@@ -7,7 +7,6 @@ from tensorflow_probability.python.distributions import (Distribution,
 
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.autoencoder.discriminator import FactorDiscriminator
 from odin.bay.vi.losses import get_divergence, maximum_mean_discrepancy
 from odin.bay.vi.utils import permute_dims
 

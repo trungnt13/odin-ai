@@ -2,9 +2,10 @@ from typing import Optional
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python import keras
 
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.autoencoder.discriminator import FactorDiscriminator
+from odin.bay.vi.autoencoder.networks import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 
 
@@ -51,7 +52,7 @@ class FactorVAE(BetaVAE):
   """
 
   def __init__(self,
-               discriminator=dict(units=1000, n_layers=5),
+               discriminator=dict(units=1000, n_hidden_layers=5),
                gamma=10.0,
                beta=1.0,
                **kwargs):
@@ -60,9 +61,12 @@ class FactorVAE(BetaVAE):
     # all latents will be concatenated
     latent_dim = np.prod(
         sum(np.array(layer.event_shape) for layer in self.latent_layers))
-    self.discriminator = FactorDiscriminator(input_shape=(latent_dim,),
-                                             **discriminator)
-    # VAE and discriminator must be trained separatedly so we split
+    # init discriminator
+    if not isinstance(discriminator, keras.layers.Layer):
+      discriminator = FactorDiscriminator(input_shape=(latent_dim,),
+                                          **discriminator)
+    self.discriminator = discriminator
+    # VAE and discriminator must be trained separated so we split
     # their params here
     self.disc_params = self.discriminator.trainable_variables
     exclude = set(id(p) for p in self.disc_params)

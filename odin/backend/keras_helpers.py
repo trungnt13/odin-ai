@@ -48,38 +48,42 @@ def add_trainable_weights(layer, *variables):
   return layer
 
 
-def layer2text(layer, inc_name=False):
+def layer2text(layer, inc_name=False, padding=''):
   assert isinstance(layer, keras.layers.Layer)
-  text = str(layer)
   cls_name = layer.__class__.__name__
   cls_name = cls_name[:10]
   if inc_name:
-    name = '[%-10s:%s]' % (cls_name, layer.name)
+    name = padding + '[%-10s:%s]' % (cls_name, layer.name)
   else:
-    name = '[%-10s] ' % cls_name
-  ## Dense
-  if isinstance(layer, keras.Sequential):
-    text = "%sbuilt:%s\n" % (name, layer.built)
-    text += "\n".join([layer2text(i, inc_name=False) for i in layer.layers])
+    name = padding + '[%-10s] ' % cls_name
+  ## Sequential
+  if isinstance(layer, keras.Model):
+    text = padding + "%sbuilt:%s name:%s\n" % (name, layer.built, layer.name)
+    text += "\n".join([
+        padding + layer2text(i, inc_name=False, padding=' ')
+        for i in layer.layers
+    ])
     return text
-  elif isinstance(layer, keras.layers.Dense):
-    text = '%sunits:%d bias:%s activ:%s' % \
+  ## Dense
+  text = str(layer)
+  if isinstance(layer, keras.layers.Dense):
+    text = padding+'%sunits:%d bias:%s activ:%s' % \
       (name, layer.units, layer.use_bias, layer.activation.__name__)
   ## Conv
   elif isinstance(layer, Conv):
-    text = '%sf:%d k:%s s:%s d:%s pad:%s bias:%s activ:%s' % \
+    text = padding+'%sf:%d k:%s s:%s d:%s pad:%s bias:%s activ:%s' % \
       (name, layer.filters, layer.kernel_size, layer.strides,
        layer.dilation_rate, layer.padding, layer.use_bias,
        layer.activation.__name__)
   ## Activation
   elif isinstance(layer, keras.layers.Activation):
-    text = '%s%s' % (name, layer.activation.__name__)
+    text = padding + '%s%s' % (name, layer.activation.__name__)
   ## Dropout
   elif isinstance(layer, keras.layers.Dropout):
-    text = '%sp=%.2f' % (name, layer.rate)
+    text = padding + '%sp=%.2f' % (name, layer.rate)
   ## BatchNorm
   elif isinstance(layer, keras.layers.BatchNormalization):
-    text = '[%-10s] axis=%s center:%s scale:%s trainable:%s' % \
+    text = padding+'[%-10s] axis=%s center:%s scale:%s trainable:%s' % \
       ('BatchRenorm' if layer.renorm else 'BatchNorm',
        [i for i in tf.nest.flatten(layer.axis)],
        layer.center, layer.scale, layer.trainable)
@@ -95,25 +99,26 @@ def layer2text(layer, inc_name=False):
     layer.update(inspect.getclosurevars(fn).nonlocals)
     layer.pop('self', None)
     layer['class'] = cls_name
-    text = "\n".join(["%s:%s" % (str(i), str(j)) for i, j in layer.items()])
+    text = padding + "\n".join(
+        ["%s:%s" % (str(i), str(j)) for i, j in layer.items()])
   ## Lambda
   elif isinstance(layer, keras.layers.Lambda):
     spec = inspect.getfullargspec(layer.function)
     kw = dict(layer.arguments)
     if spec.defaults is not None:
       kw.update(spec.defaults)
-    text = '%s <%s>(%s) default:%s' % \
+    text = padding+'%s <%s>(%s) default:%s' % \
       (name, layer.function.__name__,
        ', '.join(spec.args), kw)
   ## Reshape
   elif isinstance(layer, keras.layers.Reshape):
-    text = '%s %s' % (name, layer.target_shape)
+    text = padding + '%s %s' % (name, layer.target_shape)
   ## Flatten
   elif isinstance(layer, keras.layers.Flatten):
-    text = '%s %s' % (name, layer.data_format)
+    text = padding + '%s %s' % (name, layer.data_format)
   ## All others
   else:
-    text = '%s %s' % (name, str(layer))
+    text = padding + '%s %s' % (name, str(layer))
   ### input, output shape
   if hasattr(layer, 'input_shape') and hasattr(layer, 'output_shape'):
     text += ' %s->%s' % (str(layer.input_shape), str(layer.output_shape))

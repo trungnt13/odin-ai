@@ -15,7 +15,7 @@ __all__ = ['Criticizer']
 
 
 class Criticizer(_Criticizer, vs.Visualizer):
-  r""" Probabilistic criticizer for variational mdoel
+  r""" Probabilistic criticizer for variational model
 
   Basic progress of evaluating probabilistic model given groundtruth factors:
     - `sample_batch`

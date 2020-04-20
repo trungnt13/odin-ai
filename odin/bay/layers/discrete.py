@@ -17,14 +17,7 @@ __all__ = [
 
 
 class BernoulliLayer(tfl.DistributionLambda):
-  r"""An Independent-Bernoulli Keras layer from `prod(event_shape)` params.
-
-  Typical choices for `convert_to_tensor_fn` include:
-
-  - `tfd.Distribution.sample`
-  - `tfd.Distribution.mean`
-  - `tfd.Distribution.mode`
-  - `tfd.Bernoulli.logits`
+  r"""An Independent-Bernoulli layer.
 
   Arguments:
     event_shape: integer vector `Tensor` representing the shape of single
@@ -35,11 +28,6 @@ class BernoulliLayer(tfl.DistributionLambda):
       Default value: `tfd.Distribution.sample`.
     sample_dtype: `dtype` of samples produced by this distribution.
       Default value: `None` (i.e., previous layer's `dtype`).
-    validate_args: Python `bool`, default `False`. When `True` distribution
-      parameters are checked for validity despite possibly degrading runtime
-      performance. When `False` invalid inputs may silently render incorrect
-      outputs.
-      Default value: `False`.
     **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
   """
 
@@ -66,30 +54,27 @@ class BernoulliLayer(tfl.DistributionLambda):
           name='BernoulliLayer'):
     r"""Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
-    event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
-        value=event_shape, name='event_shape', dtype_hint=tf.int32),
-                                             tensor_name='event_shape')
-    new_shape = tf.concat([
-        tf.shape(input=params)[:-tf.size(input=event_shape)],
-        event_shape,
-    ],
-                          axis=0)
-    dist = tfd.Independent(
+    event_shape = dist_util.expand_to_vector(
+        tf.convert_to_tensor(value=event_shape,
+                             name='event_shape',
+                             dtype_hint=tf.int32),
+        tensor_name='event_shape',
+    )
+    new_shape = tf.concat(
+        [tf.shape(input=params)[:-1], event_shape],
+        axis=0,
+    )
+    return tfd.Independent(
         tfd.Bernoulli(logits=tf.reshape(params, new_shape),
                       dtype=dtype or params.dtype.base_dtype,
                       validate_args=validate_args),
         reinterpreted_batch_ndims=tf.size(input=event_shape),
-        validate_args=validate_args,
         name=name,
     )
-    return dist
 
   @staticmethod
   def params_size(event_shape=(), name='BernoulliLayer_params_size'):
     r"""The number of `params` needed to create a single distribution."""
-    event_shape = tf.convert_to_tensor(value=event_shape,
-                                       name='event_shape',
-                                       dtype_hint=tf.int32)
     return _event_size(event_shape, name=name)
 
 

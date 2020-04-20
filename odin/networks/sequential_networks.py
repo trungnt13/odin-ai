@@ -1,15 +1,20 @@
 from __future__ import absolute_import, division, print_function
 
 import dataclasses
+import inspect
 import types
 from copy import deepcopy
 from numbers import Number
 
 import numpy as np
 import tensorflow as tf
+from six import string_types
 from tensorflow.python import keras
 from tensorflow.python.framework import tensor_shape
+from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.layers.convolutional import Conv as _Conv
+from tensorflow.python.keras.utils import layer_utils
+from tensorflow.python.util import tf_inspect
 
 from odin.backend.alias import (parse_activation, parse_constraint,
                                 parse_initializer, parse_regularizer)
@@ -44,12 +49,6 @@ def _as_arg_tuples(*args):
   return [ref] + [as_tuple(i, N=n) for i in args[1:]], n
 
 
-def _store_arguments(d):
-  self = d.pop('self')
-  d.pop('__class__')
-  self._init_arguments = dict(d)
-
-
 def _rank_and_input_shape(rank, input_shape, start_layers):
   if rank is None and input_shape is None:
     raise ValueError(
@@ -74,14 +73,22 @@ def _rank_and_input_shape(rank, input_shape, start_layers):
 _STORED_TRANSPOSE = {}
 
 
+# ===========================================================================
+# Base classes
+# ===========================================================================
 class SequentialNetwork(keras.Sequential):
 
-  def __init__(self, start_layers=[], layers=None, end_layers=[], name=None):
-    layers = [
-        [] if l is None else list(l) for l in (start_layers, layers, end_layers)
-    ]
+  def __init__(self, layers=None, start_layers=[], end_layers=[], name=None):
+    layers = [[] if l is None else tf.nest.flatten(l)
+              for l in (start_layers, layers, end_layers)]
     layers = tf.nest.flatten(layers)
     super().__init__(layers=None if len(layers) == 0 else layers, name=name)
+    self._init_arguments = {}
+
+  def _store_arguments(self, kwargs):
+    kwargs = dict(kwargs)
+    kwargs.pop('__class__', None)
+    self._init_arguments = kwargs
 
   @property
   def init_arguments(self):
@@ -95,32 +102,11 @@ class SequentialNetwork(keras.Sequential):
     """
     raise NotImplementedError
 
-  # def get_config(self):
-  #   cfg = super().get_config()
-  #   if hasattr(self, 'input_shape'):
-  #     cfg['layers'][0]['config']['batch_input_shape'] = self.input_shape
-  #     cfg['layers'][0]['config']['input_shape'] = self.input_shape[1:]
-  #     cfg['build_input_shape'] = self.input_shape
-  #   return cfg
-
-  # @classmethod
-  # def from_config(cls, config, custom_objects=None):
-  #   layer = super().from_config(config, custom_objects)
-  #   if 'build_input_shape' in config:
-  #     layer.build(config['build_input_shape'])
-  #   return layer
-
-  def _to_string(self):
-    text = ""
-    for l in self.layers:
-      text += layer2text(l, inc_name=False) + '\n'
-    return text[:-1]
-
   def __repr__(self):
-    return self._to_string()
+    return self.__str__()
 
   def __str__(self):
-    return self._to_string()
+    return layer2text(self)
 
 
 # ===========================================================================
@@ -156,7 +142,7 @@ class DenseNetwork(SequentialNetwork):
          units, activation, use_bias, kernel_initializer, bias_initializer,
          kernel_regularizer, bias_regularizer, activity_regularizer,
          kernel_constraint, bias_constraint, batchnorm, layer_dropout)
-    _store_arguments(locals())
+    self._store_arguments(locals())
 
     layers = []
     if flatten:
@@ -278,7 +264,7 @@ class ConvNetwork(SequentialNetwork):
          use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
          bias_regularizer, activity_regularizer, kernel_constraint,
          bias_constraint, batchnorm, layer_dropout)
-    _store_arguments(locals())
+    self._store_arguments(locals())
 
     layers = []
     if input_shape is not None:
@@ -419,7 +405,7 @@ class DeconvNetwork(SequentialNetwork):
          activation, use_bias, kernel_initializer, bias_initializer,
          kernel_regularizer, bias_regularizer, activity_regularizer,
          kernel_constraint, bias_constraint, batchnorm, layer_dropout)
-    _store_arguments(locals())
+    self._store_arguments(locals())
 
     layers = []
     if input_shape is not None:

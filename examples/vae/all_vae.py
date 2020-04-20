@@ -132,11 +132,10 @@ class VaeExperimenter(Experimenter):
     else:
       latent_size = cfg.latent_size
     # create the network
-    fn = autoencoder.create_mnist_autoencoder if 'mnist' in cfg.ds else \
-      autoencoder.create_image_autoencoder
-    encoder, decoder = fn(image_shape=self.input_shape,
-                          latent_size=latent_size,
-                          distribution=x_rv.posterior)
+    encoder, decoder = autoencoder.create_image_autoencoder(
+        image_shape=self.input_shape,
+        latent_size=latent_size,
+        distribution=x_rv.posterior)
     # create the model and criticizer
     self.model = autoencoder.get_vae(cfg.vae)(outputs=x_rv,
                                               latents=z_rv,
