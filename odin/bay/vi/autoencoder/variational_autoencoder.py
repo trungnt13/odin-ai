@@ -155,6 +155,8 @@ class TrainStep:
     llk, div = self.vae.elbo(self.inputs,
                              pX_Z,
                              qZ_X,
+                             training=self.training,
+                             mask=self.mask,
                              return_components=True,
                              **self.elbo_kw)
     # sum all the components log-likelihood and divergence
@@ -385,6 +387,8 @@ class VariationalAutoencoder(keras.Model):
         latent(e, training=training, sample_shape=sample_shape)
         for latent in self.latent_layers
     ]
+    for q in qZ_X:  # remember to store the keras mask in outputs
+      q._keras_mask = mask
     return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
   def decode(self,
@@ -431,6 +435,8 @@ class VariationalAutoencoder(keras.Model):
         outputs = outputs[0]
     # create the output distribution
     dist = [layer(outputs, training=training) for layer in self.output_layers]
+    for p in dist:  # remember to store the keras mask in outputs
+      p._keras_mask = mask
     return dist[0] if len(self.output_layers) == 1 else tuple(dist)
 
   def call(self, inputs, training=None, mask=None, sample_shape=()):
@@ -438,6 +444,11 @@ class VariationalAutoencoder(keras.Model):
                        training=training,
                        mask=mask,
                        sample_shape=sample_shape)
+    # transfer the mask from encoder to decoder here
+    for q in tf.nest.flatten(qZ_X):
+      if hasattr(q, '_keras_mask') and q._keras_mask is not None:
+        mask = q._keras_mask
+        break
     pX_Z = self.decode(qZ_X,
                        training=training,
                        mask=mask,
@@ -551,6 +562,12 @@ class VariationalAutoencoder(keras.Model):
     X = [tf.convert_to_tensor(x, dtype=self.dtype) for x in tf.nest.flatten(X)]
     pX_Z = tf.nest.flatten(pX_Z)
     qZ_X = tf.nest.flatten(qZ_X)
+    # override the default mask
+    # if the processed mask from decoder is available
+    # but, it still unclear should we use the original mask or the processed
+    # mask here
+    # if hasattr(pX_Z[0], '_keras_mask') and pX_Z[0]._keras_mask is not None:
+    # mask = pX_Z[0]._keras_mask
     llk, div = self._elbo(X,
                           pX_Z,
                           qZ_X,

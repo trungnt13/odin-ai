@@ -11,6 +11,7 @@ from tensorflow_probability.python.distributions import OneHotCategorical
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
 from odin.bay.helpers import kl_divergence
+from odin.bay.layers.distribution_util_layers import ConditionalTensorLayer
 from odin.bay.random_variable import RandomVariable as RV
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.networks import FactorDiscriminator, ImageNet
@@ -18,6 +19,13 @@ from odin.bay.vi.utils import marginalize_categorical_labels
 from odin.networks.conditional_embedding import get_conditional_embedding
 
 __all__ = ['ConditionalM2VAE']
+
+
+def _batch_size(x):
+  batch_size = x.shape[0]
+  if batch_size is None:
+    batch_size = tf.shape(x)[0]
+  return batch_size
 
 
 class ConditionalM2VAE(BetaVAE):
@@ -33,9 +41,6 @@ class ConditionalM2VAE(BetaVAE):
   Arguments:
     conditional_embedding : {'repeat', 'embed', 'project'}. Strategy for
       concatenating one-hot encoded labels to inputs.
-    sample_label_prior : a Boolean. If True, directly sample from known
-      labels prior in case of unlablled data, otherwise, marginalize the
-      labels.
     alpha : a Scalar. The weight of discriminative objective added to the
       labelled data objective. In the paper, it is recommended:
       `alpha = 0.1 * (n_total_samples / n_labelled_samples)`
@@ -43,16 +48,22 @@ class ConditionalM2VAE(BetaVAE):
   Example:
   ```
   from odin.fuel import MNIST
-  from odin.bay.vi.autoencoder import M2VAE
+  from odin.bay.vi.autoencoder import ConditionalM2VAE
+
   ds = MNIST()
-  train = ds.create_dataset(partition='train', inc_labels=True)
+  train = ds.create_dataset(partition='train', inc_labels=0.1)
   test = ds.create_dataset(partition='test', inc_labels=True)
+
   encoder, decoder = create_image_autoencoder(image_shape=(28, 28, 1),
                                               input_shape=(28, 28, 2),
                                               center0=True,
                                               latent_shape=20)
-  vae = M2VAE(encoder=encoder, decoder=decoder, conditional_embedding='embed')
-  vae.fit(train, compile_graph=False)
+
+  vae = ConditionalM2VAE(encoder=encoder,
+                         decoder=decoder,
+                         conditional_embedding='embed',
+                         alpha=0.1 * 10)
+  vae.fit(train, compile_graph=True, epochs=-1, max_iter=8000, sample_shape=5)
   ```
 
   Reference:
@@ -70,7 +81,6 @@ class ConditionalM2VAE(BetaVAE):
                labels=RV(10, 'onehot', projection=False, name="Label"),
                classifier=dict(units=1000, n_hidden_layers=5),
                conditional_embedding="embed",
-               sample_label_prior=False,
                alpha=0.1,
                **kwargs):
     assert isinstance(labels, RV), "labels must be instance of %s" % str(RV)
@@ -79,7 +89,6 @@ class ConditionalM2VAE(BetaVAE):
     # the distribution of labels
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name="alpha")
     self.labels = labels.create_posterior()
-    self.sample_label_prior = bool(sample_label_prior)
     if self.labels.prior is None:
       self.labels.prior = OneHotCategorical(
           logits=np.log([1. / self.n_labels] * self.n_labels),
@@ -130,22 +139,56 @@ class ConditionalM2VAE(BetaVAE):
     return bk.atleast_2d(
         self.labels.prior.sample(sample_shape=sample_shape, seed=seed))
 
-  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+  def prepare_inputs(self, inputs, mask):
+    n_labels = self.n_labels
+    n_outputs = len(self.output_layers)
     inputs = tf.nest.flatten(inputs)
-    # Given the label for semi-supervised learning
-    if len(inputs) > len(self.output_layers):
+    batch_size = _batch_size(inputs[0])
+    # no labels provided:
+    if len(inputs) == n_outputs:
+      X = inputs
+      y = None
+      mask = tf.cast(tf.zeros(shape=(batch_size, 1)), tf.bool)
+    else:
       X = inputs[:-1]
       y = inputs[-1]
-    # unlablled, marginalize by y, by sampling from y prior
+      if mask is None:
+        mask = tf.cast(tf.ones(shape=(batch_size, 1)), tf.bool)
+    # split into unlabelled and labelled data
+    mask = tf.reshape(mask, (-1,))
+    X_unlabelled = [tf.boolean_mask(i, tf.logical_not(mask), axis=0) for i in X]
+    X_labelled = [tf.boolean_mask(i, mask, axis=0) for i in X]
+    # for unlabelled data
+    y_unlabelled = marginalize_categorical_labels(
+        batch_size=_batch_size(X_unlabelled[0]),
+        num_classes=n_labels,
+        dtype=inputs[0].dtype,
+    )
+    X_unlabelled = [tf.repeat(i, n_labels, axis=0) for i in X_unlabelled]
+    # for labelled data
+    if y is not None:
+      y_labelled = tf.boolean_mask(y, mask, axis=0)
+      y = tf.concat([y_unlabelled, y_labelled], axis=0)
+      mask = tf.cast(
+          tf.concat(
+              [
+                  tf.zeros(shape=(_batch_size(y_unlabelled), 1)),
+                  tf.ones(shape=(_batch_size(y_labelled), 1))
+              ],
+              axis=0,
+          ), tf.bool)
+    # for only unlabelled data
     else:
-      if self.sample_label_prior:
-        y = self.labels.prior.sample(sample_shape=inputs[0].shape[0] *
-                                     self.n_labels)
-      else:
-        y = marginalize_categorical_labels(batch_size=inputs[0].shape[0],
-                                           num_classes=self.n_labels,
-                                           dtype=self.dtype)
-      X = [tf.repeat(i, self.n_labels, axis=0) for i in inputs]
+      y = y_unlabelled
+      mask = tf.repeat(mask, n_labels, axis=0)
+    X = [
+        tf.concat([unlab, lab], axis=0)
+        for unlab, lab in zip(X_unlabelled, X_labelled)
+    ]
+    return X, y, mask
+
+  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+    X, y, mask = self.prepare_inputs(inputs, mask=mask)
     # conditional embedding y
     y_embedded = self.embedder(y, training=training)
     X = [tf.concat([i, y_embedded], axis=-1) for i in X]
@@ -154,76 +197,91 @@ class ConditionalM2VAE(BetaVAE):
     # encode normally
     qZ_X = super().encode(X,
                           training=training,
+                          mask=mask,
                           sample_shape=sample_shape,
                           **kwargs)
-    return qZ_X, y
+    qZ_X = [
+        ConditionalTensorLayer(sample_shape=sample_shape)([qZ_X, y])
+        for q in tf.nest.flatten(qZ_X)
+    ]
+    # remember to store the new mask
+    for q in qZ_X:
+      q._keras_mask = mask
+    return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
-  def decode(self, latents, training=None, mask=None, sample_shape=(), **kwargs):
-    qZ_X, y = latents
-    # again we need to repeat y to match qZ_X
-    n_samples = tf.nest.flatten(sample_shape)
-    if len(n_samples) > 0:
-      for _ in range(len(n_samples)):
-        y = tf.expand_dims(y, axis=0)
-      for i, n in enumerate(n_samples):
-        y = tf.repeat(y, n, axis=i)
-    Z = tf.concat([qZ_X, y], axis=-1)
-    return super().decode(latents=Z,
-                          training=training,
-                          sample_shape=sample_shape,
-                          **kwargs)
-
-  def call(self, inputs, training=None, sample_shape=(), return_labels=False):
-    qZ_X = self.encode(inputs, training=training, sample_shape=sample_shape)
-    pX_Z = self.decode(qZ_X, training=training, sample_shape=sample_shape)
-    y = qZ_X[-1]
-    qZ_X = qZ_X[:-1]
-    if len(self.latent_layers) == 1:
-      qZ_X = qZ_X[0]
-    if return_labels:
-      return pX_Z, qZ_X, y
-    return pX_Z, qZ_X
-
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape):
-    ## check if data is unlablled and be marginalized along Y
-    is_unlablled = False
-    if X[0].shape[0] != pX_Z[0].batch_shape[-1]:
-      is_unlablled = True
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training):
+    inputs = X[:len(self.output_layers)]
+    if mask is None:
+      if len(X) == len(self.output_layers):  # no labelled
+        X_unlabelled = inputs
+      else:  # all data is labelled
+        X_unlabelled = [tf.zeros(shape=(0,) + i.shape[1:]) for i in inputs]
+    else:
+      m = tf.logical_not(tf.reshape(mask, (-1,)))
+      X_unlabelled = [tf.boolean_mask(i, m, axis=0) for i in inputs]
+    ## prepare inputs as usual
+    X, y, mask = self.prepare_inputs(X, mask)
     ## Normal ELBO
-    llk, div = super()._elbo(
-        [tf.repeat(x, self.n_labels, axis=0) for x in X] if is_unlablled else X,
-        pX_Z,
-        qZ_X,
-        analytic,
-        reverse,
-        sample_shape,
-    )
-    ## special case of unlablled data
-    if is_unlablled:
-      pY_X = self.classify(X[0])
-      probs = pY_X.probs_parameter()
-      new_llk = {}
-      for name, x in llk.items():
-        shape = tf.concat([x.shape[:-1], (-1, self.n_labels)], axis=0)
-        x = tf.reshape(x, shape)
-        x = tf.reduce_sum(x * probs, axis=-1)
-        new_llk[name] = x
-      new_div = {}
-      for name, x in div.items():
-        shape = tf.concat([x.shape[:-1], (-1, self.n_labels)], axis=0)
-        x = tf.reshape(x, shape)
-        x = tf.reduce_sum(x * probs, axis=-1)
-        new_div[name] = x
-      new_div['kl_label'] = kl_divergence(pY_X,
-                                          self.labels.prior,
-                                          analytic=True)
-      llk = new_llk
-      div = new_div
-    ## labelled data, add the discriminative objective
-    elif len(X) > len(self.output_layers):
-      y = X[-1]
-      pY_X = self.classify(X[0])
-      llk['llk_labels'] = self.alpha * pY_X.log_prob(y)
+    llk, div = super()._elbo(X,
+                             pX_Z,
+                             qZ_X,
+                             analytic,
+                             reverse,
+                             sample_shape,
+                             mask=mask,
+                             training=training)
+    mask = tf.reshape(mask, (-1,))
+    ### for unlablled data
+    mask_unlablled = tf.logical_not(mask)
+    pY_X = self.classify(X_unlabelled)
+    probs = pY_X.probs_parameter()
+    # log-likehood
+    llk_unlabelled = {}
+    for name, lk in llk.items():
+      lk = tf.transpose(lk)
+      lk = tf.boolean_mask(lk, mask_unlablled, axis=0)
+      lk = tf.transpose(tf.reshape(lk, (self.n_labels, tf.shape(probs)[0], -1)))
+      lk = tf.reduce_sum(lk * probs, axis=-1)
+      llk_unlabelled[name + '_unlabelled'] = lk
+    # kl-divergence
+    div_unlabelled = {}
+    for name, dv in div.items():
+      dv = tf.transpose(dv)
+      dv = tf.boolean_mask(dv, mask_unlablled, axis=0)
+      dv = tf.transpose(tf.reshape(dv, (self.n_labels, tf.shape(probs)[0], -1)))
+      dv = tf.reduce_sum(dv * probs, axis=-1)
+      div_unlabelled[name + '_unlablled'] = dv
+    div_unlabelled['kl_classifier'] = kl_divergence(pY_X,
+                                                    self.labels.prior,
+                                                    analytic=True)
+    ### for labelled data, add the discriminative objective
+    X_labelled = [tf.boolean_mask(i, mask, axis=0) for i in X]
+    # log-likehood
+    llk_labelled = {
+        name + '_labelled':
+        tf.transpose(tf.boolean_mask(tf.transpose(lk), mask, axis=0))
+        for name, lk in llk.items()
+    }
+    # add the classification (discrimination) loss
+    y_labelled = tf.boolean_mask(y, mask, axis=0)
+    pY_X = self.classify(X_labelled)
+    llk_labelled['llk_classifier'] = self.alpha * pY_X.log_prob(y_labelled)
+    # kl-divergence
+    div_labelled = {
+        name + '_labelled':
+        tf.transpose(tf.boolean_mask(tf.transpose(dv), mask, axis=0))
+        for name, dv in div.items()
+    }
+    ### merge everything
+    llk = {
+        k: tf.reduce_mean(v)
+        for k, v in dict(**llk_unlabelled, **llk_labelled).items()
+    }
+    div = {
+        k: tf.reduce_mean(v)
+        for k, v in dict(**div_unlabelled, **div_labelled).items()
+    }
     return llk, div
 
   def __str__(self):

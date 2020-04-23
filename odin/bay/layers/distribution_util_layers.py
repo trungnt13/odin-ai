@@ -1,10 +1,12 @@
 from __future__ import absolute_import, division, print_function
 
 import collections
+from functools import partial
 
 import tensorflow as tf
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize)
 from tensorflow_probability.python.layers.internal import \
@@ -12,8 +14,11 @@ from tensorflow_probability.python.layers.internal import \
 from tensorflow_probability.python.layers.internal import \
     tensor_tuple as tensor_tuple
 
+from odin.bay.distributions.conditional import ConditionalTensor
+
 __all__ = [
-    'ConcatDistribution', 'Sampling', 'Moments', 'Stddev', 'DistributionAttr'
+    'ConditionalTensorLayer', 'ConcatDistributionLayer', 'Sampling', 'Moments',
+    'Stddev', 'DistributionAttr'
 ]
 
 
@@ -22,23 +27,44 @@ def _check_distribution(x):
   "Input to this layer must be instance of tensorflow_probability Distribution"
 
 
-class ConcatDistribution(DistributionLambda):
-  """ This layer create a new `Distribution` by concatenate parameters of
+class ConditionalTensorLayer(DistributionLambda):
+  r""" This layer concatenate a Tensor to all the statistics of given
+  distribution, helpful for conditional VAE.
+  """
+
+  def __init__(self,
+               convert_to_tensor_fn=Distribution.sample,
+               sample_shape=(),
+               **kwargs):
+    if convert_to_tensor_fn == Distribution.sample and sample_shape != ():
+      convert_to_tensor_fn = partial(Distribution.sample,
+                                     sample_shape=sample_shape)
+    super().__init__(
+        lambda params: ConditionalTensor(distribution=params[0],
+                                         conditional_tensor=params[1]),
+        convert_to_tensor_fn, **kwargs)
+
+
+class ConcatDistributionLayer(DistributionLambda):
+  r""" This layer create a new `Distribution` by concatenate parameters of
   multiple distributions of the same type along given `axis`
   """
 
   def __init__(self,
                axis=None,
                convert_to_tensor_fn=Distribution.sample,
+               sample_shape=(),
                **kwargs):
     from odin.bay.distributions.utils import concat_distribution
-    super(ConcatDistribution, self).__init__(
-        lambda dists: concat_distribution(dists=dists, axis=axis),
-        convert_to_tensor_fn, **kwargs)
+    if convert_to_tensor_fn == Distribution.sample and sample_shape != ():
+      convert_to_tensor_fn = partial(Distribution.sample,
+                                     sample_shape=sample_shape)
+    super().__init__(lambda dists: concat_distribution(dists=dists, axis=axis),
+                     convert_to_tensor_fn, **kwargs)
     self.axis = axis
 
   def get_config(self):
-    config = super(ConcatDistribution, self).get_config()
+    config = super().get_config()
     config['axis'] = self.axis
     return config
 
