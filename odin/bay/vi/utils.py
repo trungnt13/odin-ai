@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import types
+from numbers import Number
 
 import numpy as np
 import tensorflow as tf
@@ -10,6 +11,7 @@ from sklearn.preprocessing import KBinsDiscretizer
 __all__ = [
     'discretizing',
     'permute_dims',
+    'marginalize_categorical_labels',
 ]
 
 
@@ -97,6 +99,24 @@ def discretizing(*factors,
   if return_model:
     return factors, disc
   return factors
+
+
+def marginalize_categorical_labels(batch_size, num_classes, dtype=tf.float32):
+  r"""
+  Example:
+  ```
+  # shape: [batch_size * n_labels, n_labels]
+  y = marginalize_categorical_labels(batch_size=inputs[0].shape[0],
+                                     num_classes=n_labels,
+                                     dtype=self.dtype)
+  # shape: [batch_size * n_labels, n_dims]
+  X = [tf.repeat(i, n_labels, axis=0) for i in inputs]
+  ```
+  """
+  y = tf.expand_dims(tf.eye(num_classes, dtype=dtype), axis=0)
+  y = tf.repeat(y, batch_size, axis=0)
+  y = tf.reshape(y, (-1, num_classes))
+  return y
 
 
 @tf.function(autograph=True)

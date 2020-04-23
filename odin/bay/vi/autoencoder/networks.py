@@ -1,4 +1,5 @@
 from functools import partial
+from numbers import Number
 
 import numpy as np
 import tensorflow as tf
@@ -23,7 +24,7 @@ __all__ = [
 # Helpers
 # ===========================================================================
 def _nparams(distribution, distribution_kw):
-  from odin.bay import parse_distribution
+  from odin.bay.distribution_alias import parse_distribution
   distribution, _ = parse_distribution(distribution)
   return int(
       tf.reduce_prod(distribution.params_size(1, **distribution_kw)).numpy())
@@ -45,14 +46,15 @@ class Center0Image(keras.layers.Layer):
 # Basic Network
 # ===========================================================================
 def create_image_autoencoder(image_shape=(64, 64, 1),
-                             latent_size=10,
+                             latent_shape=(10,),
                              projection_dim=256,
                              activation='relu',
                              center0=True,
                              distribution='bernoulli',
                              distribution_kw=dict(),
                              skip_connect=False,
-                             convolution=True):
+                             convolution=True,
+                             input_shape=None):
   r""" Initialized the Convolutional encoder and decoder often used in
   Disentangled VAE literatures.
 
@@ -78,7 +80,7 @@ class ImageNet(keras.Model):
 
   def __init__(self,
                image_shape=(28, 28, 1),
-               latent_size=10,
+               latent_shape=(10,),
                projection_dim=256,
                activation='relu',
                center0=True,
@@ -87,18 +89,27 @@ class ImageNet(keras.Model):
                skip_connect=False,
                convolution=True,
                decoding=False,
+               input_shape=None,
                name=None):
     if name is None:
       name = "Decoder" if decoding else "Encoder"
     super().__init__(name=name)
-    assert len(image_shape) == 3, "Only support image"
-    self.image_shape = image_shape
+    if isinstance(image_shape, Number):
+      image_shape = (image_shape,)
+    if isinstance(latent_shape, Number):
+      latent_shape = (latent_shape,)
+    ## check multi-inputs
+    self.latent_shape = latent_shape
+    self.image_shape = [image_shape]
+    # input_shape to the encoder is the same as output_shape in the decoder
+    if input_shape is None:
+      input_shape = image_shape
+    # others
     self.skip_connect = bool(skip_connect)
     self.convolution = bool(convolution)
     self.is_mnist = False
     self.pool_size = []
     self.decoding = decoding
-    self.latent_size = int(latent_size)
     ## prepare layers
     layers = []
     if center0 and not decoding:
@@ -120,8 +131,9 @@ class ImageNet(keras.Model):
       self.is_mnist = True
       if decoding:
         layers = [
+            _DENSE(projection_dim, activation=activation),
             keras.layers.Lambda(
-                lambda codes: tf.reshape(codes, (-1, 1, 1, latent_size))),
+                lambda codes: tf.reshape(codes, (-1, 1, 1, projection_dim))),
             _DECONV(2 * base_depth, 7, padding="VALID", activation=activation),
             _DECONV(2 * base_depth, 5, activation=activation),
             _DECONV(2 * base_depth, 5, 2, activation=activation),
@@ -177,9 +189,9 @@ class ImageNet(keras.Model):
     self._layers = layers
     ## build the network
     if decoding:
-      x = keras.layers.Input(shape=(latent_size,))
+      x = keras.layers.Input(shape=latent_shape)
     else:
-      x = keras.layers.Input(shape=image_shape)
+      x = keras.layers.Input(shape=input_shape)
     self(x)
 
   def __repr__(self):
@@ -192,7 +204,7 @@ class ImageNet(keras.Model):
     first_inputs = inputs
     if not self.convolution:  # dense
       if not self.decoding:
-        first_inputs = tf.reshape(inputs, (-1, np.prod(self.image_shape)))
+        first_inputs = tf.reshape(inputs, (-1, np.prod(inputs.shape[1:])))
     else:  # convolution
       if self.decoding:
         first_inputs = tf.expand_dims(inputs, axis=-2)

@@ -47,6 +47,10 @@ class YDisentanglement(ImageDataset):
       self.attributes_test = data['attributes_test']
 
   @property
+  def labels(self):
+    return np.array(["num", "xoffset", "yoffset", "rotation"])
+
+  @property
   def is_binary(self):
     return True
 
@@ -62,17 +66,22 @@ class YDisentanglement(ImageDataset):
                      cache='',
                      parallel=None,
                      partition='train',
-                     inc_labels=False) -> tf.data.Dataset:
+                     inc_labels=False,
+                     seed=1) -> tf.data.Dataset:
     r"""
     Arguments:
       partition : {'train', 'valid', 'test'}
-      inc_labels : a Boolean. If True, return both image and label, otherwise,
-        only image is returned.
+      inc_labels : a Boolean or Scalar. If True, return both image and label,
+        otherwise, only image is returned.
+        If a scalar is provided, it indicate the percent of labelled data
+        in the mask.
 
     Return :
-      train, test, unlabeled : `tensorflow.data.Dataset`
-        image - `(tf.float32, (64, 64, 3))`
-        label - `(tf.float32, (10,))`
+      tensorflow.data.Dataset :
+        image - `(tf.float32, (None, 48, 48, 1))`
+        label - `(tf.float32, (None, 4))`
+        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
     images, attributes = _partition(partition,
                                     train=(self.images_train,
@@ -82,11 +91,16 @@ class YDisentanglement(ImageDataset):
     images = tf.data.Dataset.from_tensor_slices(images)
     attributes = tf.data.Dataset.from_tensor_slices(attributes)
     ds = tf.data.Dataset.zip((images, attributes)) if inc_labels else images
+    inc_labels = float(inc_labels)
+    gen = tf.random.experimental.Generator.from_seed(seed=seed)
 
     def _process(*data):
       image = tf.expand_dims(tf.cast(data[0], tf.float32), -1)
       if inc_labels:
         label = tf.cast(data[1], tf.float32)
+        if 0. < inc_labels < 1.:  # semi-supervised mask
+          mask = gen.uniform(shape=(1,)) < inc_labels
+          return image, label, mask
         return image, label
       return image
 

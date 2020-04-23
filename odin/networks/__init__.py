@@ -9,7 +9,7 @@ from odin.networks.sequential_networks import *
 from odin.networks.skip_connection import SkipConnection, skip_connect
 from odin.networks.time_delay import *
 from odin.networks.util_layers import *
-
+from odin.networks.conditional_embedding import *
 
 
 def register_new_keras_layers(extras=None):

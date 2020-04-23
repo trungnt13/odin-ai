@@ -105,7 +105,7 @@ print("Input shape", input_shape)
 # Create networks
 # ===========================================================================
 encoder, decoder = create_image_autoencoder(image_shape=input_shape,
-                                            latent_size=ZDIM,
+                                            latent_shape=ZDIM,
                                             projection_dim=128)
 vae = VariationalAutoencoder(
     encoder=encoder,

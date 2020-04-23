@@ -118,6 +118,11 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
                            dtype=tf.float32))
   elif dist == obd.Dirichlet:
     prior = dist(**_kwargs(concentration=[1.] * event_size))
+  elif dist == obd.Bernoulli:
+    prior = obd.Independent(
+        obd.Bernoulli(**_kwargs(
+            logits=np.full(event_shape, np.log(0.5)), dtype=tf.float32)),
+        len(event_shape))
   ## other
   return prior
 
@@ -283,7 +288,7 @@ class RandomVariable:
 
   def create_posterior(self,
                        input_shape=None,
-                       name=None) -> obl.DistributionLambda:
+                       name=None) -> obl.DenseDistribution:
     r""" Initiate a Distribution for the random variable """
     prior = _default_prior(self.event_shape, self.posterior, self.prior,
                            self.kwargs)

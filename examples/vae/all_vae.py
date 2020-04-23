@@ -134,7 +134,7 @@ class VaeExperimenter(Experimenter):
     # create the network
     encoder, decoder = autoencoder.create_image_autoencoder(
         image_shape=self.input_shape,
-        latent_size=latent_size,
+        latent_shape=latent_size,
         distribution=x_rv.posterior)
     # create the model and criticizer
     self.model = autoencoder.get_vae(cfg.vae)(outputs=x_rv,

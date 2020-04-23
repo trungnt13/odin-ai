@@ -196,7 +196,7 @@ tfp_vae = TFPVAE()
 # ===========================================================================
 # ODIN vae
 # ===========================================================================
-encoder, decoder = create_image_autoencoder(latent_size=latent_size,
+encoder, decoder = create_image_autoencoder(latent_shape=latent_size,
                                             base_depth=base_depth,
                                             center0=True,
                                             activation=activation)

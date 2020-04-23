@@ -116,6 +116,11 @@ def layer2text(layer, inc_name=False, padding=''):
   ## Flatten
   elif isinstance(layer, keras.layers.Flatten):
     text = padding + '%s %s' % (name, layer.data_format)
+  ## Embedding
+  elif isinstance(layer, keras.layers.Embedding):
+    text = padding + '%s in_dim:%d out_dim:%d mask0:%s seq_len:%s' % (
+        name, layer.input_dim, layer.output_dim, layer.mask_zero,
+        layer.input_length)
   ## All others
   else:
     text = padding + '%s %s' % (name, str(layer))

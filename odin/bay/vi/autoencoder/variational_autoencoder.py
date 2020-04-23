@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import glob
 import inspect
 import os
+import warnings
 from typing import Callable, List, Optional, Union
 
 import numpy as np
@@ -13,6 +14,7 @@ from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
 
+from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
 from odin.bay.random_variable import RandomVariable
 from odin.networks import NetworkConfig, SequentialNetwork
@@ -229,10 +231,10 @@ class VariationalAutoencoder(keras.Model):
     if encoder is not None:
       if isinstance(encoder, NetworkConfig):
         encoder = encoder.create_network(input_shape, name="Encoder")
-      elif hasattr(encoder, 'input_shape'):
-        assert list(encoder.input_shape[1:]) == input_shape, \
-          "encoder has input_shape=%s but VAE input_shape=%s" % \
-            (str(encoder.input_shape[1:]), str(input_shape))
+      elif hasattr(encoder, 'input_shape') and \
+        list(encoder.input_shape[1:]) != input_shape:
+        warnings.warn("encoder has input_shape=%s but VAE input_shape=%s" %
+                      (str(encoder.input_shape[1:]), str(input_shape)))
     else:
       assert isinstance(config, NetworkConfig), \
         "config must be instance of NetworkConfig but given: %s" % \
@@ -272,10 +274,10 @@ class VariationalAutoencoder(keras.Model):
     if decoder is not None:
       if isinstance(decoder, NetworkConfig):
         decoder = decoder.create_network(latent_shape, name="Decoder")
-      elif hasattr(decoder, 'input_shape'):
-        assert list(decoder.input_shape[-1:]) == latent_shape, \
-          "decoder has input_shape=%s but latent_shape=%s" % \
-            (str(decoder.input_shape[-1:]), str(latent_shape))
+      elif hasattr(decoder, 'input_shape') and \
+        list(decoder.input_shape[-1:]) != latent_shape:
+        warnings.warn("decoder has input_shape=%s but latent_shape=%s" %
+                      (str(decoder.input_shape[-1:]), str(latent_shape)))
     else:
       decoder = config.create_decoder(encoder=encoder,
                                       latent_shape=latent_shape)
@@ -350,9 +352,7 @@ class VariationalAutoencoder(keras.Model):
     r""" Sampling from prior distribution """
     samples = []
     for latent in self.latent_layers:
-      s = latent.sample(sample_shape=sample_shape, seed=seed)
-      if len(s.shape) < 2:  # at-least 2D
-        s = tf.expand_dims(s, axis=0)
+      s = bk.atleast_2d(latent.sample(sample_shape=sample_shape, seed=seed))
       samples.append(s)
     return samples[0] if len(samples) == 1 else tuple(samples)
 
@@ -361,9 +361,7 @@ class VariationalAutoencoder(keras.Model):
     wrong since `RandomVariable` often has a default prior. """
     samples = []
     for output in self.output_layers:
-      s = output.sample(sample_shape=sample_shape, seed=seed)
-      if tf.rank(s) == 1:  # at-least 2D
-        s = tf.expand_dims(s, axis=0)
+      s = bk.atleast_2d(output.sample(sample_shape=sample_shape, seed=seed))
       samples.append(s)
     return samples[0] if len(samples) == 1 else tuple(samples)
 
@@ -429,7 +427,10 @@ class VariationalAutoencoder(keras.Model):
 
   @tf.function(autograph=False)
   def marginal_log_prob(self, inputs, training=False, sample_shape=100):
-    r""" marginal log-likelihood of shape [batch_size]
+    r"""
+    Return:
+      a Tensor of shape [batch_size]
+        marginal log-likelihood
     """
     sample_shape = tf.cast(tf.reduce_prod(sample_shape), tf.int32)
     iw_const = tf.math.log(tf.cast(tf.reduce_prod(sample_shape), self.dtype))
@@ -467,8 +468,8 @@ class VariationalAutoencoder(keras.Model):
 
   def elbo(self,
            X,
-           pX_Z,
-           qZ_X,
+           pX_Z=None,
+           qZ_X=None,
            analytic=False,
            reverse=True,
            sample_shape=None,
@@ -506,6 +507,11 @@ class VariationalAutoencoder(keras.Model):
       divergence : dictionary `Tensor` of shape [sample_shape, batch_size].
         The reversed KL-divergence or rate
     """
+    if qZ_X is None:
+      qZ_X = self.encode(X)
+    if pX_Z is None:
+      pX_Z = self.decode(qZ_X)
+    # organize all inputs to list
     X = [tf.convert_to_tensor(x, dtype=self.dtype) for x in tf.nest.flatten(X)]
     pX_Z = tf.nest.flatten(pX_Z)
     qZ_X = tf.nest.flatten(qZ_X)

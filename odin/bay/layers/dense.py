@@ -181,7 +181,7 @@ class DenseDistribution(Dense):
     return tf.cast(tf.reduce_prod(self._event_shape), tf.int32)
 
   @property
-  def prior(self):
+  def prior(self) -> Distribution:
     return self._prior
 
   @prior.setter
@@ -189,7 +189,7 @@ class DenseDistribution(Dense):
     assert isinstance(p, (Distribution, type(None)))
     self._prior = p
 
-  def posterior_layer(self, sample_shape=()):
+  def posterior_layer(self, sample_shape=()) -> DistributionLambda:
     if self._convert_to_tensor_fn == Distribution.sample:
       fn = partial(Distribution.sample, sample_shape=sample_shape)
     else:
@@ -199,7 +199,7 @@ class DenseDistribution(Dense):
                                  **self._posterior_kwargs)
 
   @property
-  def posterior(self):
+  def posterior(self) -> Distribution:
     r""" Return the last parametrized distribution, i.e. the result from the
     last `call` """
     return self._last_distribution
@@ -233,10 +233,12 @@ class DenseDistribution(Dense):
         params, training=training)
     self._last_distribution = posterior
     # NOTE: all distribution has the method kl_divergence, so we cannot use it
+    prior = self.prior if prior is None else prior
     posterior.KL_divergence = KLdivergence(
-        posterior,
-        prior=self.prior if prior is None else prior,
-        sample_shape=None) # None mean reuse samples here
+        posterior, prior=prior,
+        sample_shape=None)  # None mean reuse samples here
+    assert not hasattr(posterior, 'prior'), "Cannot assign prior to the output"
+    posterior.prior = prior
     return posterior
 
   def kl_divergence(self,

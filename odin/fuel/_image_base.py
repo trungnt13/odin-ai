@@ -90,7 +90,7 @@ class ImageDataset:
                      parallel=None,
                      partition='train',
                      inc_labels=False,
-                     **kwargs) -> tf.data.Dataset:
+                     seed=1) -> tf.data.Dataset:
     raise NotImplementedError()
 
 
@@ -123,17 +123,22 @@ class BinarizedMNIST(ImageDataset):
                      cache='',
                      parallel=None,
                      partition='train',
-                     inc_labels=False) -> tf.data.Dataset:
+                     inc_labels=False,
+                     seed=1) -> tf.data.Dataset:
     r"""
     Arguments:
       partition : {'train', 'valid', 'test'}
-      inc_labels : a Boolean. If True, return both image and label, otherwise,
-        only image is returned.
+      inc_labels : a Boolean or Scalar. If True, return both image and label,
+        otherwise, only image is returned.
+        If a scalar is provided, it indicate the percent of labelled data
+        in the mask.
 
     Return :
-      train, test, unlabeled : `tensorflow.data.Dataset`
-        image - `(tf.float32, (28, 28, 1))`
-        label - `(tf.float32, (10,))`
+      tensorflow.data.Dataset :
+        image - `(tf.float32, (None, 28, 28, 1))`
+        label - `(tf.float32, (None, 10))`
+        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
     ds = _partition(partition,
                     train=self.train,
@@ -143,6 +148,8 @@ class BinarizedMNIST(ImageDataset):
     if len(struct) == 1:
       inc_labels = False
     ids = tf.range(self.n_labels, dtype=tf.float32)
+    inc_labels = float(inc_labels)
+    gen = tf.random.experimental.Generator.from_seed(seed=seed)
 
     def _process_dict(data):
       image = tf.cast(data['image'], tf.float32)
@@ -150,6 +157,11 @@ class BinarizedMNIST(ImageDataset):
         image = self.normalize_255(image)
       if inc_labels:
         label = tf.cast(data['label'], tf.float32)
+        if len(label.shape) == 0:  # covert to one-hot
+          label = tf.cast(ids == label, tf.float32)
+        if 0. < inc_labels < 1.:  # semi-supervised mask
+          mask = gen.uniform(shape=(1,)) < inc_labels
+          return image, label, mask
         return image, label
       return image
 
@@ -159,8 +171,11 @@ class BinarizedMNIST(ImageDataset):
         image = self.normalize_255(image)
       if inc_labels:
         label = tf.cast(data[1], tf.float32)
-        if len(label.shape) == 0:
+        if len(label.shape) == 0:  # covert to one-hot
           label = tf.cast(ids == label, tf.float32)
+        if 0. < inc_labels < 1.:  # semi-supervised mask
+          mask = gen.uniform(shape=(1,)) < inc_labels
+          return image, label, mask
         return image, label
       return image
 

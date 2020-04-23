@@ -151,19 +151,24 @@ class CelebA(ImageDataset):
                      cache='',
                      parallel=tf.data.experimental.AUTOTUNE,
                      partition='train',
-                     inc_labels=True) -> tf.data.Dataset:
+                     inc_labels=True,
+                     seed=1) -> tf.data.Dataset:
     r""" The default argument will downsize and crop the image to square size
     (64, 64)
 
     Arguments:
       partition : {'train', 'valid', 'test'}
-      inc_labels : a Boolean. If True, return both image and label, otherwise,
-        only image is returned.
+      inc_labels : a Boolean or Scalar. If True, return both image and label,
+        otherwise, only image is returned.
+        If a scalar is provided, it indicate the percent of labelled data
+        in the mask.
 
-    Return:
-      train, valid, test: `tensorflow.data.Dataset`
-         - image `(tf.float32, (64, 64, 3))`
-         - label `(tf.float32, (40,))`
+    Return :
+      tensorflow.data.Dataset :
+        image - `(tf.float32, (None, 64, 64, 3))`
+        label - `(tf.float32, (None, 40))`
+        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
     image_shape = self.original_shape
     image_size = self.image_size
@@ -172,6 +177,8 @@ class CelebA(ImageDataset):
       height = int(float(image_size) / image_shape[1] * image_shape[0])
       # offset_height, offset_width, target_height, target_width
       crop_offset = ((height - image_size) // 2, 0, image_size, image_size)
+    inc_labels = float(inc_labels)
+    gen = tf.random.experimental.Generator.from_seed(seed=seed)
 
     def read(path):
       img = tf.io.decode_jpeg(tf.io.read_file(path))
@@ -186,6 +193,10 @@ class CelebA(ImageDataset):
           img = tf.image.crop_to_bounding_box(img, *crop_offset)
       return img
 
+    def mask(image, label):
+      mask = gen.uniform(shape=(1,)) < inc_labels
+      return image, label, mask
+
     ### select partition
     images, attrs = _partition(
         partition,
@@ -196,12 +207,12 @@ class CelebA(ImageDataset):
     images = tf.data.Dataset.from_tensor_slices(images).map(read, parallel)
     if inc_labels:
       attrs = tf.data.Dataset.from_tensor_slices(self.train_attr)
+      images = tf.data.Dataset.zip((images, attrs))
+      if 0. < inc_labels < 1.:  # semi-supervised mask
+        images = images.map(mask)
 
     if cache is not None:
       images = images.cache(str(cache))
-    # return both image and attributes
-    if inc_labels:
-      images = tf.data.Dataset.zip((images, attrs))
     # shuffle must be called after cache
     if shuffle is not None:
       images = images.shuffle(int(shuffle))
@@ -301,7 +312,8 @@ class Shapes3D(ImageDataset):
                      cache='',
                      parallel=tf.data.experimental.AUTOTUNE,
                      partition='train',
-                     inc_labels=True) -> tf.data.Dataset:
+                     inc_labels=True,
+                     seed=1) -> tf.data.Dataset:
     r""" Create tensorflow dataset for train, valid and test
       The images are normalized in range [-1, 1]
 
@@ -326,13 +338,17 @@ class Shapes3D(ImageDataset):
         is used, then the number of parallel calls is set dynamically based
         on available CPU.
       partition : {'train', 'valid', 'test'}
-      inc_labels : a Boolean. If True, return both image and label, otherwise,
-        only image is returned.
+      inc_labels : a Boolean or Scalar. If True, return both image and label,
+        otherwise, only image is returned.
+        If a scalar is provided, it indicate the percent of labelled data
+        in the mask.
 
-    Return:
-      train, valid, test: `tensorflow.data.Dataset`
-         - image `(tf.float32, (64, 64, 3))`
-         - label `(tf.float32, (6,))`
+    Return :
+      tensorflow.data.Dataset :
+        image - `(tf.float32, (None, 64, 64, 3))`
+        label - `(tf.float32, (None, 6))`
+        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
     # both images and labels, note: a tuple must be used here
     types = (tf.uint8, tf.float32)
@@ -341,8 +357,10 @@ class Shapes3D(ImageDataset):
     if not inc_labels:
       types = types[0]
       shapes = shapes[0]
+    inc_labels = float(inc_labels)
+    gen = tf.random.experimental.Generator.from_seed(seed=seed)
 
-    def gen(indices):
+    def gen_data(indices):
       for i in indices:
         if inc_labels:
           yield self.images[i], tf.cast(self.factors[i], dtype=tf.float32)
@@ -354,6 +372,9 @@ class Shapes3D(ImageDataset):
       if inc_labels:
         ims, lab = ims
         ims = tf.cast(ims, tf.float32)
+        if 0. < inc_labels < 1.:  # semi-supervised mask
+          mask = gen.uniform(shape=(tf.shape(ims)[0], 1)) < inc_labels
+          return ims, lab, mask
         return self.normalize_255(ims), lab
       ims = tf.cast(ims[0], tf.float32)
       return self.normalize_255(ims)
@@ -366,7 +387,7 @@ class Shapes3D(ImageDataset):
         test=self.test_indices,
     )
     ds = tf.data.Dataset.from_generator(
-        partial(gen, indices), output_types=types,
+        partial(gen_data, indices), output_types=types,
         output_shapes=shapes).batch(batch_size,
                                     drop_remainder).map(process, parallel)
     if cache is not None:
@@ -446,19 +467,39 @@ class dSprites(ImageDataset):
                      partition='train',
                      inc_labels=False,
                      continuous_factors=False,
-                     **kwargs) -> tf.data.Dataset:
+                     seed=1) -> tf.data.Dataset:
+    r"""
+    Arguments:
+      partition : {'train', 'valid', 'test'}
+      inc_labels : a Boolean or Scalar. If True, return both image and label,
+        otherwise, only image is returned.
+        If a scalar is provided, it indicate the percent of labelled data
+        in the mask.
+
+    Return :
+      tensorflow.data.Dataset :
+        image - `(tf.float32, (None, 64, 64, 1))`
+        label - `(tf.float32, (None, 5))`
+        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
+    """
     ds = _partition(partition,
                     train=self.train,
                     valid=self.valid,
                     test=self.test)
     factors = self._continuous_factors if continuous_factors else \
       self._discrete_factors
+    inc_labels = float(inc_labels)
+    gen = tf.random.experimental.Generator.from_seed(seed=seed)
 
     def _process(data):
       image = tf.cast(data['image'], tf.float32)
       if inc_labels:
         label = tf.convert_to_tensor([data[i] for i in factors],
                                      dtype=tf.float32)
+        if 0. < inc_labels < 1.:  # semi-supervised mask
+          mask = gen.uniform(shape=(1,)) < inc_labels
+          return image, label, mask
         return image, label
       return image
 
@@ -549,17 +590,22 @@ class SLT10(ImageDataset):
                      cache='',
                      parallel=tf.data.experimental.AUTOTUNE,
                      partition='train',
-                     inc_labels=True) -> tf.data.Dataset:
+                     inc_labels=True,
+                     seed=1) -> tf.data.Dataset:
     r"""
     Arguments:
-      partition : {'train', 'valid', 'test'}
-      inc_labels : a Boolean. If True, return both image and label, otherwise,
-        only image is returned.
+      partition : {'train', 'valid', 'test', 'unlablled'}
+      inc_labels : a Boolean or Scalar. If True, return both image and label,
+        otherwise, only image is returned.
+        If a scalar is provided, it indicate the percent of labelled data
+        in the mask.
 
     Return :
-      train, test, unlabeled : `tensorflow.data.Dataset`
-        image - `(tf.float32, (64, 64, 3))`
-        label - `(tf.float32, (10,))`
+      tensorflow.data.Dataset :
+        image - `(tf.float32, (None, 64, 64, 3))`
+        label - `(tf.float32, (None, 10))`
+        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
     if isinstance(image_size, Number) and image_size == 96:
       image_size = None
@@ -574,6 +620,8 @@ class SLT10(ImageDataset):
                    (-1,) + SLT10.IMAGE_SHAPE)
     if labels_path is None:  # unlabled data
       inc_labels = False
+    inc_labels = float(inc_labels)
+    gen = tf.random.experimental.Generator.from_seed(seed=seed)
     if inc_labels:
       y = np.fromfile(labels_path, dtype=np.uint8) - 1
       y = one_hot(y, len(self.class_names)).astype(np.float32)
@@ -587,15 +635,20 @@ class SLT10(ImageDataset):
                               antialias=False)
       return img
 
+    def masking(image, label):
+      mask = gen.uniform(shape=(1,)) < inc_labels
+      return image, label, mask
+
     ### processing
     images = tf.data.Dataset.from_tensor_slices(X).map(resize, parallel)
     if inc_labels:
       labels = tf.data.Dataset.from_tensor_slices(y)
+      images = tf.data.Dataset.zip((images, labels))
+      if 0. < inc_labels < 1.:  # semi-supervised mask
+        images = images.map(masking)
+    # cache data
     if cache is not None:
       images = images.cache(str(cache))
-    # return both image and attributes
-    if inc_labels:
-      images = tf.data.Dataset.zip((images, labels))
     # shuffle must be called after cache
     if shuffle is not None:
       images = images.shuffle(int(shuffle))

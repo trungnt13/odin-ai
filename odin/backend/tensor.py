@@ -1,9 +1,10 @@
-# A collection of functions for processing, manipulating and calculating
-# necessary information from tensors
+# A singular purpose for this module is to create an unified A.P.I for
+# Tensorflow, Pytorch and Numpy.
 #
-# Aim for unifiying the API among numpy, tensorflow and pytorch.
-# Since numpy is most popular framework, the function name is strictly
-# following numpy name and arguments.
+# All interfaces are unified to Numpy.
+#
+# Additional functions only to be implemented if there is no equivalent
+# version in Numpy.
 #
 # This software is released under the MIT License.
 # https://opensource.org/licenses/MIT
@@ -571,6 +572,7 @@ def reshape(x, shape):
     fn_reshape = lambda _, shape: _.view(shape)
   else:
     fn_reshape = np.reshape
+    x = np.asanyarray(x)
   # start reshaping
   input_shape = x.shape
   new_shape = []
@@ -593,6 +595,39 @@ def expand_dims(x, axis):
   if torch.is_tensor(x):
     return torch.unsqueeze(x, axis)
   return np.expand_dims(x, axis)
+
+
+def atleast_1d(*arys):
+  arrs = []
+  for a in arys:
+    if isinstance(a, numbers.Number) or a.ndim == 0:
+      a = reshape(a, (1,))
+    arrs.append(a)
+  return arrs[0] if len(arrs) == 1 else arrs
+
+
+def atleast_2d(*arys):
+  arrs = []
+  for a in arys:
+    if isinstance(a, numbers.Number) or a.ndim == 0:
+      a = reshape(a, (1, 1))
+    elif a.ndim == 1:
+      a = expand_dims(a, axis=0)
+    arrs.append(a)
+  return arrs[0] if len(arrs) == 1 else arrs
+
+
+def atleast_3d(*arys):
+  arrs = []
+  for a in arys:
+    if isinstance(a, numbers.Number) or a.ndim == 0:
+      a = reshape(a, (1, 1, 1))
+    elif a.ndim == 1:
+      a = reshape(a, (1, 1, -1))
+    elif a.ndim == 2:
+      a = expand_dims(a, axis=0)
+    arrs.append(a)
+  return arrs[0] if len(arrs) == 1 else arrs
 
 
 def squeeze(x, axis):
@@ -632,7 +667,7 @@ def swapaxes(x, axis1, axis2):
 
 
 def transpose(x, pattern):
-  """ Reorder the dimensions of this variable, optionally inserting
+  r""" Reorder the dimensions of this variable, optionally inserting
   broadcasted dimensions.
 
   Parameters
@@ -701,7 +736,7 @@ def flatten(x, outdim=1):
 
 
 def tile(x, reps, axis=None):
-  """ Construct an array by repeating `x` the number of times given by `reps`.
+  r""" Construct an array by repeating `x` the number of times given by `reps`.
 
   If x has shape (s1, s2, s3) and axis=(1, -1), the output
   will have shape (s1, s2 * n[0], s3 * n[1]).
@@ -860,7 +895,10 @@ def apply_mask(x, mask):
 # ===========================================================================
 # Randomization helper
 # ===========================================================================
-def random_normal(*shape, mean=0.0, stddev=1.0, dtype='float32',
+def random_normal(*shape,
+                  mean=0.0,
+                  stddev=1.0,
+                  dtype='float32',
                   framework=None):
   r""" math::`x \sim N(mean, stddev)`"""
   framework = parse_framework(framework)
