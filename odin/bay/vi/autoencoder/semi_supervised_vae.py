@@ -17,10 +17,10 @@ from odin.bay.vi.autoencoder.networks import FactorDiscriminator, ImageNet
 from odin.bay.vi.utils import marginalize_categorical_labels
 from odin.networks.conditional_embedding import get_conditional_embedding
 
-__all__ = ['M2VAE']
+__all__ = ['ConditionalM2VAE']
 
 
-class M2VAE(BetaVAE):
+class ConditionalM2VAE(BetaVAE):
   r""" Implementation of M2 model (Kingma et al. 2014). The default
   configuration of this layer is optimized for MNIST.
 
@@ -130,7 +130,7 @@ class M2VAE(BetaVAE):
     return bk.atleast_2d(
         self.labels.prior.sample(sample_shape=sample_shape, seed=seed))
 
-  def encode(self, inputs, training=None, sample_shape=(), **kwargs):
+  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
     inputs = tf.nest.flatten(inputs)
     # Given the label for semi-supervised learning
     if len(inputs) > len(self.output_layers):
@@ -158,7 +158,7 @@ class M2VAE(BetaVAE):
                           **kwargs)
     return qZ_X, y
 
-  def decode(self, latents, training=None, sample_shape=(), **kwargs):
+  def decode(self, latents, training=None, mask=None, sample_shape=(), **kwargs):
     qZ_X, y = latents
     # again we need to repeat y to match qZ_X
     n_samples = tf.nest.flatten(sample_shape)

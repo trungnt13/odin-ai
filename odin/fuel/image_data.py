@@ -195,7 +195,7 @@ class CelebA(ImageDataset):
 
     def mask(image, label):
       mask = gen.uniform(shape=(1,)) < inc_labels
-      return image, label, mask
+      return dict(inputs=(image, label), mask=mask)
 
     ### select partition
     images, attrs = _partition(
@@ -374,7 +374,7 @@ class Shapes3D(ImageDataset):
         ims = tf.cast(ims, tf.float32)
         if 0. < inc_labels < 1.:  # semi-supervised mask
           mask = gen.uniform(shape=(tf.shape(ims)[0], 1)) < inc_labels
-          return ims, lab, mask
+          return dict(inputs=(ims, lab), mask=mask)
         return self.normalize_255(ims), lab
       ims = tf.cast(ims[0], tf.float32)
       return self.normalize_255(ims)
@@ -499,7 +499,7 @@ class dSprites(ImageDataset):
                                      dtype=tf.float32)
         if 0. < inc_labels < 1.:  # semi-supervised mask
           mask = gen.uniform(shape=(1,)) < inc_labels
-          return image, label, mask
+          return dict(inputs=(image, label), mask=mask)
         return image, label
       return image
 
@@ -637,7 +637,7 @@ class SLT10(ImageDataset):
 
     def masking(image, label):
       mask = gen.uniform(shape=(1,)) < inc_labels
-      return image, label, mask
+      return dict(inputs=(image, label), mask=mask)
 
     ### processing
     images = tf.data.Dataset.from_tensor_slices(X).map(resize, parallel)

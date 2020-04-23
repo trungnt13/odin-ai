@@ -21,7 +21,8 @@ class BetaVAE(VariationalAutoencoder):
     super().__init__(**kwargs)
     self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     div = {key: self.beta * val for key, val in div.items()}
     return llk, div
@@ -40,7 +41,8 @@ class BetaTCVAE(BetaVAE):
       arXiv:1802.04942 [cs, stat].
   """
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     for name, q in zip(self.latent_names, qZ_X):
       tc = total_correlation(tf.convert_to_tensor(q), q)
@@ -85,7 +87,8 @@ class AnnealedVAE(VariationalAutoencoder):
         vmax=tf.constant(c_max, self.dtype),
         norm=int(iter_max))
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     # step : training step, updated when call `.train_steps()`
     c = self.interpolation(self.step)
@@ -93,11 +96,11 @@ class AnnealedVAE(VariationalAutoencoder):
     return llk, div
 
 
-class CyclicalAnnealingVAE(BetaVAE):
-  r"""
-  Reference:
-    Fu, H., Li, C., Liu, X., Gao, J., Celikyilmaz, A., Carin, L., 2019.
-      "Cyclical Annealing Schedule: A Simple Approach to Mitigating KL
-      Vanishing". arXiv:1903.10145 [cs, stat].
-  """
-  pass
+# class CyclicalAnnealingVAE(BetaVAE):
+#   r"""
+#   Reference:
+#     Fu, H., Li, C., Liu, X., Gao, J., Celikyilmaz, A., Carin, L., 2019.
+#       "Cyclical Annealing Schedule: A Simple Approach to Mitigating KL
+#       Vanishing". arXiv:1903.10145 [cs, stat].
+#   """
+#   pass

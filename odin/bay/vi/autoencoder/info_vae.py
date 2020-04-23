@@ -54,7 +54,8 @@ class InfoVAE(BetaVAE):
   def alpha(self):
     return 1 - self.beta
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     # repeat for each latent
     for name, q in zip(self.latent_names, qZ_X):
@@ -135,14 +136,8 @@ class MutualInfoVAE(BetaVAE):
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype)
     self.resample_zprime = bool(resample_zprime)
 
-  def _elbo(self,
-            X,
-            pX_Z,
-            qZ_X,
-            analytic,
-            reverse,
-            sample_shape,
-            training=None):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training):
     # don't take KL of qC_X
     llk, div = super()._elbo(X, pX_Z, qZ_X[:-1], analytic, reverse,
                              sample_shape)
@@ -188,14 +183,8 @@ class FactorInfoVAE(BetaVAE):
     super().__init__(beta=beta, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype)
 
-  def _elbo(self,
-            X,
-            pX_Z,
-            qZ_X,
-            analytic,
-            reverse,
-            sample_shape,
-            training=None):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training):
     # don't take KL of qC_X
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     z_prime = [permute_dims(q) for q in qZ_X]

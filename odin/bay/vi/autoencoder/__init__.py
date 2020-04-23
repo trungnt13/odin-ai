@@ -4,8 +4,8 @@ from odin.bay.vi.autoencoder.factor_vae import *
 from odin.bay.vi.autoencoder.info_vae import *
 from odin.bay.vi.autoencoder.lda_vae import *
 from odin.bay.vi.autoencoder.networks import *
-from odin.bay.vi.autoencoder.self_vae import *
-from odin.bay.vi.autoencoder.semi_vae import *
+from odin.bay.vi.autoencoder.self_supervised_vae import *
+from odin.bay.vi.autoencoder.semi_supervised_vae import *
 from odin.bay.vi.autoencoder.stochastic_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.bay.vi.autoencoder.vq_vae import *

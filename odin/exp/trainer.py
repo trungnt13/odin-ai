@@ -458,6 +458,10 @@ class Trainer(object):
     ### optimizing function
     optimize_args = _validate_optimize(optimize)
 
+    ### create autograph version of optimize
+    if compile_graph and not isinstance(optimize, Function):
+      optimize = tf.function(optimize, autograph=bool(autograph))
+
     ### helper function for training iteration
     def step(n_iter, inputs, training):
       kw = dict()
@@ -465,14 +469,15 @@ class Trainer(object):
         kw['n_iter'] = n_iter
       if 'training' in optimize_args:
         kw['training'] = training
-      loss, metrics = optimize(inputs, **kw)
+      if isinstance(inputs, dict):
+        kw.update(inputs)
+        loss, metrics = optimize(**kw)
+      else:
+        loss, metrics = optimize(inputs, **kw)
       assert isinstance(metrics, dict), "Metrics must be instance of dictionary"
       return loss, metrics
 
-    ### create autograph version of optimize
-    if compile_graph and not isinstance(optimize, Function):
-      step = tf.function(step, autograph=bool(autograph))
-
+    ### validation
     def valid():
       epoch_loss = []
       epoch_metrics = defaultdict(list)

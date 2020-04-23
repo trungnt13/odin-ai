@@ -66,6 +66,8 @@ class StochasticVAE(BetaVAE):
 
   def train_steps(self,
                   inputs,
+                  training=None,
+                  mask=None,
                   sample_shape=(),
                   iw=False,
                   elbo_kw=dict()) -> TrainStep:
@@ -92,6 +94,8 @@ class StochasticVAE(BetaVAE):
     for _ in range(self.kl_steps):
       yield PosteriorStep(vae=self,
                           inputs=inputs,
+                          mask=mask,
+                          training=training,
                           sample_shape=sample_shape,
                           iw=iw,
                           elbo_kw=elbo_kw,
@@ -99,6 +103,8 @@ class StochasticVAE(BetaVAE):
     for _ in range(self.llk_steps):
       yield LikelihoodStep(vae=self,
                            inputs=inputs,
+                           mask=mask,
+                           training=training,
                            sample_shape=sample_shape,
                            iw=iw,
                            elbo_kw=elbo_kw,

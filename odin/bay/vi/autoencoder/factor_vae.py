@@ -11,10 +11,11 @@ from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 
 class FactorStep(TrainStep):
 
-  def __call__(self, training=True):
+  def __call__(self):
     inputs, qZ_X = self.inputs
     qZ_Xprime = self.vae.encode(inputs,
-                                training=training,
+                                training=self.training,
+                                mask=self.mask,
                                 sample_shape=self.sample_shape)
     dtc_loss = self.vae.dtc_loss(qZ_X, qZ_Xprime, training=training)
     return dtc_loss, dict(dtc=dtc_loss)
@@ -74,14 +75,8 @@ class FactorVAE(BetaVAE):
         p for p in self.trainable_variables if id(p) not in exclude
     ]
 
-  def _elbo(self,
-            X,
-            pX_Z,
-            qZ_X,
-            analytic,
-            reverse,
-            sample_shape,
-            training=None):
+  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training):
     llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
     div['tc'] = self.total_correlation(qZ_X, training=training)
     return llk, div
@@ -103,10 +98,12 @@ class FactorVAE(BetaVAE):
 
   def train_steps(self,
                   inputs,
+                  training=None,
+                  mask=None,
                   sample_shape=(),
                   iw=False,
                   elbo_kw=dict()) -> TrainStep:
-    r""" Facilitate multiple steps training for each iteration (smilar to GAN)
+    r""" Facilitate multiple steps training for each iteration (similar to GAN)
 
     Example:
     ```
@@ -136,6 +133,8 @@ class FactorVAE(BetaVAE):
     # first step optimize VAE with total correlation loss
     step1 = TrainStep(vae=self,
                       inputs=x1,
+                      training=training,
+                      mask=mask,
                       sample_shape=sample_shape,
                       iw=iw,
                       elbo_kw=elbo_kw,
@@ -144,6 +143,8 @@ class FactorVAE(BetaVAE):
     # second step optimize the discriminator for discriminate permuted code
     step2 = FactorStep(vae=self,
                        inputs=[x2, step1.qZ_X],
+                       training=training,
+                       mask=mask,
                        sample_shape=sample_shape,
                        parameters=self.disc_params)
     yield step2

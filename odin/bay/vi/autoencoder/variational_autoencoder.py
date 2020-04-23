@@ -127,6 +127,8 @@ class TrainStep:
   def __init__(self,
                vae,
                inputs,
+               training=None,
+               mask=None,
                sample_shape=(),
                iw=False,
                elbo_kw=dict(),
@@ -136,13 +138,16 @@ class TrainStep:
     self.parameters = (vae.trainable_variables
                        if parameters is None else parameters)
     self.inputs = inputs
+    self.mask = mask
     self.sample_shape = sample_shape
     self.iw = iw
     self.elbo_kw = elbo_kw
+    self.training = training
 
-  def __call__(self, training=True):
+  def __call__(self):
     pX_Z, qZ_X = self.vae(self.inputs,
-                          training=training,
+                          training=self.training,
+                          mask=self.mask,
                           sample_shape=self.sample_shape)
     # store so it could be reused
     self.pX_Z = pX_Z
@@ -217,6 +222,8 @@ class VariationalAutoencoder(keras.Model):
     clipnorm = kwargs.pop('clipnorm', None)
     if name is None:
       name = type(self).__name__
+    ### keras want this supports_masking on to enable support masking
+    self.supports_masking = True
     super().__init__(**kwargs)
     ### First, infer the right input_shape
     outputs = tf.nest.flatten(outputs)
@@ -371,16 +378,21 @@ class VariationalAutoencoder(keras.Model):
     z = self.sample_prior(sample_shape, seed)
     return self.decode(z, training=training, **kwargs)
 
-  def encode(self, inputs, training=None, sample_shape=(), **kwargs):
+  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
     r""" Encoding inputs to latent codes """
-    e = self.encoder(inputs, training=training, **kwargs)
+    e = self.encoder(inputs, training=training, mask=mask, **kwargs)
     qZ_X = [
         latent(e, training=training, sample_shape=sample_shape)
         for latent in self.latent_layers
     ]
     return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
-  def decode(self, latents, training=None, sample_shape=(), **kwargs):
+  def decode(self,
+             latents,
+             training=None,
+             mask=None,
+             sample_shape=(),
+             **kwargs):
     r""" Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
     sample_shape = tf.nest.flatten(sample_shape)
@@ -403,6 +415,7 @@ class VariationalAutoencoder(keras.Model):
     outputs = self.decoder(
         latents,
         training=training,
+        mask=mask,
         **kwargs,
     )
     # get back the sample shape
@@ -420,13 +433,23 @@ class VariationalAutoencoder(keras.Model):
     dist = [layer(outputs, training=training) for layer in self.output_layers]
     return dist[0] if len(self.output_layers) == 1 else tuple(dist)
 
-  def call(self, inputs, training=None, sample_shape=()):
-    qZ_X = self.encode(inputs, training=training, sample_shape=sample_shape)
-    pX_Z = self.decode(qZ_X, training=training, sample_shape=sample_shape)
+  def call(self, inputs, training=None, mask=None, sample_shape=()):
+    qZ_X = self.encode(inputs,
+                       training=training,
+                       mask=mask,
+                       sample_shape=sample_shape)
+    pX_Z = self.decode(qZ_X,
+                       training=training,
+                       mask=mask,
+                       sample_shape=sample_shape)
     return pX_Z, qZ_X
 
   @tf.function(autograph=False)
-  def marginal_log_prob(self, inputs, training=False, sample_shape=100):
+  def marginal_log_prob(self,
+                        inputs,
+                        training=False,
+                        mask=None,
+                        sample_shape=100):
     r"""
     Return:
       a Tensor of shape [batch_size]
@@ -434,7 +457,10 @@ class VariationalAutoencoder(keras.Model):
     """
     sample_shape = tf.cast(tf.reduce_prod(sample_shape), tf.int32)
     iw_const = tf.math.log(tf.cast(tf.reduce_prod(sample_shape), self.dtype))
-    pX_Z, qZ_X = self.call(inputs, training=training, sample_shape=sample_shape)
+    pX_Z, qZ_X = self.call(inputs,
+                           training=training,
+                           mask=mask,
+                           sample_shape=sample_shape)
     llk = []
     for i, (p,
             x) in enumerate(zip(tf.nest.flatten(pX_Z),
@@ -451,6 +477,8 @@ class VariationalAutoencoder(keras.Model):
             analytic,
             reverse,
             sample_shape=None,
+            mask=None,
+            training=None,
             **kwargs):
     r""" The basic components of all ELBO """
     ### llk
@@ -473,6 +501,8 @@ class VariationalAutoencoder(keras.Model):
            analytic=False,
            reverse=True,
            sample_shape=None,
+           mask=None,
+           training=None,
            iw=False,
            return_components=False,
            **kwargs):
@@ -508,14 +538,27 @@ class VariationalAutoencoder(keras.Model):
         The reversed KL-divergence or rate
     """
     if qZ_X is None:
-      qZ_X = self.encode(X)
+      qZ_X = self.encode(X,
+                         training=training,
+                         mask=mask,
+                         sample_shape=sample_shape)
     if pX_Z is None:
-      pX_Z = self.decode(qZ_X)
+      pX_Z = self.decode(qZ_X,
+                         training=training,
+                         mask=mask,
+                         sample_shape=sample_shape)
     # organize all inputs to list
     X = [tf.convert_to_tensor(x, dtype=self.dtype) for x in tf.nest.flatten(X)]
     pX_Z = tf.nest.flatten(pX_Z)
     qZ_X = tf.nest.flatten(qZ_X)
-    llk, div = self._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape,
+    llk, div = self._elbo(X,
+                          pX_Z,
+                          qZ_X,
+                          analytic,
+                          reverse,
+                          sample_shape=sample_shape,
+                          mask=mask,
+                          training=training,
                           **kwargs)
     if not (isinstance(llk, dict) and isinstance(div, dict)):
       raise RuntimeError(
@@ -558,9 +601,10 @@ class VariationalAutoencoder(keras.Model):
     return elbo
 
   ################## For training
-
   def train_steps(self,
                   inputs,
+                  training=True,
+                  mask=None,
                   sample_shape=(),
                   iw=False,
                   elbo_kw=dict()) -> TrainStep:
@@ -588,31 +632,37 @@ class VariationalAutoencoder(keras.Model):
     self.step.assign_add(1)
     yield TrainStep(vae=self,
                     inputs=inputs,
+                    training=training,
+                    mask=mask,
                     sample_shape=sample_shape,
                     iw=iw,
                     elbo_kw=elbo_kw)
 
-  def optimize(self, inputs, training=True, optimizer=None):
+  def optimize(self, inputs, training=True, mask=None, optimizer=None):
     if optimizer is None:
       optimizer = tf.nest.flatten(self.optimizer)
     all_metrics = {}
     total_loss = 0.
     optimizer = tf.nest.flatten(optimizer)
     n_optimizer = len(optimizer)
-    for i, step in enumerate(self.train_steps(inputs, **self._trainstep_kw)):
+    for i, step in enumerate(
+        self.train_steps(inputs=inputs,
+                         training=training,
+                         mask=mask,
+                         **self._trainstep_kw)):
       opt = optimizer[i % n_optimizer]
       parameters = step.parameters
-      # this somehow more inconvenient than pytorch
+      # this GradientTape somehow more inconvenient than pytorch
       if training:
         with tf.GradientTape(watch_accessed_variables=False) as tape:
           tape.watch(parameters)
-          loss, metrics = step(training=training)
+          loss, metrics = step()
         # applying the gradients
         gradients = tape.gradient(loss, parameters)
         opt.apply_gradients(zip(gradients, parameters))
       else:
         tape = None
-        loss, metrics = step(training=training)
+        loss, metrics = step()
       # update metrics and loss
       all_metrics.update(metrics)
       total_loss += loss

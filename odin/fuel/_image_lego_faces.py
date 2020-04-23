@@ -443,7 +443,7 @@ class LegoFaces(ImageDataset):
         label = tf.cast(data[1], tf.float32)
         if 0. < inc_labels < 1.:  # semi-supervised mask
           mask = gen.uniform(shape=(1,)) < inc_labels
-          return image, label, mask
+          return dict(inputs=(image, label), mask=mask)
         return image, label
       return image
 
