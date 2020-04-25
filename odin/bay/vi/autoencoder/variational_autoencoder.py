@@ -16,7 +16,7 @@ from tensorflow_probability.python import layers as tfl
 
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
-from odin.bay.random_variable import RandomVariable
+from odin.bay.random_variable import RandomVariable as RV
 from odin.networks import NetworkConfig, SequentialNetwork
 
 
@@ -24,10 +24,10 @@ from odin.networks import NetworkConfig, SequentialNetwork
 # Helpers
 # ===========================================================================
 def _check_rv(rv, input_shape):
-  assert isinstance(rv, (RandomVariable, Layer)), \
+  assert isinstance(rv, (RV, Layer)), \
     "Variable must be instance of odin.bay.RandomVariable or keras.layers.Layer, " + \
       "but given: %s" % str(type(rv))
-  if isinstance(rv, RandomVariable):
+  if isinstance(rv, RV):
     rv = rv.create_posterior(input_shape=input_shape)
   ### get the event_shape
   shape = rv.event_shape if hasattr(rv, 'event_shape') else rv.output_shape
@@ -183,36 +183,35 @@ class VariationalAutoencoder(keras.Model):
   r""" Base class for all variational autoencoder
 
   Arguments:
-    encoder : `Layer`.
-    decoder : `Layer`.
-    config : `NetworkConfig`.
+    encoder : `keras.layers.Layer` or `odin.networks.NetworkConfig`.
+    decoder : `keras.layers.Layer` or `odin.networks.NetworkConfig`.
     outputs : `RandomVariable` or `Layer`. List of output distribution
     latents : `RandomVariable` or `Layer`. List of latent distribution
 
   Call return:
-    pX_Z : Distribution
-    qZ_X : Distribution
+    pX_Z : a single or a list of `tensorflow_probability.Distribution`
+    qZ_X : a single or a list of `tensorflow_probability.Distribution`
 
   Layers:
     encoder : `keras.layers.Layer`. Encoding inputs to latents
     decoder : `keras.layers.Layer`. Decoding latents to intermediate states
-    latent_layers : `keras.layers.Layer`. The latent variable (random variable)
-    output_layers : `keras.layers.Layer`. The output variable (random or
-      deterministic variable)
+    latent_layers : `keras.layers.Layer`. A list of the Dense layer that create
+      the latent variable (random variable)
+    output_layers : `keras.layers.Layer`. A list of the Dense layer that create
+      the output variable (random or deterministic variable)
   """
 
   def __init__(self,
-               encoder: Union[Layer, NetworkConfig] = None,
+               encoder: Union[Layer, NetworkConfig] = NetworkConfig(),
                decoder: Union[Layer, NetworkConfig] = None,
-               config: Optional[NetworkConfig] = NetworkConfig(),
-               outputs: Union[Layer,
-                              RandomVariable] = RandomVariable(event_shape=64,
-                                                               posterior='gaus',
-                                                               name="Input"),
-               latents: Union[Layer,
-                              RandomVariable] = RandomVariable(event_shape=10,
-                                                               posterior='diag',
-                                                               name="Latent"),
+               outputs: Union[Layer, RV] = RV(event_shape=64,
+                                              posterior='gaus',
+                                              projection=True,
+                                              name="Input"),
+               latents: Union[Layer, RV] = RV(event_shape=10,
+                                              posterior='diag',
+                                              projection=True,
+                                              name="Latent"),
                reduce_latent='concat',
                input_shape=None,
                step=0.,
@@ -237,21 +236,14 @@ class VariationalAutoencoder(keras.Model):
       if len(outputs) == 1:
         input_shape = input_shape[0]
     ### Then, create the encoder, so we know the input_shape to latent layers
-    if encoder is not None:
-      if isinstance(encoder, NetworkConfig):
-        encoder = encoder.create_network(input_shape, name="Encoder")
-      elif hasattr(encoder, 'input_shape') and \
-        list(encoder.input_shape[1:]) != input_shape:
-        warnings.warn("encoder has input_shape=%s but VAE input_shape=%s" %
-                      (str(encoder.input_shape[1:]), str(input_shape)))
-    else:
-      assert isinstance(config, NetworkConfig), \
-        "config must be instance of NetworkConfig but given: %s" % \
-          str(type(config))
-      print("CREATE NETWORKS!!!!!")
-      print(config)
-      encoder = config.create_network(input_shape)
-      print("TEST!!!!!")
+    config = None
+    if isinstance(encoder, NetworkConfig):
+      config = encoder
+      encoder = encoder.create_network(input_shape, name="Encoder")
+    elif hasattr(encoder, 'input_shape') and \
+      list(encoder.input_shape[1:]) != input_shape:
+      warnings.warn("encoder has input_shape=%s but VAE input_shape=%s" %
+                    (str(encoder.input_shape[1:]), str(input_shape)))
     ### check latent and input distribution
     all_latents = [
         _check_rv(z, input_shape=encoder.output_shape[1:])

@@ -322,28 +322,27 @@ def deconv_network(units,
                        frozen=True)
 class NetworkConfig(dict):
   r""" A dataclass for storing the autoencoder networks (encoder and decoder)
-  configuration
+  configuration. Number of layers is determined by length of `units`
 
   Arguments:
-    units : An Integer, number of hidden units for each hidden layers
-    nlayers : An Integer, number of hidden layers
+    units : a list of Integer. Number of hidden units for each hidden layers
+    kernel : a list of Integer, kernel size for convolution network
+    strides : a list of Integer, stride step for convoltion
     activation : a String, alias of activation function
     input_dropout : A Scalar [0., 1.], dropout rate, if 0., turn-off dropout.
       this rate is applied for input layer.
-     - encoder_dropout : for the encoder output
-     - latent_dropout : for the decoder input (right after the latent)
-     - decoder_dropout : for the decoder output
-     - layer_dropout : for each hidden layer
-    batchnorm : A Boolean, batch normalization
-    linear_decoder : A Boolean, if `True`, use an `Identity` (i.e. Linear)
+     - layer_dropout : between two hidden layers
+     - output_dropout : for the final output
+    batchnorm : a Boolean, batch normalization
+    linear_decoder : a Boolean, if `True`, use an `Identity` (i.e. Linear)
       decoder
-    pyramid : A Boolean, if `True`, use pyramid structure where the number of
-      hidden units decrease as the depth increase
-    use_conv : A Boolean, if `True`, use convolutional encoder and decoder
-    kernel : An Integer, kernel size for convolution network
-    strides : An Integer, stride step for convoltion
+    network : {'conv', 'deconv', 'dense'}.
+      type of `Layer` for the network
+    flatten_inputs: a Boolean. Flatten the inputs to 2D in case of `Dense`
+      network
     projection : An Integer, number of hidden units for the `Dense`
       linear projection layer right after convolutional network.
+
   """
 
   units: int = 64
@@ -507,7 +506,6 @@ class NetworkConfig(dict):
       name = "Encoder"
     ### prepare the shape
     input_shape = _shape(input_shape)
-    input_ndim = len(input_shape)
     ### convolution network
     if self.network == 'conv':
       # create the encoder
