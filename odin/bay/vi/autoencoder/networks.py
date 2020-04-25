@@ -35,7 +35,7 @@ _DENSE = partial(keras.layers.Dense, use_bias=True)
 
 
 class Center0Image(keras.layers.Layer):
-  r"""Normalize the image pixel to [-1, 1]"""
+  r"""Normalize the image pixel from [0, 1] to [-1, 1]"""
 
   def call(self, inputs, **kwargs):
     return 2. * inputs - 1.
@@ -58,6 +58,11 @@ def create_image_autoencoder(image_shape=(64, 64, 1),
   Disentangled VAE literatures.
 
   By default, the image_shape and channels are configurated for binarized MNIST
+
+  Arguments:
+    image_shape : tuple of Integer. The shape of input and output image
+    input_shape : tuple of Integer (optional). The `input_shape` to the encoder
+      is different from the `image_shape` (in case of conditional VAE).
   """
   kw = dict(locals())
   encoder = ImageNet(**kw, decoding=False)
@@ -70,6 +75,10 @@ def create_image_autoencoder(image_shape=(64, 64, 1),
 # ===========================================================================
 class ImageNet(keras.Model):
   r"""
+  Arguments:
+    image_shape : tuple of Integer. The shape of input and output image
+    input_shape : tuple of Integer (optional). The `input_shape` to the encoder
+      is different from the `image_shape` (in case of conditional VAE).
 
   Reference:
     Dieng, A.B., Kim, Y., Rush, A.M., Blei, D.M., 2018. "Avoiding Latent

@@ -42,7 +42,6 @@ class _Criticizer(object):
     self._reconstructions = None
     # others
     self._rand = random_state
-    self._is_list_inputs = None
 
   def assert_sampled(self):
     if self._inputs is None or \
@@ -56,11 +55,6 @@ class _Criticizer(object):
   def inputs(self):
     self.assert_sampled()
     return self._inputs
-
-  @property
-  def is_list_inputs(self):
-    self.assert_sampled()
-    return self._is_list_inputs
 
   @property
   def representations(self):
@@ -184,7 +178,7 @@ class _Criticizer(object):
     factor matrix """
     return self._factors_name.index(str(factors_name))
 
-  def encode(self, inputs, sample_shape=(), first_latent=True):
+  def encode(self, inputs, mask=None, sample_shape=(), first_latent=True):
     r""" Encode inputs to latent codes
 
     Arguments:
@@ -195,13 +189,10 @@ class _Criticizer(object):
     Returns:
       `tensorflow_probability.Distribution`, q(z|x) the latent distribution
     """
-    if self._is_list_inputs is not None:
-      if self._is_list_inputs:
-        inputs = tf.nest.flatten(inputs)
-      elif isinstance(inputs, (tuple, list)):
-        inputs = inputs[0]
-    latents = self._vae.encode(inputs,
+    inputs = tf.nest.flatten(inputs)[:len(self._vae.encoder.inputs)]
+    latents = self._vae.encode(inputs[0] if len(inputs) == 1 else inputs,
                                training=False,
+                               mask=mask,
                                sample_shape=sample_shape)
     # only support single returned latent variable now
     for z in tf.nest.flatten(latents):
@@ -213,10 +204,11 @@ class _Criticizer(object):
       return latents[0]
     return latents
 
-  def decode(self, latents, sample_shape=()):
+  def decode(self, latents, mask=None, sample_shape=()):
     r""" Decode the latents into reconstruction distribution """
     outputs = self._vae.decode(latents,
                                training=False,
+                               mask=mask,
                                sample_shape=sample_shape)
     for o in tf.nest.flatten(outputs):
       assert isinstance(o, tfd.Distribution), \
@@ -414,7 +406,6 @@ class _Criticizer(object):
             factors = tqdm(factors, desc="Reading factors")
           factors = tf.concat([i for i in factors], axis=0)
     # post-processing
-    is_list_inputs = isinstance(inputs, (tuple, list))
     inputs = tf.nest.flatten(inputs)
     assert len(factors.shape) == 2, "factors must be a matrix"
     # ====== split train test ====== #
@@ -493,7 +484,6 @@ class _Criticizer(object):
     ids_train = train[4]
     ids_test = test[4]
     # assign the variables
-    self._is_list_inputs = is_list_inputs
     self._inputs = (train[0], test[0])
     self._factors = (train[1], test[1])
     self._factors_name = train_factors.factors_name
