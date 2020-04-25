@@ -25,9 +25,9 @@ from odin.utils import as_tuple
 
 __all__ = [
     'SequentialNetwork',
-    'DenseNetwork',
-    'ConvNetwork',
-    'DeconvNetwork',
+    'dense_network',
+    'conv_network',
+    'deconv_network',
     'NetworkConfig',
 ]
 
@@ -49,28 +49,20 @@ def _as_arg_tuples(*args):
   return [ref] + [as_tuple(i, N=n) for i in args[1:]], n
 
 
-def _rank_and_input_shape(rank, input_shape, start_layers):
+def _infer_rank_and_input_shape(rank, input_shape):
   if rank is None and input_shape is None:
     raise ValueError(
         "rank or input_shape must be given so the convolution type "
         "can be determined.")
-  if input_shape is not None:
-    if len(start_layers) > 0:
-      first = start_layers[0]
-      if not hasattr(first, '_batch_input_shape'):
-        first._batch_input_shape = (None,) + tuple(input_shape)
-      input_shape = None
-    elif rank is not None:
+  if rank is not None:
+    if input_shape is not None:
       input_shape = _shape(input_shape)
       if rank != (len(input_shape) - 1):
         raise ValueError("rank=%d but given input_shape=%s (rank=%d)" %
                          (rank, str(input_shape), len(input_shape) - 1))
-  if rank is None:
+  else:
     rank = len(input_shape) - 1
   return rank, input_shape
-
-
-_STORED_TRANSPOSE = {}
 
 
 # ===========================================================================
@@ -78,29 +70,8 @@ _STORED_TRANSPOSE = {}
 # ===========================================================================
 class SequentialNetwork(keras.Sequential):
 
-  def __init__(self, layers=None, start_layers=[], end_layers=[], name=None):
-    layers = [[] if l is None else tf.nest.flatten(l)
-              for l in (start_layers, layers, end_layers)]
-    layers = tf.nest.flatten(layers)
-    super().__init__(layers=None if len(layers) == 0 else layers, name=name)
-    self._init_arguments = {}
-
-  def _store_arguments(self, kwargs):
-    kwargs = dict(kwargs)
-    kwargs.pop('__class__', None)
-    self._init_arguments = kwargs
-
-  @property
-  def init_arguments(self):
-    return dict(self._init_arguments)
-
-  def transpose(self, input_shape=None, tied_weights=False):
-    r"""
-    Arguments:
-      input_shape : specific input shape for the transposed network
-      tied_weights : Boolean. Tie the weight of the encoder and decoder.
-    """
-    raise NotImplementedError
+  def __init__(self, layers=None, name=None):
+    super().__init__(layers=None if layers is None else layers, name=name)
 
   def __repr__(self):
     return self.__str__()
@@ -112,344 +83,232 @@ class SequentialNetwork(keras.Sequential):
 # ===========================================================================
 # Networks
 # ===========================================================================
-class DenseNetwork(SequentialNetwork):
-  r""" Multi-layers neural network """
+def dense_network(units,
+                  activation='relu',
+                  use_bias=True,
+                  kernel_initializer='glorot_uniform',
+                  bias_initializer='zeros',
+                  kernel_regularizer=None,
+                  bias_regularizer=None,
+                  activity_regularizer=None,
+                  kernel_constraint=None,
+                  bias_constraint=None,
+                  flatten_inputs=True,
+                  batchnorm=True,
+                  input_dropout=0.,
+                  output_dropout=0.,
+                  layer_dropout=0.,
+                  input_shape=None):
+  r""" Multi-layers dense feed-forward neural network """
+  (units, activation, use_bias, kernel_initializer, bias_initializer,
+   kernel_regularizer, bias_regularizer, activity_regularizer,
+   kernel_constraint,
+   bias_constraint, batchnorm, layer_dropout), nlayers = _as_arg_tuples(
+       units, activation, use_bias, kernel_initializer, bias_initializer,
+       kernel_regularizer, bias_regularizer, activity_regularizer,
+       kernel_constraint, bias_constraint, batchnorm, layer_dropout)
+  layers = []
+  if flatten_inputs:
+    layers.append(keras.layers.Flatten())
+  if 0. < input_dropout < 1.:
+    layers.append(keras.layers.Dropout(input_dropout))
+  for i in range(nlayers):
+    layers.append(
+        keras.layers.Dense(\
+          units[i],
+          activation='linear',
+          use_bias=(not batchnorm[i]) and use_bias[i],
+          kernel_initializer=kernel_initializer[i],
+          bias_initializer=bias_initializer[i],
+          kernel_regularizer=kernel_regularizer[i],
+          bias_regularizer=bias_regularizer[i],
+          activity_regularizer=activity_regularizer[i],
+          kernel_constraint=kernel_constraint[i],
+          bias_constraint=bias_constraint[i],
+          name="Layer%d" % i))
+    if batchnorm[i]:
+      layers.append(keras.layers.BatchNormalization())
+    layers.append(keras.layers.Activation(activation[i]))
+    if layer_dropout[i] > 0 and i != nlayers - 1:
+      layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
+  if 0. < output_dropout < 1.:
+    layers.append(keras.layers.Dropout(output_dropout))
+  # matching input_shape and start_layers
+  if input_shape is not None:
+    layers = [keras.layers.InputLayer(input_shape=input_shape)] + layers
+  return layers
 
-  def __init__(self,
-               units=128,
-               activation='relu',
-               use_bias=True,
-               kernel_initializer='glorot_uniform',
-               bias_initializer='zeros',
-               kernel_regularizer=None,
-               bias_regularizer=None,
-               activity_regularizer=None,
-               kernel_constraint=None,
-               bias_constraint=None,
-               flatten=False,
-               batchnorm=True,
-               input_dropout=0.,
-               output_dropout=0.,
-               layer_dropout=0.,
-               input_shape=None,
-               start_layers=[],
-               end_layers=[],
-               name=None):
-    (units, activation, use_bias, kernel_initializer, bias_initializer,
-     kernel_regularizer, bias_regularizer, activity_regularizer,
-     kernel_constraint, bias_constraint,
-     batchnorm, layer_dropout), nlayers = _as_arg_tuples(
-         units, activation, use_bias, kernel_initializer, bias_initializer,
-         kernel_regularizer, bias_regularizer, activity_regularizer,
-         kernel_constraint, bias_constraint, batchnorm, layer_dropout)
-    self._store_arguments(locals())
 
-    layers = []
-    if flatten:
+def conv_network(units,
+                 rank=2,
+                 kernel=3,
+                 strides=1,
+                 padding='same',
+                 dilation=1,
+                 activation='relu',
+                 use_bias=True,
+                 kernel_initializer='glorot_uniform',
+                 bias_initializer='zeros',
+                 kernel_regularizer=None,
+                 bias_regularizer=None,
+                 activity_regularizer=None,
+                 kernel_constraint=None,
+                 bias_constraint=None,
+                 batchnorm=True,
+                 input_dropout=0.,
+                 output_dropout=0.,
+                 layer_dropout=0.,
+                 projection=False,
+                 input_shape=None,
+                 name=None):
+  r""" Multi-layers convolutional neural network
+
+  Arguments:
+    projection : {True, False, an Integer}.
+      If True, flatten the output into 2-D.
+      If an Integer, use a `Dense` layer with linear activation to project
+      the output in to 2-D
+  """
+  rank, input_shape = _infer_rank_and_input_shape(rank, input_shape)
+  (units, kernel, strides, padding, dilation, activation, use_bias,
+   kernel_initializer, bias_initializer, kernel_regularizer, bias_regularizer,
+   activity_regularizer, kernel_constraint,
+   bias_constraint, batchnorm, layer_dropout), nlayers = _as_arg_tuples(
+       units, kernel, strides, padding, dilation, activation, use_bias,
+       kernel_initializer, bias_initializer, kernel_regularizer,
+       bias_regularizer, activity_regularizer, kernel_constraint,
+       bias_constraint, batchnorm, layer_dropout)
+
+  layers = []
+  if input_shape is not None:
+    layers.append(keras.layers.InputLayer(input_shape=input_shape))
+  if 0. < input_dropout < 1.:
+    layers.append(keras.layers.Dropout(input_dropout))
+
+  if rank == 3:
+    layer_type = keras.layers.Conv3D
+  elif rank == 2:
+    layer_type = keras.layers.Conv2D
+  elif rank == 1:
+    layer_type = keras.layers.Conv1D
+
+  for i in range(nlayers):
+    layers.append(
+        layer_type(\
+          filters=units[i],
+          kernel_size=kernel[i],
+          strides=strides[i],
+          padding=padding[i],
+          dilation_rate=dilation[i],
+          activation='linear',
+          use_bias=(not batchnorm[i]) and use_bias[i],
+          kernel_initializer=kernel_initializer[i],
+          bias_initializer=bias_initializer[i],
+          kernel_regularizer=kernel_regularizer[i],
+          bias_regularizer=bias_regularizer[i],
+          activity_regularizer=activity_regularizer[i],
+          kernel_constraint=kernel_constraint[i],
+          bias_constraint=bias_constraint[i],
+          name="Layer%d" % i))
+    if batchnorm[i]:
+      layers.append(keras.layers.BatchNormalization())
+    layers.append(keras.layers.Activation(activation[i]))
+    if layer_dropout[i] > 0 and i != nlayers - 1:
+      layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
+  if 0. < output_dropout < 1.:
+    layers.append(keras.layers.Dropout(output_dropout))
+  # projection
+  if isinstance(projection, bool):
+    if projection:
       layers.append(keras.layers.Flatten())
-    if 0. < input_dropout < 1.:
-      layers.append(keras.layers.Dropout(input_dropout))
-    for i in range(nlayers):
-      layers.append(
-          keras.layers.Dense(\
-            units[i],
-            activation='linear',
-            use_bias=(not batchnorm[i]) and use_bias[i],
-            kernel_initializer=kernel_initializer[i],
-            bias_initializer=bias_initializer[i],
-            kernel_regularizer=kernel_regularizer[i],
-            bias_regularizer=bias_regularizer[i],
-            activity_regularizer=activity_regularizer[i],
-            kernel_constraint=kernel_constraint[i],
-            bias_constraint=bias_constraint[i],
-            name="Layer%d" % i))
-      if batchnorm[i]:
-        layers.append(keras.layers.BatchNormalization())
-      layers.append(keras.layers.Activation(activation[i]))
-      if layer_dropout[i] > 0 and i != nlayers - 1:
-        layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
-    if 0. < output_dropout < 1.:
-      layers.append(keras.layers.Dropout(output_dropout))
-    # matching input_shape and start_layers
-    if input_shape is not None:
-      if len(start_layers) > 0 and \
-        not hasattr(start_layers[0], '_batch_input_shape'):
-        start_layers[0]._batch_input_shape = (None,) + tuple(input_shape)
-      else:
-        layers = [keras.Input(shape=input_shape)] + layers
-    super().__init__(start_layers=start_layers,
-                     layers=layers,
-                     end_layers=end_layers,
-                     name=name)
-
-  def transpose(self, input_shape=None, tied_weights=False):
-    r""" Created a transposed network """
-    if id(self) in _STORED_TRANSPOSE:
-      return _STORED_TRANSPOSE[id(self)]
-    args = self.init_arguments
-    args['units'] = args['units'][::-1]
-    args['input_shape'] = input_shape
-    args['name'] = self.name + '_transpose'
-    args['flatten'] = False
-    if tied_weights:
-      args['kernel_constraint'] = None
-      args['kernel_regularizer'] = None
-    del args['nlayers']
-    # create the transposed network
-    transpose_net = DenseNetwork(**args)
-    _STORED_TRANSPOSE[id(self)] = transpose_net
-    if tied_weights:
-      weights = [w for w in self.weights if '/kernel' in w.name][::-1][:-1]
-      layers = [
-          l for l in transpose_net.layers if isinstance(l, keras.layers.Dense)
-      ][1:]
-      for w, l in zip(weights, layers):
-
-        def build(self, input_shape):
-          input_shape = tensor_shape.TensorShape(input_shape)
-          last_dim = tensor_shape.dimension_value(input_shape[-1])
-          self.input_spec = keras.layers.InputSpec(min_ndim=2,
-                                                   axes={-1: last_dim})
-          self.kernel = tf.transpose(self.tied_kernel)
-          if self.use_bias:
-            self.bias = self.add_weight('bias',
-                                        shape=(self.units,),
-                                        initializer=self.bias_initializer,
-                                        regularizer=self.bias_regularizer,
-                                        constraint=self.bias_constraint,
-                                        dtype=self.dtype,
-                                        trainable=True)
-          else:
-            self.bias = None
-          self.built = True
-
-        l.tied_kernel = w
-        l.build = types.MethodType(build, l)
-    return transpose_net
+  elif isinstance(projection, Number):
+    layers.append(keras.layers.Flatten())
+    layers.append(
+        keras.layers.Dense(int(projection), activation='linear', use_bias=True))
+  return layers
 
 
-class ConvNetwork(SequentialNetwork):
-  r""" Multi-layers neural network """
+def deconv_network(units,
+                   rank=2,
+                   kernel=3,
+                   strides=1,
+                   padding='same',
+                   output_padding=None,
+                   dilation=1,
+                   activation='relu',
+                   use_bias=True,
+                   kernel_initializer='glorot_uniform',
+                   bias_initializer='zeros',
+                   kernel_regularizer=None,
+                   bias_regularizer=None,
+                   activity_regularizer=None,
+                   kernel_constraint=None,
+                   bias_constraint=None,
+                   batchnorm=True,
+                   input_dropout=0.,
+                   output_dropout=0.,
+                   layer_dropout=0.,
+                   projection=None,
+                   input_shape=None):
+  r""" Multi-layers transposed convolutional neural network """
+  rank, input_shape = _infer_rank_and_input_shape(rank, input_shape)
+  (units, kernel, strides, padding, output_padding, dilation, activation,
+   use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
+   bias_regularizer, activity_regularizer, kernel_constraint,
+   bias_constraint, batchnorm, layer_dropout), nlayers = _as_arg_tuples(
+       units, kernel, strides, padding, output_padding, dilation, activation,
+       use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
+       bias_regularizer, activity_regularizer, kernel_constraint,
+       bias_constraint, batchnorm, layer_dropout)
+  #
+  layers = []
+  if input_shape is not None:
+    layers.append(keras.layers.InputLayer(input_shape=input_shape))
+  if 0. < input_dropout < 1.:
+    layers.append(keras.layers.Dropout(input_dropout))
+  #
+  if rank == 3:
+    raise NotImplementedError
+  elif rank == 2:
+    layer_type = keras.layers.Conv2DTranspose
+  elif rank == 1:
+    layer_type = Conv1DTranspose
 
-  def __init__(self,
-               filters,
-               rank=2,
-               kernel_size=3,
-               strides=1,
-               padding='same',
-               dilation_rate=1,
-               activation='relu',
-               use_bias=True,
-               kernel_initializer='glorot_uniform',
-               bias_initializer='zeros',
-               kernel_regularizer=None,
-               bias_regularizer=None,
-               activity_regularizer=None,
-               kernel_constraint=None,
-               bias_constraint=None,
-               batchnorm=True,
-               input_dropout=0.,
-               output_dropout=0.,
-               layer_dropout=0.,
-               input_shape=None,
-               start_layers=[],
-               end_layers=[],
-               name=None):
-    rank, input_shape = _rank_and_input_shape(rank, input_shape, start_layers)
-    (filters, kernel_size, strides, padding, dilation_rate, activation,
-     use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
-     bias_regularizer, activity_regularizer, kernel_constraint, bias_constraint,
-     batchnorm, layer_dropout), nlayers = _as_arg_tuples(
-         filters, kernel_size, strides, padding, dilation_rate, activation,
-         use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
-         bias_regularizer, activity_regularizer, kernel_constraint,
-         bias_constraint, batchnorm, layer_dropout)
-    self._store_arguments(locals())
-
-    layers = []
-    if input_shape is not None:
-      layers.append(keras.Input(shape=input_shape))
-    if 0. < input_dropout < 1.:
-      layers.append(keras.layers.Dropout(input_dropout))
-
-    if rank == 3:
-      layer_type = keras.layers.Conv3D
-    elif rank == 2:
-      layer_type = keras.layers.Conv2D
-    elif rank == 1:
-      layer_type = keras.layers.Conv1D
-
-    for i in range(nlayers):
-      layers.append(
-          layer_type(\
-            filters=filters[i],
-            kernel_size=kernel_size[i],
-            strides=strides[i],
-            padding=padding[i],
-            dilation_rate=dilation_rate[i],
-            activation='linear',
-            use_bias=(not batchnorm[i]) and use_bias[i],
-            kernel_initializer=kernel_initializer[i],
-            bias_initializer=bias_initializer[i],
-            kernel_regularizer=kernel_regularizer[i],
-            bias_regularizer=bias_regularizer[i],
-            activity_regularizer=activity_regularizer[i],
-            kernel_constraint=kernel_constraint[i],
-            bias_constraint=bias_constraint[i],
-            name="Layer%d" % i))
-      if batchnorm[i]:
-        layers.append(keras.layers.BatchNormalization())
-      layers.append(keras.layers.Activation(activation[i]))
-      if layer_dropout[i] > 0 and i != nlayers - 1:
-        layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
-    if 0. < output_dropout < 1.:
-      layers.append(keras.layers.Dropout(output_dropout))
-    super().__init__(start_layers=start_layers,
-                     layers=layers,
-                     end_layers=end_layers,
-                     name=name)
-
-  def transpose(self, input_shape=None, tied_weights=False):
-    if tied_weights:
-      raise NotImplementedError(
-          "No support for tied_weights in ConvNetwork.transpose")
-    if id(self) in _STORED_TRANSPOSE:
-      return _STORED_TRANSPOSE[id(self)]
-    args = {
-        k: v[::-1] if isinstance(v, tuple) else v
-        for k, v in self.init_arguments.items()
-    }
-    rank = args['rank']
-    # input_shape: infer based on output of ConvNetwork
-    start_layers = []
-    if hasattr(self, 'output_shape'):
-      if input_shape is None:
-        start_layers.append(keras.Input(input_shape=self.output_shape[1:]))
-      else:
-        input_shape = as_tuple(input_shape)
-        shape = [
-            l.output_shape[1:]
-            for l in self.layers[::-1]
-            if isinstance(l, _Conv)
-        ][0]  # last convolution layer
-        start_layers = [keras.layers.Flatten(input_shape=input_shape)]
-        if input_shape != shape:
-          if np.prod(input_shape) != np.prod(shape):
-            start_layers.append(
-                keras.layers.Dense(units=int(np.prod(shape)),
-                                   use_bias=False,
-                                   activation='linear'))
-          start_layers.append(keras.layers.Reshape(shape))
-    # create the transposed network
-    transposed = DeconvNetwork(
-        filters=args['filters'],
-        rank=args['rank'],
-        kernel_size=args['kernel_size'],
-        strides=args['strides'],
-        padding=args['padding'],
-        dilation_rate=args['dilation_rate'],
-        activation=args['activation'],
-        use_bias=args['use_bias'],
-        kernel_initializer=args['kernel_initializer'],
-        bias_initializer=args['bias_initializer'],
-        kernel_regularizer=args['kernel_regularizer'],
-        bias_regularizer=args['bias_regularizer'],
-        activity_regularizer=args['activity_regularizer'],
-        kernel_constraint=args['kernel_constraint'],
-        bias_constraint=args['bias_constraint'],
-        batchnorm=args['batchnorm'],
-        input_dropout=args['input_dropout'],
-        output_dropout=args['output_dropout'],
-        layer_dropout=args['layer_dropout'],
-        start_layers=start_layers,
-        end_layers=[])
-    _STORED_TRANSPOSE[id(self)] = transposed
-    return transposed
-
-
-class DeconvNetwork(SequentialNetwork):
-  r""" Multi-layers neural network """
-
-  def __init__(self,
-               filters,
-               rank=2,
-               kernel_size=3,
-               strides=1,
-               padding='same',
-               output_padding=None,
-               dilation_rate=1,
-               activation='relu',
-               use_bias=True,
-               kernel_initializer='glorot_uniform',
-               bias_initializer='zeros',
-               kernel_regularizer=None,
-               bias_regularizer=None,
-               activity_regularizer=None,
-               kernel_constraint=None,
-               bias_constraint=None,
-               batchnorm=True,
-               input_dropout=0.,
-               output_dropout=0.,
-               layer_dropout=0.,
-               input_shape=None,
-               start_layers=[],
-               end_layers=[],
-               name=None):
-    rank, input_shape = _rank_and_input_shape(rank, input_shape, start_layers)
-    (filters, kernel_size, strides, padding, output_padding, dilation_rate,
-     activation, use_bias, kernel_initializer, bias_initializer,
-     kernel_regularizer, bias_regularizer, activity_regularizer,
-     kernel_constraint, bias_constraint,
-     batchnorm, layer_dropout), nlayers = _as_arg_tuples(
-         filters, kernel_size, strides, padding, output_padding, dilation_rate,
-         activation, use_bias, kernel_initializer, bias_initializer,
-         kernel_regularizer, bias_regularizer, activity_regularizer,
-         kernel_constraint, bias_constraint, batchnorm, layer_dropout)
-    self._store_arguments(locals())
-
-    layers = []
-    if input_shape is not None:
-      layers.append(keras.Input(shape=input_shape))
-    if 0. < input_dropout < 1.:
-      layers.append(keras.layers.Dropout(input_dropout))
-
-    if rank == 3:
-      raise NotImplementedError
-    elif rank == 2:
-      layer_type = keras.layers.Conv2DTranspose
-    elif rank == 1:
-      layer_type = Conv1DTranspose
-
-    for i in range(nlayers):
-      layers.append(
-          layer_type(\
-            filters=filters[i],
-            kernel_size=kernel_size[i],
-            strides=strides[i],
-            padding=padding[i],
-            output_padding=output_padding[i],
-            dilation_rate=dilation_rate[i],
-            activation='linear',
-            use_bias=(not batchnorm[i]) and use_bias[i],
-            kernel_initializer=kernel_initializer[i],
-            bias_initializer=bias_initializer[i],
-            kernel_regularizer=kernel_regularizer[i],
-            bias_regularizer=bias_regularizer[i],
-            activity_regularizer=activity_regularizer[i],
-            kernel_constraint=kernel_constraint[i],
-            bias_constraint=bias_constraint[i],
-            name="Layer%d" % i))
-      if batchnorm[i]:
-        layers.append(keras.layers.BatchNormalization())
-      layers.append(keras.layers.Activation(activation[i]))
-      if layer_dropout[i] > 0 and i != nlayers - 1:
-        layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
-    if 0. < output_dropout < 1.:
-      layers.append(keras.layers.Dropout(output_dropout))
-    super().__init__(start_layers=start_layers,
-                     layers=layers,
-                     end_layers=end_layers,
-                     name=name)
+  for i in range(nlayers):
+    layers.append(
+        layer_type(\
+          filters=units[i],
+          kernel_size=kernel[i],
+          strides=strides[i],
+          padding=padding[i],
+          output_padding=output_padding[i],
+          dilation_rate=dilation[i],
+          activation='linear',
+          use_bias=(not batchnorm[i]) and use_bias[i],
+          kernel_initializer=kernel_initializer[i],
+          bias_initializer=bias_initializer[i],
+          kernel_regularizer=kernel_regularizer[i],
+          bias_regularizer=bias_regularizer[i],
+          activity_regularizer=activity_regularizer[i],
+          kernel_constraint=kernel_constraint[i],
+          bias_constraint=bias_constraint[i],
+          name="Layer%d" % i))
+    if batchnorm[i]:
+      layers.append(keras.layers.BatchNormalization())
+    layers.append(keras.layers.Activation(activation[i]))
+    if layer_dropout[i] > 0 and i != nlayers - 1:
+      layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
+  if 0. < output_dropout < 1.:
+    layers.append(keras.layers.Dropout(output_dropout))
+  # projection
+  if isinstance(projection, bool):
+    if projection:
+      layers.append(keras.layers.Flatten())
+  elif isinstance(projection, Number):
+    layers.append(keras.layers.Flatten())
+    layers.append(
+        keras.layers.Dense(int(projection), activation='linear', use_bias=True))
+  return layers
 
 
 # ===========================================================================
@@ -481,26 +340,33 @@ class NetworkConfig(dict):
     pyramid : A Boolean, if `True`, use pyramid structure where the number of
       hidden units decrease as the depth increase
     use_conv : A Boolean, if `True`, use convolutional encoder and decoder
-    kernel_size : An Integer, kernel size for convolution network
+    kernel : An Integer, kernel size for convolution network
     strides : An Integer, stride step for convoltion
     projection : An Integer, number of hidden units for the `Dense`
       linear projection layer right after convolutional network.
   """
 
   units: int = 64
-  nlayers: int = 2
+  kernel: int = 3
+  strides: int = 1
+  padding: str = 'same'
+  dilation: int = 1
   activation: str = 'relu'
-  input_dropout: float = 0.3
-  encoder_dropout: float = 0.
-  latent_dropout: float = 0.
-  decoder_dropout: float = 0.
+  use_bias: bool = True
+  kernel_initializer: str = 'glorot_uniform'
+  bias_initializer: str = 'zeros'
+  kernel_regularizer: str = None
+  bias_regularizer: str = None
+  activity_regularizer: str = None
+  kernel_constraint: str = None
+  bias_constraint: str = None
+  batchnorm: bool = False
+  input_dropout: float = 0.
+  output_dropout: float = 0.
   layer_dropout: float = 0.
-  batchnorm: bool = True
   linear_decoder: bool = False
-  pyramid: bool = False
   network: str = 'dense'
-  kernel_size: int = 5
-  strides: int = 2
+  flatten_inputs: bool = True
   projection: int = None
 
   def __post_init__(self):
@@ -531,18 +397,6 @@ class NetworkConfig(dict):
     return dataclasses.replace(obj, **kwargs)
 
   ################ Create the networks
-  def _units(self):
-    units = self.units
-    if isinstance(units, Number):
-      if self.pyramid:
-        units = [int(units / 2**i) for i in range(1, self.nlayers + 1)]
-      else:
-        units = [units] * self.nlayers
-    elif self.pyramid:
-      raise ValueError("pyramid mode only support when a single number is "
-                       "provided for units, but given: %s" % str(units))
-    return units
-
   def create_autoencoder(self, input_shape, latent_shape, name=None):
     r""" Create both encoder and decoder at once """
     encoder_name = None if name is None else "%s_%s" % (name, "encoder")
@@ -553,7 +407,10 @@ class NetworkConfig(dict):
                                   name=decoder_name)
     return encoder, decoder
 
-  def create_decoder(self, encoder, latent_shape, name=None):
+  def create_decoder(self,
+                     encoder,
+                     latent_shape,
+                     name=None) -> SequentialNetwork:
     r"""
     Arguments:
       latent_shape : a tuple of Integer. Shape of latent without the batch
@@ -566,7 +423,6 @@ class NetworkConfig(dict):
     if name is None:
       name = "Decoder"
     latent_shape = _shape(latent_shape)
-    units = self._units()
     input_shape = encoder.input_shape[1:]
     n_channels = input_shape[-1]
     rank = 1 if len(input_shape) == 2 else 2
@@ -577,52 +433,67 @@ class NetworkConfig(dict):
     if self.network == 'conv':
       # get the last convolution shape
       eshape = encoder.layers[-3].output_shape[1:]
-      start_layers = []
-      if self.projection is not None:
-        start_layers = [
-            keras.layers.Dense(self.projection,
+      start_layers = [keras.layers.InputLayer(input_shape=latent_shape)]
+      if self.projection is not None and not isinstance(self.projection, bool):
+        start_layers += [
+            keras.layers.Dense(int(self.projection),
                                activation='linear',
-                               use_bias=True,
-                               input_shape=latent_shape),
+                               use_bias=True),
             keras.layers.Dense(np.prod(eshape),
                                activation=self.activation,
                                use_bias=True),
             keras.layers.Reshape(eshape),
         ]
-      else:
-        start_layers = [keras.layers.InputLayer(input_shape=latent_shape)]
-      decoder = DeconvNetwork(list(units[1:]) + [n_channels],
-                              rank=rank,
-                              kernel_size=self.kernel_size,
-                              strides=self.strides,
-                              padding='same',
-                              dilation_rate=1,
-                              activation=self.activation,
-                              use_bias=True,
-                              batchnorm=self.batchnorm,
-                              input_dropout=self.latent_dropout,
-                              output_dropout=self.decoder_dropout,
-                              layer_dropout=self.layer_dropout,
-                              start_layers=start_layers,
-                              end_layers=[keras.layers.Reshape(input_shape)],
-                              name=name)
+      decoder = deconv_network(
+          tf.nest.flatten(self.units)[::-1][1:] + [n_channels],
+          rank=rank,
+          kernel=tf.nest.flatten(self.kernel)[::-1],
+          strides=tf.nest.flatten(self.strides)[::-1],
+          padding=tf.nest.flatten(self.padding)[::-1],
+          dilation=tf.nest.flatten(self.dilation)[::-1],
+          activation=tf.nest.flatten(self.activation)[::-1],
+          use_bias=tf.nest.flatten(self.use_bias)[::-1],
+          batchnorm=tf.nest.flatten(self.batchnorm)[::-1],
+          input_dropout=self.input_dropout,
+          output_dropout=self.output_dropout,
+          layer_dropout=tf.nest.flatten(self.layer_dropout)[::-1],
+          kernel_initializer=self.kernel_initializer,
+          bias_initializer=self.bias_initializer,
+          kernel_regularizer=self.kernel_regularizer,
+          bias_regularizer=self.bias_regularizer,
+          activity_regularizer=self.activity_regularizer,
+          kernel_constraint=self.kernel_constraint,
+          bias_constraint=self.bias_constraint,
+      )
+      decoder = start_layers + decoder
+      decoder.append(keras.layers.Reshape(input_shape))
     ### dense network
     elif self.network == 'dense':
-      decoder = DenseNetwork(units=units[::-1],
-                             activation=self.activation,
-                             use_bias=True,
-                             batchnorm=self.batchnorm,
-                             input_dropout=self.latent_dropout,
-                             output_dropout=self.decoder_dropout,
-                             layer_dropout=self.layer_dropout,
-                             input_shape=latent_shape,
-                             name=name)
+      decoder = dense_network(
+          tf.nest.flatten(self.units)[::-1],
+          activation=tf.nest.flatten(self.activation)[::-1],
+          use_bias=tf.nest.flatten(self.use_bias)[::-1],
+          batchnorm=tf.nest.flatten(self.batchnorm)[::-1],
+          input_dropout=self.input_dropout,
+          output_dropout=self.output_dropout,
+          layer_dropout=tf.nest.flatten(self.layer_dropout)[::-1],
+          kernel_initializer=self.kernel_initializer,
+          bias_initializer=self.bias_initializer,
+          kernel_regularizer=self.kernel_regularizer,
+          bias_regularizer=self.bias_regularizer,
+          activity_regularizer=self.activity_regularizer,
+          kernel_constraint=self.kernel_constraint,
+          bias_constraint=self.bias_constraint,
+          flatten_inputs=self.flatten_inputs,
+          input_shape=latent_shape,
+      )
     ### deconv
-    elif self.network == 'deconv':
-      raise ValueError("Deconv network doesn't support decoding.")
-    return decoder
+    else:
+      raise NotImplementedError("'%s' network doesn't support decoding." %
+                                self.network)
+    return SequentialNetwork(decoder, name=name)
 
-  def create_network(self, input_shape, name=None):
+  def create_network(self, input_shape, name=None) -> SequentialNetwork:
     r"""
     Arguments:
       input_shape : a tuple of Integer. Shape of input without the batch
@@ -637,81 +508,72 @@ class NetworkConfig(dict):
     ### prepare the shape
     input_shape = _shape(input_shape)
     input_ndim = len(input_shape)
-    units = self._units()
-    ### start layers for Convolution and Deconvolution
-    if 'conv' in self.network:
-      assert input_ndim in (1, 2, 3), \
-        "Only support 2-D, 3-D or 4-D inputs, but given: %s" % str(input_shape)
-      start_layers = []
-      # reshape to 3-D
-      if input_ndim == 1:
-        start_layers.append(ExpandDims(axis=-1))
-        rank = 1
-        n_channels = 1
-      else:
-        rank = input_ndim - 1
-        n_channels = input_shape[-1]
-      # projection
-      end_layers = []
-      if self.projection is not None:
-        end_layers = [
-            keras.layers.Flatten(),
-            keras.layers.Dense(self.projection,
-                               activation='linear',
-                               use_bias=True)
-        ]
     ### convolution network
     if self.network == 'conv':
       # create the encoder
-      encoder = ConvNetwork(units[::-1],
-                            rank=rank,
-                            kernel_size=self.kernel_size,
-                            strides=self.strides,
-                            padding='same',
-                            dilation_rate=1,
-                            activation=self.activation,
-                            use_bias=True,
-                            batchnorm=self.batchnorm,
-                            input_dropout=self.input_dropout,
-                            output_dropout=self.encoder_dropout,
-                            layer_dropout=self.layer_dropout,
-                            start_layers=start_layers,
-                            end_layers=end_layers,
-                            input_shape=input_shape,
-                            name=name)
-    ### dense network
-    elif self.network == 'dense':
-      encoder = DenseNetwork(units=units,
+      network = conv_network(self.units,
+                             kernel=self.kernel,
+                             strides=self.strides,
+                             padding=self.padding,
+                             dilation=self.dilation,
                              activation=self.activation,
-                             flatten=True if input_ndim > 1 else False,
-                             use_bias=True,
+                             use_bias=self.use_bias,
                              batchnorm=self.batchnorm,
                              input_dropout=self.input_dropout,
-                             output_dropout=self.encoder_dropout,
+                             output_dropout=self.output_dropout,
                              layer_dropout=self.layer_dropout,
-                             input_shape=input_shape,
-                             name=name)
-    ### deconv
-    elif self.network == 'deconv':
-      encoder = DeconvNetwork(units[::-1],
-                              rank=rank,
-                              kernel_size=self.kernel_size,
-                              strides=self.strides,
-                              padding='same',
-                              dilation_rate=1,
+                             kernel_initializer=self.kernel_initializer,
+                             bias_initializer=self.bias_initializer,
+                             kernel_regularizer=self.kernel_regularizer,
+                             bias_regularizer=self.bias_regularizer,
+                             activity_regularizer=self.activity_regularizer,
+                             kernel_constraint=self.kernel_constraint,
+                             bias_constraint=self.bias_constraint,
+                             projection=self.projection,
+                             input_shape=input_shape)
+    ### dense network
+    elif self.network == 'dense':
+      network = dense_network(self.units,
                               activation=self.activation,
-                              use_bias=True,
+                              use_bias=self.use_bias,
                               batchnorm=self.batchnorm,
                               input_dropout=self.input_dropout,
-                              output_dropout=self.encoder_dropout,
+                              output_dropout=self.output_dropout,
                               layer_dropout=self.layer_dropout,
-                              start_layers=start_layers,
-                              end_layers=end_layers,
-                              input_shape=input_shape,
-                              name=name)
+                              kernel_initializer=self.kernel_initializer,
+                              bias_initializer=self.bias_initializer,
+                              kernel_regularizer=self.kernel_regularizer,
+                              bias_regularizer=self.bias_regularizer,
+                              activity_regularizer=self.activity_regularizer,
+                              kernel_constraint=self.kernel_constraint,
+                              bias_constraint=self.bias_constraint,
+                              flatten_inputs=self.flatten_inputs,
+                              input_shape=input_shape)
+    ### deconv
+    elif self.network == 'deconv':
+      network = deconv_network(self.units,
+                               kernel=self.kernel,
+                               strides=self.strides,
+                               padding=self.padding,
+                               dilation=self.dilation,
+                               activation=self.activation,
+                               use_bias=self.use_bias,
+                               batchnorm=self.batchnorm,
+                               input_dropout=self.input_dropout,
+                               output_dropout=self.output_dropout,
+                               layer_dropout=self.layer_dropout,
+                               kernel_initializer=self.kernel_initializer,
+                               bias_initializer=self.bias_initializer,
+                               kernel_regularizer=self.kernel_regularizer,
+                               bias_regularizer=self.bias_regularizer,
+                               activity_regularizer=self.activity_regularizer,
+                               kernel_constraint=self.kernel_constraint,
+                               bias_constraint=self.bias_constraint,
+                               projection=self.projection,
+                               input_shape=input_shape)
     ### others
     else:
       raise NotImplementedError("No implementation for network of type: '%s'" %
                                 self.network)
     # ====== return ====== #
-    return encoder
+    return SequentialNetwork(network, name=name)

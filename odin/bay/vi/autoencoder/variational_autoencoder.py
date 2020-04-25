@@ -248,7 +248,10 @@ class VariationalAutoencoder(keras.Model):
       assert isinstance(config, NetworkConfig), \
         "config must be instance of NetworkConfig but given: %s" % \
           str(type(config))
+      print("CREATE NETWORKS!!!!!")
+      print(config)
       encoder = config.create_network(input_shape)
+      print("TEST!!!!!")
     ### check latent and input distribution
     all_latents = [
         _check_rv(z, input_shape=encoder.output_shape[1:])

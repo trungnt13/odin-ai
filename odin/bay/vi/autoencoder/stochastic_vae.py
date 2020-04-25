@@ -5,6 +5,8 @@ import tensorflow as tf
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 
+__all__ = ['ImputeVAE', 'StochasticVAE']
+
 
 class PosteriorStep(TrainStep):
 
@@ -109,3 +111,10 @@ class StochasticVAE(BetaVAE):
                            iw=iw,
                            elbo_kw=elbo_kw,
                            parameters=self.llk_params)
+
+
+class ImputeVAE(BetaVAE):
+
+  def __init__(self, impute_steps=3, **kwargs):
+    super().__init__(**kwargs)
+    self.impute_steps = int(impute_steps)

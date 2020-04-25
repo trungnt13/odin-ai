@@ -9,8 +9,7 @@ from tensorflow_probability.python.distributions import Distribution
 
 from odin.backend.keras_helpers import layer2text
 from odin.bay.vi.utils import permute_dims
-from odin.networks import (ConvNetwork, DeconvNetwork, DenseNetwork,
-                           NetworkConfig, SequentialNetwork, SkipConnection)
+from odin.networks import NetworkConfig, SequentialNetwork, SkipConnection
 from odin.utils import as_tuple
 
 __all__ = [

@@ -67,23 +67,23 @@ def layer2text(layer, inc_name=False, padding=''):
   ## Dense
   text = str(layer)
   if isinstance(layer, keras.layers.Dense):
-    text = padding+'%sunits:%d bias:%s activ:%s' % \
+    text = '%sunits:%d bias:%s activ:%s' % \
       (name, layer.units, layer.use_bias, layer.activation.__name__)
   ## Conv
   elif isinstance(layer, Conv):
-    text = padding+'%sf:%d k:%s s:%s d:%s pad:%s bias:%s activ:%s' % \
+    text = '%sf:%d k:%s s:%s d:%s pad:%s bias:%s activ:%s' % \
       (name, layer.filters, layer.kernel_size, layer.strides,
        layer.dilation_rate, layer.padding, layer.use_bias,
        layer.activation.__name__)
   ## Activation
   elif isinstance(layer, keras.layers.Activation):
-    text = padding + '%s%s' % (name, layer.activation.__name__)
+    text = '%s%s' % (name, layer.activation.__name__)
   ## Dropout
   elif isinstance(layer, keras.layers.Dropout):
-    text = padding + '%sp=%.2f' % (name, layer.rate)
+    text = '%sp=%.2f' % (name, layer.rate)
   ## BatchNorm
   elif isinstance(layer, keras.layers.BatchNormalization):
-    text = padding+'[%-10s] axis=%s center:%s scale:%s trainable:%s' % \
+    text = padding + '[%-10s] axis=%s center:%s scale:%s trainable:%s' % \
       ('BatchRenorm' if layer.renorm else 'BatchNorm',
        [i for i in tf.nest.flatten(layer.axis)],
        layer.center, layer.scale, layer.trainable)
@@ -107,23 +107,23 @@ def layer2text(layer, inc_name=False, padding=''):
     kw = dict(layer.arguments)
     if spec.defaults is not None:
       kw.update(spec.defaults)
-    text = padding+'%s <%s>(%s) default:%s' % \
+    text = '%s <%s>(%s) default:%s' % \
       (name, layer.function.__name__,
        ', '.join(spec.args), kw)
   ## Reshape
   elif isinstance(layer, keras.layers.Reshape):
-    text = padding + '%s %s' % (name, layer.target_shape)
+    text = '%sshape:%s' % (name, layer.target_shape)
   ## Flatten
   elif isinstance(layer, keras.layers.Flatten):
-    text = padding + '%s %s' % (name, layer.data_format)
+    text = '%s %s' % (name, layer.data_format)
   ## Embedding
   elif isinstance(layer, keras.layers.Embedding):
-    text = padding + '%s in_dim:%d out_dim:%d mask0:%s seq_len:%s' % (
+    text = '%s in_dim:%d out_dim:%d mask0:%s seq_len:%s' % (
         name, layer.input_dim, layer.output_dim, layer.mask_zero,
         layer.input_length)
   ## All others
   else:
-    text = padding + '%s %s' % (name, str(layer))
+    text = '%s %s' % (name, str(layer))
   ### input, output shape
   if hasattr(layer, 'input_shape') and hasattr(layer, 'output_shape'):
     text += ' %s->%s' % (str(layer.input_shape), str(layer.output_shape))
