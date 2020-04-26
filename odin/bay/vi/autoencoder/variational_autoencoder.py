@@ -104,6 +104,41 @@ def _to_optimizer(optimizer, learning_rate, clipnorm):
   return all_optimizers
 
 
+def _parse_network_alias(encoder, decoder):
+  if isinstance(encoder, string_types):
+    encoder = str(encoder).lower().strip()
+    from odin.bay.vi.autoencoder.networks import create_image_autoencoder
+    if encoder in ('mnist', 'fashion_mnist'):
+      encoder, decoder = create_image_autoencoder(image_shape=(28, 28, 1),
+                                                  latent_shape=(10,),
+                                                  projection_dim=128,
+                                                  activation='relu',
+                                                  center0=True,
+                                                  distribution='bernoulli',
+                                                  distribution_kw=dict(),
+                                                  skip_connect=False,
+                                                  convolution=True,
+                                                  input_shape=None)
+    elif encoder in ('shapes3d', 'dsprites', 'celeba', 'slt10', 'legofaces'):
+      n_channels = 1 if encoder == 'dsprites' else 3
+      encoder, decoder = create_image_autoencoder(image_shape=(64, 64,
+                                                               n_channels),
+                                                  latent_shape=(10,),
+                                                  projection_dim=256,
+                                                  activation='relu',
+                                                  center0=True,
+                                                  distribution='bernoulli',
+                                                  distribution_kw=dict(),
+                                                  skip_connect=False,
+                                                  convolution=True,
+                                                  input_shape=None)
+    else:
+      raise NotImplementedError(
+          "No support for predefined network for dataset with name: '%s'" %
+          encoder)
+  return encoder, decoder
+
+
 # ===========================================================================
 # Training step
 # ===========================================================================
@@ -237,6 +272,7 @@ class VariationalAutoencoder(keras.Model):
         input_shape = input_shape[0]
     ### Then, create the encoder, so we know the input_shape to latent layers
     config = None
+    encoder, decoder = _parse_network_alias(encoder, decoder)
     if isinstance(encoder, NetworkConfig):
       config = encoder
       encoder = encoder.create_network(input_shape, name="Encoder")
@@ -275,6 +311,9 @@ class VariationalAutoencoder(keras.Model):
       latent_shape = list(reduce_latent(zs).shape[1:])
     self.reduce_latent = reduce_latent
     ### Create the decoder
+    n_parameterization = 1
+    if isinstance(outputs[0], RV):
+      n_parameterization = outputs[0].n_parameterization
     if decoder is not None:
       if isinstance(decoder, NetworkConfig):
         decoder = decoder.create_network(latent_shape, name="Decoder")
@@ -284,7 +323,8 @@ class VariationalAutoencoder(keras.Model):
                       (str(decoder.input_shape[-1:]), str(latent_shape)))
     else:
       decoder = config.create_decoder(encoder=encoder,
-                                      latent_shape=latent_shape)
+                                      latent_shape=latent_shape,
+                                      n_parameterization=n_parameterization)
     ### Finally the output distributions
     all_outputs = [_check_rv(x, decoder.output_shape[1:]) for x in outputs]
     self.output_layers = [x[0] for x in all_outputs]
@@ -333,6 +373,18 @@ class VariationalAutoencoder(keras.Model):
     return super().save_weights(filepath=filepath,
                                 overwrite=overwrite,
                                 save_format='tf')
+
+  @property
+  def is_semi_supervised(self):
+    return False
+
+  @property
+  def is_self_supervised(self):
+    return False
+
+  @property
+  def is_weak_supervised(self):
+    return False
 
   @property
   def is_fitted(self):
@@ -701,6 +753,18 @@ class VariationalAutoencoder(keras.Model):
       skip_fitted=False,
       log_tag='',
       log_path=None):
+    r""" Override the original fit method of keras to provide simplified
+    procedure with `VariationalAutoencoder.optimize` and
+    `VariationalAutoencoder.train_steps`
+
+    Arguments:
+      callback : a Callable, called every `valid_freq` steps or
+        `valid_interval` seconds
+      compile_graph : a Boolean. If True, using tensorflow autograph for
+        optimize function (about 2 times better speed), otherwise, run the
+        function in Eager mode (better for debugging).
+
+    """
     if self.is_fitted and skip_fitted:
       return self
     from odin.exp.trainer import Trainer

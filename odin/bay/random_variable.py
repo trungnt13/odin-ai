@@ -120,9 +120,8 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
     prior = dist(**_kwargs(concentration=[1.] * event_size))
   elif dist == obd.Bernoulli:
     prior = obd.Independent(
-        obd.Bernoulli(**_kwargs(
-            logits=np.full(event_shape, np.log(0.5)), dtype=tf.float32)),
-        len(event_shape))
+        obd.Bernoulli(**_kwargs(logits=np.full(event_shape, np.log(0.5)),
+                                dtype=tf.float32)), len(event_shape))
   ## other
   return prior
 
@@ -250,26 +249,26 @@ class RandomVariable:
     if remove_independent:
       while isinstance(dist, obd.Independent):
         dist = dist.distribution
-    return dist
+    return dist, size
 
   @property
   def is_mixture(self):
-    dist = self._dummy_dist()
+    dist, _ = self._dummy_dist()
     return is_mixture_distribution(dist)
 
   @property
   def is_binary(self):
-    dist = self._dummy_dist()
+    dist, _ = self._dummy_dist()
     return is_binary_distribution(dist)
 
   @property
   def is_discrete(self):
-    dist = self._dummy_dist()
+    dist, _ = self._dummy_dist()
     return is_discrete_distribution(dist)
 
   @property
   def is_zero_inflated(self):
-    dist = self._dummy_dist()
+    dist, _ = self._dummy_dist()
     return is_zeroinflated_distribution(dist)
 
   @property
@@ -280,6 +279,10 @@ class RandomVariable:
       self.posterior in dir(keras.activations):
       return True
     return False
+
+  @property
+  def n_parameterization(self):
+    return self._dummy_dist()[-1]
 
   ######## create posterior distribution
   def create_prior(self) -> obd.Distribution:

@@ -409,11 +409,14 @@ class NetworkConfig(dict):
   def create_decoder(self,
                      encoder,
                      latent_shape,
+                     n_parameterization=1,
                      name=None) -> SequentialNetwork:
     r"""
     Arguments:
       latent_shape : a tuple of Integer. Shape of latent without the batch
          dimensions.
+      n_parameterization : number of parameters in case the output of decoder
+        parameterize a distribution
       name : a String (optional).
 
     Returns:
@@ -444,7 +447,8 @@ class NetworkConfig(dict):
             keras.layers.Reshape(eshape),
         ]
       decoder = deconv_network(
-          tf.nest.flatten(self.units)[::-1][1:] + [n_channels],
+          tf.nest.flatten(self.units)[::-1][1:] +
+          [n_channels * int(n_parameterization)],
           rank=rank,
           kernel=tf.nest.flatten(self.kernel)[::-1],
           strides=tf.nest.flatten(self.strides)[::-1],

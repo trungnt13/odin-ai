@@ -4,6 +4,7 @@ import tensorflow as tf
 
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
+from odin.utils import as_tuple
 
 __all__ = ['ImputeVAE', 'StochasticVAE']
 
@@ -114,7 +115,87 @@ class StochasticVAE(BetaVAE):
 
 
 class ImputeVAE(BetaVAE):
+  r""" Iteratively imputing VAE outputs for a fixed number of steps
 
-  def __init__(self, impute_steps=3, **kwargs):
-    super().__init__(**kwargs)
+  Arguments:
+    sequential : a Boolean. If True, using the outputs from previous step
+      as inputs for the next step when calculating ELBO.
+      This could be interpreted as a scheme for data augmentation.
+  """
+
+  def __init__(self,
+               beta=1.,
+               impute_steps=3,
+               impute_llk_weights=[1.0, 0.8, 0.4],
+               impute_kl_weights=[1.0, 0.8, 0.4],
+               sequential=True,
+               **kwargs):
+    super().__init__(beta=beta, **kwargs)
+    assert impute_steps >= 1
     self.impute_steps = int(impute_steps)
+    self.impute_kl_weights = as_tuple(impute_kl_weights,
+                                      t=float,
+                                      N=self.impute_steps)
+    self.impute_llk_weights = as_tuple(impute_llk_weights,
+                                       t=float,
+                                       N=self.impute_steps)
+    self.sequential = bool(sequential)
+
+  def _elbo(self,
+            X,
+            pX_Z,
+            qZ_X,
+            analytic,
+            reverse,
+            sample_shape=None,
+            mask=None,
+            training=None,
+            **kwargs):
+    if sample_shape is None:
+      sample_shape = []
+    X = [X] * self.impute_steps
+    all_llk = {}
+    all_div = {}
+    prev_px = None
+    for step, (inputs, px, qz, w_llk, w_div) in enumerate(
+        zip(X, pX_Z, qZ_X, self.impute_llk_weights, self.impute_kl_weights)):
+      if self.sequential and prev_px is not None:
+        inputs = [p.mean() for p in prev_px]
+      px = tf.nest.flatten(px)
+      qz = tf.nest.flatten(qz)
+      llk, div = super()._elbo(X=inputs,
+                               pX_Z=px,
+                               qZ_X=qz,
+                               analytic=analytic,
+                               reverse=reverse,
+                               sample_shape=sample_shape,
+                               mask=mask,
+                               training=training,
+                               **kwargs)
+      all_llk.update({'%s_%d' % (k, step): w_llk * v for k, v in llk.items()})
+      all_div.update({'%s_%d' % (k, step): w_div * v for k, v in div.items()})
+      prev_px = px
+    return all_llk, all_div
+
+  def call(self, inputs, training=None, mask=None, sample_shape=()):
+    sample_shape = tf.nest.flatten(sample_shape)
+    pX_Z, qZ_X = super().call(inputs,
+                              training=training,
+                              mask=mask,
+                              sample_shape=sample_shape)
+    results = [[pX_Z], [qZ_X]]
+    for _ in range(1, self.impute_steps):
+      pX_Z = tf.nest.flatten(pX_Z)
+      inputs = [p.mean() for p in pX_Z]
+      if len(sample_shape) > 0:
+        inputs = [
+            tf.reduce_mean(i, axis=list(range(len(sample_shape))))
+            for i in inputs
+        ]
+      pX_Z, qZ_X = super().call(inputs[0] if len(inputs) == 1 else inputs,
+                                training=training,
+                                mask=mask,
+                                sample_shape=sample_shape)
+      results[0].append(pX_Z)
+      results[1].append(qZ_X)
+    return results[0], results[1]
