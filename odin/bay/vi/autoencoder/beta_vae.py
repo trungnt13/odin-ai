@@ -23,7 +23,14 @@ class BetaVAE(VariationalAutoencoder):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
+    llk, div = super()._elbo(X,
+                             pX_Z,
+                             qZ_X,
+                             analytic,
+                             reverse,
+                             sample_shape=sample_shape,
+                             mask=mask,
+                             training=training)
     div = {key: self.beta * val for key, val in div.items()}
     return llk, div
 
@@ -43,7 +50,14 @@ class BetaTCVAE(BetaVAE):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
+    llk, div = super()._elbo(X,
+                             pX_Z,
+                             qZ_X,
+                             analytic,
+                             reverse,
+                             sample_shape=sample_shape,
+                             mask=mask,
+                             training=training)
     for name, q in zip(self.latent_names, qZ_X):
       tc = total_correlation(tf.convert_to_tensor(q), q)
       div['tc_%s' % name] = (self.beta - 1.) * tc
@@ -89,7 +103,14 @@ class AnnealedVAE(VariationalAutoencoder):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
+    llk, div = super()._elbo(X,
+                             pX_Z,
+                             qZ_X,
+                             analytic,
+                             reverse,
+                             sample_shape=sample_shape,
+                             mask=mask,
+                             training=training)
     # step : training step, updated when call `.train_steps()`
     c = self.interpolation(self.step)
     div = {key: self.gamma * tf.math.abs(val - c) for key, val in div.items()}

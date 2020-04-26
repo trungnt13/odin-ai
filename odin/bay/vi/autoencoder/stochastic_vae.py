@@ -121,6 +121,18 @@ class ImputeVAE(BetaVAE):
     sequential : a Boolean. If True, using the outputs from previous step
       as inputs for the next step when calculating ELBO.
       This could be interpreted as a scheme for data augmentation.
+
+  Example:
+  ```
+  ds = MNIST()
+  train = ds.create_dataset(partition='train')
+  vae = ImputeVAE(
+      encoder='mnist',
+      outputs=RV((28, 28, 1), 'bern', name="Image"),
+      impute_steps=3,
+      sequential=True)
+  vae.fit(train, epochs=-1, max_iter=8000, compile_graph=True)
+  ```
   """
 
   def __init__(self,

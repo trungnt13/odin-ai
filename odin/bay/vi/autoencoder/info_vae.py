@@ -56,7 +56,14 @@ class InfoVAE(BetaVAE):
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
+    llk, div = super()._elbo(X,
+                             pX_Z,
+                             qZ_X,
+                             analytic,
+                             reverse,
+                             sample_shape=sample_shape,
+                             mask=mask,
+                             training=training)
     # repeat for each latent
     for name, q in zip(self.latent_names, qZ_X):
       info_div = (self.gamma - self.beta) * self.divergence(
@@ -139,8 +146,14 @@ class MutualInfoVAE(BetaVAE):
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training):
     # don't take KL of qC_X
-    llk, div = super()._elbo(X, pX_Z, qZ_X[:-1], analytic, reverse,
-                             sample_shape)
+    llk, div = super()._elbo(X,
+                             pX_Z,
+                             qZ_X[:-1],
+                             analytic,
+                             reverse,
+                             sample_shape=sample_shape,
+                             mask=mask,
+                             training=training)
     # the latents, in the implementation, the author reuse z samples here,
     # but in the algorithm, z_prime is re-sampled from the prior.
     # But, reasonably, we want to hold z_prime fix to z, and c_prime is the
@@ -186,7 +199,14 @@ class FactorInfoVAE(BetaVAE):
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training):
     # don't take KL of qC_X
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
+    llk, div = super()._elbo(X,
+                             pX_Z,
+                             qZ_X,
+                             analytic,
+                             reverse,
+                             sample_shape=sample_shape,
+                             mask=mask,
+                             training=training)
     z_prime = [permute_dims(q) for q in qZ_X]
     pX_Zprime = self.decode(z_prime, training=training)
     qZ_Xprime = self.encode(pX_Zprime, training=training)

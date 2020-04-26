@@ -6,6 +6,7 @@ from odin.bay.vi.autoencoder.lda_vae import *
 from odin.bay.vi.autoencoder.networks import *
 from odin.bay.vi.autoencoder.self_supervised_vae import *
 from odin.bay.vi.autoencoder.conditional_vae import *
+from odin.bay.vi.autoencoder.multitask_vae import *
 from odin.bay.vi.autoencoder.stochastic_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.bay.vi.autoencoder.vq_vae import *

@@ -723,7 +723,10 @@ class VariationalAutoencoder(keras.Model):
           loss, metrics = step()
         # applying the gradients
         gradients = tape.gradient(loss, parameters)
-        opt.apply_gradients(zip(gradients, parameters))
+        grad_param = [
+            (g, p) for g, p in zip(gradients, parameters) if g is not None
+        ]
+        opt.apply_gradients(grad_param)
       else:
         tape = None
         loss, metrics = step()
@@ -800,7 +803,9 @@ class VariationalAutoencoder(keras.Model):
     cls = [
         i for i in type.mro(type(self)) if issubclass(i, VariationalAutoencoder)
     ]
-    text = "%s" % "->".join([i.__name__ for i in cls[::-1]])
+    text = "%s supervising(semi:%s self:%s weak:%s)" % (
+        "->".join([i.__name__ for i in cls[::-1]]), self.is_semi_supervised,
+        self.is_self_supervised, self.is_weak_supervised)
     ## encoder
     text += "\n Encoder:\n  "
     text += "\n  ".join(_net2str(self.encoder).split('\n'))
