@@ -7,11 +7,40 @@ from odin.bay.vi.autoencoder.variational_autoencoder import \
 class AdaptiveVAE(VariationalAutoencoder):
   r"""
 
+  Arguments:
+    base_method : {'g', 'ml'}. Base method for adapting the self-supervised
+      objective:
+      - 'group' for group VAE
+      - 'multilevel' for multi-level VAE
+
   Reference:
     Locatello, F., et al. 2020. "Weakly-Supervised Disentanglement Without
       Compromises". arXiv:2002.02886 [cs, stat].
   """
-  pass
+
+  def __init__(self, base_method="group"):
+    super().__init__()
+
+
+class WeaklySupervisedVAE(VariationalAutoencoder):
+  r"""
+
+  Arguments:
+    strategy : {'restricted', 'match', 'rank'}. Strategy for weak supervised
+      objective
+      - 'restricted' labelling
+      - 'match' paring
+      - 'rank' pairing
+
+  Reference:
+    Shu, R., Chen, Y., Kumar, A., Ermon, S., Poole, B., 2019.
+      "Weakly Supervised Disentanglement with Guarantees".
+      arXiv:1910.09772 [cs, stat].
+    https://github.com/google-research/google-research/tree/master/weak_disentangle
+  """
+
+  def __init__(self, strategy="rank"):
+    super().__init__()
 
 
 class GroupVAE(VariationalAutoencoder):
@@ -20,6 +49,7 @@ class GroupVAE(VariationalAutoencoder):
     Hosoya, H., 2019. "Group-based Learning of Disentangled Representations
       with Generalizability for Novel Contents", in: Proceedings of the
       Twenty-Eighth International Joint Conference on Artificial Intelligence.
+    https://github.com/HaruoHosoya/gvae
   """
 
   def __init__(self, **kwargs):

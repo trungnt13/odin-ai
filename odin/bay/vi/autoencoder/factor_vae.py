@@ -13,11 +13,12 @@ class FactorStep(TrainStep):
 
   def __call__(self):
     inputs, qZ_X = self.inputs
+    mask = self.mask
     qZ_Xprime = self.vae.encode(inputs,
                                 training=self.training,
-                                mask=self.mask,
+                                mask=mask,
                                 sample_shape=self.sample_shape)
-    dtc_loss = self.vae.dtc_loss(qZ_X, qZ_Xprime, training=training)
+    dtc_loss = self.vae.dtc_loss(qZ_X, qZ_Xprime, training=self.training)
     return dtc_loss, dict(dtc=dtc_loss)
 
 
@@ -28,17 +29,27 @@ class FactorVAE(BetaVAE):
   The training procedure of FactorVAE is as follows:
 
   ```
-    foreach iter:
-      X = minibatch()
-      pX_Z, qZ_X = vae(x, trainining=True)
-      loss = -vae.elbo(X, pX_Z, qZ_X, training=True)
-      vae_optimizer.apply_gradients(loss, vae.parameters)
+  foreach iter:
+    X = minibatch()
+    X1, X2 = split(X, 2, axis=0)
 
-      dtc_loss = vae.dtc_loss(qZ_X, training=True)
-      dis_optimizer.apply_gradients(dtc_loss, dis.parameters)
+    pX_Z, qZ_X = vae(X1, trainining=True)
+    loss = -vae.elbo(X1, pX_Z, qZ_X, training=True)
+    vae_optimizer.apply_gradients(loss, vae.parameters)
+
+    qZ_Xprime = vae.encode(X2, training=True)
+    dtc_loss = vae.dtc_loss(qZ_X, qZ_Xprime, training=True)
+    dis_optimizer.apply_gradients(dtc_loss, dis.parameters)
   ```
 
+  Arguments:
+    discriminator : a Dictionary or `keras.layers.Layer`.
+      Keywords arguments for creating the `FactorDiscriminator`
+
   Note:
+    You should use double the `batch_size` since the minibatch will be splitted
+    into 2 partitions for `X` and `X_prime`.
+
     It is recommended to use the same optimizers configuration like in the
     paper: `Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999)` for the VAE
     and `Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)` for the
@@ -53,7 +64,7 @@ class FactorVAE(BetaVAE):
   """
 
   def __init__(self,
-               discriminator=dict(units=1000, n_hidden_layers=5),
+               discriminator=dict(units=[1000, 1000, 1000, 1000, 1000]),
                gamma=10.0,
                beta=1.0,
                **kwargs):
@@ -74,19 +85,31 @@ class FactorVAE(BetaVAE):
     self.vae_params = [
         p for p in self.trainable_variables if id(p) not in exclude
     ]
+    #
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
-    div['tc'] = self.total_correlation(qZ_X, training=training)
+    llk, div = super()._elbo(X,
+                             pX_Z,
+                             qZ_X,
+                             analytic,
+                             reverse,
+                             sample_shape=sample_shape,
+                             mask=mask,
+                             training=training)
+    for layer, qz in zip(self.latent_layers, qZ_X):
+      div['tc_%s' % layer.name] = self.total_correlation(qz,
+                                                         apply_gamma=True,
+                                                         training=training)
     return llk, div
 
-  def total_correlation(self, qZ_X, scaled_by_gamma=True, training=None):
+  def total_correlation(self, qZ_X, apply_gamma=False, training=None):
     r""" Using the discriminator output to estimate total correlation of
     the latents
+
     """
     tc = self.discriminator.total_correlation(qZ_X, training=training)
-    if scaled_by_gamma:
+    if apply_gamma:
       tc = self.gamma * tc
     return tc
 
@@ -130,11 +153,21 @@ class FactorVAE(BetaVAE):
       inputs = [tf.split(x, 2, axis=0) for x in tf.nest.flatten(inputs)]
       x1 = [i[0] for i in inputs]
       x2 = [i[1] for i in inputs]
+    # split the mask
+    mask1 = None
+    mask2 = None
+    if mask is not None:
+      if tf.is_tensor(mask):
+        mask1, mask2 = tf.split(mask, 2, axis=0)
+      else:
+        mask = [tf.split(m, 2, axis=0) for m in tf.nest.flatten(mask)]
+        mask1 = [i[0] for i in mask]
+        mask2 = [i[1] for i in mask]
     # first step optimize VAE with total correlation loss
     step1 = TrainStep(vae=self,
                       inputs=x1,
                       training=training,
-                      mask=mask,
+                      mask=mask1,
                       sample_shape=sample_shape,
                       iw=iw,
                       elbo_kw=elbo_kw,
@@ -144,7 +177,7 @@ class FactorVAE(BetaVAE):
     step2 = FactorStep(vae=self,
                        inputs=[x2, step1.qZ_X],
                        training=training,
-                       mask=mask,
+                       mask=mask2,
                        sample_shape=sample_shape,
                        parameters=self.disc_params)
     yield step2
@@ -171,10 +204,13 @@ class FactorVAE(BetaVAE):
       autograph=False,
       logging_interval=2,
       log_tag='',
-      log_path=None):
+      log_path=None,
+      **kwargs):
     kw = dict(locals())
     del kw['self']
     del kw['__class__']
+    kwargs = kw.pop('kwargs')
+    kw.update(kwargs)
     super().fit(**kw)
 
   def __str__(self):

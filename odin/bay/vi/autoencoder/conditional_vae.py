@@ -49,16 +49,13 @@ class ConditionalM2VAE(BetaVAE):
   ```
   from odin.fuel import MNIST
   from odin.bay.vi.autoencoder import ConditionalM2VAE
-
   ds = MNIST()
   train = ds.create_dataset(partition='train', inc_labels=0.1)
   test = ds.create_dataset(partition='test', inc_labels=True)
-
   encoder, decoder = create_image_autoencoder(image_shape=(28, 28, 1),
                                               input_shape=(28, 28, 2),
                                               center0=True,
                                               latent_shape=20)
-
   vae = ConditionalM2VAE(encoder=encoder,
                          decoder=decoder,
                          conditional_embedding='embed',

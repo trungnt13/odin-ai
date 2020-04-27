@@ -96,22 +96,24 @@ def dense_network(units,
                   flatten_inputs=True,
                   batchnorm=True,
                   input_dropout=0.,
-                  output_dropout=0.,
-                  layer_dropout=0.,
+                  dropout=0.,
                   input_shape=None):
   r""" Multi-layers dense feed-forward neural network """
   (units, activation, use_bias, kernel_initializer, bias_initializer,
    kernel_regularizer, bias_regularizer, activity_regularizer,
-   kernel_constraint,
-   bias_constraint, batchnorm, layer_dropout), nlayers = _as_arg_tuples(
-       units, activation, use_bias, kernel_initializer, bias_initializer,
-       kernel_regularizer, bias_regularizer, activity_regularizer,
-       kernel_constraint, bias_constraint, batchnorm, layer_dropout)
+   kernel_constraint, bias_constraint, batchnorm,
+   dropout), nlayers = _as_arg_tuples(units, activation, use_bias,
+                                      kernel_initializer, bias_initializer,
+                                      kernel_regularizer, bias_regularizer,
+                                      activity_regularizer, kernel_constraint,
+                                      bias_constraint, batchnorm, dropout)
   layers = []
+  if input_shape is not None:
+    layers.append(keras.layers.InputLayer(input_shape=input_shape))
   if flatten_inputs:
     layers.append(keras.layers.Flatten())
-  if 0. < input_dropout < 1.:
-    layers.append(keras.layers.Dropout(input_dropout))
+  if input_dropout > 0:
+    layers.append(keras.layers.Dropout(rate=input_dropout))
   for i in range(nlayers):
     layers.append(
         keras.layers.Dense(\
@@ -129,13 +131,8 @@ def dense_network(units,
     if batchnorm[i]:
       layers.append(keras.layers.BatchNormalization())
     layers.append(keras.layers.Activation(activation[i]))
-    if layer_dropout[i] > 0 and i != nlayers - 1:
-      layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
-  if 0. < output_dropout < 1.:
-    layers.append(keras.layers.Dropout(output_dropout))
-  # matching input_shape and start_layers
-  if input_shape is not None:
-    layers = [keras.layers.InputLayer(input_shape=input_shape)] + layers
+    if dropout[i] > 0:
+      layers.append(keras.layers.Dropout(rate=dropout[i]))
   return layers
 
 
@@ -156,8 +153,7 @@ def conv_network(units,
                  bias_constraint=None,
                  batchnorm=True,
                  input_dropout=0.,
-                 output_dropout=0.,
-                 layer_dropout=0.,
+                 dropout=0.,
                  projection=False,
                  input_shape=None,
                  name=None):
@@ -173,17 +169,17 @@ def conv_network(units,
   (units, kernel, strides, padding, dilation, activation, use_bias,
    kernel_initializer, bias_initializer, kernel_regularizer, bias_regularizer,
    activity_regularizer, kernel_constraint,
-   bias_constraint, batchnorm, layer_dropout), nlayers = _as_arg_tuples(
+   bias_constraint, batchnorm, dropout), nlayers = _as_arg_tuples(
        units, kernel, strides, padding, dilation, activation, use_bias,
        kernel_initializer, bias_initializer, kernel_regularizer,
        bias_regularizer, activity_regularizer, kernel_constraint,
-       bias_constraint, batchnorm, layer_dropout)
+       bias_constraint, batchnorm, dropout)
 
   layers = []
   if input_shape is not None:
     layers.append(keras.layers.InputLayer(input_shape=input_shape))
   if 0. < input_dropout < 1.:
-    layers.append(keras.layers.Dropout(input_dropout))
+    layers.append(keras.layers.Dropout(rate=input_dropout))
 
   if rank == 3:
     layer_type = keras.layers.Conv3D
@@ -213,10 +209,8 @@ def conv_network(units,
     if batchnorm[i]:
       layers.append(keras.layers.BatchNormalization())
     layers.append(keras.layers.Activation(activation[i]))
-    if layer_dropout[i] > 0 and i != nlayers - 1:
-      layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
-  if 0. < output_dropout < 1.:
-    layers.append(keras.layers.Dropout(output_dropout))
+    if dropout[i] > 0:
+      layers.append(keras.layers.Dropout(rate=dropout[i]))
   # projection
   if isinstance(projection, bool):
     if projection:
@@ -246,8 +240,7 @@ def deconv_network(units,
                    bias_constraint=None,
                    batchnorm=True,
                    input_dropout=0.,
-                   output_dropout=0.,
-                   layer_dropout=0.,
+                   dropout=0.,
                    projection=None,
                    input_shape=None):
   r""" Multi-layers transposed convolutional neural network """
@@ -255,11 +248,11 @@ def deconv_network(units,
   (units, kernel, strides, padding, output_padding, dilation, activation,
    use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
    bias_regularizer, activity_regularizer, kernel_constraint,
-   bias_constraint, batchnorm, layer_dropout), nlayers = _as_arg_tuples(
+   bias_constraint, batchnorm, dropout), nlayers = _as_arg_tuples(
        units, kernel, strides, padding, output_padding, dilation, activation,
        use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
        bias_regularizer, activity_regularizer, kernel_constraint,
-       bias_constraint, batchnorm, layer_dropout)
+       bias_constraint, batchnorm, dropout)
   #
   layers = []
   if input_shape is not None:
@@ -296,10 +289,8 @@ def deconv_network(units,
     if batchnorm[i]:
       layers.append(keras.layers.BatchNormalization())
     layers.append(keras.layers.Activation(activation[i]))
-    if layer_dropout[i] > 0 and i != nlayers - 1:
-      layers.append(keras.layers.Dropout(rate=layer_dropout[i]))
-  if 0. < output_dropout < 1.:
-    layers.append(keras.layers.Dropout(output_dropout))
+    if dropout[i] > 0:
+      layers.append(keras.layers.Dropout(rate=dropout[i]))
   # projection
   if isinstance(projection, bool):
     if projection:
@@ -331,8 +322,7 @@ class NetworkConfig(dict):
     activation : a String, alias of activation function
     input_dropout : A Scalar [0., 1.], dropout rate, if 0., turn-off dropout.
       this rate is applied for input layer.
-     - layer_dropout : between two hidden layers
-     - output_dropout : for the final output
+    dropout : a list of Scalar [0., 1.], dropout rate between two hidden layers
     batchnorm : a Boolean, batch normalization
     linear_decoder : a Boolean, if `True`, use an `Identity` (i.e. Linear)
       decoder
@@ -361,8 +351,7 @@ class NetworkConfig(dict):
   bias_constraint: str = None
   batchnorm: bool = False
   input_dropout: float = 0.
-  output_dropout: float = 0.
-  layer_dropout: float = 0.
+  dropout: float = 0.
   linear_decoder: bool = False
   network: str = 'dense'
   flatten_inputs: bool = True
@@ -458,8 +447,7 @@ class NetworkConfig(dict):
           use_bias=tf.nest.flatten(self.use_bias)[::-1],
           batchnorm=tf.nest.flatten(self.batchnorm)[::-1],
           input_dropout=self.input_dropout,
-          output_dropout=self.output_dropout,
-          layer_dropout=tf.nest.flatten(self.layer_dropout)[::-1],
+          dropout=tf.nest.flatten(self.dropout)[::-1],
           kernel_initializer=self.kernel_initializer,
           bias_initializer=self.bias_initializer,
           kernel_regularizer=self.kernel_regularizer,
@@ -478,8 +466,7 @@ class NetworkConfig(dict):
           use_bias=tf.nest.flatten(self.use_bias)[::-1],
           batchnorm=tf.nest.flatten(self.batchnorm)[::-1],
           input_dropout=self.input_dropout,
-          output_dropout=self.output_dropout,
-          layer_dropout=tf.nest.flatten(self.layer_dropout)[::-1],
+          dropout=tf.nest.flatten(self.dropout)[::-1],
           kernel_initializer=self.kernel_initializer,
           bias_initializer=self.bias_initializer,
           kernel_regularizer=self.kernel_regularizer,
@@ -522,8 +509,7 @@ class NetworkConfig(dict):
                              use_bias=self.use_bias,
                              batchnorm=self.batchnorm,
                              input_dropout=self.input_dropout,
-                             output_dropout=self.output_dropout,
-                             layer_dropout=self.layer_dropout,
+                             dropout=self.dropout,
                              kernel_initializer=self.kernel_initializer,
                              bias_initializer=self.bias_initializer,
                              kernel_regularizer=self.kernel_regularizer,
@@ -540,8 +526,7 @@ class NetworkConfig(dict):
                               use_bias=self.use_bias,
                               batchnorm=self.batchnorm,
                               input_dropout=self.input_dropout,
-                              output_dropout=self.output_dropout,
-                              layer_dropout=self.layer_dropout,
+                              dropout=self.dropout,
                               kernel_initializer=self.kernel_initializer,
                               bias_initializer=self.bias_initializer,
                               kernel_regularizer=self.kernel_regularizer,
@@ -562,8 +547,7 @@ class NetworkConfig(dict):
                                use_bias=self.use_bias,
                                batchnorm=self.batchnorm,
                                input_dropout=self.input_dropout,
-                               output_dropout=self.output_dropout,
-                               layer_dropout=self.layer_dropout,
+                               dropout=self.dropout,
                                kernel_initializer=self.kernel_initializer,
                                bias_initializer=self.bias_initializer,
                                kernel_regularizer=self.kernel_regularizer,

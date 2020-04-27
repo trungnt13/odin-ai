@@ -723,9 +723,12 @@ class VariationalAutoencoder(keras.Model):
           loss, metrics = step()
         # applying the gradients
         gradients = tape.gradient(loss, parameters)
-        grad_param = [
-            (g, p) for g, p in zip(gradients, parameters) if g is not None
-        ]
+        if self._check_gradients: # for debugging
+          grad_param = zip(gradients, parameters)
+        else:
+          grad_param = [
+              (g, p) for g, p in zip(gradients, parameters) if g is not None
+          ]
         opt.apply_gradients(grad_param)
       else:
         tape = None
@@ -755,7 +758,8 @@ class VariationalAutoencoder(keras.Model):
       logging_interval=2,
       skip_fitted=False,
       log_tag='',
-      log_path=None):
+      log_path=None,
+      check_gradients=False):
     r""" Override the original fit method of keras to provide simplified
     procedure with `VariationalAutoencoder.optimize` and
     `VariationalAutoencoder.train_steps`
@@ -773,6 +777,8 @@ class VariationalAutoencoder(keras.Model):
     from odin.exp.trainer import Trainer
     trainer = Trainer()
     self.trainer = trainer
+    if log_tag is None or len(log_tag) == 0:
+      log_tag = self.__class__.__name__
     # create the optimizer
     if optimizer is not None and self.optimizer is None:
       self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
@@ -781,6 +787,7 @@ class VariationalAutoencoder(keras.Model):
     self._trainstep_kw = dict(sample_shape=sample_shape,
                               iw=iw,
                               elbo_kw=dict(analytic=analytic))
+    self._check_gradients = bool(check_gradients)
     # if already called repeat, then no need to repeat more
     if hasattr(train, 'repeat'):
       train = train.repeat(int(epochs))

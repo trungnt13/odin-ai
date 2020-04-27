@@ -9,7 +9,8 @@ from tensorflow_probability.python.distributions import Distribution
 
 from odin.backend.keras_helpers import layer2text
 from odin.bay.vi.utils import permute_dims
-from odin.networks import NetworkConfig, SequentialNetwork, SkipConnection
+from odin.networks import (NetworkConfig, SequentialNetwork, SkipConnection,
+                           dense_network)
 from odin.utils import as_tuple
 
 __all__ = [
@@ -259,45 +260,46 @@ class ImageNet(keras.Model):
 # ===========================================================================
 class FactorDiscriminator(SequentialNetwork):
   r""" The main goal is minimizing the total correlation (the mutual information
-    which quantifies the redundancy or dependency among latent variables).
+  which quantifies the redundancy or dependency among latent variables).
 
-    We use a discriminator to estimate TC
+  We use a discriminator to estimate total-correlation
+
+  This class also support Semi-supervised factor discriminator, a combination
+  of supervised objective and total correlation estimation using density-ratio.
+
+    - 0: real sample for q(z) (or last unit in case n_outputs > 2) and
+    - 1: fake sample from q(z-)
+
+  If `n_outputs` > 2, suppose the number of classes is `K` then:
+
+    - 0 to K: is the classes' logits for real sample from q(Z)
+    - K + 1: fake sample from q(z-)
 
   Arguments:
-    latent_dim : an Integer, the number of latent units used in VAE.
-    hdim : an Integer, the number of hidden units for the discriminator.
-    n_layer : an Integer, the number of hidden layers.
-    activation : Callable or String, activation function of each layer.
+    units : a list of Integer, the number of hidden units for each hidden layer.
+    n_outputs : an Integer, number of output units
 
   Reference:
-    Kim, H., Mnih, A., 2018. Disentangling by Factorising.
+    Kim, H., Mnih, A., 2018. "Disentangling by Factorising".
       arXiv:1802.05983 [cs, stat].
   """
 
   def __init__(self,
                input_shape,
                batchnorm=False,
-               units=1000,
-               n_hidden_layers=5,
+               input_dropout=0.,
+               dropout=0.,
+               units=[1000, 1000, 1000, 1000, 1000],
                n_outputs=2,
                activation=tf.nn.leaky_relu,
                name="FactorDiscriminator"):
-    # 1: real sample for q(z) (or last unit in case n_outputs > 2) and
-    # 0: fake sample from q(z-)
-    layers = [
-        keras.layers.InputLayer(input_shape=tf.nest.flatten(input_shape)),
-        keras.layers.Flatten()
-    ]
-    for idx, (units, activation) in enumerate(
-        zip(as_tuple(units, N=n_hidden_layers),
-            as_tuple(activation, N=n_hidden_layers))):
-      sublayers = [
-          keras.layers.Dense(units, use_bias=not batchnorm, activation='linear')
-      ]
-      if batchnorm:
-        sublayers.append(keras.layers.BatchNormalization())
-      sublayers.append(keras.layers.Activation(activation))
-      layers += sublayers
+    layers = dense_network(units=units,
+                           batchnorm=batchnorm,
+                           dropout=dropout,
+                           flatten_inputs=True,
+                           input_dropout=input_dropout,
+                           activation=activation,
+                           input_shape=tf.nest.flatten(input_shape))
     layers.append(keras.layers.Dense(int(n_outputs), activation='linear'))
     super().__init__(layers, name=name)
     self.input_ndim = len(self.input_shape) - 1
@@ -324,9 +326,6 @@ class FactorDiscriminator(SequentialNetwork):
       TC(z) : a scalar, approximation of the density-ratio that arises in the
         KL-term.
     """
-    # adding log_softmax here could provide more stable loss than minimizing
-    # the logit directly
-    # tf.nn.log_softmax
     d_z = self(self._to_samples(qZ_X), training=training)
     return tf.reduce_mean(d_z[..., -1] - d_z[..., 0])
 
@@ -352,7 +351,7 @@ class FactorDiscriminator(SequentialNetwork):
     z = tf.stop_gradient(z)
     z_logits = self(z, training=training)
     d_z = -tf.nn.log_softmax(z_logits, axis=-1)  # must be negative here
-    #
+    # for X_prime
     if qZ_Xprime is not None:
       z = self._to_samples(qZ_Xprime)
       z = tf.stop_gradient(z)
@@ -364,3 +363,6 @@ class FactorDiscriminator(SequentialNetwork):
     loss = 0.5 * (tf.reduce_mean(d_z[..., 0]) +
                   tf.reduce_mean(d_zperm[..., -1]))
     return loss
+
+  def classifier_loss(self, labels, qZ_X, qZ_Xprime=None, training=None):
+    pass

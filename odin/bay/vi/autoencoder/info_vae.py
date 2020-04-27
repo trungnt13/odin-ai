@@ -75,6 +75,17 @@ class InfoVAE(BetaVAE):
     return llk, div
 
 
+class InfoNCEVAE(BetaVAE):
+  r""" Mutual information bound based on Noise-Contrastive Estimation
+
+  Reference:
+    Tschannen, M., Djolonga, J., Rubenstein, P.K., Gelly, S., Lucic, M., 2019.
+      "On Mutual Information Maximization for Representation Learning".
+      arXiv:1907.13625 [cs, stat].
+    https://github.com/google-research/google-research/tree/master/mutual_information_representation_learning
+  """
+
+
 class IFVAE(BetaVAE):
   r""" Adversarial information factorized VAE
 
@@ -184,6 +195,7 @@ class MutualInfoVAE(BetaVAE):
 class FactorInfoVAE(BetaVAE):
   r""" This idea combining FactorVAE (Kim et al. 2018) and
   MutualInfoVAE (Ducau et al. 2017)
+  # TODO
 
   Reference:
     Kim, H., Mnih, A., 2018. Disentangling by Factorising.
