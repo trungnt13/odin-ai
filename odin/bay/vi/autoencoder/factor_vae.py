@@ -272,7 +272,7 @@ class FactorVAE(BetaVAE):
 # ===========================================================================
 # Same as Factor VAE but with multi-task semi-supervised extension
 # ===========================================================================
-class SemiFactorizedVAE(FactorVAE):
+class SemiFactorVAE(FactorVAE):
 
   def __init__(self,
                n_labels=10,
@@ -375,8 +375,46 @@ class Factor2VAE(FactorVAE):
     return llk, div
 
 
-class SemiFactor2VAE():
+class SemiFactor2VAE(SemiFactorVAE, Factor2VAE):
+  r""" Combination of Semi-supervised VAE and Factor-2 VAE which leverages
+  both labelled samples and the use of 2 latents space (1 for contents, and
+  1 for factors)
 
-  def __init__(self, **kwargs):
-    super().__init__(**kwargs)
-    exit()
+  Example:
+  ```
+  from odin.fuel import MNIST
+  from odin.bay.vi.autoencoder import SemiFactor2VAE
+
+  # load the dataset
+  ds = MNIST()
+  train = ds.create_dataset(partition='train', inc_labels=0.3, batch_size=128)
+  valid = ds.create_dataset(partition='valid', inc_labels=1.0, batch_size=128)
+
+  # construction of SemiFactor2VAE for MNIST dataset
+  vae = SemiFactor2VAE(encoder='mnist',
+                       outputs=RV((28, 28, 1), 'bern', name="Image"),
+                       latents=RV(10, 'diag', projection=True, name='Latents'),
+                       factors=RV(10, 'diag', projection=True, name='Factors'),
+                       alpha=10.,
+                       n_labels=10,
+                       ss_strategy='logsumexp')
+  vae.fit(
+      train,
+      valid=valid,
+      valid_freq=500,
+      compile_graph=True,
+      epochs=-1,
+      max_iter=8000,
+  )
+  ```
+  """
+
+  def __init__(self,
+               n_labels=10,
+               latents=RV(5, 'diag', projection=True, name='Latents'),
+               factors=RV(5, 'diag', projection=True, name='Factors'),
+               **kwargs):
+    super().__init__(n_labels=n_labels,
+                     latents=latents,
+                     factors=factors,
+                     **kwargs)
