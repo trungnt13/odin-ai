@@ -269,6 +269,73 @@ class FactorVAE(BetaVAE):
     return text
 
 
+# ===========================================================================
+# Same as Factor VAE but with multi-task semi-supervised extension
+# ===========================================================================
+class SemiFactorizedVAE(FactorVAE):
+
+  def __init__(self,
+               n_labels=10,
+               discriminator=dict(units=[1000, 1000, 1000, 1000, 1000]),
+               alpha=10.,
+               ss_strategy='logsumexp',
+               **kwargs):
+    if isinstance(discriminator, dict):
+      discriminator['n_outputs'] = n_labels
+      discriminator['ss_strategy'] = ss_strategy
+    super().__init__(discriminator=discriminator, **kwargs)
+    assert self.discriminator.output_shape[-1] == n_labels, \
+      "The discriminator has output shape %s, but need (n_labels + 1)=%d outputs" \
+        % (self.discriminator.output_shape, n_labels)
+    self.n_labels = n_labels
+    self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
+
+  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+    inputs = tf.nest.flatten(inputs)[:len(self.output_layers)]
+    if len(inputs) == 1:
+      inputs = inputs[0]
+    return super().encode(inputs,
+                          training=training,
+                          mask=mask,
+                          sample_shape=sample_shape,
+                          **kwargs)
+
+  def classify(self, inputs, proba=False, training=None):
+    qZ_X = self.encode(inputs, training=training)
+    if hasattr(self.discriminator, '_to_samples'):
+      z = self.discriminator._to_samples(qZ_X)
+    else:
+      z = qZ_X
+    logits = self.discriminator(z, training=training)
+    if proba:
+      return tf.nn.softmax(logits, axis=-1)
+    return logits
+
+  def classifier_loss(self,
+                      labels,
+                      qZ_X,
+                      mask=None,
+                      training=None,
+                      apply_alpha=True):
+    r""" The semi-supervised classifier loss, `mask` is given to indicate
+    labelled examples (i.e. `mask=1`), and otherwise, unlabelled examples.
+    """
+    loss = self.discriminator.classifier_loss(labels=labels,
+                                              qZ_X=qZ_X,
+                                              mask=mask,
+                                              training=training)
+    if apply_alpha:
+      loss = self.alpha * loss
+    return loss
+
+  @property
+  def is_semi_supervised(self):
+    return True
+
+
+# ===========================================================================
+# Separated latents for TC factorization
+# ===========================================================================
 class Factor2VAE(FactorVAE):
   r""" The same architecture as `FactorVAE`, however, utilize two different
   latents `Z` for contents generalizability and `C` for disentangling of
@@ -308,54 +375,8 @@ class Factor2VAE(FactorVAE):
     return llk, div
 
 
-# ===========================================================================
-# Same as Factor VAE but with multi-task semi-supervised extension
-# ===========================================================================
-class SemiFactorizedVAE(FactorVAE):
+class SemiFactor2VAE():
 
-  def __init__(self,
-               n_labels=10,
-               discriminator=dict(units=[1000, 1000, 1000, 1000, 1000]),
-               alpha=10.,
-               ss_strategy='logsumexp',
-               **kwargs):
-    if isinstance(discriminator, dict):
-      discriminator['n_outputs'] = n_labels
-      discriminator['ss_strategy'] = ss_strategy
-    super().__init__(discriminator=discriminator, **kwargs)
-    assert self.discriminator.output_shape[-1] == n_labels, \
-      "The discriminator has output shape %s, but need (n_labels + 1)=%d outputs" \
-        % (self.discriminator.output_shape, n_labels)
-    self.n_labels = n_labels
-    self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
-
-  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
-    inputs = tf.nest.flatten(inputs)[:len(self.output_layers)]
-    if len(inputs) == 1:
-      inputs = inputs[0]
-    return super().encode(inputs,
-                          training=training,
-                          mask=mask,
-                          sample_shape=sample_shape,
-                          **kwargs)
-
-  def classifier_loss(self,
-                      labels,
-                      qZ_X,
-                      mask=None,
-                      training=None,
-                      apply_alpha=True):
-    r""" The semi-supervised classifier loss, `mask` is given to indicate
-    labelled examples (i.e. `mask=1`), and otherwise, unlabelled examples.
-    """
-    loss = self.discriminator.classifier_loss(labels=labels,
-                                              qZ_X=qZ_X,
-                                              mask=mask,
-                                              training=training)
-    if apply_alpha:
-      loss = self.alpha * loss
-    return loss
-
-  @property
-  def is_semi_supervised(self):
-    return True
+  def __init__(self, **kwargs):
+    super().__init__(**kwargs)
+    exit()

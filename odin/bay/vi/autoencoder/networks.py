@@ -407,6 +407,7 @@ class FactorDiscriminator(SequentialNetwork):
     ## calculate the loss
     loss = 0.
     for y_true in labels:
+      tf.assert_rank(y_true, 2)
       loss += tf.nn.softmax_cross_entropy_with_logits(labels=y_true,
                                                       logits=z_logits)
     # check nothing is NaN
