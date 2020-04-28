@@ -218,7 +218,7 @@ class Experimenter():
 
   def __init__(self,
                save_path,
-               config_path="",
+               config_path,
                ncpu=1,
                exclude_keys=[],
                consistent_model=True):

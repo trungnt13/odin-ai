@@ -76,7 +76,7 @@ class ConditionalM2VAE(BetaVAE):
                           projection=False,
                           name='Image'),
                labels=RV(10, 'onehot', projection=False, name="Label"),
-               classifier=dict(units=1000, n_hidden_layers=5),
+               classifier=dict(units=[1000, 1000, 1000, 1000, 1000]),
                conditional_embedding="embed",
                alpha=1.,
                **kwargs):

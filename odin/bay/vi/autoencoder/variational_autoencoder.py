@@ -4,6 +4,7 @@ import glob
 import inspect
 import os
 import warnings
+from functools import partial
 from typing import Callable, List, Optional, Union
 
 import numpy as np
@@ -107,31 +108,32 @@ def _to_optimizer(optimizer, learning_rate, clipnorm):
 def _parse_network_alias(encoder, decoder):
   if isinstance(encoder, string_types):
     encoder = str(encoder).lower().strip()
-    from odin.bay.vi.autoencoder.networks import create_image_autoencoder
+    from odin.bay.vi.autoencoder.networks import ImageNet
     if encoder in ('mnist', 'fashion_mnist'):
-      encoder, decoder = create_image_autoencoder(image_shape=(28, 28, 1),
-                                                  latent_shape=(10,),
-                                                  projection_dim=128,
-                                                  activation='relu',
-                                                  center0=True,
-                                                  distribution='bernoulli',
-                                                  distribution_kw=dict(),
-                                                  skip_connect=False,
-                                                  convolution=True,
-                                                  input_shape=None)
+      kw = dict(image_shape=(28, 28, 1),
+                projection_dim=128,
+                activation='relu',
+                center0=True,
+                distribution='bernoulli',
+                distribution_kw=dict(),
+                skip_connect=False,
+                convolution=True,
+                input_shape=None)
+      encoder = ImageNet(**kw)
+      decoder = partial(ImageNet, decoding=True, **kw)
     elif encoder in ('shapes3d', 'dsprites', 'celeba', 'slt10', 'legofaces'):
       n_channels = 1 if encoder == 'dsprites' else 3
-      encoder, decoder = create_image_autoencoder(image_shape=(64, 64,
-                                                               n_channels),
-                                                  latent_shape=(10,),
-                                                  projection_dim=256,
-                                                  activation='relu',
-                                                  center0=True,
-                                                  distribution='bernoulli',
-                                                  distribution_kw=dict(),
-                                                  skip_connect=False,
-                                                  convolution=True,
-                                                  input_shape=None)
+      kw = dict(image_shape=(64, 64, n_channels),
+                projection_dim=256,
+                activation='relu',
+                center0=True,
+                distribution='bernoulli',
+                distribution_kw=dict(),
+                skip_connect=False,
+                convolution=True,
+                input_shape=None)
+      encoder = ImageNet(**kw)
+      decoder = partial(ImageNet, decoding=True, **kw)
     else:
       raise NotImplementedError(
           "No support for predefined network for dataset with name: '%s'" %
@@ -314,6 +316,8 @@ class VariationalAutoencoder(keras.Model):
     n_parameterization = 1
     if isinstance(outputs[0], RV):
       n_parameterization = outputs[0].n_parameterization
+    if isinstance(decoder, partial):
+      decoder = decoder(latent_shape=latent_shape)
     if decoder is not None:
       if isinstance(decoder, NetworkConfig):
         decoder = decoder.create_network(latent_shape, name="Decoder")
@@ -723,7 +727,7 @@ class VariationalAutoencoder(keras.Model):
           loss, metrics = step()
         # applying the gradients
         gradients = tape.gradient(loss, parameters)
-        if self._check_gradients: # for debugging
+        if self._check_gradients:  # for debugging
           grad_param = zip(gradients, parameters)
         else:
           grad_param = [

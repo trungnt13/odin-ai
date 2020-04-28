@@ -3,9 +3,6 @@ import tensorflow as tf
 
 from odin.bay.random_variable import RandomVariable as RV
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.autoencoder.factor_vae import FactorVAE
-
-__all__ = ['MultitaskVAE', 'SemiFactorizedVAE']
 
 
 class MultitaskVAE(BetaVAE):
@@ -84,43 +81,12 @@ class MultitaskVAE(BetaVAE):
   def is_semi_supervised(self):
     return True
 
-# ===========================================================================
-# SemiFactorizedVAE
-# ===========================================================================
 
-class SemiFactorizedVAE(FactorVAE):
+class MultiheadVAE(BetaVAE):
+  r""" Multi-head decoder for multiple output """
 
-  def __init__(self,
-               labels=RV(10, 'onehot', projection=True, name="Label"),
-               discriminator=dict(units=1000, n_hidden_layers=5),
-               alpha=10.,
-               beta=1.,
-               gamma=1.,
-               **kwargs):
-    labels = tf.nest.flatten(labels)
-    n_labels = int(sum(np.prod(l.event_shape) for l in labels))
-    if isinstance(discriminator, dict):
-      discriminator['n_outputs'] = 1 + n_labels
-    super().__init__(gamma=gamma,
-                     beta=beta,
-                     discriminator=discriminator,
-                     **kwargs)
-    assert self.discriminator.output_shape[-1] == (n_labels + 1), \
-      "The discriminator has output shape %s, but need (n_labels + 1)=%d outputs" \
-        % (self.discriminator.output_shape, n_labels + 1)
-    self.labels = labels
-    self.n_labels = n_labels
-    self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
-
-  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
-    inputs = tf.nest.flatten(inputs)[:len(self.output_layers)]
-    if len(inputs) == 1:
-      inputs = inputs[0]
-    return super().encode(inputs,
-                          training=training,
-                          mask=mask,
-                          sample_shape=sample_shape,
-                          **kwargs)
+  def __init__(self, alpha=10., beta=1., linear_head=True, **kwargs):
+    super().__init__(beta=beta, **kwargs)
 
   @property
   def is_semi_supervised(self):

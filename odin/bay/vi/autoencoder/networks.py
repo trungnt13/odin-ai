@@ -278,10 +278,17 @@ class FactorDiscriminator(SequentialNetwork):
   Arguments:
     units : a list of Integer, the number of hidden units for each hidden layer.
     n_outputs : an Integer, number of output units
+    ss_strategy : {'sum', 'logsumexp', 'mean', 'max', 'min'}.
+      Strategy for combining the outputs semi-supervised learning:
+      - 'logsumexp' : used for semi-supervised GAN in (Salimans T. 2016)
 
   Reference:
     Kim, H., Mnih, A., 2018. "Disentangling by Factorising".
       arXiv:1802.05983 [cs, stat].
+    Salimans, T., Goodfellow, I., Zaremba, W., et al 2016.
+      "Improved Techniques for Training GANs".
+      arXiv:1606.03498 [cs.LG].
+
   """
 
   def __init__(self,
@@ -290,8 +297,9 @@ class FactorDiscriminator(SequentialNetwork):
                input_dropout=0.,
                dropout=0.,
                units=[1000, 1000, 1000, 1000, 1000],
-               n_outputs=2,
+               n_outputs=1,
                activation=tf.nn.leaky_relu,
+               ss_strategy='logsumexp',
                name="FactorDiscriminator"):
     layers = dense_network(units=units,
                            batchnorm=batchnorm,
@@ -303,6 +311,9 @@ class FactorDiscriminator(SequentialNetwork):
     layers.append(keras.layers.Dense(int(n_outputs), activation='linear'))
     super().__init__(layers, name=name)
     self.input_ndim = len(self.input_shape) - 1
+    self.n_outputs = int(n_outputs)
+    self.ss_strategy = str(ss_strategy)
+    assert self.ss_strategy in {'sum', 'logsumexp', 'mean', 'max', 'min'}
 
   def _to_samples(self, qZ_X):
     qZ_X = tf.nest.flatten(qZ_X)
@@ -310,9 +321,21 @@ class FactorDiscriminator(SequentialNetwork):
     z = tf.reshape(z, tf.concat([(-1,), z.shape[-self.input_ndim:]], axis=0))
     return z
 
+  def _tc_logits(self, logits):
+    # use ss_strategy to infer appropriate logits value for
+    # total-correlation estimator (logits for q(z)) in case of n_outputs > 1
+    if self.n_outputs == 1:
+      return logits[..., 0]
+    return getattr(tf, 'reduce_%s' % self.ss_strategy)(logits, axis=-1)
+
   def total_correlation(self, qZ_X, training=None):
     r""" Total correlation Eq(3)
-      `TC(z) = KL(q(z)||q(z-)) = E_q(z)[log(q(z) / q(z-))]`
+    ```
+    TC(z) = KL(q(z)||q(z-)) = E_q(z)[log(q(z) / q(z-))]
+          ~ E_q(z)[ log(D(z)) - log(1 - D(z)) ]
+    ```
+
+    We want to minimize the total correlation to achieve factorized latent units
 
     Note:
       In many implementation, `log(q(z-)) - log(q(z))` is referred as `total
@@ -326,8 +349,14 @@ class FactorDiscriminator(SequentialNetwork):
       TC(z) : a scalar, approximation of the density-ratio that arises in the
         KL-term.
     """
-    d_z = self(self._to_samples(qZ_X), training=training)
-    return tf.reduce_mean(d_z[..., -1] - d_z[..., 0])
+    z = self._to_samples(qZ_X)
+    logits = self(z, training=training)
+    logits = self._tc_logits(logits)
+    # in case using sigmoid, other implementation use -logits here but it
+    # should be logits.
+    # if it is negative here, TC is reduce, but reasonably, it must be positive
+    # (?)
+    return tf.reduce_mean(logits)
 
   def dtc_loss(self, qZ_X, qZ_Xprime=None, training=None):
     r""" Discriminated total correlation loss Algorithm(2)
@@ -349,20 +378,37 @@ class FactorDiscriminator(SequentialNetwork):
     # we don't want the gradient to be propagated to the encoder
     z = self._to_samples(qZ_X)
     z = tf.stop_gradient(z)
-    z_logits = self(z, training=training)
-    d_z = -tf.nn.log_softmax(z_logits, axis=-1)  # must be negative here
+    z_logits = self._tc_logits(self(z, training=training))
+    # using log_softmax function give more numerical stabalized results than
+    # logsumexp yourself.
+    d_z = -tf.math.log_sigmoid(z_logits)  # must be negative here
     # for X_prime
     if qZ_Xprime is not None:
       z = self._to_samples(qZ_Xprime)
       z = tf.stop_gradient(z)
     z_perm = permute_dims(z)
-    zperm_logits = self(z_perm, training=training)
-    d_zperm = -tf.nn.log_softmax(zperm_logits, axis=-1)
+    zperm_logits = self._tc_logits(self(z_perm, training=training))
+    d_zperm = -tf.math.log_sigmoid(zperm_logits)  # also negative here
     # reduce the negative of d_z, and the positive of d_zperm
     # this equal to cross_entropy(d_z, zeros) + cross_entropy(d_zperm, ones)
-    loss = 0.5 * (tf.reduce_mean(d_z[..., 0]) +
-                  tf.reduce_mean(d_zperm[..., -1]))
+    loss = 0.5 * (tf.reduce_mean(d_z) + tf.reduce_mean(zperm_logits + d_zperm))
     return loss
 
-  def classifier_loss(self, labels, qZ_X, qZ_Xprime=None, training=None):
-    pass
+  def classifier_loss(self, labels, qZ_X, mask=None, training=None):
+    labels = tf.nest.flatten(labels)
+    z = self._to_samples(qZ_X)
+    z = tf.stop_gradient(z)
+    z_logits = self(z, training=training)
+    ## applying the mask (1-labelled, 0-unlablled)
+    if mask is not None:
+      mask = tf.reshape(mask, (-1,))
+      labels = [tf.boolean_mask(y, mask, axis=0) for y in labels]
+      z_logits = tf.boolean_mask(z_logits, mask, axis=0)
+    ## calculate the loss
+    loss = 0.
+    for y_true in labels:
+      loss += tf.nn.softmax_cross_entropy_with_logits(labels=y_true,
+                                                      logits=z_logits)
+    # check nothing is NaN
+    # tf.assert_equal(tf.reduce_all(tf.logical_not(tf.math.is_nan(loss))), True)
+    return tf.reduce_mean(loss)
