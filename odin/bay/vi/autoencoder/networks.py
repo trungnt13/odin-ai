@@ -308,17 +308,20 @@ class FactorDiscriminator(SequentialNetwork):
                            input_dropout=input_dropout,
                            activation=activation,
                            input_shape=tf.nest.flatten(input_shape))
-    layers.append(keras.layers.Dense(int(n_outputs), activation='linear'))
+    layers.append(
+        keras.layers.Dense(int(n_outputs), activation='linear', name="Output"))
     super().__init__(layers, name=name)
     self.input_ndim = len(self.input_shape) - 1
     self.n_outputs = int(n_outputs)
     self.ss_strategy = str(ss_strategy)
     assert self.ss_strategy in {'sum', 'logsumexp', 'mean', 'max', 'min'}
 
-  def _to_samples(self, qZ_X):
+  def _to_samples(self, qZ_X, stop_grad=False):
     qZ_X = tf.nest.flatten(qZ_X)
     z = tf.concat([tf.convert_to_tensor(q) for q in qZ_X], axis=-1)
     z = tf.reshape(z, tf.concat([(-1,), z.shape[-self.input_ndim:]], axis=0))
+    if stop_grad:
+      z = tf.stop_gradient(z)
     return z
 
   def _tc_logits(self, logits):
@@ -376,16 +379,14 @@ class FactorDiscriminator(SequentialNetwork):
       scalar - loss value for training the discriminator
     """
     # we don't want the gradient to be propagated to the encoder
-    z = self._to_samples(qZ_X)
-    z = tf.stop_gradient(z)
+    z = self._to_samples(qZ_X, stop_grad=True)
     z_logits = self._tc_logits(self(z, training=training))
     # using log_softmax function give more numerical stabalized results than
     # logsumexp yourself.
     d_z = -tf.math.log_sigmoid(z_logits)  # must be negative here
     # for X_prime
     if qZ_Xprime is not None:
-      z = self._to_samples(qZ_Xprime)
-      z = tf.stop_gradient(z)
+      z = self._to_samples(qZ_Xprime, stop_grad=True)
     z_perm = permute_dims(z)
     zperm_logits = self._tc_logits(self(z_perm, training=training))
     d_zperm = -tf.math.log_sigmoid(zperm_logits)  # also negative here
@@ -396,8 +397,7 @@ class FactorDiscriminator(SequentialNetwork):
 
   def classifier_loss(self, labels, qZ_X, mask=None, training=None):
     labels = tf.nest.flatten(labels)
-    z = self._to_samples(qZ_X)
-    z = tf.stop_gradient(z)
+    z = self._to_samples(qZ_X, stop_grad=True)
     z_logits = self(z, training=training)
     ## applying the mask (1-labelled, 0-unlablled)
     if mask is not None:

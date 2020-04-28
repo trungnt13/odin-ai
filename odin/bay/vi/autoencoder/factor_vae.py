@@ -254,7 +254,11 @@ class FactorVAE(BetaVAE):
       logging_interval=2,
       log_tag='',
       log_path=None,
+      skip_fitted=False,
       **kwargs):
+    r""" Override the original fit method of keras to provide simplified
+    procedure with `VariationalAutoencoder.optimize` and
+    `VariationalAutoencoder.train_steps` """
     kw = dict(locals())
     del kw['self']
     del kw['__class__']
@@ -273,6 +277,15 @@ class FactorVAE(BetaVAE):
 # Same as Factor VAE but with multi-task semi-supervised extension
 # ===========================================================================
 class SemiFactorVAE(FactorVAE):
+  r""" Semi-supervised Factor VAE
+
+  Note:
+    The classifier won't be optimized during the training, with an unstable
+    latent space.
+
+    But if a VAE is pretrained, then, the extracted latents  are feed into
+    the classifier for training, then it could reach > 90% accuracy easily.
+  """
 
   def __init__(self,
                n_labels=10,
@@ -289,6 +302,15 @@ class SemiFactorVAE(FactorVAE):
         % (self.discriminator.output_shape, n_labels)
     self.n_labels = n_labels
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
+    self._is_pretraining = False
+
+  def pretrain(self):
+    self._is_pretraining = True
+    return self
+
+  def finetune(self):
+    self._is_pretraining = False
+    return self
 
   def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
     inputs = tf.nest.flatten(inputs)[:len(self.output_layers)]

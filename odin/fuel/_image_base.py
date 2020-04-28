@@ -29,22 +29,38 @@ def _partition(part, train=None, valid=None, test=None, unlabeled=None):
 
 class ImageDataset:
 
-  def sample_images(self,
-                    save_path=None,
-                    dpi=80,
-                    n_samples=25,
-                    return_labels=False,
-                    seed=1):
+  def sample_images(self, save_path=None, dpi=80, n_samples=25, seed=1):
     r""" Sample a subset of image from training set """
-    # TODO: return_labels
     n = int(np.sqrt(n_samples))
     assert n * n == n_samples, "Sqrt of n_samples is not an integer"
     train = self.create_dataset(batch_size=n_samples,
                                 partition='train',
-                                inc_labels=False)
-    images = [x for x in train.take(10)]
+                                inc_labels=0.5)
+    # prepare the data
+    images = []
+    labels = []
+    mask = []
+    for data in train.take(10):
+      if isinstance(data, dict):
+        X, y = data['inputs']
+        mask.append(data['mask'])
+      elif isinstance(data, (tuple, list)):
+        if len(data) >= 2:
+          X, y = data[:2]
+        else:
+          X = data[0]
+          y = None
+      else:
+        X = data
+        y = None
+      images.append(X)
+      if y is not None:
+        labels.append(y)
     rand = np.random.RandomState(seed=seed)
-    images = images[rand.choice(10)].numpy()
+    idx = rand.choice(10)
+    images = images[idx].numpy()
+    labels = labels[idx].numpy() if len(labels) > 0 else None
+    mask = mask[idx].numpy().ravel() if len(mask) > 0 else None
     # plot and save the figure
     if save_path is not None:
       plot_images = images
@@ -55,8 +71,12 @@ class ImageDataset:
       for i in range(n_samples):
         plt.subplot(n, n, i + 1)
         img = plot_images[i]
-        plt.imshow(img)
+        plt.imshow(img, cmap='gray' if img.ndim == 2 else None)
         plt.axis('off')
+        if labels is not None:
+          lab = np.argmax(labels[i])
+          m = True if mask is None else mask[i]
+          plt.title("Label:%s Mask:%s" % (lab, m))
       plt.tight_layout()
       fig.savefig(save_path, dpi=int(dpi))
       plt.close(fig)

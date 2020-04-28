@@ -10,8 +10,14 @@ class MultitaskVAE(BetaVAE):
 
   Example:
   ```
+  from odin.fuel import MNIST
+  from odin.bay.vi.autoencoder import MultitaskVAE
+
+  # load the dataset, include 50% of the labels for semi-supervised objective
   ds = MNIST()
   train = ds.create_dataset(partition='train', inc_labels=0.5)
+
+  # create and train the model
   vae = MultitaskVAE(encoder='mnist',
                      outputs=RV((28, 28, 1),
                                 'bern',
