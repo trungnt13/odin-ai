@@ -769,6 +769,11 @@ class VariationalAutoencoder(keras.Model):
     `VariationalAutoencoder.train_steps`
 
     Arguments:
+      optimizer : Text, instance of `tf.optimizers.Optimizer`
+        or `None`. A list of optimizers is accepted in case of multiple
+        steps training.
+        - If `None`, re-use stored optimizer, raise `RuntimeError` if no
+          predefined optimizer found.
       callback : a Callable, called every `valid_freq` steps or
         `valid_interval` seconds
       compile_graph : a Boolean. If True, using tensorflow autograph for
@@ -808,6 +813,19 @@ class VariationalAutoencoder(keras.Model):
                 max_iter=max_iter,
                 callback=callback)
     self._trainstep_kw = dict()
+    return self
+
+  def plot_learning_curves(self,
+                           path="/tmp/tmp.png",
+                           summary_steps=[100, 10],
+                           show_validation=True,
+                           dpi=100):
+    assert self.trainer is not None, \
+      "fit method must be called before plotting learning curves"
+    self.trainer.plot_learning_curves(path=path,
+                                      summary_steps=summary_steps,
+                                      show_validation=show_validation,
+                                      dpi=dpi)
     return self
 
   def __str__(self):
