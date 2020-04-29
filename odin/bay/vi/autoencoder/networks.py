@@ -316,9 +316,12 @@ class FactorDiscriminator(SequentialNetwork):
     self.ss_strategy = str(ss_strategy)
     assert self.ss_strategy in {'sum', 'logsumexp', 'mean', 'max', 'min'}
 
-  def _to_samples(self, qZ_X, stop_grad=False):
+  def _to_samples(self, qZ_X, mean=False, stop_grad=False):
     qZ_X = tf.nest.flatten(qZ_X)
-    z = tf.concat([tf.convert_to_tensor(q) for q in qZ_X], axis=-1)
+    if mean:
+      z = tf.concat([q.mean() for q in qZ_X], axis=-1)
+    else:
+      z = tf.concat([tf.convert_to_tensor(q) for q in qZ_X], axis=-1)
     z = tf.reshape(z, tf.concat([(-1,), z.shape[-self.input_ndim:]], axis=0))
     if stop_grad:
       z = tf.stop_gradient(z)
@@ -395,9 +398,9 @@ class FactorDiscriminator(SequentialNetwork):
     loss = 0.5 * (tf.reduce_mean(d_z) + tf.reduce_mean(zperm_logits + d_zperm))
     return loss
 
-  def classifier_loss(self, labels, qZ_X, mask=None, training=None):
+  def classifier_loss(self, labels, qZ_X, mean=False, mask=None, training=None):
     labels = tf.nest.flatten(labels)
-    z = self._to_samples(qZ_X, stop_grad=True)
+    z = self._to_samples(qZ_X, mean=mean, stop_grad=True)
     z_logits = self(z, training=training)
     ## applying the mask (1-labelled, 0-unlablled)
     if mask is not None:

@@ -214,6 +214,12 @@ class Experimenter():
     on_train(cfg: DictConfig, model_path: str)
       call when training start
 
+  Example
+  ```
+  CONFIG = r"data: 1\nmodel: 2"
+  exp = Experimenter(save_path="/tmp/exptmp", config_path=CONFIG)
+  exp.run()
+  ```
   """
 
   def __init__(self,
@@ -424,19 +430,19 @@ class Experimenter():
 
   def on_load_data(self, cfg: DictConfig):
     r""" Cleaning """
-    pass
+    print("LOAD DATA!")
 
   def on_create_model(self, cfg: DictConfig):
     r""" Cleaning """
-    pass
+    print("CREATE MODEL!", cfg)
 
   def on_load_model(self, cfg: DictConfig, model_path: str):
     r""" Cleaning """
-    pass
+    print("LOAD MODEL:", model_path)
 
   def on_train(self, cfg: DictConfig, model_path: str):
     r""" Cleaning """
-    pass
+    print("TRAINING:", model_path)
 
   ####################### Basic logics
   def _run(self, cfg: DictConfig):

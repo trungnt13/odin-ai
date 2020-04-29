@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import glob
 import inspect
 import os
+import pickle
 import warnings
 from functools import partial
 from typing import Callable, List, Optional, Union
@@ -369,11 +370,20 @@ class VariationalAutoencoder(keras.Model):
       if len(files) > 0 and all(os.path.isfile(f) for f in files):
         self.load_weights(path)
 
+  def load_weights(self, filepath):
+    trainer_path = filepath + '.trainer'
+    if os.path.exist(trainer_path):
+      with open(trainer_path, 'rb') as f:
+        pickle.load(f)
+    return super().load_weights(filepath, by_name=False, skip_mismatch=False)
+
   def save_weights(self, filepath, overwrite=True):
     r""" Just copy this function here to fix the `save_format` to 'tf'
 
     Since saving 'h5' will drop certain variables.
     """
+    with open(filepath + '.trainer', 'wb') as f:
+      pickle.dump(self.trainer, f)
     return super().save_weights(filepath=filepath,
                                 overwrite=overwrite,
                                 save_format='tf')
@@ -784,8 +794,9 @@ class VariationalAutoencoder(keras.Model):
     if self.is_fitted and skip_fitted:
       return self
     from odin.exp.trainer import Trainer
-    trainer = Trainer()
-    self.trainer = trainer
+    if self.trainer is None:
+      trainer = Trainer()
+      self.trainer = trainer
     if log_tag is None or len(log_tag) == 0:
       log_tag = self.__class__.__name__
     # create the optimizer
@@ -800,7 +811,7 @@ class VariationalAutoencoder(keras.Model):
     # if already called repeat, then no need to repeat more
     if hasattr(train, 'repeat'):
       train = train.repeat(int(epochs))
-    trainer.fit(train_ds=train,
+    self.trainer.fit(train_ds=train,
                 optimize=self.optimize,
                 valid_ds=valid,
                 valid_freq=valid_freq,
