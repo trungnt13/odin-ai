@@ -67,10 +67,10 @@ class ScoreBoard:
   multiple experiments.
 
   Note:
-    it might be easier to just use NOSQL, however, we are not dealing with
+    it might be easier to just use NoSQL, however, we are not dealing with
     performance critical app so SQL still a more intuitive approach.
 
-    All names are strip lower case
+    All column names are lower case
   """
 
   def __init__(self, path=":memory:"):
@@ -81,10 +81,6 @@ class ScoreBoard:
     self.path = path
     self._conn = None
     self._c = None
-
-  def assert_recording(self):
-    assert isinstance(self._c, sqlite3.Cursor), \
-      "Call ScoreBoard.recording to set the database in record mode"
 
   @property
   def conn(self) -> sqlite3.Connection:
@@ -105,6 +101,7 @@ class ScoreBoard:
   def cursor(self):
     c = self.conn.cursor()
     yield c
+    self.conn.commit()
     c.close()
 
   def is_table_exist(self, name):
@@ -117,6 +114,8 @@ class ScoreBoard:
     return True
 
   def get_all_tables(self, python_type=True):
+    r""" Return a dictionary mapping from table name to columns and
+    data type """
     with self.cursor() as c:
       name = c.execute(
           f"""SELECT name FROM sqlite_master WHERE type='table'""").fetchall()
@@ -127,6 +126,35 @@ class ScoreBoard:
                 c.execute(f"""PRAGMA table_info({table_name})""").fetchall()]
         tables[table_name] = OrderedDict(desc)
     return tables
+
+  def get_nrow(self, table):
+    table = str(table).strip().lower()
+    return self.select(f"SELECT count() FROM {table}")[0]
+
+  def get_table(self, table, where="", distinct=False, newest_first=True):
+    r""" Get all rows from given table, exclude the column 'timestamp'
+
+    Example
+    ```
+    get_table("t1", where="a=1 and b=2", distinct=True)
+    ```
+    """
+    order = ""
+    if newest_first:
+      order = "ORDER BY timestamp DESC"
+    if distinct:
+      distinct = "DISTINCT"
+    else:
+      distinct = ""
+    where = str(where)
+    if len(where) > 0 and 'where' not in where.lower():
+      where = "WHERE " + where
+    # remove the timestamp
+    table = str(table).strip().lower()
+    return [
+        row[:-1] for row in self.select(
+            f"SELECT {distinct} * FROM {table} {where} {order}")
+    ]
 
   def select(self,
              query=None,
@@ -210,26 +238,61 @@ class ScoreBoard:
     return rows
 
   ######## Create and insert
-  def _create_table(self, name, row):
+  def _create_table(self, c, name, row, unique):
     keys = []
+    keys_name = []
     for k, v in row.items():
-      keys.append([str(k).strip().lower(), _to_sqltype(v)])
+      k = str(k).strip().lower()
+      keys_name.append(k)
+      keys.append([k, _to_sqltype(v)])
     keys = ", ".join([" ".join(i) for i in keys])
-    query = f""" CREATE TABLE IF NOT EXISTS {name} ({keys});"""
-    self._c.execute(query)
-    self.conn.commit()
+    if unique:
+      # no timestamp
+      unique = ", UNIQUE (%s)" % ','.join(keys_name[:-1])
+    else:
+      unique = ""
+    query = f""" CREATE TABLE IF NOT EXISTS {name} ({keys}{unique});"""
+    try:
+      c.execute(query)
+    except sqlite3.OperationalError as e:
+      print(query)
+      raise e
 
-  def write(self, table='def', **row):
-    self.assert_recording()
+  def _write_table(self, c, table, unique, **row):
     row['timestamp'] = datetime.now().timestamp()
-    self._create_table(table, row)
+    self._create_table(c, table, row, unique)
     table_name = str(table).strip().lower()
     cols = ",".join([str(k).strip().lower() for k in row.keys()])
     fmt = ','.join(['?'] * len(row))
-    self._c.execute(f"""INSERT INTO {table_name} ({cols}) VALUES({fmt});""",
-                    [_data(v) for v in row.values()])
+    try:
+      c.execute(f"""INSERT INTO {table_name} ({cols}) VALUES({fmt});""",
+                [_data(v) for v in row.values()])
+    except sqlite3.IntegrityError as e:
+      if unique:
+        pass
+      else:
+        raise e
+
+  def write(self, table, unique=False, **row):
+    if self._c is None:
+      with self.cursor() as c:
+        self._write_table(c, table=table, unique=unique, **row)
+    else:
+      self._write_table(self._c, table=table, unique=unique, **row)
+    return self
 
   ######## others
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    text = "ScoreBoard: %s\n" % self.path
+    for tab, attrs in self.get_all_tables(python_type=False).items():
+      text += " Table: '%s' %d(rows)\n" % (tab, self.get_nrow(tab))
+      for k, t in attrs.items():
+        text += "  (%-7s) %s\n" % (t, k)
+    return text[:-1]
+
   def close(self):
     if self._c is not None:
       self._c.close()

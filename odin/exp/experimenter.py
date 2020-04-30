@@ -18,6 +18,7 @@ from numbers import Number
 from pandas import DataFrame
 from six import string_types
 
+from odin.exp.scores import ScoreBoard
 from odin.utils import (as_tuple, clean_folder, get_all_files,
                         get_formatted_datetime)
 from odin.utils.crypto import md5_checksum, md5_folder
@@ -261,6 +262,7 @@ class Experimenter():
     self._exclude_keys = as_tuple(exclude_keys, t=string_types)
     self.consistent_model = bool(consistent_model)
     self._train_mode = True
+    self._db = None
 
   def train(self):
     r""" Prepare this experimenter for training models """
@@ -333,17 +335,27 @@ class Experimenter():
     return self._exclude_keys
 
   @property
-  def db_path(self):
-    return os.path.join(self._save_path, 'exp.db')
+  def db(self) -> ScoreBoard:
+    r""" Path to the database recording all experiments configuration and
+    results """
+    if self._db is None:
+      self._db = ScoreBoard(os.path.join(self._save_path, 'exp.db'))
+    return self._db
 
   @property
   def configs(self) -> DictConfig:
     return deepcopy(self._configs)
 
   ####################### Helpers
-  def write_history(self, *msg):
+  def _write_history(self, path, *msg):
+    date = get_formatted_datetime(only_number=False)
+    self.db.write(table='run',
+                  path=path,
+                  date=date,
+                  **dict([m.split(':') for m in msg]))
     with open(os.path.join(self._save_path, 'history.txt'), 'a+') as f:
-      f.write("[%s]" % get_formatted_datetime(only_number=False))
+      f.write("[%s]" % date)
+      f.write("path: %s\n" % path)
       for i, m in enumerate(msg):
         sep = " " if i == 0 else "\t"
         f.write("%s%s\n" % (sep, str(m)))
@@ -446,6 +458,8 @@ class Experimenter():
 
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
+    hash_key = Experimenter.hash_config(cfg, self.exclude_keys)
+    self.db.write('config', unique=True, hash=hash_key, **cfg)
     # the cfg is dispatched by hydra.run_job, we couldn't change anything here
     logger = LOGGER
     with warnings.catch_warnings():
@@ -542,9 +556,9 @@ class Experimenter():
     is_multirun = any(',' in ovr for ovr in overrides) or \
       any(',' in arg and '=' in arg for arg in sys.argv)
     # write history
-    self.write_history(command, "overrides: %s" % str(overrides),
-                       "strict: %s" % str(strict), "ncpu: %d" % ncpu,
-                       "multirun: %s" % str(is_multirun))
+    self._write_history(command, "overrides:%s" % str(overrides),
+                        "strict:%s" % str(strict), "ncpu:%d" % ncpu,
+                        "multirun:%s" % str(is_multirun))
     # generate app help
     hlp = '\n\n'.join([
         "%s - %s" % (str(key), ', '.join(sorted(as_tuple(val, t=str))))
