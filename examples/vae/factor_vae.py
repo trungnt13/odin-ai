@@ -25,14 +25,14 @@ np.random.seed(1)
 
 # ===========================================================================
 # Helpers
-# vae=factor,factor2 ds=dsprites,mnist,shapes3d pretrain=0,1000 finetune=8000 maxtc=True,False
-# vae=semi,semi2 ds=dsprites,mnist,shapes3d pretrain=0,1000 finetune=8000 alpha=1,10 strategy=logsumexp,max
+# vae=factor,factor2 ds=legofaces,mnist pretrain=0,1000 finetune=8000 maxtc=True,False
+# vae=semi,semi2 ds=legofaces,mnist pretrain=0,1000 finetune=8000 alpha=1,10 strategy=logsumexp,max
 # -m -ncpu=2
 # ===========================================================================
 CONFIG = \
 r"""
-ds: dsprites
-model: factor
+ds: mnist
+vae: factor
 pretrain: 0
 finetune: 8000
 alpha: 1.
@@ -99,14 +99,20 @@ class Factor(Experimenter):
     ds.sample_images(save_path=os.path.join(self.save_path, 'samples.png'))
     train = ds.create_dataset(partition='train',
                               inc_labels=float(cfg.semi),
-                              batch_size=128)
-    valid = ds.create_dataset(partition='valid', inc_labels=1.0, batch_size=128)
+                              batch_size=128,
+                              drop_remainder=True)
+    valid = ds.create_dataset(partition='valid',
+                              inc_labels=1.0,
+                              batch_size=128,
+                              drop_remainder=True)
     train_u = ds.create_dataset(partition='train',
                                 inc_labels=False,
-                                batch_size=128)
+                                batch_size=128,
+                                drop_remainder=True)
     valid_u = ds.create_dataset(partition='valid',
                                 inc_labels=False,
-                                batch_size=128)
+                                batch_size=128,
+                                drop_remainder=True)
     self.ds = ds
     self.train, self.train_u = train, train_u
     self.valid, self.valid_u = valid, valid_u
@@ -122,7 +128,7 @@ class Factor(Experimenter):
               lamda=cfg.lamda,
               maximize_tc=bool(cfg.maxtc),
               path=os.path.join(model_dir, 'weight'))
-    if cfg.model == 'factor':
+    if cfg.vae == 'factor':
       del kw['alpha']
       model = FactorVAE(
           encoder=cfg.ds,
@@ -130,7 +136,7 @@ class Factor(Experimenter):
           latents=RV(20, 'diag', projection=True, name="Latents"),
           **kw,
       )
-    elif cfg.model == 'factor2':
+    elif cfg.vae == 'factor2':
       del kw['alpha']
       model = Factor2VAE(
           encoder=cfg.ds,
@@ -139,7 +145,7 @@ class Factor(Experimenter):
           factors=RV(10, 'diag', projection=True, name='Factors'),
           **kw,
       )
-    elif cfg.model == 'semi':
+    elif cfg.vae == 'semi':
       model = SemiFactorVAE(
           encoder=cfg.ds,
           outputs=RV(self.ds.shape, 'bern', name="Image"),
@@ -148,7 +154,7 @@ class Factor(Experimenter):
           ss_strategy=cfg.strategy,
           **kw,
       )
-    elif cfg.model == 'semi2':
+    elif cfg.vae == 'semi2':
       model = SemiFactor2VAE(
           encoder=cfg.ds,
           outputs=RV(self.ds.shape, 'bern', name="Image"),
@@ -159,7 +165,7 @@ class Factor(Experimenter):
           **kw,
       )
     else:
-      raise NotImplementedError("No support for model: %s" % cfg.model)
+      raise NotImplementedError("No support for model: %s" % cfg.vae)
     # store the model
     self.model = model
     if cfg.verbose:

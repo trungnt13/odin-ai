@@ -204,9 +204,11 @@ class CelebA(ImageDataset):
         valid=(self.valid_files, self.valid_attr),
         test=(self.test_files, self.test_attr),
     )
+    # convert [-1, 1] to [0., 1.]
+    attrs = (attrs + 1.) / 2
     images = tf.data.Dataset.from_tensor_slices(images).map(read, parallel)
     if inc_labels:
-      attrs = tf.data.Dataset.from_tensor_slices(self.train_attr)
+      attrs = tf.data.Dataset.from_tensor_slices(attrs)
       images = tf.data.Dataset.zip((images, attrs))
       if 0. < inc_labels < 1.:  # semi-supervised mask
         images = images.map(mask)
