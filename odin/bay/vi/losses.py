@@ -114,6 +114,10 @@ def total_correlation(z_samples, qZ_X: Distribution):
     z_mean: [batch_size, num_latents]-tensor with mean of the encoder.
     z_logvar: [batch_size, num_latents]-tensor with log variance of the encoder.
 
+  Note:
+    This involve calculating pair-wise distance, memory complexity up to
+    `O(n*n*d)`.
+
   Returns:
     Total correlation estimated on a batch.
 

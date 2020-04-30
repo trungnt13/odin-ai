@@ -4,6 +4,7 @@ import itertools
 import os
 import re
 import sqlite3
+import warnings
 from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import datetime
@@ -19,7 +20,7 @@ from six import string_types
 # ===========================================================================
 def _to_sqltype(x):
   if isinstance(x, Number):
-    if isinstance(x, int) or x.is_integer():
+    if float(x).is_integer():
       return "INTEGER"
     return "REAL"
   if isinstance(x, np.ndarray):
@@ -41,7 +42,7 @@ def _data(x):
   if isinstance(x, string_types):
     return x
   elif isinstance(x, Number):
-    if isinstance(x, int) or x.is_integer():
+    if float(x).is_integer():
       return int(x)
     return float(x)
   b = BytesIO()
@@ -73,7 +74,7 @@ class ScoreBoard:
     All column names are lower case
   """
 
-  def __init__(self, path=":memory:"):
+  def __init__(self, path=":memory:", read_only=False):
     if ':memory:' not in path:
       path = os.path.abspath(os.path.expanduser(path))
       if os.path.isdir(path):
@@ -81,11 +82,26 @@ class ScoreBoard:
     self.path = path
     self._conn = None
     self._c = None
+    self._read_only = bool(read_only)
+
+  @property
+  def read_only(self):
+    return self._read_only
+
+  @read_only.setter
+  def read_only(self, ro):
+    if ro != self._read_only:
+      self._read_only = bool(ro)
+      if self._conn is not None:
+        self._conn.close()
 
   @property
   def conn(self) -> sqlite3.Connection:
     if self._conn is None:
-      self._conn = sqlite3.connect(self.path)
+      if self.read_only:
+        self._conn = sqlite3.connect('file:%s?mode=ro' % self.path, uri=True)
+      else:
+        self._conn = sqlite3.connect(self.path)
     return self._conn
 
   @contextmanager
@@ -130,6 +146,13 @@ class ScoreBoard:
   def get_nrow(self, table):
     table = str(table).strip().lower()
     return self.select(f"SELECT count() FROM {table}")[0]
+
+  def get_column_names(self, table):
+    table = str(table).strip().lower()
+    with self.cursor() as c:
+      cols = c.execute(f"""PRAGMA table_info({table});""").fetchall()
+      cols = [i[1] for i in cols[:-1]]
+    return cols
 
   def get_table(self, table, where="", distinct=False, newest_first=True):
     r""" Get all rows from given table, exclude the column 'timestamp'
@@ -238,7 +261,7 @@ class ScoreBoard:
     return rows
 
   ######## Create and insert
-  def _create_table(self, c, name, row, unique):
+  def _create_table(self, _cursor, name, row, unique):
     keys = []
     keys_name = []
     for k, v in row.items():
@@ -253,20 +276,23 @@ class ScoreBoard:
       unique = ""
     query = f""" CREATE TABLE IF NOT EXISTS {name} ({keys}{unique});"""
     try:
-      c.execute(query)
+      _cursor.execute(query)
     except sqlite3.OperationalError as e:
       print(query)
       raise e
 
-  def _write_table(self, c, table, unique, **row):
+  def _write_table(self, _cursor, table, unique, **row):
+    if self.read_only:
+      warnings.warn("Cannot write to table: %s %s" % (table, str(row)))
+      return
     row['timestamp'] = datetime.now().timestamp()
-    self._create_table(c, table, row, unique)
+    self._create_table(_cursor, table, row, unique)
     table_name = str(table).strip().lower()
     cols = ",".join([str(k).strip().lower() for k in row.keys()])
     fmt = ','.join(['?'] * len(row))
     try:
-      c.execute(f"""INSERT INTO {table_name} ({cols}) VALUES({fmt});""",
-                [_data(v) for v in row.values()])
+      _cursor.execute(f"""INSERT INTO {table_name} ({cols}) VALUES({fmt});""",
+                      [_data(v) for v in row.values()])
     except sqlite3.IntegrityError as e:
       if unique:
         pass
@@ -274,11 +300,13 @@ class ScoreBoard:
         raise e
 
   def write(self, table, unique=False, **row):
+    row.pop('table', None)
+    row.pop('unique', None)
     if self._c is None:
       with self.cursor() as c:
-        self._write_table(c, table=table, unique=unique, **row)
+        self._write_table(_cursor=c, table=table, unique=unique, **row)
     else:
-      self._write_table(self._c, table=table, unique=unique, **row)
+      self._write_table(_cursor=self._c, table=table, unique=unique, **row)
     return self
 
   ######## others

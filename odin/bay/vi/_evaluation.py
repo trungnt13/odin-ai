@@ -737,7 +737,7 @@ class _Criticizer(object):
     Return:
       tuple of 3 scalars:
         - disentanglement score: The degree to which a representation factorises
-          or disentangles the underlying factors of variatio
+          or disentangles the underlying factors of variation
         - completeness score: The degree to which each underlying factor is
           captured by a single code variable.
         - informativeness score: test accuracy of a factor recognizer trained
@@ -762,10 +762,12 @@ class _Criticizer(object):
       tuple of 2 scalars: total correlation estimation for train and test set
     """
     samples = [qz.sample(seed=self.randint) for qz in self.representations]
-    return tuple([
-        losses.total_correlation(z, qz).numpy()
-        for z, qz in zip(samples, self.representations)
-    ])
+    # memory complexity O(n*n*d), better do it on CPU
+    with tf.device('/CPU:0'):
+      return tuple([
+          losses.total_correlation(z, qz).numpy()
+          for z, qz in zip(samples, self.representations)
+      ])
 
   def cal_dcd_scores(self, n_samples=1000, lognorm=True, n_components=2):
     r""" Same as D.C.I but use density matrix instead of importance matrix
@@ -786,7 +788,7 @@ class _Criticizer(object):
          metrics.completeness_score(test)) / 2.
     return d, c
 
-  def cal_dcc_scores(self, mean=True, method='spearman'):
+  def cal_dcc_scores(self, method='spearman', mean=True):
     r""" Same as D.C.I but use correlation matrix instead of importance matrix
     """
     train, test = self.create_correlation_matrix(mean=mean,
@@ -800,7 +802,7 @@ class _Criticizer(object):
          metrics.completeness_score(test)) / 2.
     return d, c
 
-  def cal_relative_disentanglement_strength(self, mean=True, method='spearman'):
+  def cal_relative_disentanglement_strength(self, method='spearman', mean=True):
     r""" Relative strength for both axes of correlation matrix.
     Basically, is the mean of normalized maximum correlation per code, and
     per factor
@@ -820,6 +822,9 @@ class _Criticizer(object):
   ############## Downstream scores
   def cal_separated_attr_predictability(self, mean=True):
     r"""
+    Return:
+      a Scalar : single score representing SAP value for test set.
+
     Reference:
       Kumar, A., Sattigeri, P., Balakrishnan, A., 2018. Variational Inference of
         Disentangled Latent Concepts from Unlabeled Observations.

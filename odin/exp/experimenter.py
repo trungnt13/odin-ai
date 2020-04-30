@@ -197,38 +197,37 @@ class Experimenter():
   Arguments:
     save_path : path to a folder for saving the experiments
     config_path : String. Two option for providing the configuration file
-      - path to a yaml file : base configuraition
+      - path to a yaml file : base configuration
       - the yaml content itself, stored in string
     ncpu : number of process when multirun (-m) option is enable.
     exclude_keys : list of String. Keys will be excluded when hashing
       the configuration to create experiments' ID.
-    consistent_model : a Boolean. If True, check if MD5 of saved model
-      is the same as MD5 of loaded model.
 
   Methods:
     on_load_data(cfg: DictConfig)
       called at the beginning, everytime, for loading data
-    on_create_model(cfg: DictConfig)
+    on_create_model(cfg: DictConfig, path: str, md5: str)
       called only when first train a model with given configuration
-    on_load_model(cfg: DictConfig, path: str)
-      called when pretrained model detected
-    on_train(cfg: DictConfig, model_path: str)
+    on_train(cfg: DictConfig, model_dir: str)
       call when training start
+
+  Database:
+    List of default tables and columns:
+    - 'run' (store the called running script and its arguments)
+        path, date, overrides, strict, ncpu, multirun, timestamp
+    - 'config' (store the configuration of each run)
+        hash, ds, model, timestamp
 
   Example
   ```
   CONFIG = r"data: 1\nmodel: 2"
   exp = Experimenter(save_path="/tmp/exptmp", config_path=CONFIG)
   exp.run()
+  # python main.py vae=betavae,factorvae ds=mnist,shapes3d -m -ncpu 2
   ```
   """
 
-  def __init__(self,
-               save_path,
-               config_path,
-               ncpu=1,
-               exclude_keys=[],
-               consistent_model=True):
+  def __init__(self, save_path, config_path, ncpu=1, exclude_keys=[]):
     # already init, return by singleton
     if hasattr(self, '_configs'):
       return
@@ -260,19 +259,9 @@ class Experimenter():
     ### others
     self._all_keys = set(_all_keys(self._configs, base=""))
     self._exclude_keys = as_tuple(exclude_keys, t=string_types)
-    self.consistent_model = bool(consistent_model)
-    self._train_mode = True
+    ### running configuration
     self._db = None
-
-  def train(self):
-    r""" Prepare this experimenter for training models """
-    self._train_mode = True
-    return self
-
-  def eval(self):
-    r""" Prevent further changes to models, and prepare for evaluation """
-    self._train_mode = False
-    return self
+    self._running_configs = None
 
   ####################### Static helpers
   @staticmethod
@@ -361,7 +350,7 @@ class Experimenter():
         f.write("%s%s\n" % (sep, str(m)))
     return self
 
-  def get_output_path(self, cfg: DictConfig = None):
+  def get_output_dir(self, cfg: DictConfig = None):
     if cfg is None:
       cfg = self.configs
     key = Experimenter.hash_config(cfg, self.exclude_keys)
@@ -370,9 +359,12 @@ class Experimenter():
       os.mkdir(path)
     return path
 
-  def get_model_path(self, cfg: DictConfig = None):
-    output_path = self.get_output_path(cfg)
-    return os.path.join(output_path, 'model')
+  def get_model_dir(self, cfg: DictConfig = None):
+    path = self.get_output_dir(cfg)
+    path = os.path.join(path, 'model')
+    if not os.path.exists(path):
+      os.mkdir(path)
+    return path
 
   def get_hydra_path(self):
     path = os.path.join(self._save_path, 'hydra')
@@ -381,7 +373,7 @@ class Experimenter():
     return path
 
   def get_config_path(self, cfg: DictConfig = None, datetime=False):
-    output_path = self.get_output_path(cfg)
+    output_path = self.get_output_dir(cfg)
     if datetime:
       return os.path.join(
           output_path,
@@ -434,6 +426,26 @@ class Experimenter():
         print(" Remove:", path)
     return self
 
+  ####################### Database access
+  def save_scores(self, table, **scores):
+    r""" Save scores to the SQLite database, the hash key (primary key) is
+    determined by the running configuration. """
+    cfg = self._running_configs
+    if cfg is None:
+      cfg = self._configs
+    hash_key = Experimenter.hash_config(cfg, self.exclude_keys)
+    self.db.write(table=table, hash=hash_key, **scores)
+    return self
+
+  def get_all_configs(self) -> DataFrame:
+    col_names = self.db.get_column_names('config')
+    df = DataFrame(self.db.get_table('config'), columns=col_names)
+    return df
+
+  def select(self, query):
+    r""" Run a select query on the database """
+    return self.db.select(query)
+
   ####################### Base methods
   @property
   def args_help(self) -> dict:
@@ -441,66 +453,54 @@ class Experimenter():
     return {}
 
   def on_load_data(self, cfg: DictConfig):
-    r""" Cleaning """
     print("LOAD DATA!")
 
-  def on_create_model(self, cfg: DictConfig):
-    r""" Cleaning """
-    print("CREATE MODEL!", cfg)
+  def on_create_model(self, cfg: DictConfig, model_dir: str, md5: str = None):
+    print("CREATE MODEL!", cfg, model_dir, md5)
 
-  def on_load_model(self, cfg: DictConfig, model_path: str):
-    r""" Cleaning """
-    print("LOAD MODEL:", model_path)
-
-  def on_train(self, cfg: DictConfig, model_path: str):
-    r""" Cleaning """
-    print("TRAINING:", model_path)
+  def on_train(self, cfg: DictConfig, output_dir: str, model_dir: str):
+    print("TRAINING:", cfg, output_dir, model_dir)
 
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
     hash_key = Experimenter.hash_config(cfg, self.exclude_keys)
-    self.db.write('config', unique=True, hash=hash_key, **cfg)
+    self.db.write(
+        'config',
+        unique=True,
+        hash=hash_key,
+        **{k: v for k, v in cfg.items() if k not in self.exclude_keys})
+    self._running_configs = cfg
     # the cfg is dispatched by hydra.run_job, we couldn't change anything here
     logger = LOGGER
     with warnings.catch_warnings():
       warnings.filterwarnings('ignore', category=DeprecationWarning)
-      # prepare the paths
-      model_path = self.get_model_path(cfg)
-      md5_path = model_path + '.md5'
-      # check the configs
+      ## prepare the paths
+      output_dir = self.get_output_dir(cfg)
+      model_dir = self.get_model_dir(cfg)
+      md5_path = model_dir + '.md5'
+      ## check the configs
       config_path = self.get_config_path(cfg, datetime=True)
       with open(config_path, 'w') as f:
         OmegaConf.save(cfg, f)
       logger.info("Save config: %s" % config_path)
-      # load data
+      ## load data
       self.on_load_data(cfg)
       logger.info("Loaded data")
-      # create or load model
-      if os.path.exists(model_path) and len(os.listdir(model_path)) > 0:
-        # check if the loading model is consistent with the saved model
-        if os.path.exists(md5_path) and self.consistent_model:
-          md5_loaded = md5_folder(model_path)
-          with open(md5_path, 'r') as f:
-            md5_saved = f.read().strip()
-          assert md5_loaded == md5_saved, \
-            "MD5 of saved model mismatch, probably files are corrupted"
-        model = self.on_load_model(cfg, model_path)
-        if model is None:
-          raise RuntimeError(
-              "The implementation of on_load_model must return the loaded model."
-          )
-        logger.info("Loaded model: %s" % model_path)
-      else:
-        self.on_create_model(cfg)
-        logger.info("Create model: %s" % model_path)
-      # training
-      self.on_train(cfg, model_path)
+      ## create or load model
+      md5_saved = None
+      if os.path.exists(md5_path):
+        with open(md5_path, 'r') as f:
+          md5_saved = f.read().strip()
+      self.on_create_model(cfg, model_dir, md5_saved)
+      logger.info("Create model: %s (md5:%s)" % (model_dir, str(md5_saved)))
+      ## training
+      self.on_train(cfg, output_dir, model_dir)
       logger.info("Finish training")
-      # saving the model hash
-      if os.path.exists(model_path) and len(os.listdir(model_path)) > 0:
+      ## saving the model hash
+      if os.path.exists(model_dir) and len(os.listdir(model_dir)) > 0:
         with open(md5_path, 'w') as f:
-          f.write(md5_folder(model_path))
-        logger.info("Save model:%s" % model_path)
+          f.write(md5_folder(model_dir))
+        logger.info("Save model:%s" % model_dir)
 
   def run(self, overrides=[], ncpu=None, **configs):
     r"""
@@ -510,15 +510,17 @@ class Experimenter():
         unknown key, otherwise, the config will return `None`.
 
     Example:
-      exp = SisuaExperimenter(ncpu=1)
-      exp.run(
-          overrides={
-              'model': ['sisua', 'dca', 'vae'],
-              'dataset.name': ['cortex', 'pbmc8kly'],
-              'train.verbose': 0,
-              'train.epochs': 2,
-              'train': ['adam'],
-          })
+    ```
+    exp = SisuaExperimenter(ncpu=1)
+    exp.run(
+        overrides={
+            'model': ['sisua', 'dca', 'vae'],
+            'dataset.name': ['cortex', 'pbmc8kly'],
+            'train.verbose': 0,
+            'train.epochs': 2,
+            'train': ['adam'],
+        })
+    ```
     """
     overrides = _overrides(overrides) + _overrides(configs)
     strict = False
@@ -699,7 +701,7 @@ class Experimenter():
                          str(conditions))
     random.seed(seed)
     exp, cfg = random.choice(list(exp_cfg.items()))
-    model = self.on_load_model(cfg, os.path.join(exp, 'model'))
+    model = self.on_create_model(cfg, os.path.join(exp, 'model'), None)
     cfg = OmegaConf.load(cfg[-1])
     return model, cfg
 
@@ -728,7 +730,7 @@ class Experimenter():
                          str(conditions))
     if load_model:
       found_models = [
-          self.on_load_model(cfg, path)
+          self.on_create_model(cfg, path, None)
           for cfg, path in zip(found_cfg, found_models)
       ]
     if return_config:

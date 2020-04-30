@@ -221,17 +221,28 @@ def representative_importance_matrix(repr_train,
   num_factors = factor_train.shape[1]
   assert hasattr(algo, 'feature_importances_'), \
     "The class must contain 'feature_importances_' attribute"
+
+  def _train(factor_idx):
+    model = algo(random_state=random_state)
+    model.fit(repr_train, factor_train[:, factor_idx])
+    feat = np.abs(model.feature_importances_)
+    train = np.mean(model.predict(repr_train) == factor_train[:, factor_idx])
+    test = np.mean(model.predict(repr_test) == factor_test[:, factor_idx])
+    return factor_idx, feat, train, test
+
   # ====== compute importance based on gradient boosted trees ====== #
   importance_matrix = np.zeros(shape=[num_latents, num_factors],
                                dtype=np.float64)
-  train_acc = []
-  test_acc = []
-  for i in range(num_factors):
-    model = algo(random_state=random_state)
-    model.fit(repr_train, factor_train[:, i])
-    importance_matrix[:, i] = np.abs(model.feature_importances_)
-    train_acc.append(np.mean(model.predict(repr_train) == factor_train[:, i]))
-    test_acc.append(np.mean(model.predict(repr_test) == factor_test[:, i]))
+  train_acc = list(range(num_factors))
+  test_acc = list(range(num_factors))
+  for i, feat, train, test, in MPI(jobs=list(range(num_factors)),
+                                   func=_train,
+                                   batch=1,
+                                   ncpu=max(1,
+                                            get_cpu_count() - 1)):
+    importance_matrix[:, i] = feat
+    train_acc[i] = train
+    test_acc[i] = test
   return importance_matrix, train_acc, test_acc
 
 
@@ -290,4 +301,3 @@ def relative_strength(mat):
       np.power(np.max(mat, axis=1), 2) / np.sum(mat, axis=1),
       copy=False, nan=0.0))
   return (score_x + score_y) / 2
-
