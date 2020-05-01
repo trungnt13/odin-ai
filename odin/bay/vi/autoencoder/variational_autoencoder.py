@@ -372,9 +372,9 @@ class VariationalAutoencoder(keras.Model):
 
   def load_weights(self, filepath):
     trainer_path = filepath + '.trainer'
-    if os.path.exist(trainer_path):
+    if os.path.exists(trainer_path):
       with open(trainer_path, 'rb') as f:
-        pickle.load(f)
+        self.trainer = pickle.load(f)
     return super().load_weights(filepath, by_name=False, skip_mismatch=False)
 
   def save_weights(self, filepath, overwrite=True):

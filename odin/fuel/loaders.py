@@ -159,15 +159,6 @@ class MNIST_dropout(DataLoader):
 class FMNIST_dropout(DataLoader):
   pass
 
-
-class CIFAR10(DataLoader):
-  pass
-
-
-class CIFAR100(DataLoader):
-  pass
-
-
 # ===========================================================================
 # AUdio dataset
 # ===========================================================================

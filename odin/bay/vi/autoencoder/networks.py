@@ -416,3 +416,10 @@ class FactorDiscriminator(SequentialNetwork):
     # check nothing is NaN
     # tf.assert_equal(tf.reduce_all(tf.logical_not(tf.math.is_nan(loss))), True)
     return tf.reduce_mean(loss)
+
+
+# ===========================================================================
+# Factor divergence
+# ===========================================================================
+class FactorDivergence():
+  pass

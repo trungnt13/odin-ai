@@ -25,8 +25,8 @@ np.random.seed(1)
 
 # ===========================================================================
 # Helpers
-# vae=factor,factor2 ds=legofaces,mnist pretrain=0,1000 finetune=8000 maxtc=True,False
-# vae=semi,semi2 ds=legofaces,mnist pretrain=0,1000 finetune=8000 alpha=1,10 strategy=logsumexp,max
+# vae=factor,factor2 ds=celeba,mnist pretrain=0,1000 finetune=12000 maxtc=True,False
+# vae=semi,semi2 ds=celeba,mnist pretrain=0,1000 finetune=12000 alpha=1,10 strategy=logsumexp,max
 # -m -ncpu=2
 # ===========================================================================
 CONFIG = \
@@ -34,8 +34,8 @@ r"""
 ds: mnist
 vae: factor
 pretrain: 0
-finetune: 8000
-alpha: 1.
+finetune: 12000
+alpha: 10.
 beta: 1.
 gamma: 6.
 lamda: 1.

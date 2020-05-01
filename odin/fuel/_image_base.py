@@ -29,12 +29,21 @@ def _partition(part, train=None, valid=None, test=None, unlabeled=None):
 
 class ImageDataset:
 
-  def sample_images(self, save_path=None, dpi=80, n_samples=25, seed=1):
+  @property
+  def name(self):
+    return self.__class__.__name__.lower()
+
+  def sample_images(self,
+                    save_path=None,
+                    dpi=120,
+                    n_samples=25,
+                    partition='train',
+                    seed=1):
     r""" Sample a subset of image from training set """
     n = int(np.sqrt(n_samples))
     assert n * n == n_samples, "Sqrt of n_samples is not an integer"
     train = self.create_dataset(batch_size=n_samples,
-                                partition='train',
+                                partition=str(partition),
                                 inc_labels=0.5)
     # prepare the data
     images = []
@@ -74,9 +83,13 @@ class ImageDataset:
         plt.imshow(img, cmap='gray' if img.ndim == 2 else None)
         plt.axis('off')
         if labels is not None:
-          lab = np.argmax(labels[i])
+          y = [str(j) for j in self.labels[np.array(labels[i], dtype=np.bool)]]
+          if len(y) > 1:
+            lab = '\n'.join(y) + '\n'
+          else:
+            lab = y[0] + ' '
           m = True if mask is None else mask[i]
-          plt.title("Label:%s Mask:%s" % (lab, m))
+          plt.title("Label:%sMask:%s" % (lab, m), fontsize=6)
       plt.tight_layout()
       fig.savefig(save_path, dpi=int(dpi))
       plt.close(fig)
@@ -252,3 +265,5 @@ class BinarizedAlphaDigits(BinarizedMNIST):
   @property
   def shape(self):
     return (20, 16, 1)
+
+
