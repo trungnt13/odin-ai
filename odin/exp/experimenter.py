@@ -262,6 +262,19 @@ class Experimenter():
     ### running configuration
     self._db = None
     self._running_configs = None
+    self._mode_training = True
+
+  @property
+  def is_training(self):
+    return self._mode_training
+
+  def train(self):
+    self._mode_training = True
+    return self
+
+  def eval(self):
+    self._mode_training = False
+    return self
 
   ####################### Static helpers
   @staticmethod
@@ -461,6 +474,9 @@ class Experimenter():
   def on_train(self, cfg: DictConfig, output_dir: str, model_dir: str):
     print("TRAINING:", cfg, output_dir, model_dir)
 
+  def on_eval(self, cfg: DictConfig, output_dir: str):
+    print("EVALUATING:", cfg, output_dir)
+
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
     hash_key = Experimenter.hash_config(cfg, self.exclude_keys)
@@ -494,8 +510,14 @@ class Experimenter():
       self.on_create_model(cfg, model_dir, md5_saved)
       logger.info("Create model: %s (md5:%s)" % (model_dir, str(md5_saved)))
       ## training
-      self.on_train(cfg, output_dir, model_dir)
-      logger.info("Finish training")
+      logger.info("Start experiment in mode '%s'" %
+                  ('training' if self.is_training else 'evaluating'))
+      if self.is_training:
+        self.on_train(cfg, output_dir, model_dir)
+        logger.info("Finish training")
+      else:
+        self.on_eval(cfg, output_dir)
+        logger.info("Finish evaluating")
       ## saving the model hash
       if os.path.exists(model_dir) and len(os.listdir(model_dir)) > 0:
         with open(md5_path, 'w') as f:

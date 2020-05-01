@@ -27,7 +27,7 @@ np.random.seed(1)
 # Helpers
 # vae=factor,factor2 ds=celeba,mnist pretrain=0,1000 finetune=12000 maxtc=True,False
 # vae=semi,semi2 ds=celeba,mnist pretrain=0,1000 finetune=12000 alpha=1,10 strategy=logsumexp,max
-# -m -ncpu=2
+# python factor_vae.py vae=factor,factor2,semi,semi2 ds=cifar10,cifar100,mnist pretrain=1000 finetune=12000 -m -ncpu=2
 # ===========================================================================
 CONFIG = \
 r"""
@@ -194,6 +194,8 @@ class Factor(Experimenter):
     self.model.plot_learning_curves(
         os.path.join(output_dir, 'learning_curves.png'))
     self.model.save_weights(os.path.join(model_dir, 'weight'))
+
+  def on_eval(self, cfg, output_dir):
     # Criticizer
     crt = Criticizer(vae=self.model)
     crt.sample_batch(inputs=self.valid, n_samples=[10000, 5000], verbose=True)
@@ -236,4 +238,4 @@ class Factor(Experimenter):
 # ===========================================================================
 if __name__ == "__main__":
   exp = Factor()
-  exp.run()
+  exp.train().run()
