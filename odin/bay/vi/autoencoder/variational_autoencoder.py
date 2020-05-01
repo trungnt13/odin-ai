@@ -122,9 +122,14 @@ def _parse_network_alias(encoder, decoder):
                 input_shape=None)
       encoder = ImageNet(**kw)
       decoder = partial(ImageNet, decoding=True, **kw)
-    elif encoder in ('shapes3d', 'dsprites', 'celeba', 'slt10', 'legofaces'):
+    elif encoder in ('shapes3d', 'dsprites', 'celeba', 'slt10', 'legofaces',
+                     'cifar10', 'cifar100'):
       n_channels = 1 if encoder == 'dsprites' else 3
-      kw = dict(image_shape=(64, 64, n_channels),
+      if encoder in ('cifar10', 'cifar100'):
+        image_shape = (32, 32, 3)
+      else:
+        image_shape = (64, 64, n_channels)
+      kw = dict(image_shape=image_shape,
                 projection_dim=256,
                 activation='relu',
                 center0=True,
@@ -812,17 +817,17 @@ class VariationalAutoencoder(keras.Model):
     if hasattr(train, 'repeat'):
       train = train.repeat(int(epochs))
     self.trainer.fit(train_ds=train,
-                optimize=self.optimize,
-                valid_ds=valid,
-                valid_freq=valid_freq,
-                valid_interval=valid_interval,
-                compile_graph=compile_graph,
-                autograph=autograph,
-                logging_interval=logging_interval,
-                log_tag=log_tag,
-                log_path=log_path,
-                max_iter=max_iter,
-                callback=callback)
+                     optimize=self.optimize,
+                     valid_ds=valid,
+                     valid_freq=valid_freq,
+                     valid_interval=valid_interval,
+                     compile_graph=compile_graph,
+                     autograph=autograph,
+                     logging_interval=logging_interval,
+                     log_tag=log_tag,
+                     log_path=log_path,
+                     max_iter=max_iter,
+                     callback=callback)
     self._trainstep_kw = dict()
     return self
 
@@ -830,13 +835,15 @@ class VariationalAutoencoder(keras.Model):
                            path="/tmp/tmp.png",
                            summary_steps=[100, 10],
                            show_validation=True,
-                           dpi=100):
+                           dpi=100,
+                           title=None):
     assert self.trainer is not None, \
       "fit method must be called before plotting learning curves"
     self.trainer.plot_learning_curves(path=path,
                                       summary_steps=summary_steps,
                                       show_validation=show_validation,
-                                      dpi=dpi)
+                                      dpi=dpi,
+                                      title=title)
     return self
 
   def __str__(self):

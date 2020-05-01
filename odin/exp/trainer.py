@@ -589,7 +589,8 @@ class Trainer(object):
                            path="/tmp/tmp.png",
                            summary_steps=[100, 10],
                            show_validation=True,
-                           dpi=100):
+                           dpi=100,
+                           title=None):
     r""" Learning curves
 
     Arguments:
@@ -663,7 +664,11 @@ class Trainer(object):
     # set the xlabels
     for ax, step in zip(subplots[-2:], summary_steps):
       ax.set_xlabel("#Iter * %d" % step)
-    fig.tight_layout()
+    if title is not None:
+      fig.suptitle(str(title))
+      fig.tight_layout(rect=[0, 0.03, 1, 0.97])
+    else:
+      fig.tight_layout()
     fig.savefig(path, dpi=dpi)
     plt.close(fig)
     return self
