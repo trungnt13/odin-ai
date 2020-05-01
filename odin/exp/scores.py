@@ -270,8 +270,12 @@ class ScoreBoard:
       keys.append([k, _to_sqltype(v)])
     keys = ", ".join([" ".join(i) for i in keys])
     if unique:
-      # no timestamp
-      unique = ", UNIQUE (%s)" % ','.join(keys_name[:-1])
+      if isinstance(unique, string_types):  # a single columns
+        unique = ", UNIQUE (%s)" % unique
+      elif isinstance(unique, (tuple, list)):  # list of columns
+        unique = ", UNIQUE (%s)" % ','.join([str(i) for i in unique])
+      else:  # use all columns for unique
+        unique = ", UNIQUE (%s)" % ','.join(keys_name[:-1])  # no timestamp
     else:
       unique = ""
     query = f""" CREATE TABLE IF NOT EXISTS {name} ({keys}{unique});"""

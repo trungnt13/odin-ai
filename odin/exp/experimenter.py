@@ -202,6 +202,9 @@ class Experimenter():
     ncpu : number of process when multirun (-m) option is enable.
     exclude_keys : list of String. Keys will be excluded when hashing
       the configuration to create experiments' ID.
+    hash_length : an Integer (default: `5`). The length of hash key that is
+      unique for each experiment configuration, the longer the less chance
+      for hash collision.
 
   Methods:
     on_load_data(cfg: DictConfig)
@@ -227,11 +230,17 @@ class Experimenter():
   ```
   """
 
-  def __init__(self, save_path, config_path, ncpu=1, exclude_keys=[]):
+  def __init__(self,
+               save_path,
+               config_path,
+               ncpu=1,
+               exclude_keys=[],
+               hash_length=5):
     # already init, return by singleton
     if hasattr(self, '_configs'):
       return
     self.ncpu = int(ncpu)
+    self.hash_length = int(hash_length)
     ### check save path
     self._save_path = _abspath(save_path)
     if os.path.isfile(self._save_path):
@@ -276,6 +285,16 @@ class Experimenter():
     self._mode_training = False
     return self
 
+  def hash_config(self, cfg: DictConfig, exclude_keys=[]) -> str:
+    r"""
+    cfg : dictionary of configuration to generate an unique identity
+    exclude_keys : list of string, given keys will be ignored from the
+      configuration
+    """
+    assert isinstance(cfg, (DictConfig, dict))
+    cfg = Experimenter.remove_keys(cfg, copy=True, keys=exclude_keys)
+    return md5_checksum(cfg)[:self.hash_length]
+
   ####################### Static helpers
   @staticmethod
   def remove_keys(cfg: DictConfig, keys=[], copy=True) -> DictConfig:
@@ -295,17 +314,6 @@ class Experimenter():
         else:
           del cfg[key]
     return cfg
-
-  @staticmethod
-  def hash_config(cfg: DictConfig, exclude_keys=[]) -> str:
-    r"""
-    cfg : dictionary of configuration to generate an unique identity
-    exclude_keys : list of string, given keys will be ignored from the
-      configuraiton
-    """
-    assert isinstance(cfg, (DictConfig, dict))
-    cfg = Experimenter.remove_keys(cfg, copy=True, keys=exclude_keys)
-    return md5_checksum(cfg)[:8]
 
   @staticmethod
   def match_arguments(func: callable,
@@ -366,7 +374,7 @@ class Experimenter():
   def get_output_dir(self, cfg: DictConfig = None):
     if cfg is None:
       cfg = self.configs
-    key = Experimenter.hash_config(cfg, self.exclude_keys)
+    key = self.hash_config(cfg, self.exclude_keys)
     path = os.path.join(self._save_path, 'exp_%s' % key)
     if not os.path.exists(path):
       os.mkdir(path)
@@ -424,8 +432,8 @@ class Experimenter():
     overrides = _overrides(overrides) + _overrides(configs)
     cfg = self.load_configuration(overrides)
     if isinstance(cfg, DictConfig):
-      return Experimenter.hash_config(cfg, self.exclude_keys)
-    return [Experimenter.hash_config(cfg, self.exclude_keys) for c in cfg]
+      return self.hash_config(cfg, self.exclude_keys)
+    return [self.hash_config(cfg, self.exclude_keys) for c in cfg]
 
   def clear_all_experiments(self, verbose=True):
     input("<Enter> to continue remove all experiments ...")
@@ -446,8 +454,8 @@ class Experimenter():
     cfg = self._running_configs
     if cfg is None:
       cfg = self._configs
-    hash_key = Experimenter.hash_config(cfg, self.exclude_keys)
-    self.db.write(table=table, hash=hash_key, **scores)
+    hash_key = self.hash_config(cfg, self.exclude_keys)
+    self.db.write(table=table, unique='hash', hash=hash_key, **scores)
     return self
 
   def get_all_configs(self) -> DataFrame:
@@ -479,7 +487,7 @@ class Experimenter():
 
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
-    hash_key = Experimenter.hash_config(cfg, self.exclude_keys)
+    hash_key = self.hash_config(cfg, self.exclude_keys)
     self.db.write(
         'config',
         unique=True,
@@ -520,9 +528,10 @@ class Experimenter():
         logger.info("Finish evaluating")
       ## saving the model hash
       if os.path.exists(model_dir) and len(os.listdir(model_dir)) > 0:
+        md5 = md5_folder(model_dir)
         with open(md5_path, 'w') as f:
-          f.write(md5_folder(model_dir))
-        logger.info("Save model:%s" % model_dir)
+          f.write(md5)
+        logger.info("Saved model at path:%s  (MD5: %s)" % (model_dir, md5))
 
   def run(self, overrides=[], ncpu=None, **configs):
     r"""
@@ -561,9 +570,12 @@ class Experimenter():
           sys.argv.pop(idx)
           sys.argv.pop(idx)
         break
-    # check reset
+    ## check functional fixed arguments
     for idx, arg in enumerate(list(sys.argv)):
-      if arg in ('--reset', '--clear', '--clean'):
+      if arg in ('--eval', '-eval'):
+        self.eval()
+        sys.argv.pop(idx)
+      elif arg in ('--reset', '--clear', '--clean'):
         configs_filter = lambda f: 'configs' != f.split('/')[-1]
         if len(get_all_files(self._save_path, filter_func=configs_filter)) > 0:
           old_exps = '\n'.join([
