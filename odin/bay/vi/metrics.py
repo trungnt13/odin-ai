@@ -16,6 +16,7 @@
 from __future__ import absolute_import, division, print_function
 
 import warnings
+from collections import defaultdict
 
 import numpy as np
 import scipy as sp
@@ -51,61 +52,110 @@ __all__ = [
 # ===========================================================================
 # Clustering scores
 # ===========================================================================
+def _unsupervised_clustering_accuracy(y, y_pred):
+  r""" Unsupervised Clustering Accuracy
+
+  Author: scVI (https://github.com/YosefLab/scVI)
+  """
+  from sklearn.utils.linear_assignment_ import linear_assignment
+  assert len(y_pred) == len(y)
+  u = np.unique(np.concatenate((y, y_pred)))
+  n_clusters = len(u)
+  mapping = dict(zip(u, range(n_clusters)))
+  reward_matrix = np.zeros((n_clusters, n_clusters), dtype=np.int64)
+  for y_pred_, y_ in zip(y_pred, y):
+    if y_ in mapping:
+      reward_matrix[mapping[y_pred_], mapping[y_]] += 1
+  cost_matrix = reward_matrix.max() - reward_matrix
+  ind = linear_assignment(cost_matrix)
+  return sum([reward_matrix[i, j] for i, j in ind]) * 1.0 / y_pred.size, ind
+
+
+def _clustering_scores(X, y, algo, seed):
+  assert X.ndim == 2 and y.ndim == 1
+  n_factors = len(np.unique(y))
+  # simple normalization to 0-1, then pick the argmax
+  if algo == 'kmeans':
+    km = KMeans(n_factors, n_init=200, random_state=seed)
+    y_pred = km.fit_predict(X)
+  elif algo == 'gmm':
+    gmm = GaussianMixture(n_factors, random_state=seed)
+    gmm.fit(X)
+    y_pred = gmm.predict(X)
+  elif algo in ('both', 'avg', 'avr', 'average', 'mean'):
+    score1 = _clustering_scores(X, y, algo='kmeans', seed=seed)
+    score2 = _clustering_scores(X, y, algo='gmm', seed=seed)
+    return {k: (v + score2[k]) / 2 for k, v in score1.items()}
+  else:
+    raise ValueError("Not support for prediction_algorithm: '%s'" % algo)
+  # the scores
+  with catch_warnings_ignore(FutureWarning):
+    asw_score = silhouette_score(X, y)
+    ari_score = adjusted_rand_score(y, y_pred)
+    nmi_score = normalized_mutual_info_score(y, y_pred)
+    uca_score = _unsupervised_clustering_accuracy(y, y_pred)[0]
+  return dict(ASW=asw_score, ARI=ari_score, NMI=nmi_score, UCA=uca_score)
+
+
 def unsupervised_clustering_scores(representations,
                                    factors,
-                                   prediction_algorithm='both',
+                                   algorithm='both',
                                    seed=1):
   r""" Calculating the unsupervised clustering Scores:
-    - ASW: silhouette_score (higher is better, best is 1, worst is -1)
-    - ARI: adjusted_rand_score (higher is better)
-    - NMI: normalized_mutual_info_score (higher is better)
-    - UCA: unsupervised_clustering_accuracy (higher is better)
 
-  Note: remember the order of returned value
+    - ASW: silhouette_score (higher is better, best is 1, worst is -1)
+    - ARI: adjusted_rand_score (range [0, 1] - higher is better)
+    - NMI: normalized_mutual_info_score (range [0, 1] - higher is better)
+    - UCA: unsupervised_clustering_accuracy (range [0, 1] - higher is better)
+
+  Note: remember the order of returned value, the time complexity is
+  exponential as the number of labels increasing
 
   Arguments:
     factors : a Matrix. Categorical factors (i.e. one-hot encoded), or multiple
       factors
-    prediction_algorithm : {'knn', 'gmm', 'both'}. The algorithm for
-      predicting factors from representations
+    algorithm : {'kmean', 'gmm', 'both'}. The clustering algorithm for
+      assigning the cluster from representations
 
   Return:
     dict(ASW=asw_score, ARI=ari_score, NMI=nmi_score, UCA=uca_score)
 
   """
-  # simple normalization to 0-1, then pick the argmax
-  if factors.ndim == 2:
-    vmin = np.min(factors, axis=0, keepdims=True)
-    vmax = np.max(factors, axis=0, keepdims=True)
-    factors = (factors - vmin) / (vmax - vmin)
-    factors = np.argmax(factors, axis=-1)
-  if prediction_algorithm == 'knn':
-    km = KMeans(n_factors, n_init=200, random_state=seed)
-    factors_pred = km.fit_predict(representations)
-  elif prediction_algorithm == 'gmm':
-    gmm = GaussianMixture(n_factors, random_state=seed)
-    gmm.fit(representations)
-    factors_pred = gmm.predict(representations)
-  elif prediction_algorithm == 'both':
-    score1 = clustering_scores(representations,
-                               factors,
-                               n_factors=n_factors,
-                               prediction_algorithm='knn')
-    score2 = clustering_scores(representations,
-                               factors,
-                               n_factors=n_factors,
-                               prediction_algorithm='gmm')
-    return {k: (v + score2[k]) / 2 for k, v in score1.items()}
-  else:
-    raise ValueError("Not support for prediction_algorithm: '%s'" %
-                     prediction_algorithm)
-  #
-  with catch_warnings_ignore(FutureWarning):
-    asw_score = silhouette_score(representations, factors)
-    ari_score = adjusted_rand_score(factors, factors_pred)
-    nmi_score = normalized_mutual_info_score(factors, factors_pred)
-    uca_score = unsupervised_clustering_accuracy(factors, factors_pred)[0]
-  return dict(ASW=asw_score, ARI=ari_score, NMI=nmi_score, UCA=uca_score)
+  assert factors.ndim == 2, "Only support factors as a matrix."
+  factor_type = 'multinomial'
+  if np.all(np.unique(factors) == [0., 1.]):
+    if np.all(np.sum(factors, axis=1) == 1.):
+      factor_type = 'binary'
+    else:
+      factor_type = 'multibinary'
+  # start scoring
+  if factor_type == 'binary':
+    return _clustering_scores(representations, np.argmax(factors, axis=1),
+                              algorithm, seed)
+  if factor_type in ('multinomial', 'multibinary'):
+    from tqdm import tqdm
+    scores = defaultdict(list)
+    prog = tqdm(desc="Scoring clusters", total=factors.shape[1])
+
+    def _get_scores(idx):
+      y = factors[:, idx]
+      if factor_type == 'multinomial':
+        uni = {v: i for i, v in enumerate(sorted(np.unique(y)))}
+        y = np.array([uni[i] for i in y])
+      else:
+        y = y.astype(np.int32)
+      return _clustering_scores(representations, y, algorithm, seed)
+
+    for s in MPI(jobs=list(range(factors.shape[1])),
+                 func=_get_scores,
+                 batch=1,
+                 ncpu=min(max(1,
+                              get_cpu_count() - 1), 10)):
+      prog.update(1)
+      for k, v in s.items():
+        scores[k].append(v)
+    return {k: np.mean(v) for k, v in scores.items()}
+  raise NotImplementedError("No support for factor type: %s" % factor_type)
 
 
 # ===========================================================================
@@ -199,8 +249,8 @@ def mutual_info_estimate(representations,
 
   for i, mi in MPI(jobs=list(range(num_factors)),
                    func=func,
-                   ncpu=max(1,
-                            get_cpu_count() - 1),
+                   ncpu=min(max(1,
+                                get_cpu_count() - 1), 10),
                    batch=1):
     mi_matrix[:, i] = mi
   return mi_matrix
@@ -304,8 +354,8 @@ def representative_importance_matrix(repr_train,
   for i, feat, train, test, in MPI(jobs=list(range(num_factors)),
                                    func=_train,
                                    batch=1,
-                                   ncpu=max(1,
-                                            get_cpu_count() - 1)):
+                                   ncpu=min(max(1,
+                                                get_cpu_count() - 1), 10)):
     importance_matrix[:, i] = feat
     train_acc[i] = train
     test_acc[i] = test
