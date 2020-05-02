@@ -238,3 +238,9 @@ class CIFAR100(CIFAR):
           'willow_tree', 'wolf', 'woman', 'worm'
       ]
     return np.array(y)
+
+
+class CIFAR20(CIFAR100):
+
+  def __init__(self, path="~/tensorflow_datasets/cifar"):
+    super().__init__(coarse_labels=True, path=path)

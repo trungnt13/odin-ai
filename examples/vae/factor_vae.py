@@ -27,7 +27,9 @@ np.random.seed(1)
 # Helpers
 # vae=factor,factor2 ds=celeba,mnist pretrain=0,1000 finetune=12000 maxtc=True,False
 # vae=semi,semi2 ds=celeba,mnist pretrain=0,1000 finetune=12000 alpha=1,10 strategy=logsumexp,max
-# python factor_vae.py vae=factor,factor2,semi,semi2 ds=cifar10,cifar100,mnist pretrain=1000 finetune=12000 -m -ncpu=2
+# python factor_vae.py vae=factor,factor2,semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=12000 -m -ncpu=2
+# python factor_vae.py vae=factor,factor2 ds=shapes3D,dsprites,celeba pretrain=0,1000 finetune=12000 maxtc=True,False gamma=6,10,20 -m -ncpu=3
+# TODO: some things wrong with Shapes3D
 # ===========================================================================
 CONFIG = \
 r"""
@@ -92,7 +94,8 @@ class Factor(Experimenter):
   def __init__(self):
     super().__init__(save_path='/tmp/factorexp',
                      config_path=CONFIG,
-                     exclude_keys=['verbose'])
+                     exclude_keys=['verbose'],
+                     hash_length=5)
 
   def on_load_data(self, cfg):
     ds = get_dataset(cfg.ds)()
@@ -191,8 +194,9 @@ class Factor(Experimenter):
       train, valid = (self.train, self.valid) if self.model.is_semi_supervised \
         else (self.train_u, self.valid_u)
       self.model.finetune().fit(train, valid=valid, max_iter=cfg.finetune, **kw)
-    self.model.plot_learning_curves(
-        os.path.join(output_dir, 'learning_curves.png'))
+    self.model.plot_learning_curves(os.path.join(output_dir,
+                                                 'learning_curves.png'),
+                                    title=self.model.__class__.__name__)
     self.model.save_weights(os.path.join(model_dir, 'weight'))
 
   def on_eval(self, cfg, output_dir):

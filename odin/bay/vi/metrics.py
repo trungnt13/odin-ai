@@ -19,9 +19,13 @@ import warnings
 
 import numpy as np
 import scipy as sp
+from sklearn.cluster import KMeans
 from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import mutual_info_score
+from sklearn.metrics import (adjusted_mutual_info_score, adjusted_rand_score,
+                             mutual_info_score, normalized_mutual_info_score,
+                             silhouette_score)
 from sklearn.metrics.cluster import entropy as entropy1D
+from sklearn.mixture import GaussianMixture
 
 from odin.bay.vi.downstream_metrics import *
 from odin.utils import catch_warnings_ignore
@@ -35,11 +39,73 @@ __all__ = [
     'mutual_info_gap',
     'representative_importance_matrix',
     'dci_scores',
+    # unsupervised scores
+    'unsupervised_clustering_scores',
     # downstream score
     'separated_attr_predictability',
     'beta_vae_score',
     'factor_vae_score',
 ]
+
+
+# ===========================================================================
+# Clustering scores
+# ===========================================================================
+def unsupervised_clustering_scores(representations,
+                                   factors,
+                                   prediction_algorithm='both',
+                                   seed=1):
+  r""" Calculating the unsupervised clustering Scores:
+    - ASW: silhouette_score (higher is better, best is 1, worst is -1)
+    - ARI: adjusted_rand_score (higher is better)
+    - NMI: normalized_mutual_info_score (higher is better)
+    - UCA: unsupervised_clustering_accuracy (higher is better)
+
+  Note: remember the order of returned value
+
+  Arguments:
+    factors : a Matrix. Categorical factors (i.e. one-hot encoded), or multiple
+      factors
+    prediction_algorithm : {'knn', 'gmm', 'both'}. The algorithm for
+      predicting factors from representations
+
+  Return:
+    dict(ASW=asw_score, ARI=ari_score, NMI=nmi_score, UCA=uca_score)
+
+  """
+  # simple normalization to 0-1, then pick the argmax
+  if factors.ndim == 2:
+    vmin = np.min(factors, axis=0, keepdims=True)
+    vmax = np.max(factors, axis=0, keepdims=True)
+    factors = (factors - vmin) / (vmax - vmin)
+    factors = np.argmax(factors, axis=-1)
+  if prediction_algorithm == 'knn':
+    km = KMeans(n_factors, n_init=200, random_state=seed)
+    factors_pred = km.fit_predict(representations)
+  elif prediction_algorithm == 'gmm':
+    gmm = GaussianMixture(n_factors, random_state=seed)
+    gmm.fit(representations)
+    factors_pred = gmm.predict(representations)
+  elif prediction_algorithm == 'both':
+    score1 = clustering_scores(representations,
+                               factors,
+                               n_factors=n_factors,
+                               prediction_algorithm='knn')
+    score2 = clustering_scores(representations,
+                               factors,
+                               n_factors=n_factors,
+                               prediction_algorithm='gmm')
+    return {k: (v + score2[k]) / 2 for k, v in score1.items()}
+  else:
+    raise ValueError("Not support for prediction_algorithm: '%s'" %
+                     prediction_algorithm)
+  #
+  with catch_warnings_ignore(FutureWarning):
+    asw_score = silhouette_score(representations, factors)
+    ari_score = adjusted_rand_score(factors, factors_pred)
+    nmi_score = normalized_mutual_info_score(factors, factors_pred)
+    uca_score = unsupervised_clustering_accuracy(factors, factors_pred)[0]
+  return dict(ASW=asw_score, ARI=ari_score, NMI=nmi_score, UCA=uca_score)
 
 
 # ===========================================================================

@@ -271,18 +271,19 @@ class Experimenter():
     ### running configuration
     self._db = None
     self._running_configs = None
-    self._mode_training = True
+    self._training_mode = True
+    self._override_mode = False
 
   @property
   def is_training(self):
-    return self._mode_training
+    return self._training_mode
 
   def train(self):
-    self._mode_training = True
+    self._training_mode = True
     return self
 
   def eval(self):
-    self._mode_training = False
+    self._training_mode = False
     return self
 
   def hash_config(self, cfg: DictConfig, exclude_keys=[]) -> str:
@@ -500,6 +501,9 @@ class Experimenter():
       warnings.filterwarnings('ignore', category=DeprecationWarning)
       ## prepare the paths
       output_dir = self.get_output_dir(cfg)
+      if self._override_mode:
+        logger.info("Override experiment at path: %s" % output_dir)
+        shutil.rmtree(output_dir)
       model_dir = self.get_model_dir(cfg)
       md5_path = model_dir + '.md5'
       ## check the configs
@@ -572,7 +576,10 @@ class Experimenter():
         break
     ## check functional fixed arguments
     for idx, arg in enumerate(list(sys.argv)):
-      if arg in ('--eval', '-eval'):
+      if arg in ('--override', '-override'):
+        self._override_mode = True
+        sys.argv.pop(idx)
+      elif arg in ('--eval', '-eval'):
         self.eval()
         sys.argv.pop(idx)
       elif arg in ('--reset', '--clear', '--clean'):

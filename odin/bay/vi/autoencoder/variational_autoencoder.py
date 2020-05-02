@@ -123,9 +123,9 @@ def _parse_network_alias(encoder, decoder):
       encoder = ImageNet(**kw)
       decoder = partial(ImageNet, decoding=True, **kw)
     elif encoder in ('shapes3d', 'dsprites', 'celeba', 'slt10', 'legofaces',
-                     'cifar10', 'cifar100'):
+                     'cifar10', 'cifar20', 'cifar100'):
       n_channels = 1 if encoder == 'dsprites' else 3
-      if encoder in ('cifar10', 'cifar100'):
+      if encoder in ('cifar10', 'cifar100', 'cifar20'):
         image_shape = (32, 32, 3)
       else:
         image_shape = (64, 64, n_channels)

@@ -16,7 +16,7 @@ from tqdm import tqdm
 from bigarray import MmapArray, MmapArrayWriter
 from odin.fuel._image_base import (MNIST, BinarizedAlphaDigits, BinarizedMNIST,
                                    ImageDataset, _partition)
-from odin.fuel._image_cifar import CIFAR10, CIFAR100
+from odin.fuel._image_cifar import CIFAR10, CIFAR20, CIFAR100
 from odin.fuel._image_lego_faces import LegoFaces
 from odin.fuel._image_synthesize import YDisentanglement
 from odin.utils import as_tuple, batching, get_datasetpath, one_hot

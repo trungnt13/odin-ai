@@ -885,6 +885,22 @@ class _Criticizer(object):
                                           verbose=verbose)
     return score_train, score_test
 
+  def cal_clustering_scores(self, latent, labels, n_labels, prediction_algorithm='both'):
+    r""" Calculating the unsupervised clustering Scores:
+      - silhouette_score (higher is better, best is 1, worst is -1)
+      - adjusted_rand_score (higher is better)
+      - normalized_mutual_info_score (higher is better)
+      - unsupervised_clustering_accuracy (higher is better)
+
+    Note: remember the order of returned value
+
+    Arguments:
+      labels : categorical labels (i.e. single classes or one-hot encoded)
+      prediction_algorithm : {'knn', 'gmm', 'both'}
+    """
+    pass
+
+
   ##############  Posterior predictive check (PPC)
   def posterior_predictive_check(n_samples=100):
     r""" PPC - "simulating replicated data under the fitted model and then
