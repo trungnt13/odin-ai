@@ -27,7 +27,8 @@ np.random.seed(1)
 # Helpers
 # vae=factor,factor2 ds=celeba,mnist pretrain=0,1000 finetune=12000 maxtc=True,False
 # vae=semi,semi2 ds=celeba,mnist pretrain=0,1000 finetune=12000 alpha=1,10 strategy=logsumexp,max
-# python factor_vae.py vae=factor,factor2,semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=12000 -m -ncpu=2
+# python factor_vae.py vae=factor,factor2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 -m -ncpu=3;
+# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 semi=0.1,0.01 -m -ncpu=3
 # python factor_vae.py vae=factor,factor2 ds=shapes3D,dsprites,celeba pretrain=0,1000 finetune=12000 maxtc=True,False gamma=6,10,20 -m -ncpu=3
 # TODO: some things wrong with Shapes3D
 # ===========================================================================
@@ -36,7 +37,7 @@ r"""
 ds: mnist
 vae: factor
 pretrain: 0
-finetune: 12000
+finetune: 10000
 alpha: 10.
 beta: 1.
 gamma: 6.
@@ -178,8 +179,8 @@ class Factor(Experimenter):
     # clustering scores
     scores = crt.cal_clustering_scores()
     # downstream scores
-    beta = np.mean(crt.cal_betavae_score(n_samples=5000, verbose=True))
-    factor = np.mean(crt.cal_factorvae_score(n_samples=8000, verbose=True))
+    beta = np.mean(crt.cal_betavae_score(n_samples=10000, verbose=True))
+    factor = np.mean(crt.cal_factorvae_score(n_samples=10000, verbose=True))
     tc = np.mean(crt.cal_total_correlation())
     d, c, i = crt.cal_dci_scores()
     sap = np.mean(crt.cal_separated_attr_predictability())

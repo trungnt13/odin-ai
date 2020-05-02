@@ -389,12 +389,14 @@ class Trainer(object):
     self.valid_metrics_epoch = []
 
   def __getstate__(self):
-    return self.n_iter.numpy(), self.train_loss, self.train_metrics, \
-      self.valid_loss, self.valid_metrics
+    return (self.n_iter.numpy(), self.train_loss, self.train_metrics,
+            self.valid_loss, self.valid_metrics, self.valid_loss_epoch,
+            self.valid_metrics_epoch)
 
   def __setstate__(self, states):
-    self.n_iter, self.train_loss, self.train_metrics, \
-      self.valid_loss, self.valid_metrics = states
+    (self.n_iter, self.train_loss, self.train_metrics, self.valid_loss,
+     self.valid_metrics, self.valid_loss_epoch,
+     self.valid_metrics_epoch) = states
     self.n_iter = tf.Variable(self.n_iter,
                               dtype=tf.float32,
                               trainable=False,
