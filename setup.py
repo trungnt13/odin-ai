@@ -2,32 +2,30 @@ from os import path
 
 from setuptools import find_packages, setup
 
-_ODIN_VERSION_ = '1.2.3'
-_TENSORFLOW_VERSION = '2.1.0'
-_TENSORFLOW_PROBABILITY_VERSION = '0.9.0'
-_TENSORFLOW_ADDONS_VERSION = '0.5.2'
-_PYTORCH_VERSION = '1.4.0'
-_TORCHVISION_VERSION = '1.4.0'
+ODIN_VERSION = '1.2.3'
+TENSORFLOW_VERSION = '2.1.0'
+TENSORFLOW_PROBABILITY_VERSION = '0.9.0'
+TENSORFLOW_ADDONS_VERSION = '0.5.2'
+PYTORCH_VERSION = '1.4.0'
+TORCHVISION_VERSION = '1.4.0'
 
 # ===========================================================================
 # Dependencies
 # ===========================================================================
 dependencies = [
     'numpy>=1.0.0',
-    "tensorflow==%s" % _TENSORFLOW_VERSION,
-    'tensorflow-probability==%s' % _TENSORFLOW_PROBABILITY_VERSION,
+    "tensorflow==%s" % TENSORFLOW_VERSION,
+    'tensorflow-probability==%s' % TENSORFLOW_PROBABILITY_VERSION,
     # 'tensorflow-addons==%s' % _TENSORFLOW_ADDONS_VERSION,
     'tensorflow-datasets',
-    'torch==%s' % _PYTORCH_VERSION,
+    'torch==%s' % PYTORCH_VERSION,
     'hydra-core',  # for easy configuration
-    # 'pytorch-lightning',  # for training pytorch module
     'bigarray>=0.2.1',
     'six>=1.9.0',
     'scikit-learn==0.22.1',
     'matplotlib>=3.0.0',
     'decorator',
     'tqdm',
-    # 'dill',
     'pyyaml',
     'pycrypto',
 ]
@@ -48,7 +46,7 @@ of organized networks.
 # ===========================================================================
 setup(
     name='odin-ai',
-    version=_ODIN_VERSION_,
+    version=ODIN_VERSION,
     description="Deep learning for research and production",
     long_description=long_description,
     long_description_content_type='text/x-rst',

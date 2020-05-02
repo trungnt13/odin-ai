@@ -354,7 +354,7 @@ class Shapes3D(ImageDataset):
       where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
     # both images and labels, note: a tuple must be used here
-    types = (tf.uint8, tf.float32)
+    types = (tf.float32, tf.float32)
     shapes = (tf.TensorShape(self.images.shape[1:]),
               tf.TensorShape(self.factors.shape[1:]))
     if not inc_labels:
@@ -365,22 +365,23 @@ class Shapes3D(ImageDataset):
 
     def gen_data(indices):
       for i in indices:
+        img = self.images[i]
+        img = tf.cast(img, tf.float32)
+        img = tf.clip_by_value(img / 255., 1e-6, 1. - 1e-6)
         if inc_labels:
-          yield self.images[i], tf.cast(self.factors[i], dtype=tf.float32)
+          yield img, tf.cast(self.factors[i], dtype=tf.float32)
         else:
-          yield self.images[i]
+          yield img
 
     def process(*ims):
       r""" Normalizing the image to range [0., 1.] dtype tf.float32"""
       if inc_labels:
         ims, lab = ims
-        ims = tf.cast(ims, tf.float32)
         if 0. < inc_labels < 1.:  # semi-supervised mask
           mask = gen.uniform(shape=(tf.shape(ims)[0], 1)) < inc_labels
           return dict(inputs=(ims, lab), mask=mask)
-        return self.normalize_255(ims), lab
-      ims = tf.cast(ims[0], tf.float32)
-      return self.normalize_255(ims)
+        return ims, lab
+      return ims[0]
 
     ### get the right partition
     indices = _partition(
@@ -389,10 +390,10 @@ class Shapes3D(ImageDataset):
         valid=self.valid_indices,
         test=self.test_indices,
     )
-    ds = tf.data.Dataset.from_generator(
-        partial(gen_data, indices), output_types=types,
-        output_shapes=shapes).batch(batch_size,
-                                    drop_remainder).map(process, parallel)
+    ds = tf.data.Dataset.from_generator(partial(gen_data, indices),
+                                        output_types=types,
+                                        output_shapes=shapes)
+    ds = ds.batch(batch_size, drop_remainder).map(process, parallel)
     if cache is not None:
       ds = ds.cache(str(cache))
     if shuffle is not None:

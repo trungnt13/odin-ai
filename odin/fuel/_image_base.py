@@ -1,8 +1,11 @@
+import gzip
 import os
+from urllib.request import urlretrieve
 
 import numpy as np
 import tensorflow as tf
 
+from odin.utils import md5_checksum, one_hot
 from odin.utils.net_utils import download_and_extract
 
 
@@ -70,6 +73,10 @@ class ImageDataset:
     images = images[idx].numpy()
     labels = labels[idx].numpy() if len(labels) > 0 else None
     mask = mask[idx].numpy().ravel() if len(mask) > 0 else None
+    # check labels type
+    labels_type = 'multinomial'
+    if np.all(np.unique(labels) == [0., 1.]):
+      labels_type = 'binary'
     # plot and save the figure
     if save_path is not None:
       plot_images = images
@@ -83,13 +90,17 @@ class ImageDataset:
         plt.imshow(img, cmap='gray' if img.ndim == 2 else None)
         plt.axis('off')
         if labels is not None:
-          y = [str(j) for j in self.labels[np.array(labels[i], dtype=np.bool)]]
-          if len(y) > 1:
-            lab = '\n'.join(y) + '\n'
+          if labels_type == 'binary':
+            y = [
+                str(j) for j in self.labels[np.array(labels[i], dtype=np.bool)]
+            ]
+            lab = ('\n'.join(y) + '\n') if len(y) > 1 else (y[0] + ' ')
           else:
-            lab = y[0] + ' '
+            lab = '\n'.join(
+                ["%s=%s" % (l, str(j)) for l, j in zip(self.labels, labels[i])])
+            lab += '\n'
           m = True if mask is None else mask[i]
-          plt.title("Label:%sMask:%s" % (lab, m), fontsize=6)
+          plt.title("%s[Mask:%s]" % (lab, m), fontsize=6)
       plt.tight_layout()
       fig.savefig(save_path, dpi=int(dpi))
       plt.close(fig)
@@ -226,15 +237,91 @@ class BinarizedMNIST(ImageDataset):
 
 
 class MNIST(BinarizedMNIST):
-  r""" MNIST """
+  r""" MNIST
+  55000 examples for train, 5000 for valid, and 10000 for test
+  """
+  URL = dict(
+      X_train=r"http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz",
+      y_train=r"http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz",
+      X_test=r"http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz",
+      y_test=r"http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz",
+  )
 
-  def __init__(self):
-    import tensorflow_datasets as tfds
-    self.train, self.valid, self.test = tfds.load(
-        name='mnist',
-        split=['train[:90%]', 'train[90%:]', 'test'],
-        shuffle_files=True,
-        as_supervised=True)
+  MD5 = r"8ba71f60dccd53a0b68bfe41ed4cdf9c"
+
+  def __init__(self, path='~/tensorflow_datasets/mnist'):
+    path = os.path.abspath(os.path.expanduser(path))
+    save_path = os.path.join(path, 'mnist.npz')
+    if not os.path.exists(path):
+      os.makedirs(path)
+    assert os.path.isdir(path)
+
+    ## check exist processed file
+    all_data = None
+    if os.path.exists(save_path):
+      if not os.path.isfile(save_path):
+        raise ValueError("path to %s must be a file" % save_path)
+      if md5_checksum(save_path) != MNIST.MD5:
+        print("Miss match MD5 remove file at: ", save_path)
+        os.remove(save_path)
+      else:
+        all_data = np.load(save_path)
+    ## download and extract
+    if all_data is None:
+      from tqdm import tqdm
+
+      def dl_progress(count, block_size, total_size):
+        kB = block_size * count / 1024.
+        prog.update(kB - prog.n)
+
+      read32 = lambda b: np.frombuffer(
+          b, dtype=np.dtype(np.uint32).newbyteorder('>'))[0]
+
+      all_data = {}
+      for name, url in MNIST.URL.items():
+        basename = os.path.basename(url)
+        zip_path = os.path.join(path, basename)
+        prog = tqdm(desc="Downloading %s" % basename, unit='kB')
+        urlretrieve(url, zip_path, dl_progress)
+        prog.clear()
+        prog.close()
+        with gzip.open(zip_path, "rb") as f:
+          magic = read32(f.read(4))
+          if magic not in (2051, 2049):
+            raise ValueError('Invalid magic number %d in MNIST image file: %s' %
+                             (magic, zip_path))
+          n = read32(f.read(4))
+          # images
+          if 'X_' in name:
+            rows = read32(f.read(4))
+            cols = read32(f.read(4))
+            buf = f.read(rows * cols * n)
+            data = np.frombuffer(buf, dtype=np.uint8)
+            data = data.reshape(n, rows, cols, 1)
+          # labels
+          else:
+            buf = f.read(n)
+            data = np.frombuffer(buf, dtype=np.uint8)
+            data = one_hot(data, 10)
+          all_data[name] = data
+      np.savez_compressed(save_path, **all_data)
+    ## split train, valid, test
+    rand = np.random.RandomState(seed=1)
+    ids = rand.permutation(all_data['X_train'].shape[0])
+    X_train = all_data['X_train'][ids]
+    y_train = all_data['y_train'][ids]
+    X_valid = X_train[:5000]
+    y_valid = y_train[:5000]
+    X_train = X_train[5000:]
+    y_train = y_train[5000:]
+    X_test = all_data['X_test']
+    y_test = all_data['y_test']
+    to_ds = lambda images, labels: tf.data.Dataset.zip(
+        (tf.data.Dataset.from_tensor_slices(images),
+         tf.data.Dataset.from_tensor_slices(labels)))
+    self.train = to_ds(X_train, y_train)
+    self.valid = to_ds(X_valid, y_valid)
+    self.test = to_ds(X_test, y_test)
 
   @property
   def labels(self):
@@ -265,5 +352,3 @@ class BinarizedAlphaDigits(BinarizedMNIST):
   @property
   def shape(self):
     return (20, 16, 1)
-
-
