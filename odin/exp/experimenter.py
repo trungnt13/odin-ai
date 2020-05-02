@@ -207,12 +207,16 @@ class Experimenter():
       for hash collision.
 
   Methods:
-    on_load_data(cfg: DictConfig)
+    on_load_data(cfg)
       called at the beginning, everytime, for loading data
-    on_create_model(cfg: DictConfig, path: str, md5: str)
+    on_create_model(cfg, model_dir, md5)
       called only when first train a model with given configuration
-    on_train(cfg: DictConfig, model_dir: str)
+    on_train(cfg, output_dir, model_dir)
       call when training start
+    on_eval(cfg, output_dir)
+      call with `--eval` option for evaluation
+    on_plot(models, output_dir)
+      call with `--plot` option for visualization
 
   Database:
     List of default tables and columns:
@@ -271,19 +275,23 @@ class Experimenter():
     ### running configuration
     self._db = None
     self._running_configs = None
-    self._training_mode = True
+    self._training_mode = 'train'
     self._override_mode = False
 
   @property
   def is_training(self):
-    return self._training_mode
+    return self._training_mode == 'train'
 
   def train(self):
-    self._training_mode = True
+    self._training_mode = 'train'
     return self
 
   def eval(self):
-    self._training_mode = False
+    self._training_mode = 'eval'
+    return self
+
+  def plot(self):
+    self._training_mode = 'plot'
     return self
 
   def hash_config(self, cfg: DictConfig, exclude_keys=[]) -> str:
@@ -449,14 +457,18 @@ class Experimenter():
     return self
 
   ####################### Database access
-  def save_scores(self, table, **scores):
+  def save_scores(self, table, override=False, **scores):
     r""" Save scores to the SQLite database, the hash key (primary key) is
     determined by the running configuration. """
     cfg = self._running_configs
     if cfg is None:
       cfg = self._configs
     hash_key = self.hash_config(cfg, self.exclude_keys)
-    self.db.write(table=table, unique='hash', hash=hash_key, **scores)
+    self.db.write(table=table,
+                  unique='hash',
+                  override=override,
+                  hash=hash_key,
+                  **scores)
     return self
 
   def get_all_configs(self) -> DataFrame:
@@ -486,8 +498,12 @@ class Experimenter():
   def on_eval(self, cfg: DictConfig, output_dir: str):
     print("EVALUATING:", cfg, output_dir)
 
+  def on_plot(self, models, cfg: DictConfig, output_dir: str):
+    print("PLOTTING:", cfg, output_dir)
+
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
+    cfg = deepcopy(cfg)
     hash_key = self.hash_config(cfg, self.exclude_keys)
     self.db.write(
         'config',
@@ -522,14 +538,16 @@ class Experimenter():
       self.on_create_model(cfg, model_dir, md5_saved)
       logger.info("Create model: %s (md5:%s)" % (model_dir, str(md5_saved)))
       ## training
-      logger.info("Start experiment in mode '%s'" %
-                  ('training' if self.is_training else 'evaluating'))
-      if self.is_training:
+      logger.info("Start experiment in mode '%s'" % self._training_mode)
+      if self._training_mode == 'train':
         self.on_train(cfg, output_dir, model_dir)
         logger.info("Finish training")
-      else:
+      elif self._training_mode == 'eval':
         self.on_eval(cfg, output_dir)
         logger.info("Finish evaluating")
+      elif self._training_mode == 'plot':
+        self.on_plot(cfg, output_dir)
+        logger.info("Finish plotting")
       ## saving the model hash
       if os.path.exists(model_dir) and len(os.listdir(model_dir)) > 0:
         md5 = md5_folder(model_dir)
@@ -538,7 +556,12 @@ class Experimenter():
         logger.info("Saved model at path:%s  (MD5: %s)" % (model_dir, md5))
 
   def run(self, overrides=[], ncpu=None, **configs):
-    r"""
+    r""" Extra options for controlling the experiment:
+
+      `--eval` : run in evaluation mode
+      `--plot` : run in plotting mode
+      `--reset` or `--clear` : remove all exist experiments
+      `--override` : override existed experiment
 
     Arguments:
       strict: A Boolean, strict configurations prevent the access to
@@ -578,6 +601,12 @@ class Experimenter():
     for idx, arg in enumerate(list(sys.argv)):
       if arg in ('--override', '-override'):
         self._override_mode = True
+        sys.argv.pop(idx)
+      elif arg in ('--train', '-train'):
+        self.train()
+        sys.argv.pop(idx)
+      elif arg in ('--plot', '-plot'):
+        self.plot()
         sys.argv.pop(idx)
       elif arg in ('--eval', '-eval'):
         self.eval()
@@ -679,7 +708,10 @@ class Experimenter():
     Hydra.run = old_multirun[0]
     Hydra.multirun = old_multirun[1]
     # update the summary
-    self.summary()
+    try:
+      self.summary()
+    except Exception as e:
+      print("Error:", e)
     return self
 
   ####################### For evaluation
@@ -794,7 +826,7 @@ class Experimenter():
       }
       cfg = [("",
               Experimenter.remove_keys(OmegaConf.load(cfg[-1]),
-                                       copy=False,
+                                       copy=True,
                                        keys=self.exclude_keys))]
       # use stack instead of recursive
       while len(cfg) > 0:

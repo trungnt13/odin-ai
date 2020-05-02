@@ -849,19 +849,12 @@ class _Criticizer(object):
     """
     z_train, z_test = self.representations
     f_train, f_test = self.factors
-    score_train = metrics.beta_vae_score(z_train,
-                                         f_train,
-                                         n_samples=n_samples,
-                                         use_mean=mean,
-                                         random_state=self.randint,
-                                         verbose=verbose)
-    score_test = metrics.beta_vae_score(z_test,
-                                        f_test,
-                                        n_samples=n_samples,
-                                        use_mean=mean,
-                                        random_state=self.randint,
-                                        verbose=verbose)
-    return score_train, score_test
+    return metrics.beta_vae_score(concat_distribution([z_train, z_test]),
+                                  np.concatenate([f_train, f_test], axis=0),
+                                  n_samples=n_samples,
+                                  use_mean=mean,
+                                  random_state=self.randint,
+                                  verbose=verbose)
 
   def cal_factorvae_score(self, mean=True, n_samples=10000, verbose=False):
     r""" FactorVAE based score
@@ -871,35 +864,31 @@ class _Criticizer(object):
     """
     z_train, z_test = self.representations
     f_train, f_test = self.factors
-    score_train = metrics.factor_vae_score(z_train,
-                                           f_train,
-                                           n_samples=n_samples,
-                                           use_mean=mean,
-                                           random_state=self.randint,
-                                           verbose=verbose)
-    score_test = metrics.factor_vae_score(z_test,
-                                          f_test,
-                                          n_samples=n_samples,
-                                          use_mean=mean,
-                                          random_state=self.randint,
-                                          verbose=verbose)
-    return score_train, score_test
+    return metrics.factor_vae_score(concat_distribution([z_train, z_test]),
+                                    np.concatenate([f_train, f_test], axis=0),
+                                    n_samples=n_samples,
+                                    use_mean=mean,
+                                    random_state=self.randint,
+                                    verbose=verbose)
 
-  def cal_clustering_scores(self, latent, labels, n_labels, prediction_algorithm='both'):
+  def cal_clustering_scores(self, algorithm='both', seed=1):
     r""" Calculating the unsupervised clustering Scores:
-      - silhouette_score (higher is better, best is 1, worst is -1)
-      - adjusted_rand_score (higher is better)
-      - normalized_mutual_info_score (higher is better)
-      - unsupervised_clustering_accuracy (higher is better)
 
-    Note: remember the order of returned value
+    - ASW: silhouette_score (higher is better, best is 1, worst is -1)
+    - ARI: adjusted_rand_score (range [0, 1] - higher is better)
+    - NMI: normalized_mutual_info_score (range [0, 1] - higher is better)
+    - UCA: unsupervised_clustering_accuracy (range [0, 1] - higher is better)
 
-    Arguments:
-      labels : categorical labels (i.e. single classes or one-hot encoded)
-      prediction_algorithm : {'knn', 'gmm', 'both'}
+    Return:
+      dict(ASW=asw_score, ARI=ari_score, NMI=nmi_score, UCA=uca_score)
     """
-    pass
-
+    z_train, z_test = self.representations_mean
+    f_train, f_test = self.factors
+    return metrics.unsupervised_clustering_scores(
+        np.concatenate([z_train, z_test], axis=0),
+        np.concatenate([f_train, f_test], axis=0),
+        algorithm=algorithm,
+        seed=seed)
 
   ##############  Posterior predictive check (PPC)
   def posterior_predictive_check(n_samples=100):

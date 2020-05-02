@@ -285,7 +285,7 @@ class ScoreBoard:
       print(query)
       raise e
 
-  def _write_table(self, _cursor, table, unique, **row):
+  def _write_table(self, _cursor, table, unique, override, **row):
     if self.read_only:
       warnings.warn("Cannot write to table: %s %s" % (table, str(row)))
       return
@@ -294,8 +294,9 @@ class ScoreBoard:
     table_name = str(table).strip().lower()
     cols = ",".join([str(k).strip().lower() for k in row.keys()])
     fmt = ','.join(['?'] * len(row))
+    write_mode = "REPLACE" if override else "INSERT"
     try:
-      _cursor.execute(f"""INSERT INTO {table_name} ({cols}) VALUES({fmt});""",
+      _cursor.execute(f"""{write_mode} INTO {table_name} ({cols}) VALUES({fmt});""",
                       [_data(v) for v in row.values()])
     except sqlite3.IntegrityError as e:
       if unique:
@@ -303,14 +304,19 @@ class ScoreBoard:
       else:
         raise e
 
-  def write(self, table, unique=False, **row):
+  def write(self, table, unique=False, override=False, **row):
     row.pop('table', None)
     row.pop('unique', None)
+    row.pop('override', None)
+    row.pop('_cursor', None)
+    row['table'] = table
+    row['unique'] = unique
+    row['override'] = override
     if self._c is None:
       with self.cursor() as c:
-        self._write_table(_cursor=c, table=table, unique=unique, **row)
+        self._write_table(_cursor=c, **row)
     else:
-      self._write_table(_cursor=self._c, table=table, unique=unique, **row)
+      self._write_table(_cursor=self._c, **row)
     return self
 
   ######## others

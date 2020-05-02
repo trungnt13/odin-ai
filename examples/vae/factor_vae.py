@@ -45,45 +45,19 @@ semi: 0.1
 maxtc: False
 strategy: logsumexp
 verbose: False
+gpu: False
 """
 
 
-def cal_mllk(vae, data):
-  with tf.device("/CPU:0"):
+def cal_mllk(vae, data, gpu=False):
+  device = 'GPU' if gpu else 'CPU'
+  with tf.device(f"/{device}:0"):
     return np.mean(
         np.concatenate([
             vae.marginal_log_prob(x, sample_shape=50)
             for x in tqdm(data.repeat(1), desc="Calculating MarginalLLK")
         ],
                        axis=0))
-
-
-def train_discriminator(vae, disc=None):
-  opt = tf.optimizers.Adam(learning_rate=0.0001,
-                           beta_1=0.5,
-                           beta_2=0.9,
-                           epsilon=1e-07,
-                           amsgrad=False)
-  if disc is None:
-    disc = FactorDiscriminator(vae.latent_shape[1], n_outputs=10)
-  params = disc.trainable_variables
-  # print("#params:", len(params), ", ".join(p.name for p in params))
-  prog = tqdm(train.repeat(1))
-  for data in prog:
-    X, y = data['inputs']
-    mask = data['mask']
-    with tf.GradientTape(watch_accessed_variables=False) as tape:
-      tape.watch(params)
-      qZ_X = vae.encode(X)
-      loss = disc.classifier_loss(y, qZ_X, mask=mask, training=True)
-      grads = tape.gradient(tf.reduce_mean(loss), params)
-      opt.apply_gradients(grads_and_vars=zip(grads, params))
-    # accuracy
-    norm = tf.reduce_sum(tf.linalg.global_norm(grads))
-    y_pred = tf.argmax(tf.nn.softmax(disc(qZ_X.sample()), axis=-1), axis=1)
-    y_true = tf.argmax(y, axis=1)
-    prog.desc = " * Loss:%.2f  Acc:%.2f  Norm:%.2f" % (
-        loss, accuracy_score(y_true, y_pred), norm)
 
 
 # ===========================================================================
@@ -94,31 +68,27 @@ class Factor(Experimenter):
   def __init__(self):
     super().__init__(save_path='/tmp/factorexp',
                      config_path=CONFIG,
-                     exclude_keys=['verbose'],
+                     exclude_keys=['verbose', 'gpu'],
                      hash_length=5)
 
   def on_load_data(self, cfg):
     ds = get_dataset(cfg.ds)()
     ds.sample_images(save_path=os.path.join(self.save_path, 'samples.png'))
+    kw = dict(batch_size=128, drop_remainder=True)
     train = ds.create_dataset(partition='train',
                               inc_labels=float(cfg.semi),
-                              batch_size=128,
-                              drop_remainder=True)
-    valid = ds.create_dataset(partition='valid',
-                              inc_labels=1.0,
-                              batch_size=128,
-                              drop_remainder=True)
-    train_u = ds.create_dataset(partition='train',
-                                inc_labels=False,
-                                batch_size=128,
-                                drop_remainder=True)
-    valid_u = ds.create_dataset(partition='valid',
-                                inc_labels=False,
-                                batch_size=128,
-                                drop_remainder=True)
+                              **kw)
+    train_u = ds.create_dataset(partition='train', inc_labels=False, **kw)
+    valid = ds.create_dataset(partition='valid', inc_labels=1.0, **kw)
+    valid_u = ds.create_dataset(partition='valid', inc_labels=False, **kw)
+    # reduce batch_size here, otherwise, mllk take ~ 7GB VRAM
+    kw['batch_size'] = 8
+    test = ds.create_dataset(partition='test', inc_labels=1.0, **kw)
+    test_u = ds.create_dataset(partition='test', inc_labels=False, **kw)
     self.ds = ds
     self.train, self.train_u = train, train_u
     self.valid, self.valid_u = valid, valid_u
+    self.test, self.test_u = test, test_u
     if cfg.verbose:
       print("Dataset:", ds)
       print(" train:", train)
@@ -200,12 +170,16 @@ class Factor(Experimenter):
     self.model.save_weights(os.path.join(model_dir, 'weight'))
 
   def on_eval(self, cfg, output_dir):
+    # marginal log-likelihood
+    mllk = cal_mllk(self.model, self.test_u, gpu=cfg.gpu)
     # Criticizer
     crt = Criticizer(vae=self.model)
-    crt.sample_batch(inputs=self.valid, n_samples=[10000, 5000], verbose=True)
+    crt.sample_batch(inputs=self.test, n_samples=[10000, 5000], verbose=True)
+    # clustering scores
+    scores = crt.cal_clustering_scores()
     # downstream scores
-    beta = np.mean(crt.cal_betavae_score(verbose=True))
-    factor = np.mean(crt.cal_factorvae_score(verbose=True))
+    beta = np.mean(crt.cal_betavae_score(n_samples=5000, verbose=True))
+    factor = np.mean(crt.cal_factorvae_score(n_samples=8000, verbose=True))
     tc = np.mean(crt.cal_total_correlation())
     d, c, i = crt.cal_dci_scores()
     sap = np.mean(crt.cal_separated_attr_predictability())
@@ -213,7 +187,6 @@ class Factor(Experimenter):
     rds_spearman = np.mean(
         crt.cal_relative_disentanglement_strength("spearman"))
     mig = np.mean(crt.cal_mutual_info_gap())
-    mllk = cal_mllk(self.model, self.valid_u)
     dmi, cmi = crt.cal_dcmi_scores()
     # save to database
     scores = dict(
@@ -230,11 +203,15 @@ class Factor(Experimenter):
         cmi=cmi,
         mig=mig,
         mllk=mllk,
+        asw=scores['ASW'],
+        ari=scores['ARI'],
+        nmi=scores['NMI'],
+        uca=scores['UCA'],
     )
     if cfg.verbose:
       for k, v in scores.items():
         print('%-8s' % k, ':', '%.3f' % v)
-    self.save_scores("score", **scores)
+    self.save_scores(table="score", override=True, **scores)
 
 
 # ===========================================================================
