@@ -16,6 +16,8 @@ from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible
 
 from odin.bay import distributions as obd
+from odin.bay.distributions.combined import CombinedDistribution
+from odin.bay.distributions.conditional import ConditionalTensor
 from odin.bay.distributions.negative_binomial_disp import NegativeBinomialDisp
 from odin.bay.distributions.zero_inflated import ZeroInflated
 
@@ -32,6 +34,8 @@ dist_params = {
     obd.Independent: ['distribution', 'reinterpreted_batch_ndims'],
     ZeroInflated: ['count_distribution', 'inflated_distribution'],
     obd.MixtureSameFamily: ['mixture_distribution', 'components_distribution'],
+    CombinedDistribution: ['distributions'],
+    ConditionalTensor: ['distribution', 'conditional_tensor'],
     # Exponential
     obd.Gamma: ['concentration', 'rate'],
     # Gaussians
@@ -196,7 +200,15 @@ def concat_distribution(dists: List[tfd.Distribution],
 
   # no more distribution, tensor of parameters is return during the
   # recursive operator
-  if issubclass(dist_type, tf.Tensor):
+  if issubclass(dist_type, (tuple, list)) and all(
+      isinstance(i, obd.Distribution) or tf.is_tensor(i)
+      for i in tf.nest.flatten(dists)):
+    return [
+        tf.concat(x, axis=axis)
+        if tf.is_tensor(x) else concat_distribution(x, axis=axis)
+        for x in zip(*dists)
+    ]
+  elif issubclass(dist_type, tf.Tensor):
     if dists[0].shape.ndims == 0:
       for d in dists[1:]:
         # make sure all the number is the same (we cannot concatenate numbers)
@@ -242,7 +254,8 @@ def concat_distribution(dists: List[tfd.Distribution],
 # ===========================================================================
 # Slice the distribution
 # ===========================================================================
-def slice_distribution(index, dist: tfd.Distribution,
+def slice_distribution(index,
+                       dist: tfd.Distribution,
                        name=None) -> tfd.Distribution:
   r""" Apply indexing on distribution parameters and return another
   `Distribution` """

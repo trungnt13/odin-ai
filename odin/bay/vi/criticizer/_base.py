@@ -12,7 +12,7 @@ from odin.bay.distributions.utils import concat_distribution
 from odin.bay.vi import utils
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
-from odin.bay.vi.criticizer.helpers import CombinedDistribution
+from odin.bay.distributions import CombinedDistribution
 from odin.bay.vi.data_utils import Factor
 from odin.utils import as_tuple
 

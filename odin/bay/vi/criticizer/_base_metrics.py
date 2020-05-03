@@ -6,6 +6,7 @@ from sklearn.linear_model import Lasso
 
 from odin import search
 from odin.bay import distributions as tfd
+from odin.bay.distributions import CombinedDistribution
 from odin.bay.distributions.utils import concat_distribution
 from odin.bay.vi import losses, metrics
 from odin.bay.vi.criticizer._base import CriticizerBase
@@ -173,14 +174,6 @@ class CriticizerMetrics(CriticizerBase):
                                        name=fname)
         f_gmm.append(gmm)
       ### the code Gaussian
-      dist_type = type(qZ)
-      if isinstance(qZ, tfd.Independent):
-        dist_type = type(qZ.distribution)
-      support_type = (tfd.MultivariateNormalDiag, tfd.Normal)
-      if dist_type not in support_type:
-        raise RuntimeError(
-            "No support posterior distribution: %s, the support distributions are: %s"
-            % (str(dist_type), str(support_type)))
       z_gau = []
       for mean, stddev, code_name in zip(tf.transpose(qZ.mean()),
                                          tf.transpose(qZ.stddev()),

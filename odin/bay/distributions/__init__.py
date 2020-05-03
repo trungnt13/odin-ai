@@ -8,5 +8,6 @@ from odin.bay.distributions.utils import *
 from odin.bay.distributions.zero_inflated import ZeroInflated
 from odin.bay.distributions.mixture import *
 from odin.bay.distributions.conditional import *
+from odin.bay.distributions.combined import *
 
 RelaxedSoftmax = RelaxedOneHotCategorical

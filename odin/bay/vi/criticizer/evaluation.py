@@ -80,12 +80,10 @@ class Criticizer(CriticizerMetrics, CriticizerPlot):
         {i.lower(): j for i, j in self.cal_clustering_scores().items()})
     #
     betavae = self.cal_betavae_score(n_samples=n_samples, verbose=verbose)
-    scores['betavae_train'] = betavae[0]
-    scores['betavae_test'] = betavae[1]
+    scores['betavae'] = betavae
     #
     factorvae = self.cal_factorvae_score(n_samples=n_samples, verbose=verbose)
-    scores['factorvae_train'] = factorvae[0]
-    scores['factorvae_test'] = factorvae[1]
+    scores['factorvae'] = factorvae
     #
     scores['rds_spearman'] = self.cal_relative_disentanglement_strength(
         method='spearman')
