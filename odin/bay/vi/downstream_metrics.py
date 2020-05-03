@@ -152,6 +152,9 @@ def _sampling_helper(representations,
         if verbose:
           prog.update(1)
   ## return shape: [n_samples, n_code] and [n_samples]
+  if verbose:
+    prog.clear()
+    prog.close()
   return features, labels
 
 

@@ -359,7 +359,7 @@ class CriticizerBase(object):
                    factors_name=None,
                    train_percent=0.8,
                    n_samples=[2000, 1000],
-                   batch_size=16,
+                   batch_size=64,
                    verbose=True):
     r""" Sample a batch of training and testing for evaluation of VAE
 
@@ -479,6 +479,10 @@ class CriticizerBase(object):
         Zs.append(z)
         # update the counter
         n += len(y)
+      # end progress
+      if verbose:
+        prog.clear()
+        prog.close()
       # aggregate all data
       Xs = [np.concatenate(x, axis=0) for x in Xs]
       Ys = np.concatenate(Ys, axis=0)

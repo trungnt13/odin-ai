@@ -354,32 +354,28 @@ class CriticizerMetrics(CriticizerBase):
                                                 random_state=self.randint)
     return sap
 
-  def cal_betavae_score(self, mean=True, n_samples=10000, verbose=False):
+  def cal_betavae_score(self, mean=True, n_samples=10000, verbose=True):
     r""" The Beta-VAE score train a logistic regression to detect the invariant
     factor based on the absolute difference in the representations.
 
     Returns:
       tuple of 2 scalars: accuracy for train and test data
     """
-    z_train, z_test = self.representations
-    f_train, f_test = self.factors
-    return metrics.beta_vae_score(concat_distribution([z_train, z_test]),
-                                  np.concatenate([f_train, f_test], axis=0),
+    return metrics.beta_vae_score(concat_distribution(self.representations),
+                                  np.concatenate(self.factors, axis=0),
                                   n_samples=n_samples,
                                   use_mean=mean,
                                   random_state=self.randint,
                                   verbose=verbose)
 
-  def cal_factorvae_score(self, mean=True, n_samples=10000, verbose=False):
+  def cal_factorvae_score(self, mean=True, n_samples=10000, verbose=True):
     r""" FactorVAE based score
 
     Returns:
       tuple of 2 scalars: accuracy for train and test data
     """
-    z_train, z_test = self.representations
-    f_train, f_test = self.factors
-    return metrics.factor_vae_score(concat_distribution([z_train, z_test]),
-                                    np.concatenate([f_train, f_test], axis=0),
+    return metrics.factor_vae_score(concat_distribution(self.representations),
+                                    np.concatenate(self.factors, axis=0),
                                     n_samples=n_samples,
                                     use_mean=mean,
                                     random_state=self.randint,
