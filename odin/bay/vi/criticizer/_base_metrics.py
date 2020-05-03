@@ -189,11 +189,12 @@ class CriticizerMetrics(CriticizerBase):
         for fidx, gmm in enumerate(f_gmm):
           # non-analytic KL(q=gau||p=gmm)
           samples = gau.sample(n_samples)
-          qllk = gau.log_prob(samples)
-          pllk = tf.reduce_sum(tf.reshape(
-              gmm.log_prob(tf.reshape(samples, (-1, 1))), (n_samples, -1)),
-                               axis=1)
-          kl = tf.reduce_mean(qllk - pllk)
+          with tf.device("/CPU:0"):
+            qllk = gau.log_prob(samples)
+            pllk = tf.reduce_sum(tf.reshape(
+                gmm.log_prob(tf.reshape(samples, (-1, 1))), (n_samples, -1)),
+                                 axis=1)
+            kl = tf.reduce_mean(qllk - pllk)
           density_matrix[zidx, fidx] = kl.numpy()
       if bool(normalize_per_code):
         density_matrix = density_matrix / np.sum(
@@ -277,12 +278,6 @@ class CriticizerMetrics(CriticizerBase):
     """
     # memory complexity O(n*n*d), better do it on CPU
     with tf.device('/CPU:0'):
-      if self.is_multi_latents:
-        return [[
-            losses.total_correlation(qz.sample(seed=self.randint), qz).numpy()
-            for qz in qZs
-        ]
-                for qZs in self.representations]
       return [
           losses.total_correlation(qz.sample(seed=self.randint), qz).numpy()
           for qz in self.representations

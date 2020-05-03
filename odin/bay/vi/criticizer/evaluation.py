@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
+import re
 from numbers import Number
 
 import tensorflow as tf
@@ -21,37 +22,41 @@ class Criticizer(CriticizerMetrics, CriticizerPlot):
 
   Arguments:
     vae : `odin.bay.vi.VariationalAutoencoder`.
+      An instance of VariationalAutoencoder for evaluation
+    latent_indices : {`slice`, Integer, Boolean, List of Integer or Boolean}.
+      Indicate which latent will be used for evaluation (in case VAE has
+      multiple latent layers).
     random_state : a Scalar. Random seed to ensure reproducibility.
 
   Attributes:
     pass
   """
 
-  def copy(self, random_state=None):
+  def copy(self, latent_indices=None, random_state=None):
     r""" Shallow copy of Criticizer and all its sampled data """
-    crt = Criticizer(
+    crt = self.__class__(
         self._vae,
+        latent_indices=self._latent_indices,
         random_state=self.randint if random_state is None else random_state)
     for name in dir(self):
       if '_' == name[0] and '__' != name[:2] and name != '_rand':
         attr = getattr(self, name)
         if not inspect.ismethod(attr):
           setattr(crt, name, getattr(self, name))
+    # change the indices
+    if latent_indices is not None and crt.is_multi_latents:
+      z_train, z_test = crt.representations
+      z_train = z_train.distributions[latent_indices]
+      z_test = z_test.distributions[latent_indices]
+      crt._latent_indices = latent_indices
+      if isinstance(z_train, (tuple, list)) and len(z_train) > 1:
+        crt._is_multi_latents = int(len(z_train))
+        z_train = tfd.CombinedDistribution(z_train, name="LatentsTrain")
+        z_test = tfd.CombinedDistribution(z_test, name="LatentsTest")
+      else:
+        crt._is_multi_latents = 0
+      crt._representations = (z_train, z_test)
     return crt
-
-  def _check_factors(self, factors):
-    if factors is None:
-      factors = list(range(self.n_factors))
-    else:
-      try:
-        factors = [
-            int(i) if isinstance(i, Number) else self.index(i)
-            for i in tf.nest.flatten(factors)
-        ]
-      except ValueError:
-        raise ValueError("Cannot find factors: %s, from list of factors: %s" %
-                         (str(factors), self.factors_name))
-    return factors
 
   def summary(self,
               n_samples=10000,
@@ -109,7 +114,7 @@ class Criticizer(CriticizerMetrics, CriticizerPlot):
     return scores
 
   def __str__(self):
-    text = [str(self._vae)]
+    text = [str(self._vae) + ' Multilatents:%s' % self._is_multi_latents]
     text.append(" Factor name: %s" % ', '.join(self.factors_name))
     for name, data in [("Inputs", self.inputs), ("Factors", self.factors),
                        ("Original Factors", self.original_factors),

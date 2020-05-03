@@ -12,6 +12,20 @@ from odin.ml import clustering, dimension_reduce
 
 class CriticizerPlot(CriticizerBase, vs.Visualizer):
 
+  def _check_factors(self, factors):
+    if factors is None:
+      factors = list(range(self.n_factors))
+    else:
+      try:
+        factors = [
+            int(i) if isinstance(i, Number) else self.index(i)
+            for i in tf.nest.flatten(factors)
+        ]
+      except ValueError:
+        raise ValueError("Cannot find factors: %s, from list of factors: %s" %
+                         (str(factors), self.factors_name))
+    return factors
+
   def plot_test(self):
     self.assert_sampled()
     return self

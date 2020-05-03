@@ -8,23 +8,27 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from odin.bay import distributions as tfd
+from odin.bay.distributions import CombinedDistribution
 from odin.bay.distributions.utils import concat_distribution
 from odin.bay.vi import utils
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
-from odin.bay.distributions import CombinedDistribution
 from odin.bay.vi.data_utils import Factor
 from odin.utils import as_tuple
 
 
 class CriticizerBase(object):
 
-  def __init__(self, vae: VariationalAutoencoder, random_state=1):
+  def __init__(self,
+               vae: VariationalAutoencoder,
+               latent_indices=slice(None),
+               random_state=1):
     super().__init__()
     assert isinstance(vae, VariationalAutoencoder), \
       "vae must be instance of odin.bay.vi.VariationalAutoencoder, given: %s" \
         % str(type(vae))
     self._vae = vae
+    self._latent_indices = latent_indices
     if isinstance(random_state, Number):
       random_state = np.random.RandomState(seed=random_state)
     # main arguments
@@ -172,18 +176,16 @@ class CriticizerBase(object):
     return self._rand.randint(1e8)
 
   ############## proxy to VAE methods
-  def index(self, factors_name):
+  def index(self, factor_name):
     r""" Return the column index of given factors_name within the
     factor matrix """
-    return self._factors_name.index(str(factors_name))
+    return self._factors_name.index(str(factor_name))
 
-  def encode(self, inputs, mask=None, sample_shape=(), first_latent=True):
+  def encode(self, inputs, mask=None, sample_shape=()):
     r""" Encode inputs to latent codes
 
     Arguments:
       inputs : a single Tensor or list of Tensor
-      first_latent : a Boolean, indicator for returning  only the first latent
-        (in case of multiple latents returned)
 
     Returns:
       `tensorflow_probability.Distribution`, q(z|x) the latent distribution
@@ -199,8 +201,6 @@ class CriticizerBase(object):
         "The latent code return from `vae.encode` must be instance of " + \
           "tensorflow_probability.Distribution, but returned: %s" % \
             str(z)
-    if isinstance(latents, (tuple, list)) and first_latent:
-      return latents[0]
     return latents
 
   def decode(self, latents, mask=None, sample_shape=()):
@@ -296,7 +296,13 @@ class CriticizerBase(object):
         of the known factors
 
     Return:
-      a new Criticizer conditioned on the known factors
+      a new `Criticizer` with the conditioned data and representations
+
+    Example:
+    ```
+    # conditioning on: (1st-factor > 2) and (2nd-factor == 3)
+    conditioning({1: lambda x: x > 2, 2: lambda x: x==3})
+    ```
     """
     self.assert_sampled()
     known = {
@@ -322,10 +328,17 @@ class CriticizerBase(object):
     o_train, o_test = self.original_factors
     x_train = [x[train_ids] for x in x_train]
     x_test = [x[test_ids] for x in x_test]
-    z_train = self.encode(x_train, first_latent=False)
-    z_test = self.encode(x_test, first_latent=False)
+    # convert boolean indices to integer
+    z_train = self.encode(x_train)
+    z_test = self.encode(x_test)
     r_train = self.decode(z_train)
     r_test = self.decode(z_test)
+    if isinstance(z_train, (tuple, list)):
+      z_train = z_train[self._latent_indices]
+      z_test = z_test[self._latent_indices]
+    if self.is_multi_latents:
+      z_train = CombinedDistribution(z_train, name="LatentsTrain")
+      z_test = CombinedDistribution(z_test, name="LatentsTest")
     # create a new critizer
     crt = self.copy()
     crt._representations = (\
@@ -454,13 +467,15 @@ class CriticizerBase(object):
           x.append(i)
           inps.append(i)
         # latents representation
-        z = self.encode(inps, sample_shape=(), first_latent=False)
+        z = self.encode(inps, sample_shape=())
+        o = tf.nest.flatten(self.decode(z))
         if isinstance(z, (tuple, list)):
+          z = tf.nest.flatten(z[self._latent_indices])
           if len(z) == 1:
             z = z[0]
           else:
             self._is_multi_latents = len(z)
-        Os.append(tf.nest.flatten(self.decode(z)))
+        Os.append(o)
         Zs.append(z)
         # update the counter
         n += len(y)
@@ -468,12 +483,15 @@ class CriticizerBase(object):
       Xs = [np.concatenate(x, axis=0) for x in Xs]
       Ys = np.concatenate(Ys, axis=0)
       if self.is_multi_latents:
-        Zs = CombinedDistribution([
-            concat_distribution(
-                [z[zi] for z in Zs],
-                name="Latents%d" % zi,
-            ) for zi in range(self.is_multi_latents)
-        ])
+        Zs = CombinedDistribution(
+            [
+                concat_distribution(
+                    [z[zi] for z in Zs],
+                    name="Latents%d" % zi,
+                ) for zi in range(self.is_multi_latents)
+            ],
+            name="Latents",
+        )
       else:
         Zs = concat_distribution(Zs, name="Latents")
       Os = [
