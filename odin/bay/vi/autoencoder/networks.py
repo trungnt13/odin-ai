@@ -422,4 +422,5 @@ class FactorDiscriminator(SequentialNetwork):
 # Factor divergence
 # ===========================================================================
 class FactorDivergence():
+  r""" TODO """
   pass

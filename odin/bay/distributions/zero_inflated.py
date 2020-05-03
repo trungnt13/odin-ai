@@ -187,6 +187,11 @@ class ZeroInflated(distribution.Distribution):
                          self._inflated_distribution._graph_parents,
                          name=name)
 
+  def __getitem__(self, slices):
+    return self.copy(
+        count_distribution=self.count_distribution.__getitem__(slices),
+        inflated_distribution=self.inflated_distribution.__getitem__(slices))
+
   @property
   def logits(self):
     """Log-odds of a `1` outcome (vs `0`)."""

@@ -374,6 +374,13 @@ class VariationalAutoencoder(keras.Model):
       files = glob.glob(path + '*')
       if len(files) > 0 and all(os.path.isfile(f) for f in files):
         self.load_weights(path)
+      self._save_path = path
+    else:
+      self._save_path = None
+
+  @property
+  def save_path(self):
+    return self._save_path
 
   def load_weights(self, filepath):
     trainer_path = filepath + '.trainer'

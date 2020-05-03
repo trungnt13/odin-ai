@@ -119,18 +119,18 @@ def _sampling_helper(representations,
     if strategy == 'betavae':
       y = factors[rand.choice(indices, size=batch_size,
                               replace=True)][:, factor_index]
-      obs1 = []
-      obs2 = []
+      obs1_ids = []
+      obs2_ids = []
       for i in y:
         sample_indices = code_map[(factor_index, i)]
         if len(sample_indices) >= 2:
           s1, s2 = rand.choice(sample_indices, size=2, replace=False)
-          obs1.append(s1)
-          obs2.append(s2)
+          obs1_ids.append(s1)
+          obs2_ids.append(s2)
       # create the observation:
-      if len(obs1) > 0:
-        obs1 = slice_distribution(obs1, representations)
-        obs2 = slice_distribution(obs2, representations)
+      if len(obs1_ids) > 0:
+        obs1 = slice_distribution(obs1_ids, representations)
+        obs2 = slice_distribution(obs2_ids, representations)
         feat = np.mean(np.abs(repr_fn(obs1) - repr_fn(obs2)), axis=0)
         features[count, :] = feat
         labels[count] = factor_index

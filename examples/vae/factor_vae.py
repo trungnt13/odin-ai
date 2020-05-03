@@ -67,7 +67,7 @@ def cal_mllk(vae, data, gpu=False):
 class Factor(Experimenter):
 
   def __init__(self):
-    super().__init__(save_path='/tmp/factorexp',
+    super().__init__(save_path='~/exp/factorexp',
                      config_path=CONFIG,
                      exclude_keys=['verbose', 'gpu'],
                      hash_length=5)

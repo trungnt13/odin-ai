@@ -25,7 +25,8 @@ class ConditionalTensor(distribution_lib.Distribution):
                validate_args=False,
                name=None):
     parameters = dict(locals())
-    with tf.name_scope(name or ('Independent' + distribution.name)) as name:
+    with tf.name_scope(name or
+                       ('ConditionalTensor' + distribution.name)) as name:
       self._distribution = distribution
       # this is hideous but it work
       if hasattr(self._distribution, 'KL_divergence'):
@@ -123,7 +124,7 @@ class ConditionalTensor(distribution_lib.Distribution):
 
 
 @kullback_leibler.RegisterKL(ConditionalTensor, ConditionalTensor)
-def _kl_independent(a, b, name='kl_independent'):
+def _kl_independent(a, b, name='kl_conditionaltensor'):
   r"""Batched KL divergence `KL(a || b)` for ConditionalTensor distributions.
 
   This will just ignore the concatenated tensor and return `kl_divergence`

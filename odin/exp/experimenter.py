@@ -215,8 +215,10 @@ class Experimenter():
       call when training start
     on_eval(cfg, output_dir)
       call with `--eval` option for evaluation
-    on_plot(models, output_dir)
-      call with `--plot` option for visualization
+    on_plot(cfg, output_dir)
+      call with `--plot` option for visualization the results
+    on_compare(models, save_path)
+      call with `--compare` to generate analysis of comparing multiple models
 
   Database:
     List of default tables and columns:
@@ -498,8 +500,11 @@ class Experimenter():
   def on_eval(self, cfg: DictConfig, output_dir: str):
     print("EVALUATING:", cfg, output_dir)
 
-  def on_plot(self, models, cfg: DictConfig, output_dir: str):
+  def on_plot(self, cfg: DictConfig, output_dir: str):
     print("PLOTTING:", cfg, output_dir)
+
+  def on_compare(self, models, save_path: str):
+    print("COMPARING:", save_path)
 
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
@@ -599,7 +604,9 @@ class Experimenter():
         break
     ## check functional fixed arguments
     for idx, arg in enumerate(list(sys.argv)):
-      if arg in ('--override', '-override'):
+      if arg in ('--compare', '-compare'):
+        raise NotImplementedError()
+      elif arg in ('--override', '-override'):
         self._override_mode = True
         sys.argv.pop(idx)
       elif arg in ('--train', '-train'):

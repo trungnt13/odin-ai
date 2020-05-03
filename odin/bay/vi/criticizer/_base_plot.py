@@ -1,5 +1,3 @@
-from __future__ import absolute_import, division, print_function
-
 import inspect
 from numbers import Number
 
@@ -8,54 +6,12 @@ import tensorflow as tf
 
 from odin import visual as vs
 from odin.bay.vi import metrics, utils
-from odin.bay.vi._evaluation import _Criticizer
+from odin.bay.vi.criticizer._base import CriticizerBase
 from odin.ml import clustering, dimension_reduce
 
-__all__ = ['Criticizer']
 
+class CriticizerPlot(CriticizerBase, vs.Visualizer):
 
-class Criticizer(_Criticizer, vs.Visualizer):
-  r""" Probabilistic criticizer for variational model
-
-  Basic progress of evaluating probabilistic model given groundtruth factors:
-    - `sample_batch`
-    - `conditioning` on known factors
-
-  Arguments:
-    vae : `odin.bay.vi.VariationalAutoencoder`.
-    random_state : a Scalar. Random seed to ensure reproducibility.
-
-  Attributes:
-    pass
-  """
-
-  def copy(self, random_state=None):
-    r""" Shallow copy of Criticizer and all its sampled data """
-    crt = Criticizer(
-        self._vae,
-        random_state=self.randint if random_state is None else random_state)
-    for name in dir(self):
-      if '_' == name[0] and '__' != name[:2] and name != '_rand':
-        attr = getattr(self, name)
-        if not inspect.ismethod(attr):
-          setattr(crt, name, getattr(self, name))
-    return crt
-
-  def _check_factors(self, factors):
-    if factors is None:
-      factors = list(range(self.n_factors))
-    else:
-      try:
-        factors = [
-            int(i) if isinstance(i, Number) else self.index(i)
-            for i in tf.nest.flatten(factors)
-        ]
-      except ValueError:
-        raise ValueError("Cannot find factors: %s, from list of factors: %s" %
-                         (str(factors), self.factors_name))
-    return factors
-
-  ############## Ploting
   def plot_test(self):
     self.assert_sampled()
     return self
