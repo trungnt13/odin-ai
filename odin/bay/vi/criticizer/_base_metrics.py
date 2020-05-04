@@ -1,3 +1,5 @@
+from collections import OrderedDict
+
 import numpy as np
 import scipy as sp
 import tensorflow as tf
@@ -25,8 +27,8 @@ class CriticizerMetrics(CriticizerBase):
 
   ############## Matrices
   def create_correlation_matrix(self,
-                                mean=True,
                                 method='spearman',
+                                mean=True,
                                 decode=False):
     r""" Correlation matrix of `latent codes` (row) and `groundtruth factors`
     (column).
@@ -102,7 +104,7 @@ class CriticizerMetrics(CriticizerBase):
       return train, test, OrderedDict(zip(range(self.n_factors), ids))
     return train, test
 
-  def create_mutualinfo_matrix(self, mean=True, n_neighbors=3):
+  def create_mutualinfo_matrix(self, n_neighbors=3, mean=True):
     r""" Mututal information estimation using k-Nearest Neighbor
 
     Return:
@@ -117,8 +119,8 @@ class CriticizerMetrics(CriticizerBase):
     return train, test
 
   def create_importance_matrix(self,
-                               mean=True,
-                               algo=GradientBoostingClassifier):
+                               algo=GradientBoostingClassifier,
+                               mean=True):
     r""" Using ensemble algorithm to estimate the feature importance of each
     pair of (representation, factor)
 
@@ -354,7 +356,7 @@ class CriticizerMetrics(CriticizerBase):
                                                 random_state=self.randint)
     return sap
 
-  def cal_betavae_score(self, mean=True, n_samples=10000, verbose=True):
+  def cal_betavae_score(self, n_samples=10000, verbose=True):
     r""" The Beta-VAE score train a logistic regression to detect the invariant
     factor based on the absolute difference in the representations.
 
@@ -364,11 +366,11 @@ class CriticizerMetrics(CriticizerBase):
     return metrics.beta_vae_score(concat_distribution(self.representations),
                                   np.concatenate(self.factors, axis=0),
                                   n_samples=n_samples,
-                                  use_mean=mean,
+                                  use_mean=True,
                                   random_state=self.randint,
                                   verbose=verbose)
 
-  def cal_factorvae_score(self, mean=True, n_samples=10000, verbose=True):
+  def cal_factorvae_score(self, n_samples=10000, verbose=True):
     r""" FactorVAE based score
 
     Returns:
@@ -377,7 +379,7 @@ class CriticizerMetrics(CriticizerBase):
     return metrics.factor_vae_score(concat_distribution(self.representations),
                                     np.concatenate(self.factors, axis=0),
                                     n_samples=n_samples,
-                                    use_mean=mean,
+                                    use_mean=True,
                                     random_state=self.randint,
                                     verbose=verbose)
 

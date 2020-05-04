@@ -87,7 +87,7 @@ class IndexedList(list):
 
 
 class struct(dict):
-  '''Flexible object can be assigned any attribtues'''
+  r"""Flexible object can be assigned any attributes"""
 
   def __init__(self, *args, **kwargs):
     super(struct, self).__init__(*args, **kwargs)

@@ -285,7 +285,7 @@ class CriticizerBase(object):
     z_test, test_ids = _traverse(z_test)
     return z_train, z_test
 
-  def conditioning(self, known={}, logical_not=False):
+  def conditioning(self, known={}, logical_not=False, n_samples=None):
     r""" Conditioning the sampled dataset on known factors
 
     Arguments:
@@ -294,6 +294,7 @@ class CriticizerBase(object):
         the samples to be selected
       logical_not : a Boolean, if True applying the opposed conditioning
         of the known factors
+      n_samples : an Integer (Optional), maximum number of selected samples.
 
     Return:
       a new `Criticizer` with the conditioned data and representations
@@ -320,6 +321,12 @@ class CriticizerBase(object):
     for f_idx, fn_filter in known.items():
       train_ids = np.logical_and(train_ids, fn_filter(f_train[:, f_idx]))
       test_ids = np.logical_and(test_ids, fn_filter(f_test[:, f_idx]))
+    # select n_samples
+    if n_samples is not None:
+      n_samples = int(n_samples)
+      ratio = n_samples / (len(train_ids) + len(test_ids))
+      train_ids = train_ids[:int(ratio * len(train_ids))]
+      test_ids = test_ids[:int(ratio * len(test_ids))]
     # opposing the conditions
     if logical_not:
       train_ids = np.logical_not(train_ids)
@@ -417,6 +424,10 @@ class CriticizerBase(object):
           if verbose:
             factors = tqdm(factors, desc="Reading factors")
           factors = tf.concat([i for i in factors], axis=0)
+      # end the progress
+      if isinstance(inputs, tqdm):
+        inputs.clear()
+        inputs.close()
     # post-processing
     inputs = tf.nest.flatten(inputs)
     assert len(factors.shape) == 2, "factors must be a matrix"

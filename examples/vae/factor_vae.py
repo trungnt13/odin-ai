@@ -4,16 +4,20 @@ import os
 import sys
 
 import numpy as np
+import seaborn as sns
 import tensorflow as tf
+from matplotlib import pyplot as plt
 from sklearn.metrics import accuracy_score, classification_report
 from tensorflow.python import keras
 from tqdm import tqdm
 
+from odin import search
+from odin import visual as vs
 from odin.bay import RandomVariable as RV
 from odin.bay.vi import Criticizer
 from odin.bay.vi.autoencoder import (Factor2VAE, FactorDiscriminator, FactorVAE,
                                      SemiFactor2VAE, SemiFactorVAE)
-from odin.exp import Experimenter
+from odin.exp import Experimenter, pretty_config
 from odin.fuel import get_dataset
 from odin.utils import md5_folder
 
@@ -22,13 +26,17 @@ os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 tf.random.set_seed(1)
 np.random.seed(1)
+sns.set()
 
 # ===========================================================================
 # Helpers
 # vae=factor,factor2 ds=celeba,mnist pretrain=0,1000 finetune=12000 maxtc=True,False
 # vae=semi,semi2 ds=celeba,mnist pretrain=0,1000 finetune=12000 alpha=1,10 strategy=logsumexp,max
+#
 # python factor_vae.py vae=factor,factor2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 -m -ncpu=3;
 # python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 semi=0.1,0.01 -m -ncpu=3
+# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 semi=0.1,0.01 strategy=max -m -ncpu=3
+#
 # python factor_vae.py vae=factor,factor2 ds=shapes3D,dsprites,celeba pretrain=0,1000 finetune=12000 maxtc=True,False gamma=6,10,20 -m -ncpu=3
 # TODO: some things wrong with Shapes3D
 # ===========================================================================
@@ -53,12 +61,13 @@ gpu: False
 def cal_mllk(vae, data, gpu=False):
   device = 'GPU' if gpu else 'CPU'
   with tf.device(f"/{device}:0"):
-    return np.mean(
-        np.concatenate([
-            vae.marginal_log_prob(x, sample_shape=50)
-            for x in tqdm(data.repeat(1), desc="Calculating MarginalLLK")
-        ],
-                       axis=0))
+    prog = tqdm(data.repeat(1), desc="Calculating MarginalLLK")
+    mllk = np.mean(
+        np.concatenate(
+            [vae.marginal_log_prob(x, sample_shape=50) for x in prog], axis=0))
+    prog.clear()
+    prog.close()
+    return mllk
 
 
 # ===========================================================================
@@ -184,24 +193,16 @@ class Factor(Experimenter):
     tc = np.mean(crt.cal_total_correlation())
     d, c, i = crt.cal_dci_scores()
     sap = np.mean(crt.cal_separated_attr_predictability())
-    rds_pearson = np.mean(crt.cal_relative_disentanglement_strength("pearson"))
-    rds_spearman = np.mean(
-        crt.cal_relative_disentanglement_strength("spearman"))
     mig = np.mean(crt.cal_mutual_info_gap())
-    dmi, cmi = crt.cal_dcmi_scores()
     # save to database
     scores = dict(
         beta=beta,
         factor=factor,
         sap=sap,
-        pearson=rds_pearson,
-        spearman=rds_spearman,
         tc=tc,
         d=d,
         c=c,
         i=i,
-        dmi=dmi,
-        cmi=cmi,
         mig=mig,
         mllk=mllk,
         asw=scores['ASW'],
@@ -209,10 +210,66 @@ class Factor(Experimenter):
         nmi=scores['NMI'],
         uca=scores['UCA'],
     )
-    if cfg.verbose:
-      for k, v in scores.items():
-        print('%-8s' % k, ':', '%.3f' % v)
     self.save_scores(table="score", override=True, **scores)
+
+  def on_plot(self, cfg, output_dir):
+    average = lambda train_test: (train_test[0] + train_test[1]) / 2.
+    path = os.path.join(output_dir, 'matrix.png')
+    decode = lambda mat: search.diagonal_beam_search(mat.T)
+    stats = lambda mat: " mean:%.2f mean(max):%.2f" % (np.mean(
+        mat), np.mean(np.max(mat, axis=0)))
+
+    crt = Criticizer(vae=self.model)
+    crt.sample_batch(inputs=self.test,
+                     n_samples=[10000, 5000],
+                     factors_name=self.ds.labels,
+                     verbose=True)
+    n_codes = crt.n_codes
+    n_factors = crt.n_factors
+
+    mi = average(crt.create_mutualinfo_matrix())
+    spearman = average(crt.create_correlation_matrix(method='spearman'))
+    pearson = average(crt.create_correlation_matrix(method='pearson'))
+
+    height = 16
+    fig = plt.figure(figsize=(height * n_factors / n_codes * 3 + 2, height + 2))
+    kw = dict(cbar=True, annotation=True, fontsize=8)
+
+    ids = decode(mi)
+    vs.plot_heatmap(mi[ids],
+                    xticklabels=crt.factors_name,
+                    yticklabels=crt.codes_name[ids],
+                    cmap="Blues",
+                    ax=(1, 3, 1),
+                    title="[MutualInformation]" + stats(mi),
+                    **kw)
+
+    ids = decode(spearman)
+    vs.plot_heatmap(spearman[ids],
+                    xticklabels=crt.factors_name,
+                    yticklabels=crt.codes_name[ids],
+                    cmap="bwr",
+                    ax=(1, 3, 2),
+                    title="[Spearman]" + stats(spearman),
+                    **kw)
+
+    ids = decode(pearson)
+    vs.plot_heatmap(pearson[ids],
+                    xticklabels=crt.factors_name,
+                    yticklabels=crt.codes_name[ids],
+                    cmap="bwr",
+                    ax=(1, 3, 3),
+                    title="[Pearson]" + stats(pearson),
+                    **kw)
+    fig.tight_layout()
+    fig.savefig(path, dpi=120)
+
+  def on_compare(self, models, save_path):
+    mllk = self.get_scores('score', [i.hash for i in models], ['mllk'])
+    for key, val in sorted(mllk.items(), key=lambda x: models[x[0]].strategy):
+      cfg = models[key]
+      print('%-8s %-8s %-10s %.2f:' % (cfg.ds, cfg.vae, cfg.strategy, cfg.semi),
+            '%.2f' % val)
 
 
 # ===========================================================================

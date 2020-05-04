@@ -9,18 +9,20 @@ import re
 import shutil
 import sqlite3
 import sys
+import types
 import warnings
 from collections import OrderedDict
 from contextlib import contextmanager
 from copy import deepcopy
 from numbers import Number
 
+import tensorflow as tf
 from pandas import DataFrame
 from six import string_types
 
 from odin.exp.scores import ScoreBoard
 from odin.utils import (as_tuple, clean_folder, get_all_files,
-                        get_formatted_datetime)
+                        get_formatted_datetime, struct)
 from odin.utils.crypto import md5_checksum, md5_folder
 from odin.utils.mpi import MPI
 
@@ -120,6 +122,26 @@ def _prepare_conditions(conditions={}):
   return conditions
 
 
+def pretty_config(cfg: dict, ncol=4) -> str:
+  ncol = int(ncol)
+  text = ''
+  if hasattr(cfg, 'pretty'):
+    pretty = cfg.pretty().split('\n')
+  else:
+    pretty = ['%s: %s' % (str(i), str(j)) for i, j in pretty.items()]
+  max_len = max(len(i) for i in pretty)
+  fmt = f'%-{max_len}s'
+  for i, s in enumerate(pretty):
+    s = fmt % s.strip()
+    if i % ncol in list(range(1, ncol - 1)):
+      text += " | %s" % s
+    elif i % ncol == (ncol - 1):
+      text += " | %s\n" % s
+    else:
+      text += ' ' + s
+  return text
+
+
 # ===========================================================================
 # Hydra Launcher
 # ===========================================================================
@@ -185,6 +207,17 @@ def _to_sqltype(obj):
   return "BLOB"
 
 
+class ModelList(list):
+
+  def __getitem__(self, key):
+    if isinstance(key, string_types):
+      for i in self:
+        if i.hash == key:
+          return i
+      raise KeyError("Cannot find model with hash key: %s" % key)
+    return super().__getitem__(key)
+
+
 # ===========================================================================
 # Main class
 # ===========================================================================
@@ -193,6 +226,20 @@ _INSTANCES = {}
 
 class Experimenter():
   r""" Experiment management using hydra
+
+  Common workflow with Experimenter:
+  ```
+  input exp : Experimenter
+  for prog in n_processes:
+    on prog:
+      on_train()
+  for prog in n_processes:
+    on prog:
+      on_eval()
+      on_plot()
+  on_compare()
+  ```
+
 
   Arguments:
     save_path : path to a folder for saving the experiments
@@ -219,6 +266,8 @@ class Experimenter():
       call with `--plot` option for visualization the results
     on_compare(models, save_path)
       call with `--compare` to generate analysis of comparing multiple models
+      `--load` option can be added to force loading the trained model using
+      `on_create_model`
 
   Database:
     List of default tables and columns:
@@ -459,6 +508,40 @@ class Experimenter():
     return self
 
   ####################### Database access
+  def get_scores(self, table, hashes=None, *columns) -> dict:
+    r""" Get saved scores for given model based on their hash value
+
+    Arguments:
+      table : a String, name of SQL table
+      hashes : {`None`, a String, list of String}.
+        List of hash code, i.e. the identity of model, generated based on
+        its running configuration. If `None`, select all
+
+    Return:
+      a Dictionary, mapping from `hash key` to `columns`
+    Example
+    ```
+    self.get_scores('score', [i.hash for i in configs], ['mllk'])
+    ```
+    """
+    table = str(table).lower().strip()
+    # prepare columns
+    columns = [str(i) for i in tf.nest.flatten(columns)]
+    if len(columns) > 0:
+      columns = ','.join(['hash'] + columns)
+    else:
+      columns = '*'
+    # prepare where
+    hashes = [str(i) for i in tf.nest.flatten(hashes)]
+    if hashes is None or len(hashes) == 0:
+      where = ""
+    else:
+      where = "WHERE hash in (%s)" % ','.join("'%s'" % i for i in hashes)
+    # run the SQL query
+    query = f"SELECT {columns} FROM {table} {where};"
+    rows = self.select(query)
+    return {r[0]: r[1] if len(r) == 2 else r[1:] for r in rows}
+
   def save_scores(self, table, override=False, **scores):
     r""" Save scores to the SQLite database, the hash key (primary key) is
     determined by the running configuration. """
@@ -503,18 +586,81 @@ class Experimenter():
   def on_plot(self, cfg: DictConfig, output_dir: str):
     print("PLOTTING:", cfg, output_dir)
 
-  def on_compare(self, models, save_path: str):
+  def on_compare(self, models: ModelList, save_path: str):
     print("COMPARING:", save_path)
+
+  ####################### Compare multiple model
+  def _run_comparison(self, argv, load_models):
+    ## extract conditions from argv
+    argv = argv[1:]
+    regex = re.compile(r'\w+[=].+')
+    overrides = [a for a in argv if regex.findall(a) and '-' != a[0]]
+    # turn override to where condition
+    conditions = []
+    for i, ov in enumerate(overrides):
+      if i > 0:
+        conditions.append("AND")
+      key, vals = ov.split('=')
+      sql_vals = []
+      for v in vals.split(','):
+        if v.isdigit():
+          v = float(v)
+          if v.is_integer():
+            v = int(v)
+        else:
+          v = "'%s'" % v
+        sql_vals.append(v)
+      if len(sql_vals) > 1:
+        conditions.append(f"{key} in ({','.join(sql_vals)})")
+      else:
+        conditions.append(f"{key}={sql_vals[0]}")
+    conditions = ' '.join(conditions) if len(conditions) > 0 else ""
+    ## create the query
+    where = f"WHERE {conditions}" if len(conditions) > 0 else ""
+    query = f"SELECT * FROM config {where};"
+    configs = self.select(query)
+    colname = [row[1] for row in self.select("PRAGMA table_info(config);")]
+    ## select only available model
+    _path = lambda row: os.path.join(self.save_path, 'exp_%s' % row[0], 'model')
+    configs = [
+        row[:-1]
+        for row in configs  # ignore the timestamp
+        if os.path.exists(_path(row)) and os.listdir(_path(row))
+    ]
+    # create the model
+    models = ModelList()
+    attrs = set([i[0] for i in inspect.getmembers(self)])
+
+    for cfg in configs:
+      cfg = DictConfig(dict(zip(colname, cfg)))
+      if load_models:
+        # print the log (3 columns text)
+        print("Loading model:")
+        print(pretty_config(cfg))
+        # load data
+        for k in self.exclude_keys:  # set the default excluded key
+          if k not in cfg:
+            cfg[k] = self.configs[k]
+        self.on_load_data(cfg)
+        # load model
+        self.on_create_model(cfg, self.get_model_dir(cfg), md5=None)
+        # just get the newly added attributes
+        cfg = struct(**cfg)
+        for k, v in [i for i in inspect.getmembers(self) if i[0] not in attrs]:
+          cfg[k] = v
+      # add the model
+      models.append(cfg)
+    ## finally call the compare function
+    self.on_compare(models, self.save_path)
 
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
     cfg = deepcopy(cfg)
     hash_key = self.hash_config(cfg, self.exclude_keys)
-    self.db.write(
-        'config',
-        unique=True,
-        hash=hash_key,
-        **{k: v for k, v in cfg.items() if k not in self.exclude_keys})
+    self.db.write('config',
+                  unique=[k for k in cfg.keys if k not in self.exclude_keys],
+                  hash=hash_key,
+                  **{k: v for k, v in cfg.items()})
     self._running_configs = cfg
     # the cfg is dispatched by hydra.run_job, we couldn't change anything here
     logger = LOGGER
@@ -603,21 +749,28 @@ class Experimenter():
           sys.argv.pop(idx)
         break
     ## check functional fixed arguments
-    for idx, arg in enumerate(list(sys.argv)):
-      if arg in ('--compare', '-compare'):
-        raise NotImplementedError()
+    run_comparison = False
+    load_model_comparison = False
+    remove_items = []
+    for arg in list(sys.argv):
+      if arg in ('--load',):
+        load_model_comparison = True
+        remove_items.append(arg)
+      elif arg in ('--compare', '-compare'):
+        run_comparison = True
+        remove_items.append(arg)
       elif arg in ('--override', '-override'):
         self._override_mode = True
-        sys.argv.pop(idx)
+        remove_items.append(arg)
       elif arg in ('--train', '-train'):
         self.train()
-        sys.argv.pop(idx)
+        remove_items.append(arg)
       elif arg in ('--plot', '-plot'):
         self.plot()
-        sys.argv.pop(idx)
+        remove_items.append(arg)
       elif arg in ('--eval', '-eval'):
         self.eval()
-        sys.argv.pop(idx)
+        remove_items.append(arg)
       elif arg in ('--reset', '--clear', '--clean'):
         configs_filter = lambda f: 'configs' != f.split('/')[-1]
         if len(get_all_files(self._save_path, filter_func=configs_filter)) > 0:
@@ -630,7 +783,10 @@ class Experimenter():
                       "\n%s\n'n' to cancel, otherwise continue:" % old_exps)
           if inp.strip().lower() != 'n':
             clean_folder(self._save_path, filter=configs_filter, verbose=True)
-        sys.argv.pop(idx)
+        remove_items.append(arg)
+    # remove all checked arguments
+    for i in remove_items:
+      sys.argv.remove(i)
     # check multirun
     is_multirun = any(',' in ovr for ovr in overrides) or \
       any(',' in arg and '=' in arg for arg in sys.argv)
@@ -638,6 +794,10 @@ class Experimenter():
     self._write_history(command, "overrides:%s" % str(overrides),
                         "strict:%s" % str(strict), "ncpu:%d" % ncpu,
                         "multirun:%s" % str(is_multirun))
+    # run in comparison mode
+    if run_comparison:
+      self._run_comparison(sys.argv, load_model_comparison)
+      return self
     # generate app help
     hlp = '\n\n'.join([
         "%s - %s" % (str(key), ', '.join(sorted(as_tuple(val, t=str))))
