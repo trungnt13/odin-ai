@@ -11,7 +11,7 @@ import sqlite3
 import sys
 import types
 import warnings
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from copy import deepcopy
 from numbers import Number
@@ -209,6 +209,14 @@ def _to_sqltype(obj):
 
 class ModelList(list):
 
+  def to_dataframe(self) -> DataFrame:
+    return self.to_df()
+
+  def to_df(self) -> DataFrame:
+    cols = list(self[0].keys())
+    df = DataFrame([[i[k] for k in cols] for i in self], columns=cols)
+    return df
+
   def __getitem__(self, key):
     if isinstance(key, string_types):
       for i in self:
@@ -227,19 +235,25 @@ _INSTANCES = {}
 class Experimenter():
   r""" Experiment management using hydra
 
-  Common workflow with Experimenter:
+  For `--eval`, `--plot`, `--compare`,  the Experimenter will find all models
+  then filter out the model by provided. For `training`, the exact set of models
+  will provided by the arguments. For example:
+
+    - During training `ds=mnist` run only the default model on MNIST dataset.
+    - During eval `ds=mnist` run all model trained on MNIST dataset
+
+  Common workflow with `Experimenter`:
   ```
   input exp : Experimenter
   for prog in n_processes:
     on prog:
-      on_train()
+      on_train() # default, no flag
   for prog in n_processes:
     on prog:
-      on_eval()
-      on_plot()
-  on_compare()
+      on_eval() # --eval
+      on_plot() # --plot
+  on_compare() # --compare
   ```
-
 
   Arguments:
     save_path : path to a folder for saving the experiments
@@ -282,6 +296,9 @@ class Experimenter():
   exp = Experimenter(save_path="/tmp/exptmp", config_path=CONFIG)
   exp.run()
   # python main.py vae=betavae,factorvae ds=mnist,shapes3d -m -ncpu 2
+  # python main.py vae=betavae,factorvae ds=mnist,shapes3d -m -ncpu 2 --eval
+  # python main.py vae=betavae,factorvae ds=mnist,shapes3d -m -ncpu 2 --plot
+  # python main.py ds=mnist --compare --load
   ```
   """
 
@@ -326,23 +343,23 @@ class Experimenter():
     ### running configuration
     self._db = None
     self._running_configs = None
-    self._training_mode = 'train'
+    self._running_mode = 'train'
     self._override_mode = False
 
   @property
   def is_training(self):
-    return self._training_mode == 'train'
+    return self._running_mode == 'train'
 
   def train(self):
-    self._training_mode = 'train'
+    self._running_mode = 'train'
     return self
 
   def eval(self):
-    self._training_mode = 'eval'
+    self._running_mode = 'eval'
     return self
 
   def plot(self):
-    self._training_mode = 'plot'
+    self._running_mode = 'plot'
     return self
 
   def hash_config(self, cfg: DictConfig, exclude_keys=[]) -> str:
@@ -565,6 +582,74 @@ class Experimenter():
     r""" Run a select query on the database """
     return self.db.select(query)
 
+  def get_models(self, conditions="", load_models=False):
+    r""" Select all model in the database `exp.db` given the conditions """
+    regex = re.compile(r'\w+[=].+')
+    if isinstance(conditions, string_types):
+      conditions = conditions.split(' ')
+    arguments = [i for i in conditions if '-' != i[0] and '.' not in i]
+    conditions = []
+    expect_condition = True
+    ## convert condition to where statement
+    for i, ov in enumerate(arguments):
+      if regex.findall(ov):
+        if not expect_condition:
+          conditions.append("AND")
+        expect_condition = False  # now we need connector
+        key, vals = ov.split('=')
+        sql_vals = []
+        for v in vals.split(','):
+          if v.isdigit():
+            v = float(v)
+            if v.is_integer():
+              v = int(v)
+          else:
+            v = "'%s'" % v
+          sql_vals.append(v)
+        if len(sql_vals) > 1:
+          conditions.append(f"{key} in ({','.join(sql_vals)})")
+        else:
+          conditions.append(f"{key}={sql_vals[0]}")
+      else:  # expect and, or ... connector here
+        expect_condition = True
+        conditions.append(ov)
+    conditions = ' '.join(conditions) if len(conditions) > 0 else ""
+    ## create the query
+    where = f"WHERE {conditions}" if len(conditions) > 0 else ""
+    query = f"SELECT * FROM config {where};"
+    configs = self.select(query)
+    colname = [row[1] for row in self.select("PRAGMA table_info(config);")]
+    ## select only available model
+    _path = lambda row: os.path.join(self.save_path, 'exp_%s' % row[0], 'model')
+    configs = [
+        row[:-1]
+        for row in configs  # ignore the timestamp
+        if os.path.exists(_path(row)) and os.listdir(_path(row))
+    ]
+    # create the model
+    models = ModelList()
+    attrs = set([i[0] for i in inspect.getmembers(self)])
+    # iterate and get all the relevant config
+    for cfg in configs:
+      cfg = DictConfig(dict(zip(colname, cfg)))
+      if load_models:
+        print("Loading model:")
+        print(pretty_config(cfg))
+        # load data
+        for k in self.exclude_keys:  # set the default excluded key
+          if k not in cfg:
+            cfg[k] = self.configs[k]
+        self.on_load_data(cfg)
+        # load model
+        self.on_create_model(cfg, self.get_model_dir(cfg), md5=None)
+        # just get the newly added attributes
+        cfg = struct(**cfg)
+        for k, v in [i for i in inspect.getmembers(self) if i[0] not in attrs]:
+          cfg[k] = v
+      # add the model
+      models.append(cfg)
+    return models
+
   ####################### Base methods
   @property
   def args_help(self) -> dict:
@@ -591,65 +676,7 @@ class Experimenter():
 
   ####################### Compare multiple model
   def _run_comparison(self, argv, load_models):
-    ## extract conditions from argv
-    argv = argv[1:]
-    regex = re.compile(r'\w+[=].+')
-    overrides = [a for a in argv if regex.findall(a) and '-' != a[0]]
-    # turn override to where condition
-    conditions = []
-    for i, ov in enumerate(overrides):
-      if i > 0:
-        conditions.append("AND")
-      key, vals = ov.split('=')
-      sql_vals = []
-      for v in vals.split(','):
-        if v.isdigit():
-          v = float(v)
-          if v.is_integer():
-            v = int(v)
-        else:
-          v = "'%s'" % v
-        sql_vals.append(v)
-      if len(sql_vals) > 1:
-        conditions.append(f"{key} in ({','.join(sql_vals)})")
-      else:
-        conditions.append(f"{key}={sql_vals[0]}")
-    conditions = ' '.join(conditions) if len(conditions) > 0 else ""
-    ## create the query
-    where = f"WHERE {conditions}" if len(conditions) > 0 else ""
-    query = f"SELECT * FROM config {where};"
-    configs = self.select(query)
-    colname = [row[1] for row in self.select("PRAGMA table_info(config);")]
-    ## select only available model
-    _path = lambda row: os.path.join(self.save_path, 'exp_%s' % row[0], 'model')
-    configs = [
-        row[:-1]
-        for row in configs  # ignore the timestamp
-        if os.path.exists(_path(row)) and os.listdir(_path(row))
-    ]
-    # create the model
-    models = ModelList()
-    attrs = set([i[0] for i in inspect.getmembers(self)])
-
-    for cfg in configs:
-      cfg = DictConfig(dict(zip(colname, cfg)))
-      if load_models:
-        # print the log (3 columns text)
-        print("Loading model:")
-        print(pretty_config(cfg))
-        # load data
-        for k in self.exclude_keys:  # set the default excluded key
-          if k not in cfg:
-            cfg[k] = self.configs[k]
-        self.on_load_data(cfg)
-        # load model
-        self.on_create_model(cfg, self.get_model_dir(cfg), md5=None)
-        # just get the newly added attributes
-        cfg = struct(**cfg)
-        for k, v in [i for i in inspect.getmembers(self) if i[0] not in attrs]:
-          cfg[k] = v
-      # add the model
-      models.append(cfg)
+    models = self.get_models(conditions=argv[1:], load_models=load_models)
     ## finally call the compare function
     self.on_compare(models, self.save_path)
 
@@ -658,7 +685,7 @@ class Experimenter():
     cfg = deepcopy(cfg)
     hash_key = self.hash_config(cfg, self.exclude_keys)
     self.db.write('config',
-                  unique=[k for k in cfg.keys if k not in self.exclude_keys],
+                  unique=[k for k in cfg.keys() if k not in self.exclude_keys],
                   hash=hash_key,
                   **{k: v for k, v in cfg.items()})
     self._running_configs = cfg
@@ -689,14 +716,14 @@ class Experimenter():
       self.on_create_model(cfg, model_dir, md5_saved)
       logger.info("Create model: %s (md5:%s)" % (model_dir, str(md5_saved)))
       ## training
-      logger.info("Start experiment in mode '%s'" % self._training_mode)
-      if self._training_mode == 'train':
+      logger.info("Start experiment in mode '%s'" % self._running_mode)
+      if self._running_mode == 'train':
         self.on_train(cfg, output_dir, model_dir)
         logger.info("Finish training")
-      elif self._training_mode == 'eval':
+      elif self._running_mode == 'eval':
         self.on_eval(cfg, output_dir)
         logger.info("Finish evaluating")
-      elif self._training_mode == 'plot':
+      elif self._running_mode == 'plot':
         self.on_plot(cfg, output_dir)
         logger.info("Finish plotting")
       ## saving the model hash
@@ -794,10 +821,32 @@ class Experimenter():
     self._write_history(command, "overrides:%s" % str(overrides),
                         "strict:%s" % str(strict), "ncpu:%d" % ncpu,
                         "multirun:%s" % str(is_multirun))
+    ## preprocessing running mode in comparison mode
     # run in comparison mode
     if run_comparison:
       self._run_comparison(sys.argv, load_model_comparison)
       return self
+    elif self._running_mode in ('eval', 'plot'):
+      configs = self.get_models(sys.argv[1:], load_models=False)
+      if len(configs) == 0:
+        raise RuntimeError("Cannot find trained models with configuration: %s" %
+                           str(sys.argv[1:]))
+      # get all config of relevant models
+      kw = defaultdict(list)
+      for cfg in configs:
+        for k, v in cfg.items():
+          kw[k].append(v)
+      # convert the dictionary config to overrides
+      def_configs = self.configs
+      args = []
+      for k, v in kw.items():
+        v = list(set(v))
+        if k in def_configs and (len(v) > 1 or def_configs[k] != v[0]):
+          args.append('%s=%s' % (k, ','.join([str(i) for i in v])))
+      # remove old overrides and assign the new ones
+      regex = re.compile(r'\w+[=].+')
+      sys.argv = [i for i in sys.argv if not regex.findall(i)]
+      sys.argv = sys.argv[0:1] +  args + sys.argv[1:]
     # generate app help
     hlp = '\n\n'.join([
         "%s - %s" % (str(key), ', '.join(sorted(as_tuple(val, t=str))))
@@ -933,17 +982,6 @@ class Experimenter():
         else:
           ret[path] = cfg
     return ret
-
-  def sample_model(self, conditions={}, seed=1):
-    exp_cfg = self.fetch_exp_cfg(conditions)
-    if len(exp_cfg) == 0:
-      raise RuntimeError("Cannot find model with configuration: %s" %
-                         str(conditions))
-    random.seed(seed)
-    exp, cfg = random.choice(list(exp_cfg.items()))
-    model = self.on_create_model(cfg, os.path.join(exp, 'model'), None)
-    cfg = OmegaConf.load(cfg[-1])
-    return model, cfg
 
   def search(self, conditions={}, load_model=True, return_config=True):
     r"""

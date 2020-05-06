@@ -4,6 +4,7 @@ import os
 import sys
 
 import numpy as np
+import pandas as pd
 import seaborn as sns
 import tensorflow as tf
 from matplotlib import pyplot as plt
@@ -34,11 +35,15 @@ sns.set()
 # vae=semi,semi2 ds=celeba,mnist pretrain=0,1000 finetune=12000 alpha=1,10 strategy=logsumexp,max
 #
 # python factor_vae.py vae=factor,factor2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 -m -ncpu=3;
-# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 semi=0.1,0.01 -m -ncpu=3
-# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 semi=0.1,0.01 strategy=max -m -ncpu=3
+# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 semi=0.1,0.01 -m -ncpu=3;
+# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 semi=0.1,0.01 strategy=max -m -ncpu=3;
 #
-# python factor_vae.py vae=factor,factor2 ds=shapes3D,dsprites,celeba pretrain=0,1000 finetune=12000 maxtc=True,False gamma=6,10,20 -m -ncpu=3
-# TODO: some things wrong with Shapes3D
+# python factor_vae.py vae=factor,factor2 ds=cifar10,cifar20,cifar100,mnist pretrain=0 finetune=10000 -m -ncpu=3;
+# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=0 finetune=10000 semi=0.1,0.01 -m -ncpu=3;
+# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=0 finetune=10000 semi=0.1,0.01 strategy=max -m -ncpu=3;
+#
+# python factor_vae.py vae=factor,factor2 ds=shapes3D,dsprites,celeba -m -ncpu=2
+# add slt10 datasets
 # ===========================================================================
 CONFIG = \
 r"""
@@ -265,11 +270,46 @@ class Factor(Experimenter):
     fig.savefig(path, dpi=120)
 
   def on_compare(self, models, save_path):
-    mllk = self.get_scores('score', [i.hash for i in models], ['mllk'])
-    for key, val in sorted(mllk.items(), key=lambda x: models[x[0]].strategy):
-      cfg = models[key]
-      print('%-8s %-8s %-10s %.2f:' % (cfg.ds, cfg.vae, cfg.strategy, cfg.semi),
-            '%.2f' % val)
+    scores = [
+        'mllk', 'mig', 'beta', 'factor', 'uca', 'nmi', 'sap', 'd', 'c', 'i'
+    ]
+    scores = {
+        name: self.get_scores('score', [i.hash for i in models
+                                       ], name) for name in scores
+    }
+    ncol = 5
+    nrow = int(np.ceil(len(scores) / ncol))
+
+    df = models.to_dataframe()
+    for dsname, group in df.groupby('ds'):
+      name = group['vae'] + '-' + group['strategy'] + '-' + group[
+          'semi'].astype(str)
+      colors = sns.color_palette(n_colors=group.shape[0])
+      X = np.arange(group.shape[0])
+
+      fig = plt.figure(figsize=(3 * ncol, 3 * nrow))
+      for idx, (key, val) in enumerate(scores.items()):
+        y = np.array([val[hash_code] for hash_code in group['hash']])
+        vmin, vmax = np.min(y), np.max(y)
+        y = y - np.min(y)
+        ax = plt.subplot(nrow, ncol, idx + 1)
+        points = [
+            ax.scatter(x_, y_, s=32, color=c_, alpha=0.8)
+            for x_, y_, c_ in zip(X, y, colors)
+        ]
+        ax.set_title(key)
+        plt.yticks(np.linspace(0., np.max(y), 5),
+                   ["%.2f" % i for i in np.linspace(vmin, vmax, 5)])
+        ax.tick_params(bottom=False, labelbottom=False, labelsize=8)
+        # show legend:
+        if idx == 0:
+          ax.legend(points, [i for i in name],
+                    fontsize=6,
+                    fancybox=False,
+                    framealpha=0.)
+      fig.suptitle(dsname)
+      fig.tight_layout(rect=[0, 0.03, 1, 0.97])
+    vs.plot_save(os.path.join(save_path, 'compare.pdf'), dpi=100)
 
 
 # ===========================================================================
