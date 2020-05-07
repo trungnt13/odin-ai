@@ -41,6 +41,14 @@ class MultitaskVAE(BetaVAE):
     self.labels = labels
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
 
+  @property
+  def alpha(self):
+    return self._alpha
+
+  @alpha.setter
+  def alpha(self, a):
+    self._alpha = tf.convert_to_tensor(a, dtype=self.dtype, name='alpha')
+
   def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
     n_outputs = len(self.output_layers)
     n_semi = len(self.labels)
@@ -79,12 +87,15 @@ class MultitaskVAE(BetaVAE):
           m = tf.reshape(m, (-1,))
           # take into account the sample_shape by transpose the batch dim to
           # the first dimension
-          lk_y = tf.transpose(tf.boolean_mask(tf.transpose(lk_y), m, axis=0))
-        # need to check the shape here, otherwise the loss can be NaN
-        if lk_y.shape[0] == 0:
-          llk["llk_%s" % name] = 0.
-        else:
-          llk["llk_%s" % name] = tf.reduce_mean(self.alpha * lk_y)
+          # need to check the mask here, otherwise the loss can be NaN
+          lk_y = tf.cond(
+              tf.reduce_all(tf.logical_not(m)),
+              lambda: 0.,
+              lambda: tf.transpose(
+                  tf.boolean_mask(tf.transpose(lk_y), m, axis=0)),
+          )
+        llk["llk_%s" % name] = tf.reduce_mean(self.alpha * lk_y)
+    # print(llk, div)
     return llk, div
 
   @property

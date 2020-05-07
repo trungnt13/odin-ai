@@ -273,15 +273,13 @@ class Trainer(object):
     error = generalization / progression
     threshold = np.abs(threshold)
     if error >= -threshold:
-      tf.print(
-          "[EarlyStop] Exceed threshold:%.4f  generalization:%.4f progression:%.4f"
-          % (threshold, -generalization, progression))
+      tf.print("[EarlyStop] improvement:%.4f progression:%.4f threshold:%.4f" %
+               (-generalization, progression, threshold))
       return Trainer.SIGNAL_TERMINATE
     elif generalization < 0:
       if verbose:
-        tf.print(
-            "[EarlyStop] Best model, generalization improved: %.4f, threshold: %.4f"
-            % ((best / current - 1.), np.abs(threshold)))
+        tf.print("[EarlyStop] Best model, improvement:%.4f, threshold:%.4f" %
+                 ((best / current - 1.), np.abs(threshold)))
       return Trainer.SIGNAL_BEST
 
   @staticmethod

@@ -815,6 +815,8 @@ class VariationalAutoencoder(keras.Model):
       trainer = Trainer()
       trainer.early_stop
       self.trainer = trainer
+    else:
+      trainer = self.trainer
     if log_tag is None or len(log_tag) == 0:
       log_tag = self.__class__.__name__
     # create the optimizer
@@ -828,7 +830,8 @@ class VariationalAutoencoder(keras.Model):
     self._check_gradients = bool(check_gradients)
     callback_functions = [i for i in tf.nest.flatten(callback) if callable(i)]
     saved_weights = [0]
-    patience = [int(earlystop_patience)]
+    earlystop_patience = int(earlystop_patience)
+    patience = [earlystop_patience]
 
     # run early stop and callback
     def _callback():
@@ -849,10 +852,14 @@ class VariationalAutoencoder(keras.Model):
                                     verbose=True)
         if signal == Trainer.SIGNAL_BEST:
           saved_weights[0] = self.step.numpy()
+          patience[0] = min(patience[0] + 1. / earlystop_patience,
+                            earlystop_patience)
           Trainer.save_weights(self)
         elif signal == Trainer.SIGNAL_TERMINATE:
           patience[0] -= 1
-          tf.print(f"[EarlyStop] Patience decreased: {patience[0]}")
+          tf.print(
+              f"[EarlyStop] Patience decreased: {patience[0]:.2f}/{earlystop_patience}"
+          )
           if patience[0] >= 0:
             signal = None
         return signal
@@ -916,4 +923,10 @@ class VariationalAutoencoder(keras.Model):
     for i, output in enumerate(self.output_layers):
       text += "\n Output#%d:\n  " % i
       text += "\n  ".join(_net2str(output).split('\n'))
+    ## Optimizer
+    if hasattr(self, 'optimizer'):
+      for i, opt in enumerate(tf.nest.flatten(self.optimizer)):
+        text += "\n Optimizer#%d:\n  " % i
+        text += "\n  ".join(
+            ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
     return text

@@ -463,10 +463,18 @@ class FactorDiscriminator(SequentialNetwork):
     loss = 0.
     for y_true in labels:
       tf.assert_rank(y_true, 2)
-      # check the shape careful here, otherwise, NaN
-      if y_true.shape[0] > 0:
-        loss += tf.nn.softmax_cross_entropy_with_logits(labels=y_true,
-                                                        logits=z_logits)
+      # check the mask careful here, otherwise, NaN
+      if mask is None:
+        llk = tf.nn.softmax_cross_entropy_with_logits(labels=y_true,
+                                                      logits=z_logits)
+      else:
+        llk = tf.cond(
+            tf.reduce_all(tf.logical_not(mask)),
+            lambda: 0.,
+            lambda: tf.nn.softmax_cross_entropy_with_logits(labels=y_true,
+                                                            logits=z_logits),
+        )
+      loss += llk
     # check nothing is NaN
     # tf.assert_equal(tf.reduce_all(tf.logical_not(tf.math.is_nan(loss))), True)
     return tf.reduce_mean(loss)
