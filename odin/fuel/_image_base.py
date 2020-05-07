@@ -12,21 +12,29 @@ from odin.utils.net_utils import download_and_extract
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _partition(part, train=None, valid=None, test=None, unlabeled=None):
+def _partition(part,
+               train=None,
+               valid=None,
+               test=None,
+               unlabeled=None,
+               unlabelled=None, **kwargs):
   r""" A function for automatically select the right data partition """
   part = str(part).lower().strip()
+  ret = None
   if 'train' in part:
     ret = train
   elif 'valid' in part:
     ret = valid
   elif 'test' in part:
     ret = test
-  elif 'unlabeled' in part:
-    ret = unlabeled
-  else:
-    raise ValueError("No support for partition with name: '%s'" % part)
+  elif 'unlabeled' in part or 'unlabelled' in part:
+    ret = unlabeled if unlabelled is None else unlabelled
+  for k, v in kwargs.items():
+    if part == str(k).strip().lower():
+      ret = v
+      break
   if ret is None:
-    raise ValueError("No data for parition with name: '%s'" % part)
+    raise ValueError("No data for partition with name: '%s'" % part)
   return ret
 
 

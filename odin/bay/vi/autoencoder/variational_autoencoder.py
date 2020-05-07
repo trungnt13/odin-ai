@@ -122,7 +122,7 @@ def _parse_network_alias(encoder, decoder):
                 input_shape=None)
       encoder = ImageNet(**kw)
       decoder = partial(ImageNet, decoding=True, **kw)
-    elif encoder in ('shapes3d', 'dsprites', 'celeba', 'slt10', 'legofaces',
+    elif encoder in ('shapes3d', 'dsprites', 'celeba', 'stl10', 'legofaces',
                      'cifar10', 'cifar20', 'cifar100'):
       n_channels = 1 if encoder == 'dsprites' else 3
       if encoder in ('cifar10', 'cifar100', 'cifar20'):
@@ -286,7 +286,7 @@ class VariationalAutoencoder(keras.Model):
       encoder = encoder.create_network(input_shape, name="Encoder")
     elif hasattr(encoder, 'input_shape') and \
       list(encoder.input_shape[1:]) != input_shape:
-      warnings.warn("encoder has input_shape=%s but VAE input_shape=%s" %
+      warnings.warn("encoder has input_shape=%s but VAE output_shape=%s" %
                     (str(encoder.input_shape[1:]), str(input_shape)))
     ### check latent and input distribution
     all_latents = [
@@ -359,8 +359,8 @@ class VariationalAutoencoder(keras.Model):
                             dtype=self.dtype,
                             trainable=False,
                             name="Step")
-    self._trainstep_kw = dict()
     self.trainer = None
+    self._trainstep_kw = dict()
     self.latent_names = [i.name for i in self.latent_layers]
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
@@ -778,13 +778,18 @@ class VariationalAutoencoder(keras.Model):
       sample_shape=(),  # for ELBO
       analytic=False,  # for ELBO
       iw=False,  # for ELBO
-      callback=lambda: None,
+      callback=None,
       compile_graph=True,
       autograph=False,
       logging_interval=2,
       skip_fitted=False,
       log_tag='',
       log_path=None,
+      earlystop_threshold=0.001,
+      earlystop_progress_length=0,
+      earlystop_patience=-1,
+      earlystop_min_epoch=-np.inf,
+      terminate_on_nan=True,
       check_gradients=False):
     r""" Override the original fit method of keras to provide simplified
     procedure with `VariationalAutoencoder.optimize` and
@@ -808,6 +813,7 @@ class VariationalAutoencoder(keras.Model):
     from odin.exp.trainer import Trainer
     if self.trainer is None:
       trainer = Trainer()
+      trainer.early_stop
       self.trainer = trainer
     if log_tag is None or len(log_tag) == 0:
       log_tag = self.__class__.__name__
@@ -820,6 +826,37 @@ class VariationalAutoencoder(keras.Model):
                               iw=iw,
                               elbo_kw=dict(analytic=analytic))
     self._check_gradients = bool(check_gradients)
+    callback_functions = [i for i in tf.nest.flatten(callback) if callable(i)]
+    saved_weights = [0]
+    patience = [int(earlystop_patience)]
+
+    # run early stop and callback
+    def _callback():
+      for f in callback_functions:
+        f()
+      if earlystop_patience > 0:
+        if valid is not None:
+          losses = trainer.valid_loss_epoch
+        else:
+          losses = trainer.train_loss
+          ids = list(range(0, len(losses), valid_freq)) + [len(losses)]
+          losses = [np.mean(losses[s:e]) for s, e in zip(ids, ids[1:])]
+        signal = Trainer.early_stop(losses=losses,
+                                    threshold=earlystop_threshold,
+                                    progress_length=earlystop_progress_length,
+                                    min_epoch=earlystop_min_epoch,
+                                    terminate_on_nan=terminate_on_nan,
+                                    verbose=True)
+        if signal == Trainer.SIGNAL_BEST:
+          saved_weights[0] = self.step.numpy()
+          Trainer.save_weights(self)
+        elif signal == Trainer.SIGNAL_TERMINATE:
+          patience[0] -= 1
+          tf.print(f"[EarlyStop] Patience decreased: {patience[0]}")
+          if patience[0] >= 0:
+            signal = None
+        return signal
+
     # if already called repeat, then no need to repeat more
     if hasattr(train, 'repeat'):
       train = train.repeat(int(epochs))
@@ -834,8 +871,13 @@ class VariationalAutoencoder(keras.Model):
                      log_tag=log_tag,
                      log_path=log_path,
                      max_iter=max_iter,
-                     callback=callback)
+                     callback=_callback)
     self._trainstep_kw = dict()
+    # restore best weights
+    if saved_weights[0] > 0:
+      tf.print("[EarlyStop] Restore best weights from step %d" %
+               saved_weights[0])
+      Trainer.restore_weights(self)
     return self
 
   def plot_learning_curves(self,

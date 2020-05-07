@@ -529,7 +529,7 @@ class MultidSprites(object):
     pass
 
 
-class SLT10(ImageDataset):
+class STL10(ImageDataset):
   r""" Overview
    - 10 classes: airplane, bird, car, cat, deer, dog, horse, monkey,
       ship, truck.
@@ -550,17 +550,17 @@ class SLT10(ImageDataset):
     http://ai.stanford.edu/~acoates/stl10
   """
   URL = "http://ai.stanford.edu/~acoates/stl10/stl10_binary.tar.gz"
-  MD5_DOWNLOAD = "91f7769df0f17e558f3565bffb0c7dfb"
-  MD5_EXTRACT = "6d49c882f94d0659c0aea2ac58068e9c"
+  MD5_DOWNLOAD = r"91f7769df0f17e558f3565bffb0c7dfb"
+  MD5_EXTRACT = r"559636c835853bf1aca295ab34f5ad9e"
   IMAGE_SHAPE = (3, 96, 96)
 
-  def __init__(self, path="~/slt10"):
+  def __init__(self, path="~/tensorflow_datasets/stl10", image_size=64):
     self.path, self.extract_path = download_and_extract(
         path,
-        SLT10.URL,
+        STL10.URL,
         extract=True,
-        md5_download=SLT10.MD5_DOWNLOAD,
-        md5_extract=SLT10.MD5_EXTRACT)
+        md5_download=STL10.MD5_DOWNLOAD,
+        md5_extract=STL10.MD5_EXTRACT)
     ### read all the images
     self.bin_files = {
         name.split('.')[0]: os.path.join(self.extract_path, name)
@@ -569,13 +569,14 @@ class SLT10(ImageDataset):
     }
     with open(os.path.join(self.extract_path, "class_names.txt"), 'r') as f:
       self.class_names = np.array([line.strip() for line in f])
+    self.image_size = int(image_size)
 
   @property
   def labels(self):
-    return [
+    return np.array([
         'airplane', 'bird', 'car', 'cat', 'deer', 'dog', 'horse', 'monkey',
         'ship', 'truck'
-    ]
+    ])
 
   @property
   def is_binary(self):
@@ -583,11 +584,10 @@ class SLT10(ImageDataset):
 
   @property
   def shape(self):
-    return (96, 96, 3)
+    return (self.image_size, self.image_size, 3)
 
   def create_dataset(self,
                      batch_size=64,
-                     image_size=64,
                      drop_remainder=False,
                      shuffle=1000,
                      prefetch=tf.data.experimental.AUTOTUNE,
@@ -598,7 +598,9 @@ class SLT10(ImageDataset):
                      seed=1) -> tf.data.Dataset:
     r"""
     Arguments:
-      partition : {'train', 'valid', 'test', 'unlablled'}
+      partition : {'train', 'train_labelled', 'valid', 'test', 'unlabelled'}
+        - 'train' : combination of both train and unlablled
+        - 'train-labelled' : only the train data
       inc_labels : a Boolean or Scalar. If True, return both image and label,
         otherwise, only image is returned.
         If a scalar is provided, it indicate the percent of labelled data
@@ -611,52 +613,74 @@ class SLT10(ImageDataset):
         mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
       where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
+    image_size = self.image_size
     if isinstance(image_size, Number) and image_size == 96:
       image_size = None
     ### select partition
     images_path, labels_path = _partition(
         partition,
-        train=(self.bin_files['train_X'], self.bin_files['train_y']),
+        train=((self.bin_files['train_X'], self.bin_files['unlabeled_X']),
+               self.bin_files['train_y']),
+        train_labelled=(self.bin_files['train_X'], self.bin_files['train_y']),
         test=(self.bin_files['test_X'], self.bin_files['test_y']),
         unlabeled=(self.bin_files['unlabeled_X'], None),
+        unlabelled=(self.bin_files['unlabeled_X'], None),
     )
-    X = np.reshape(np.fromfile(images_path, dtype=np.uint8),
-                   (-1,) + SLT10.IMAGE_SHAPE)
-    if labels_path is None:  # unlabled data
-      inc_labels = False
+
+    X = [
+        np.reshape(np.fromfile(path, dtype=np.uint8), (-1,) + STL10.IMAGE_SHAPE)
+        for path in tf.nest.flatten(images_path)
+    ]
+    is_unlabelled = (labels_path is None)
     inc_labels = float(inc_labels)
     gen = tf.random.experimental.Generator.from_seed(seed=seed)
+    # load the labels
     if inc_labels:
-      y = np.fromfile(labels_path, dtype=np.uint8) - 1
-      y = one_hot(y, len(self.class_names)).astype(np.float32)
+      if is_unlabelled:
+        y = [np.zeros(shape=(X[0].shape[0], self.n_labels), dtype=np.float32)]
+      else:
+        y = np.fromfile(labels_path, dtype=np.uint8) - 1
+        y = [one_hot(y, self.n_labels).astype(np.float32)]
+        if len(X) == 2:  # combined of both train and unlablled set
+          y.append(
+              np.zeros(shape=(X[1].shape[0], self.n_labels), dtype=np.float32))
+      assert len(y) == len(X)
+
     ### read and resize the data
     def resize(img):
-      img = tf.clip_by_value(tf.cast(img, tf.float32) / 255., 1e-6, 1. - 1e-6)
-      img = tf.transpose(img, perm=(1, 2, 0))
+      img = tf.cast(img, tf.float32)
+      img = self.normalize_255(img)
+      img = tf.transpose(img, perm=(2, 1, 0))
       if image_size is not None:
         img = tf.image.resize(img, (image_size, image_size),
-                              preserve_aspect_ratio=False,
+                              preserve_aspect_ratio=True,
                               antialias=False)
       return img
 
     def masking(image, label):
-      mask = gen.uniform(shape=(1,)) < inc_labels
+      mask = tf.logical_and(
+          gen.uniform(shape=(1,)) < inc_labels,
+          tf.reduce_sum(label) > 0)
       return dict(inputs=(image, label), mask=mask)
 
     ### processing
-    images = tf.data.Dataset.from_tensor_slices(X).map(resize, parallel)
-    if inc_labels:
-      labels = tf.data.Dataset.from_tensor_slices(y)
-      images = tf.data.Dataset.zip((images, labels))
-      if 0. < inc_labels < 1.:  # semi-supervised mask
-        images = images.map(masking)
+    datasets = None
+    for x_i, y_i in zip(X, y if inc_labels else X):
+      images = tf.data.Dataset.from_tensor_slices(x_i).map(resize, parallel)
+      if inc_labels:
+        labels = tf.data.Dataset.from_tensor_slices(y_i)
+        images = tf.data.Dataset.zip((images, labels))
+        if 0. < inc_labels < 1.:  # semi-supervised mask
+          images = images.map(masking)
+      datasets = images if datasets is None else datasets.concatenate(images)
     # cache data
     if cache is not None:
-      images = images.cache(str(cache))
+      datasets = datasets.cache(str(cache))
     # shuffle must be called after cache
     if shuffle is not None:
-      images = images.shuffle(int(shuffle))
-    images = images.batch(batch_size, drop_remainder)
+      datasets = datasets.shuffle(int(shuffle) * len(X))
+    datasets = datasets.batch(batch_size, drop_remainder)
     if prefetch is not None:
-      images = images.prefetch(prefetch)
-    return images
+      datasets = datasets.prefetch(prefetch)
+    # return
+    return datasets

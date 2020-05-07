@@ -822,6 +822,7 @@ class Experimenter():
                         "strict:%s" % str(strict), "ncpu:%d" % ncpu,
                         "multirun:%s" % str(is_multirun))
     ## preprocessing running mode in comparison mode
+    regex = re.compile(r'\w+[=].+')
     # run in comparison mode
     if run_comparison:
       self._run_comparison(sys.argv, load_model_comparison)
@@ -844,9 +845,14 @@ class Experimenter():
         if k in def_configs and (len(v) > 1 or def_configs[k] != v[0]):
           args.append('%s=%s' % (k, ','.join([str(i) for i in v])))
       # remove old overrides and assign the new ones
-      regex = re.compile(r'\w+[=].+')
       sys.argv = [i for i in sys.argv if not regex.findall(i)]
-      sys.argv = sys.argv[0:1] +  args + sys.argv[1:]
+      sys.argv = sys.argv[0:1] + args + sys.argv[1:]
+    # show warning if multirun is necessary
+    if any(regex.findall(i) for i in sys.argv) and \
+      not ('-m' in sys.argv or '--multirun' in sys.argv):
+      warnings.warn(
+          "Multiple overrides are provided but multirun mode not enable, "
+          "-m for enabling multirun, %s" % str(sys.argv))
     # generate app help
     hlp = '\n\n'.join([
         "%s - %s" % (str(key), ', '.join(sorted(as_tuple(val, t=str))))

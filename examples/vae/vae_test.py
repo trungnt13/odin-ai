@@ -14,7 +14,7 @@ from tensorflow_probability.python import distributions as tfd
 from odin import visual as vs
 from odin.bay import RandomVariable, coercible_tensor
 from odin.bay.vi.autoencoder import (BetaVAE, VariationalAutoencoder,
-                                     create_image_autoencoder)
+                                     create_mnist_autoencoder)
 from odin.exp import Trainer
 from odin.fuel import BinarizedMNIST
 
@@ -196,7 +196,7 @@ tfp_vae = TFPVAE()
 # ===========================================================================
 # ODIN vae
 # ===========================================================================
-encoder, decoder = create_image_autoencoder(latent_shape=latent_size,
+encoder, decoder = create_mnist_autoencoder(latent_size=latent_size,
                                             base_depth=base_depth,
                                             center0=True,
                                             activation=activation)
@@ -272,7 +272,7 @@ def train_model(model, name):
               max_iter=max_iter,
               callback=callback,
               log_tag=name)
-
-
+  trainer.plot_learning_curves(f'/tmp/learning_curves_{name}.png')
+## train the model
 train_model(odin_vae, "betavae")
 train_model(tfp_vae, "tfpvae")

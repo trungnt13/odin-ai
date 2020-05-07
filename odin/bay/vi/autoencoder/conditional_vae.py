@@ -229,15 +229,15 @@ class ConditionalM2VAE(BetaVAE):
                              mask=mask,
                              training=training)
     mask = tf.reshape(mask, (-1,))
-    ### for unlablled data
-    mask_unlablled = tf.logical_not(mask)
+    ### for unlabelled data
+    mask_unlabelled = tf.logical_not(mask)
     pY_X = self.classify(X_unlabelled)
     probs = pY_X.probs_parameter()
     # log-likehood
     llk_unlabelled = {}
     for name, lk in llk.items():
       lk = tf.transpose(lk)
-      lk = tf.boolean_mask(lk, mask_unlablled, axis=0)
+      lk = tf.boolean_mask(lk, mask_unlabelled, axis=0)
       lk = tf.transpose(tf.reshape(lk, (self.n_labels, tf.shape(probs)[0], -1)))
       lk = tf.reduce_sum(lk * probs, axis=-1)
       llk_unlabelled[name + '_unlabelled'] = lk
@@ -245,10 +245,10 @@ class ConditionalM2VAE(BetaVAE):
     div_unlabelled = {}
     for name, dv in div.items():
       dv = tf.transpose(dv)
-      dv = tf.boolean_mask(dv, mask_unlablled, axis=0)
+      dv = tf.boolean_mask(dv, mask_unlabelled, axis=0)
       dv = tf.transpose(tf.reshape(dv, (self.n_labels, tf.shape(probs)[0], -1)))
       dv = tf.reduce_sum(dv * probs, axis=-1)
-      div_unlabelled[name + '_unlablled'] = dv
+      div_unlabelled[name + '_unlabelled'] = dv
     div_unlabelled['kl_classifier'] = kl_divergence(pY_X,
                                                     self.labels.prior,
                                                     analytic=True)

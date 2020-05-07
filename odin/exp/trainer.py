@@ -210,33 +210,34 @@ class Trainer(object):
 
   @staticmethod
   def early_stop(losses,
-                 threshold=0.2,
-                 progress_length=5,
-                 patience=5,
+                 threshold=0.001,
+                 progress_length=0,
                  min_epoch=-np.inf,
                  terminate_on_nan=True,
                  verbose=0):
     r""" Early stopping based on generalization loss and the three rules:
+
       - Stop when generalization error exceeds threshold in a number of
           successive steps.
       - Stop as soon as the generalization loss exceeds a certain threshold.
-      - Supress stopping if the training is still progress rapidly.
+      - Surpress stopping if the training is still progress rapidly.
 
     Generalization loss: `GL(t) = losses[-1] / min(losses[:-1]) - 1`
+
+      - if `GL(t)` <= 0 : save the best model
+      - if `GL(t)` <= threshold : continue training
+      - if `GL(t)` > threshold : stop training
 
     Progression: `PG(t) = 10 * sum(L) / (k * min(L))` where `L = losses[-k:]`
 
     The condition for early stopping: `GL(t) / PG(t) >= threshold`
 
-    Arugments:
+    Arguments:
       losses : List of loss values (smaller is better)
       threshold : Float. Determine by `generalization_error / progression`
       progress_length : Integer. Number of steps to look into the past for
         estimating the training progression. If smaller than 2, turn-off
         progression for early stopping.
-      patience : Integer. Number of successive steps that yield loss exceeds
-        `threshold / 2` until stopping. If smaller than 2, turn-off patience
-        for early stopping
       min_epoch: Minimum number of epoch until early stop kicks in.
         Note, all the metrics won't be updated until the given epoch.
       terminate_on_nan : Boolean. Terminate the training progress if NaN or Inf
@@ -245,6 +246,7 @@ class Trainer(object):
     Return:
       Trainer.SIGNAL_TERMINATE : stop training
       Trainer.SIGNAL_BEST : best model achieved
+      None : no action needed, continue training
 
     Reference:
       Prechelt, L. (1998). "Early Stopping | but when?".
@@ -256,22 +258,10 @@ class Trainer(object):
     if len(losses) < max(2., min_epoch):
       tf.print("[EarlyStop] First 2 warmup epochs.")
       return Trainer.SIGNAL_BEST
+    # generalization error (smaller is better)
     current = losses[-1]
     best = np.min(losses[:-1])
-    # patience
-    if patience > 1 and len(losses) > patience and \
-      all((i / best - 1) >= (threshold / 2) for i in losses[-patience:]):
-      if verbose:
-        tf.print("[EarlyStop] %d successive step without enough improvement." %
-                 patience)
-      return Trainer.SIGNAL_TERMINATE
-    # generalization error (smaller is better)
-    generalization = current / best - 1
-    if generalization <= 0:
-      if verbose:
-        tf.print("[EarlyStop] Best model, generalization improved: %.4f" %
-                 (best / current - 1.))
-      return Trainer.SIGNAL_BEST
+    generalization = current / best - 1.  # <0 = improvement
     # progression (bigger is better)
     if progress_length > 1:
       progress = losses[-progress_length:]
@@ -281,11 +271,18 @@ class Trainer(object):
       progression = 1.
     # thresholding
     error = generalization / progression
-    if error >= threshold:
+    threshold = np.abs(threshold)
+    if error >= -threshold:
       tf.print(
-          "[EarlyStop] Exceed threshold:%.2f  generalization:%.4f progression:%.4f"
-          % (threshold, generalization, progression))
+          "[EarlyStop] Exceed threshold:%.4f  generalization:%.4f progression:%.4f"
+          % (threshold, -generalization, progression))
       return Trainer.SIGNAL_TERMINATE
+    elif generalization < 0:
+      if verbose:
+        tf.print(
+            "[EarlyStop] Best model, generalization improved: %.4f, threshold: %.4f"
+            % ((best / current - 1.), np.abs(threshold)))
+      return Trainer.SIGNAL_BEST
 
   @staticmethod
   def apply_gradients(tape, optimizer, loss, model_or_weights):

@@ -43,7 +43,6 @@ sns.set()
 # python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=0 finetune=10000 semi=0.1,0.01 strategy=max -m -ncpu=3;
 #
 # python factor_vae.py vae=factor,factor2 ds=shapes3D,dsprites,celeba -m -ncpu=2
-# add slt10 datasets
 # ===========================================================================
 CONFIG = \
 r"""

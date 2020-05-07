@@ -14,6 +14,7 @@ from odin.networks import (NetworkConfig, SequentialNetwork, SkipConnection,
 from odin.utils import as_tuple
 
 __all__ = [
+    'create_mnist_autoencoder',
     'create_image_autoencoder',
     'ImageNet',
     'FactorDiscriminator',
@@ -45,6 +46,57 @@ class Center0Image(keras.layers.Layer):
 # ===========================================================================
 # Basic Network
 # ===========================================================================
+def create_mnist_autoencoder(latent_size=10,
+                             base_depth=32,
+                             n_channels=1,
+                             activation='relu',
+                             center0=True,
+                             distribution='bernoulli',
+                             distribution_kw=dict()):
+  r""" Specialized autoencoder configuration for Binarized MNIST """
+  n_params = _nparams(distribution, distribution_kw)
+  image_shape = (28, 28, n_channels)
+  conv = partial(keras.layers.Conv2D, padding="SAME", activation=activation)
+  deconv = partial(keras.layers.Conv2DTranspose,
+                   padding="SAME",
+                   activation=activation)
+  start = [keras.layers.InputLayer(input_shape=image_shape)]
+  if center0:
+    start.append(Center0Image())
+
+  encoder_net = keras.Sequential(
+      start + [
+          conv(base_depth, 5, 1),
+          conv(base_depth, 5, 2),
+          conv(2 * base_depth, 5, 1),
+          conv(2 * base_depth, 5, 2),
+          conv(4 * latent_size, 7, padding="VALID"),
+          keras.layers.Flatten(),
+          keras.layers.Dense(2 * latent_size, activation=None),
+      ],
+      name="Encoder",
+  )
+  # Collapse the sample and batch dimension and convert to rank-4 tensor for
+  # use with a convolutional decoder network.
+  decoder_net = keras.Sequential(
+      [
+          keras.layers.Lambda(lambda codes: tf.reshape(codes,
+                                                       (-1, 1, 1, latent_size)),
+                              batch_input_shape=(None, latent_size)),
+          deconv(2 * base_depth, 7, padding="VALID"),
+          deconv(2 * base_depth, 5),
+          deconv(2 * base_depth, 5, 2),
+          deconv(base_depth, 5),
+          deconv(base_depth, 5, 2),
+          deconv(base_depth, 5),
+          conv(image_shape[-1] * n_params, 5, activation=None),
+          keras.layers.Flatten(),
+      ],
+      name="Decoder",
+  )
+  return encoder_net, decoder_net
+
+
 def create_image_autoencoder(image_shape=(64, 64, 1),
                              latent_shape=(10,),
                              projection_dim=256,
@@ -402,7 +454,7 @@ class FactorDiscriminator(SequentialNetwork):
     labels = tf.nest.flatten(labels)
     z = self._to_samples(qZ_X, mean=mean, stop_grad=True)
     z_logits = self(z, training=training)
-    ## applying the mask (1-labelled, 0-unlablled)
+    ## applying the mask (1-labelled, 0-unlabelled)
     if mask is not None:
       mask = tf.reshape(mask, (-1,))
       labels = [tf.boolean_mask(y, mask, axis=0) for y in labels]
@@ -411,8 +463,10 @@ class FactorDiscriminator(SequentialNetwork):
     loss = 0.
     for y_true in labels:
       tf.assert_rank(y_true, 2)
-      loss += tf.nn.softmax_cross_entropy_with_logits(labels=y_true,
-                                                      logits=z_logits)
+      # check the shape careful here, otherwise, NaN
+      if y_true.shape[0] > 0:
+        loss += tf.nn.softmax_cross_entropy_with_logits(labels=y_true,
+                                                        logits=z_logits)
     # check nothing is NaN
     # tf.assert_equal(tf.reduce_all(tf.logical_not(tf.math.is_nan(loss))), True)
     return tf.reduce_mean(loss)

@@ -80,7 +80,11 @@ class MultitaskVAE(BetaVAE):
           # take into account the sample_shape by transpose the batch dim to
           # the first dimension
           lk_y = tf.transpose(tf.boolean_mask(tf.transpose(lk_y), m, axis=0))
-        llk["llk_%s" % name] = tf.reduce_mean(self.alpha * lk_y)
+        # need to check the shape here, otherwise the loss can be NaN
+        if lk_y.shape[0] == 0:
+          llk["llk_%s" % name] = 0.
+        else:
+          llk["llk_%s" % name] = tf.reduce_mean(self.alpha * lk_y)
     return llk, div
 
   @property

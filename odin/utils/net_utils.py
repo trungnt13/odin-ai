@@ -7,7 +7,7 @@ import requests
 from six.moves.urllib.error import HTTPError, URLError
 from six.moves.urllib.request import urlretrieve
 
-from odin.utils.crypto import md5_checksum
+from odin.utils.crypto import md5_checksum, md5_folder
 
 __all__ = [
     'download_and_extract',
@@ -64,8 +64,10 @@ def download_and_extract(path,
   filepath = os.path.join(path, filename)
   ### download
   if os.path.exists(filepath) and md5_download is not None:
-    if md5_checksum(filepath) != md5_download:
-      print("MD5 of downloaded file mismatch!")
+    md5 = md5_checksum(filepath)
+    if md5 != md5_download:
+      print("MD5 of downloaded file mismatch! downloaded:%s  provided:%s" %
+            (md5, md5_download))
       os.remove(filepath)
   if not os.path.exists(filepath):
     prog = tqdm(desc="Download '%s'" % filename, total=-1, unit="MB")
@@ -85,8 +87,10 @@ def download_and_extract(path,
   ### extract
   extract_path = os.path.join(path, os.path.basename(filename).split('.')[0])
   if os.path.exists(extract_path) and md5_extract is not None:
-    if md5_checksum(extract_path) != md5_extract:
-      print("MD5 extracted folder mismatch!")
+    md5 = md5_folder(extract_path)
+    if md5 != md5_extract:
+      print("MD5 extracted folder mismatch! extracted:%s provided:%s" %
+            (md5, md5_extract))
       shutil.rmtree(extract_path)
   if not os.path.exists(extract_path):
     # .tar.gz
