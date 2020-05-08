@@ -215,6 +215,7 @@ class DenseDistribution(Dense):
   def call(self,
            inputs,
            training=None,
+           mask=None,
            sample_shape=(),
            projection=True,
            prior=None):
@@ -291,9 +292,15 @@ class DenseDistribution(Dense):
     return self.__str__()
 
   def __str__(self):
-    text = "<Dense proj:%s shape:%s #params:%d posterior:%s prior:%s dropout:%.2f kw:%s>" % \
-      (not self._disable_projection, self.event_shape, self.units,
-       self._posterior_class.__name__, str(self.prior),
+    prior = (None if self.prior is None else "<%s batch:%s event:%s>" %
+             (self.prior.__class__.__name__, self.prior.batch_shape,
+              self.prior.event_shape))
+    posterior = self._posterior_class.__name__
+    text = "<Dense proj:%s built:%s event:%s #params:%d post:%s prior:%s dropout:%.2f kw:%s>" % \
+      (not self._disable_projection,
+       self.built if not hasattr(self, 'input_shape') else self.input_shape,
+       self.event_shape, self.units,
+       posterior, prior,
        self._dropout, str(self._posterior_kwargs))
     text = text.replace("tfp.distributions.", "")
     return text

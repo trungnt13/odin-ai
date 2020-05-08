@@ -351,9 +351,9 @@ class VariationalAutoencoder(keras.Model):
     ### build the latent and output layers
     for layer in self.latent_layers + self.output_layers:
       if hasattr(layer, '_batch_input_shape') and not layer.built:
-        shape = [1 if i is None else i for i in layer._batch_input_shape]
-        x = tf.ones(shape=shape, dtype=layer.dtype)
-        layer(x)  # call this dummy input to build the layer
+        shape = layer._batch_input_shape
+        # call this dummy input to build the layer
+        layer(keras.Input(shape=shape[1:], batch_size=shape[0]))
     ### the training step
     self.step = tf.Variable(step,
                             dtype=self.dtype,
@@ -464,15 +464,7 @@ class VariationalAutoencoder(keras.Model):
       q._keras_mask = mask
     return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
-  def decode(self,
-             latents,
-             training=None,
-             mask=None,
-             sample_shape=(),
-             **kwargs):
-    r""" Decoding latent codes, this does not guarantee output the
-    reconstructed distribution """
-    sample_shape = tf.nest.flatten(sample_shape)
+  def _prepare_decode_latents(self, latents, sample_shape):
     # convert all latents to Tensor
     list_latents = True
     if isinstance(latents, tfd.Distribution) or tf.is_tensor(latents):
@@ -489,6 +481,18 @@ class VariationalAutoencoder(keras.Model):
     # decoding
     latents = _reduce_latents(
         latents, self.reduce_latent) if list_latents else latents[0]
+    return latents
+
+  def decode(self,
+             latents,
+             training=None,
+             mask=None,
+             sample_shape=(),
+             **kwargs):
+    r""" Decoding latent codes, this does not guarantee output the
+    reconstructed distribution """
+    sample_shape = tf.nest.flatten(sample_shape)
+    latents = self._prepare_decode_latents(latents, sample_shape)
     outputs = self.decoder(
         latents,
         training=training,
@@ -926,7 +930,8 @@ class VariationalAutoencoder(keras.Model):
     ## Optimizer
     if hasattr(self, 'optimizer'):
       for i, opt in enumerate(tf.nest.flatten(self.optimizer)):
-        text += "\n Optimizer#%d:\n  " % i
-        text += "\n  ".join(
-            ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
+        if isinstance(opt, tf.optimizers.Optimizer):
+          text += "\n Optimizer#%d:\n  " % i
+          text += "\n  ".join(
+              ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
     return text

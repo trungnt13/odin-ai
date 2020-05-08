@@ -3,6 +3,7 @@ sftp-config*
 .DS_Store
 .sync
 Icon*
+.vscode
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

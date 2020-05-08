@@ -177,9 +177,9 @@ class RandomVariable:
   """
   event_shape: List[int] = ()
   posterior: str = 'gaus'
-  prior: str = None
   projection: bool = False
   name: str = 'RandomVariable'
+  prior: str = None
   kwargs: dict = dataclasses.field(default_factory=dict)
 
   def __post_init__(self):

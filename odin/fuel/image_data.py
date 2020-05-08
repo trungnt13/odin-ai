@@ -660,17 +660,18 @@ class STL10(ImageDataset):
     def masking(image, label):
       mask = tf.logical_and(
           gen.uniform(shape=(1,)) < inc_labels,
-          tf.reduce_sum(label) > 0)
+          tf.reduce_sum(label) > 0.)
       return dict(inputs=(image, label), mask=mask)
 
     ### processing
     datasets = None
+    must_masking = any(np.all(i == 0.) for i in y)
     for x_i, y_i in zip(X, y if inc_labels else X):
       images = tf.data.Dataset.from_tensor_slices(x_i).map(resize, parallel)
       if inc_labels:
         labels = tf.data.Dataset.from_tensor_slices(y_i)
         images = tf.data.Dataset.zip((images, labels))
-        if 0. < inc_labels < 1.:  # semi-supervised mask
+        if 0. < inc_labels < 1. or must_masking:  # semi-supervised mask
           images = images.map(masking)
       datasets = images if datasets is None else datasets.concatenate(images)
     # cache data

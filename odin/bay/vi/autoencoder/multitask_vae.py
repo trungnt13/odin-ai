@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+from tensorflow.python import array_ops, keras
 
 from odin.bay.random_variable import RandomVariable as RV
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
@@ -39,7 +40,7 @@ class MultitaskVAE(BetaVAE):
     outputs += labels
     super().__init__(beta=beta, outputs=outputs, **kwargs)
     self.labels = labels
-    self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
+    self.alpha = alpha
 
   @property
   def alpha(self):
@@ -80,6 +81,7 @@ class MultitaskVAE(BetaVAE):
       mask = tf.nest.flatten(mask)
       if len(mask) == 1:
         mask = mask * n_semi
+      # iterate over each pair
       for layer, y, py, m in zip(self.output_layers[-n_semi:], Y, pY_Z, mask):
         name = layer.name
         lk_y = py.log_prob(y)
@@ -94,7 +96,12 @@ class MultitaskVAE(BetaVAE):
               lambda: tf.transpose(
                   tf.boolean_mask(tf.transpose(lk_y), m, axis=0)),
           )
-        llk["llk_%s" % name] = tf.reduce_mean(self.alpha * lk_y)
+        # this is important, if loss=0 when using one-hot log_prob,
+        # the gradient is NaN
+        loss = tf.reduce_mean(self.alpha * lk_y)
+        loss = tf.cond(
+            tf.abs(loss) < 1e-8, lambda: tf.stop_gradient(loss), lambda: loss)
+        llk["llk_%s" % name] = loss
     # print(llk, div)
     return llk, div
 
@@ -103,12 +110,50 @@ class MultitaskVAE(BetaVAE):
     return True
 
 
-class MultiheadVAE(BetaVAE):
+class MultiheadVAE(MultitaskVAE):
   r""" Multi-head decoder for multiple output """
 
-  def __init__(self, alpha=10., beta=1., linear_head=True, **kwargs):
-    super().__init__(beta=beta, **kwargs)
+  def __init__(self,
+               outputs=RV(64, 'gaussian', projection=True, name="Input"),
+               labels=RV(10, 'onehot', projection=True, name="Label"),
+               alpha=10.,
+               beta=1.,
+               **kwargs):
+    super().__init__(alpha=alpha,
+                     beta=beta,
+                     outputs=outputs,
+                     labels=[],
+                     **kwargs)
+    self.labels = tf.nest.flatten(labels)
+    # create and build the semi-supervised output layers
+    z = keras.Input(shape=self.latent_shape[1:], batch_size=None)
+    semi_layers = [
+        l.create_posterior(self.latent_shape[1:]) for l in self.labels
+    ]
+    for layer in semi_layers:
+      layer(z)
+    # add to the main output layers
+    self.output_layers += semi_layers
 
   @property
   def is_semi_supervised(self):
     return True
+
+  def decode(self,
+             latents,
+             training=None,
+             mask=None,
+             sample_shape=(),
+             **kwargs):
+    n_semi = len(self.labels)
+    semi_layers = self.output_layers[-n_semi:]
+    self.output_layers = self.output_layers[:-n_semi]
+    # unsupervised outputs
+    pX = super().decode(latents, training, mask, sample_shape, **kwargs)
+    # semi outputs
+    pY = [layer(latents, training=training, mask=mask) for layer in semi_layers]
+    for p in pY:  # remember to store the keras mask in outputs
+      p._keras_mask = mask
+    # recover and return
+    self.output_layers = self.output_layers + semi_layers
+    return tf.nest.flatten(pX) + pY
