@@ -8,6 +8,7 @@ from tensorflow.python.keras.utils import layer_utils
 from tensorflow_probability.python.distributions import Distribution
 
 from odin.backend.keras_helpers import layer2text
+from odin.bay.random_variable import RandomVariable as RV
 from odin.bay.vi.utils import permute_dims
 from odin.networks import (NetworkConfig, SequentialNetwork, SkipConnection,
                            dense_network)
@@ -329,7 +330,8 @@ class FactorDiscriminator(SequentialNetwork):
 
   Arguments:
     units : a list of Integer, the number of hidden units for each hidden layer.
-    n_outputs : an Integer, number of output units
+    n_outputs : an Integer or instance of `RandomVariable`,
+      the number of output units and its distribution
     ss_strategy : {'sum', 'logsumexp', 'mean', 'max', 'min'}.
       Strategy for combining the outputs semi-supervised learning:
       - 'logsumexp' : used for semi-supervised GAN in (Salimans T. 2016)
@@ -353,6 +355,13 @@ class FactorDiscriminator(SequentialNetwork):
                activation=tf.nn.leaky_relu,
                ss_strategy='logsumexp',
                name="FactorDiscriminator"):
+    if isinstance(n_outputs, RV):
+      distribution = n_outputs.distribution_layer(n_outputs.event_shape)
+      n_outputs = int(np.prod(
+          n_outputs.event_shape)) * distribution.params_size(1)
+    else:
+      distribution = None
+      n_outputs = int(n_outputs)
     layers = dense_network(units=units,
                            batchnorm=batchnorm,
                            dropout=dropout,
@@ -361,10 +370,11 @@ class FactorDiscriminator(SequentialNetwork):
                            activation=activation,
                            input_shape=tf.nest.flatten(input_shape))
     layers.append(
-        keras.layers.Dense(int(n_outputs), activation='linear', name="Output"))
+        keras.layers.Dense(n_outputs, activation='linear', name="Output"))
     super().__init__(layers, name=name)
     self.input_ndim = len(self.input_shape) - 1
-    self.n_outputs = int(n_outputs)
+    self.distribution = distribution
+    self.n_outputs = n_outputs
     self.ss_strategy = str(ss_strategy)
     assert self.ss_strategy in {'sum', 'logsumexp', 'mean', 'max', 'min'}
 
@@ -459,25 +469,31 @@ class FactorDiscriminator(SequentialNetwork):
       mask = tf.reshape(mask, (-1,))
       labels = [tf.boolean_mask(y, mask, axis=0) for y in labels]
       z_logits = tf.boolean_mask(z_logits, mask, axis=0)
+    ## prepare the loss function
+    if self.distribution is None:
+      fn_loss = tf.nn.softmax_cross_entropy_with_logits
+    else:
+      distribution = self.distribution(z_logits)
+      fn_loss = lambda labels, logits: -distribution.log_prob(labels)
     ## calculate the loss
     loss = 0.
     for y_true in labels:
       tf.assert_rank(y_true, 2)
-      # check the mask careful here, otherwise, NaN
+      # check the mask careful here
       if mask is None:
-        llk = tf.nn.softmax_cross_entropy_with_logits(labels=y_true,
-                                                      logits=z_logits)
-      else:
+        llk = fn_loss(labels=y_true, logits=z_logits)
+      else:  # if no data for labels, just return 0
         llk = tf.cond(
             tf.reduce_all(tf.logical_not(mask)),
             lambda: 0.,
-            lambda: tf.nn.softmax_cross_entropy_with_logits(labels=y_true,
-                                                            logits=z_logits),
+            lambda: fn_loss(labels=y_true, logits=z_logits),
         )
       loss += llk
-    # check nothing is NaN
-    # tf.assert_equal(tf.reduce_all(tf.logical_not(tf.math.is_nan(loss))), True)
-    return tf.reduce_mean(loss)
+    # check non-zero, if zero the gradient must be stop or NaN gradient happen
+    loss = tf.reduce_mean(loss)
+    loss = tf.cond(
+        tf.abs(loss) < 1e-8, lambda: tf.stop_gradient(loss), lambda: loss)
+    return loss
 
 
 # ===========================================================================

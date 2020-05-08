@@ -10,6 +10,7 @@ from odin.bay.vi.autoencoder.multitask_vae import *
 from odin.bay.vi.autoencoder.stochastic_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.bay.vi.autoencoder.vq_vae import *
+from odin.bay.vi.autoencoder.mutual_info_vae import *
 
 
 def get_vae(name=None) -> VariationalAutoencoder:

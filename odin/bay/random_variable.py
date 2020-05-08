@@ -285,6 +285,14 @@ class RandomVariable:
     return self._dummy_dist()[-1]
 
   ######## create posterior distribution
+  @property
+  def distribution(self):
+    return parse_distribution(self.posterior)[1]
+
+  @property
+  def distribution_layer(self):
+    return parse_distribution(self.posterior)[0]
+
   def create_prior(self) -> obd.Distribution:
     return _default_prior(self.event_shape, self.posterior, self.prior,
                           self.kwargs)

@@ -321,19 +321,22 @@ class SemiFactorVAE(FactorVAE):
   """
 
   def __init__(self,
-               n_labels=10,
+               labels=RV(10, 'onehot', name="Labels"),
                discriminator=dict(units=[1000, 1000, 1000, 1000, 1000]),
                alpha=10.,
                ss_strategy='logsumexp',
                **kwargs):
     if isinstance(discriminator, dict):
-      discriminator['n_outputs'] = n_labels
+      discriminator['n_outputs'] = labels
       discriminator['ss_strategy'] = ss_strategy
     super().__init__(discriminator=discriminator, **kwargs)
+    n_labels = int(np.prod(labels.event_shape)) if hasattr(
+        labels, 'event_shape') else int(labels)
     assert self.discriminator.output_shape[-1] == n_labels, \
       "The discriminator has output shape %s, but need (n_labels + 1)=%d outputs" \
         % (self.discriminator.output_shape, n_labels)
     self.n_labels = n_labels
+    self.labels = labels
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
 
   def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):

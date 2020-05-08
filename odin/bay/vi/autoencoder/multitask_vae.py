@@ -111,7 +111,9 @@ class MultitaskVAE(BetaVAE):
 
 
 class MultiheadVAE(MultitaskVAE):
-  r""" Multi-head decoder for multiple output """
+  r""" A same multi-outputs design as `MultitaskVAE`, however, the
+  semi-supervised heads are directly connected to the latent layers to
+  exert influences. """
 
   def __init__(self,
                outputs=RV(64, 'gaussian', projection=True, name="Input"),
