@@ -370,24 +370,27 @@ class VariationalAutoencoder(keras.Model):
       self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
     else:
       self.optimizer = None
-    if path is not None and isinstance(path, string_types):
-      files = glob.glob(path + '*')
-      if len(files) > 0 and all(os.path.isfile(f) for f in files):
-        self.load_weights(path)
-      self._save_path = path
-    else:
-      self._save_path = None
+    self.load_weights(path, raise_notfound=False)
 
   @property
   def save_path(self):
     return self._save_path
 
-  def load_weights(self, filepath):
-    trainer_path = filepath + '.trainer'
-    if os.path.exists(trainer_path):
-      with open(trainer_path, 'rb') as f:
-        self.trainer = pickle.load(f)
-    return super().load_weights(filepath, by_name=False, skip_mismatch=False)
+  def load_weights(self, filepath, raise_notfound=False):
+    if isinstance(filepath, string_types):
+      files = glob.glob(filepath + '*')
+      # load weights
+      if len(files) > 0 and all(os.path.isfile(f) for f in files):
+        super().load_weights(filepath, by_name=False, skip_mismatch=False)
+      elif raise_notfound:
+        raise FileNotFoundError(f"Cannot find saved weights at path: {filepath}")
+      # load trainer
+      trainer_path = filepath + '.trainer'
+      if os.path.exists(trainer_path):
+        with open(trainer_path, 'rb') as f:
+          self.trainer = pickle.load(f)
+    self._save_path = filepath
+    return self
 
   def save_weights(self, filepath, overwrite=True):
     r""" Just copy this function here to fix the `save_format` to 'tf'
