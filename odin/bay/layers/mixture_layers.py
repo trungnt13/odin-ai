@@ -318,7 +318,8 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
                                                validate_args=False,
                                                name='Mixture%s' % name)
 
-  def params_size(self):
+  @staticmethod
+  def params_size(event_shape, n_components=2, zero_inflated=False):
     r"""Number of `params` needed to create a `MixtureNegativeBinomialLayer`
     distribution.
 
@@ -326,12 +327,16 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
      params_size: The number of parameters needed to create the mixture
        distribution.
     """
-    n_components = tf.convert_to_tensor(value=self.n_components,
-                                        name='n_components',
-                                        dtype_hint=tf.int32)
-    params_size = tf.convert_to_tensor(value=tf.reduce_prod(self.event_shape) *
-                                       (3 if self.zero_inflated else 2),
-                                       name='params_size')
+    n_components = tf.convert_to_tensor(
+        value=n_components,
+        dtype_hint=tf.int32,
+        name='n_components',
+    )
+    params_size = tf.convert_to_tensor(
+        value=tf.reduce_prod(event_shape) * (3 if zero_inflated else 2),
+        dtype_hint=tf.int32,
+        name='params_size',
+    )
     n_components = dist_util.prefer_static_value(n_components)
     params_size = dist_util.prefer_static_value(params_size)
     return n_components + n_components * params_size

@@ -68,10 +68,11 @@ def is_binary_distribution(dist):
 
 def is_discrete_distribution(dist):
   for dist in _dist(dist):
-    if issubclass(dist, (obd.Poisson, obd.NegativeBinomial,
-                         obd.NegativeBinomialDisp, obd.Categorical)):
+    if issubclass(dist,
+                  (obd.Poisson, obd.NegativeBinomial, obd.NegativeBinomialDisp,
+                   obd.Categorical, obd.Binomial, obd.Multinomial)):
       return True
-  raise NotImplementedError()
+  return False
 
 
 def is_mixture_distribution(dist):

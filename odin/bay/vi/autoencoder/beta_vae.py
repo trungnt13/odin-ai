@@ -1,6 +1,6 @@
 import tensorflow as tf
 
-from odin.backend import interpolation as _interp
+from odin.backend import interpolation
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
 from odin.bay.vi.losses import total_correlation
@@ -19,7 +19,20 @@ class BetaVAE(VariationalAutoencoder):
 
   def __init__(self, beta=10.0, **kwargs):
     super().__init__(**kwargs)
-    self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
+    self.beta = beta
+
+  @property
+  def beta(self):
+    if isinstance(self._beta, interpolation.Interpolation):
+      return self._beta(self.step)
+    return self._beta
+
+  @beta.setter
+  def beta(self, b):
+    if isinstance(b, interpolation.Interpolation):
+      self._beta = b
+    else:
+      self._beta = tf.convert_to_tensor(b, dtype=self.dtype, name='beta')
 
   def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training):
@@ -96,7 +109,7 @@ class AnnealedVAE(VariationalAutoencoder):
                **kwargs):
     super().__init__(**kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
-    self.interpolation = _interp.get(str(interpolation))(
+    self.interpolation = interpolation.get(str(interpolation))(
         vmin=tf.constant(c_min, self.dtype),
         vmax=tf.constant(c_max, self.dtype),
         norm=int(iter_max))

@@ -168,12 +168,13 @@ def conv_network(units,
   rank, input_shape = _infer_rank_and_input_shape(rank, input_shape)
   (units, kernel, strides, padding, dilation, activation, use_bias,
    kernel_initializer, bias_initializer, kernel_regularizer, bias_regularizer,
-   activity_regularizer, kernel_constraint,
-   bias_constraint, batchnorm, dropout), nlayers = _as_arg_tuples(
-       units, kernel, strides, padding, dilation, activation, use_bias,
-       kernel_initializer, bias_initializer, kernel_regularizer,
-       bias_regularizer, activity_regularizer, kernel_constraint,
-       bias_constraint, batchnorm, dropout)
+   activity_regularizer, kernel_constraint, bias_constraint, batchnorm,
+   dropout), nlayers = _as_arg_tuples(units, kernel, strides, padding, dilation,
+                                      activation, use_bias, kernel_initializer,
+                                      bias_initializer, kernel_regularizer,
+                                      bias_regularizer, activity_regularizer,
+                                      kernel_constraint, bias_constraint,
+                                      batchnorm, dropout)
 
   layers = []
   if input_shape is not None:
@@ -356,6 +357,7 @@ class NetworkConfig(dict):
   network: str = 'dense'
   flatten_inputs: bool = True
   projection: int = None
+  input_shape: tuple = None
 
   def __post_init__(self):
     network_types = ('deconv', 'conv', 'dense', 'lstm', 'gru', 'rnn')
@@ -481,9 +483,19 @@ class NetworkConfig(dict):
     else:
       raise NotImplementedError("'%s' network doesn't support decoding." %
                                 self.network)
-    return SequentialNetwork(decoder, name=name)
+    decoder = SequentialNetwork(decoder, name=name)
+    decoder.copy = types.MethodType(
+        lambda s, name=None: self.create_decoder(
+            encoder=encoder,
+            latent_shape=latent_shape,
+            n_parameterization=n_parameterization,
+            name=name,
+        ),
+        decoder,
+    )
+    return decoder
 
-  def create_network(self, input_shape, name=None) -> SequentialNetwork:
+  def create_network(self, input_shape=None, name=None) -> SequentialNetwork:
     r"""
     Arguments:
       input_shape : a tuple of Integer. Shape of input without the batch
@@ -496,7 +508,8 @@ class NetworkConfig(dict):
     if name is None:
       name = "Encoder"
     ### prepare the shape
-    input_shape = _shape(input_shape)
+    input_shape = _shape(
+        self.input_shape if input_shape is None else input_shape)
     ### convolution network
     if self.network == 'conv':
       # create the encoder
@@ -562,4 +575,10 @@ class NetworkConfig(dict):
       raise NotImplementedError("No implementation for network of type: '%s'" %
                                 self.network)
     # ====== return ====== #
-    return SequentialNetwork(network, name=name)
+    network = SequentialNetwork(network, name=name)
+    network.copy = types.MethodType(
+        lambda s, name=None: self.create_network(input_shape=input_shape,
+                                                 name=name),
+        network,
+    )
+    return network

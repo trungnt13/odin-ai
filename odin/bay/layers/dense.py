@@ -12,13 +12,9 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -40,7 +36,7 @@ __all__ = [
 ]
 
 
-def _params_size(layer, event_shape):
+def _params_size(layer, event_shape, **kwargs):
   spec = inspect.getfullargspec(layer.params_size)
   args = spec.args + spec.kwonlyargs
   if 'event_size' == args[0]:
@@ -56,6 +52,7 @@ def _params_size(layer, event_shape):
     for k in args[1:]:
       if k in closures:
         kw[k] = closures[k]
+  kw.update({k: v for k, v in kwargs.items() if k in spec.args})
   return layer.params_size(event_shape, **kw)
 
 
@@ -95,7 +92,7 @@ class DenseDistribution(Dense):
                activity_regularizer=None,
                kernel_constraint=None,
                bias_constraint=None,
-               disable_projection=False,
+               projection=True,
                **kwargs):
     assert prior is None or isinstance(prior, Distribution), \
       "prior can be None or instance of tensorflow_probability.Distribution"
@@ -128,8 +125,9 @@ class DenseDistribution(Dense):
                            posterior.__class__.__name__)
     kwargs['name'] = name
     # params_size could be static function or method
-    params_size = _params_size(self.posterior_layer(), event_shape)
-    self._disable_projection = bool(disable_projection)
+    params_size = _params_size(self.posterior_layer(), event_shape,
+                               **self._posterior_kwargs)
+    self._projection = bool(projection)
     super(DenseDistribution,
           self).__init__(units=params_size,
                          activation=activation,
@@ -148,26 +146,26 @@ class DenseDistribution(Dense):
     #   self.build(kwargs['input_shape'])
 
   def build(self, input_shape):
-    if self._disable_projection:
+    if not self._projection:
       self.built = True
     else:
       super().build(input_shape)
 
   @property
   def is_binary(self):
-    return is_binary_distribution(self.posterior_layer)
+    return is_binary_distribution(self._posterior_class)
 
   @property
   def is_discrete(self):
-    return is_discrete_distribution(self.posterior_layer)
+    return is_discrete_distribution(self._posterior_class)
 
   @property
   def is_mixture(self):
-    return is_mixture_distribution(self.posterior_layer)
+    return is_mixture_distribution(self._posterior_class)
 
   @property
   def is_zero_inflated(self):
-    return is_zeroinflated_distribution(self.posterior_layer)
+    return is_zeroinflated_distribution(self._posterior_class)
 
   @property
   def event_shape(self):
@@ -217,15 +215,14 @@ class DenseDistribution(Dense):
            training=None,
            mask=None,
            sample_shape=(),
-           projection=True,
+           projection=None,
            prior=None):
     # projection by Dense layer could be skipped by setting projection=False
     # NOTE: a 2D inputs is important here, but we don't want to flatten
     # automatically
-    if projection and not self._disable_projection:
-      params = super().call(inputs)
-    else:
-      params = inputs
+    if projection is None:
+      projection = self._projection
+    params = super().call(inputs) if projection else inputs
     # applying dropout
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
@@ -296,13 +293,12 @@ class DenseDistribution(Dense):
              (self.prior.__class__.__name__, self.prior.batch_shape,
               self.prior.event_shape))
     posterior = self._posterior_class.__name__
-    text = "<Dense proj:%s built:%s event:%s #params:%d post:%s prior:%s dropout:%.2f kw:%s>" % \
-      (not self._disable_projection,
+    text = "<'%s' proj:%s built:%s event:%s #params:%d post:%s prior:%s dropout:%.2f kw:%s>" % \
+      (self.name, self._projection,
        self.built if not hasattr(self, 'input_shape') else self.input_shape,
        self.event_shape, self.units,
        posterior, prior,
        self._dropout, str(self._posterior_kwargs))
-    text = text.replace("tfp.distributions.", "")
     return text
 
   def get_config(self):
@@ -313,7 +309,7 @@ class DenseDistribution(Dense):
     config['prior'] = self._prior
     config['dropout'] = self._dropout
     config['posterior_kwargs'] = self._posterior_kwargs
-    config['disable_projection'] = self._disable_projection
+    config['projection'] = self._projection
     return config
 
 

@@ -10,6 +10,7 @@ class MultitaskVAE(BetaVAE):
   r""" Multi-tasks VAE for semi-supervised learning
 
   Example:
+
   ```
   from odin.fuel import MNIST
   from odin.bay.vi.autoencoder import MultitaskVAE

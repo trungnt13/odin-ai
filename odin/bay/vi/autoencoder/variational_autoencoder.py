@@ -18,6 +18,7 @@ from tensorflow_probability.python import layers as tfl
 
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
+from odin.bay.layers.dense import DenseDistribution
 from odin.bay.random_variable import RandomVariable as RV
 from odin.networks import NetworkConfig, SequentialNetwork
 
@@ -53,6 +54,7 @@ def _reduce_latents(latents, mode):
   if mode is None:
     return latents
   if isinstance(mode, string_types):
+    model = str(mode).strip().lower()
     if mode == 'concat':
       return tf.concat(latents, axis=-1)
     if mode == 'mean':
@@ -63,6 +65,8 @@ def _reduce_latents(latents, mode):
       return tf.reduce_min(tf.stack(latents), axis=0)
     if mode == 'max':
       return tf.reduce_max(tf.stack(latents), axis=0)
+    if mode == 'none':
+      return latents
   return mode(latents)
 
 
@@ -187,11 +191,12 @@ class TrainStep:
     self.elbo_kw = elbo_kw
     self.training = training
 
-  def __call__(self):
+  def __call__(self, **kwargs):
     pX_Z, qZ_X = self.vae(self.inputs,
                           training=self.training,
                           mask=self.mask,
-                          sample_shape=self.sample_shape)
+                          sample_shape=self.sample_shape,
+                          **kwargs)
     # store so it could be reused
     self.pX_Z = pX_Z
     self.qZ_X = qZ_X
@@ -244,21 +249,18 @@ class VariationalAutoencoder(keras.Model):
       the output variable (random or deterministic variable)
   """
 
-  def __init__(self,
-               encoder: Union[Layer, NetworkConfig] = NetworkConfig(),
-               decoder: Union[Layer, NetworkConfig] = None,
-               outputs: Union[Layer, RV] = RV(event_shape=64,
-                                              posterior='gaus',
-                                              projection=True,
-                                              name="Input"),
-               latents: Union[Layer, RV] = RV(event_shape=10,
-                                              posterior='diag',
-                                              projection=True,
-                                              name="Latent"),
-               reduce_latent='concat',
-               input_shape=None,
-               step=0.,
-               **kwargs):
+  def __init__(
+      self,
+      encoder: Union[Layer, NetworkConfig] = NetworkConfig(),
+      decoder: Union[Layer, NetworkConfig] = None,
+      outputs: Union[Layer, RV] = RV(64, 'gaus', projection=True, name="Input"),
+      latents: Union[Layer, RV] = RV(10, 'diag', projection=True,
+                                     name="Latent"),
+      reduce_latent='concat',
+      input_shape=None,
+      step=0.,
+      **kwargs,
+  ):
     name = kwargs.pop('name', None)
     path = kwargs.pop('path', None)
     optimizer = kwargs.pop('optimizer', None)
@@ -278,6 +280,9 @@ class VariationalAutoencoder(keras.Model):
       ]
       if len(outputs) == 1:
         input_shape = input_shape[0]
+      warnings.warn(
+          f"Input shape not provide, infer using output shape {input_shape}"
+          f" , the final input shape is: {tf.nest.flatten(input_shape)}")
     ### Then, create the encoder, so we know the input_shape to latent layers
     config = None
     encoder, decoder = _parse_network_alias(encoder, decoder)
@@ -371,6 +376,9 @@ class VariationalAutoencoder(keras.Model):
     else:
       self.optimizer = None
     self.load_weights(path, raise_notfound=False)
+    ### store encode and decode method keywords
+    self._encode_kw = inspect.getfullargspec(self.encode).args[1:]
+    self._decode_kw = inspect.getfullargspec(self.decode).args[1:]
 
   @property
   def save_path(self):
@@ -383,7 +391,8 @@ class VariationalAutoencoder(keras.Model):
       if len(files) > 0 and all(os.path.isfile(f) for f in files):
         super().load_weights(filepath, by_name=False, skip_mismatch=False)
       elif raise_notfound:
-        raise FileNotFoundError(f"Cannot find saved weights at path: {filepath}")
+        raise FileNotFoundError(
+            f"Cannot find saved weights at path: {filepath}")
       # load trainer
       trainer_path = filepath + '.trainer'
       if os.path.exists(trainer_path):
@@ -426,6 +435,22 @@ class VariationalAutoencoder(keras.Model):
     return self._compiled_call
 
   @property
+  def posteriors(self) -> List[DenseDistribution]:
+    return self.output_layers
+
+  @property
+  def latents(self) -> List[DenseDistribution]:
+    return self.latent_layers
+
+  @property
+  def n_latents(self):
+    return len(self.latent_layers)
+
+  @property
+  def n_outputs(self):
+    return len(self.output_layers)
+
+  @property
   def input_shape(self):
     return self.encoder.input_shape
 
@@ -456,17 +481,6 @@ class VariationalAutoencoder(keras.Model):
     z = self.sample_prior(sample_shape, seed)
     return self.decode(z, training=training, **kwargs)
 
-  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
-    r""" Encoding inputs to latent codes """
-    e = self.encoder(inputs, training=training, mask=mask, **kwargs)
-    qZ_X = [
-        latent(e, training=training, sample_shape=sample_shape)
-        for latent in self.latent_layers
-    ]
-    for q in qZ_X:  # remember to store the keras mask in outputs
-      q._keras_mask = mask
-    return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
-
   def _prepare_decode_latents(self, latents, sample_shape):
     # convert all latents to Tensor
     list_latents = True
@@ -485,6 +499,22 @@ class VariationalAutoencoder(keras.Model):
     latents = _reduce_latents(
         latents, self.reduce_latent) if list_latents else latents[0]
     return latents
+
+  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+    r""" Encoding inputs to latent codes """
+    outputs = [
+        encoder(inputs, training=training, mask=mask, **kwargs)
+        for encoder in tf.nest.flatten(self.encoder)
+    ]
+    if len(outputs) == 1:
+      outputs = [outputs] * len(self.latent_layers)
+    qZ_X = [
+        latent(code, training=training, sample_shape=sample_shape)
+        for latent, code in zip(self.latent_layers, outputs)
+    ]
+    for q in qZ_X:  # remember to store the keras mask in outputs
+      q._keras_mask = mask
+    return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
   def decode(self,
              latents,
@@ -519,20 +549,26 @@ class VariationalAutoencoder(keras.Model):
       p._keras_mask = mask
     return dist[0] if len(self.output_layers) == 1 else tuple(dist)
 
-  def call(self, inputs, training=None, mask=None, sample_shape=()):
-    qZ_X = self.encode(inputs,
-                       training=training,
-                       mask=mask,
-                       sample_shape=sample_shape)
+  def call(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+    qZ_X = self.encode(
+        inputs,
+        training=training,
+        mask=mask,
+        sample_shape=sample_shape,
+        **{k: v for k, v in kwargs.items() if k in self._encode_kw},
+    )
     # transfer the mask from encoder to decoder here
     for q in tf.nest.flatten(qZ_X):
       if hasattr(q, '_keras_mask') and q._keras_mask is not None:
         mask = q._keras_mask
         break
-    pX_Z = self.decode(qZ_X,
-                       training=training,
-                       mask=mask,
-                       sample_shape=sample_shape)
+    pX_Z = self.decode(
+        qZ_X,
+        training=training,
+        mask=mask,
+        sample_shape=sample_shape,
+        **{k: v for k, v in kwargs.items() if k in self._decode_kw},
+    )
     return pX_Z, qZ_X
 
   @tf.function(autograph=False)
@@ -735,7 +771,12 @@ class VariationalAutoencoder(keras.Model):
                     iw=iw,
                     elbo_kw=elbo_kw)
 
-  def optimize(self, inputs, training=True, mask=None, optimizer=None):
+  def optimize(self,
+               inputs,
+               training=True,
+               mask=None,
+               optimizer=None,
+               **kwargs):
     if optimizer is None:
       optimizer = tf.nest.flatten(self.optimizer)
     all_metrics = {}
@@ -753,10 +794,10 @@ class VariationalAutoencoder(keras.Model):
       if training:
         with tf.GradientTape(watch_accessed_variables=False) as tape:
           tape.watch(parameters)
-          loss, metrics = step()
+          loss, metrics = step(**kwargs)  # addition kwargs for vae.call(...)
         # applying the gradients
         gradients = tape.gradient(loss, parameters)
-        if self._check_gradients:  # for debugging
+        if self._allow_none_gradients:  # for debugging
           grad_param = zip(gradients, parameters)
         else:
           grad_param = [
@@ -797,7 +838,9 @@ class VariationalAutoencoder(keras.Model):
       earlystop_patience=-1,
       earlystop_min_epoch=-np.inf,
       terminate_on_nan=True,
-      check_gradients=False):
+      checkpoint=None,
+      allow_rollback=False,
+      allow_none_gradients=False):
     r""" Override the original fit method of keras to provide simplified
     procedure with `VariationalAutoencoder.optimize` and
     `VariationalAutoencoder.train_steps`
@@ -815,8 +858,15 @@ class VariationalAutoencoder(keras.Model):
         function in Eager mode (better for debugging).
 
     """
+    # TODO, support checkpoint, allow_rollback, fit history
+    # skip training if model is fitted or reached a number of iteration
     if self.is_fitted and skip_fitted:
-      return self
+      if isinstance(skip_fitted, bool):
+        return self
+      skip_fitted = int(skip_fitted)
+      if int(self.step.numpy()) >= skip_fitted:
+        return self
+    # create the trainer
     from odin.exp.trainer import Trainer
     if self.trainer is None:
       trainer = Trainer()
@@ -834,7 +884,7 @@ class VariationalAutoencoder(keras.Model):
     self._trainstep_kw = dict(sample_shape=sample_shape,
                               iw=iw,
                               elbo_kw=dict(analytic=analytic))
-    self._check_gradients = bool(check_gradients)
+    self._allow_none_gradients = bool(allow_none_gradients)
     callback_functions = [i for i in tf.nest.flatten(callback) if callable(i)]
     saved_weights = [0]
     earlystop_patience = int(earlystop_patience)
@@ -926,7 +976,7 @@ class VariationalAutoencoder(keras.Model):
     for i, latent in enumerate(self.latent_layers):
       text += "\n Latent#%d:\n  " % i
       text += "\n  ".join(_net2str(latent).split('\n'))
-    ## Ouput
+    ## Output
     for i, output in enumerate(self.output_layers):
       text += "\n Output#%d:\n  " % i
       text += "\n  ".join(_net2str(output).split('\n'))

@@ -8,6 +8,8 @@ from odin.bay.vi.losses import get_divergence, maximum_mean_discrepancy
 
 
 def _clip_binary(x, eps=1e-7):
+  # this is ad-hoc value, tested 1e-8 but return NaN for RelaxedSigmoid
+  # all the time
   return tf.clip_by_value(x, eps, 1. - eps)
 
 
@@ -27,8 +29,9 @@ class MutualInfoVAE(BetaVAE):
   Arguments:
     resample_zprime : a Boolean. if True, use samples from q(z|x) for z_prime
       instead of sampling z_prime from prior.
-    kl_code : a Boolean (default: False). By default, only maximize the mutual
-      information of the code q(c|X) and the input p(X|z, c).
+    kl_code : a Boolean (default: True).
+      If False, only maximize the mutual information of the code q(c|X) and
+      the input p(X|z, c), this is the original configuration in the paper.
       If True, encourage factorized code by pushing the KL divergence to the
       prior (multivariate diagonal normal).
 
@@ -47,7 +50,7 @@ class MutualInfoVAE(BetaVAE):
                latents=RV(5, 'diag', True, "Latents"),
                code=RV(5, 'diag', True, 'MutualCodes'),
                resample_zprime=False,
-               kl_code=False,
+               kl_code=True,
                **kwargs):
     latents = tf.nest.flatten(latents)
     latents.append(code)

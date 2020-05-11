@@ -301,8 +301,11 @@ class RandomVariable:
                        input_shape=None,
                        name=None) -> obl.DenseDistribution:
     r""" Initiate a Distribution for the random variable """
-    prior = _default_prior(self.event_shape, self.posterior, self.prior,
-                           self.kwargs)
+    if self.is_deterministic:
+      prior = None
+    else:
+      prior = _default_prior(self.event_shape, self.posterior, self.prior,
+                             self.kwargs)
     event_shape = self.event_shape
     posterior = self.posterior
     posterior_kwargs = dict(self.kwargs)
@@ -311,7 +314,7 @@ class RandomVariable:
     if posterior in dir(tf.losses) or posterior in dir(keras.activations):
       distribution_layer = obl.VectorDeterministicLayer
       if posterior in dir(tf.losses):
-        activation = posterior_kwargs.pop('activation', 'relu')
+        activation = posterior_kwargs.pop('activation', 'linear')
         fn = tf.losses.get(str(posterior))
       else:  # just activation function, loss default MSE
         activation = keras.activations.get(self.posterior)
@@ -324,7 +327,7 @@ class RandomVariable:
       activation = 'linear'
     # ====== create distribution layers ====== #
     activation = posterior_kwargs.pop('activation', activation)
-    kw = dict(disable_projection=not self.projection)
+    kw = dict(projection=self.projection)
     if input_shape is not None:
       kw['input_shape'] = input_shape
     ### create the layer

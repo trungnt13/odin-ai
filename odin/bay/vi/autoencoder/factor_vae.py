@@ -459,11 +459,7 @@ class SemiFactor2VAE(SemiFactorVAE, Factor2VAE):
   """
 
   def __init__(self,
-               n_labels=10,
                latents=RV(5, 'diag', projection=True, name='Latents'),
                factors=RV(5, 'diag', projection=True, name='Factors'),
                **kwargs):
-    super().__init__(n_labels=n_labels,
-                     latents=latents,
-                     factors=factors,
-                     **kwargs)
+    super().__init__(latents=latents, factors=factors, **kwargs)
