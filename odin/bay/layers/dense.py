@@ -146,10 +146,13 @@ class DenseDistribution(Dense):
     #   self.build(kwargs['input_shape'])
 
   def build(self, input_shape):
-    if not self._projection:
-      self.built = True
-    else:
+    if self._projection and not self.built:
       super().build(input_shape)
+    self.built = True
+
+  @property
+  def projection(self):
+    return self._projection
 
   @property
   def is_binary(self):

@@ -358,6 +358,7 @@ class NetworkConfig(dict):
   flatten_inputs: bool = True
   projection: int = None
   input_shape: tuple = None
+  name: str = None
 
   def __post_init__(self):
     network_types = ('deconv', 'conv', 'dense', 'lstm', 'gru', 'rnn')
@@ -505,8 +506,8 @@ class NetworkConfig(dict):
     Returns:
       encoder : keras.Sequential
     """
-    if name is None:
-      name = "Encoder"
+    if self.name is not None:
+      name = self.name
     ### prepare the shape
     input_shape = _shape(
         self.input_shape if input_shape is None else input_shape)

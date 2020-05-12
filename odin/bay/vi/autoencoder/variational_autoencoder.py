@@ -6,6 +6,7 @@ import os
 import pickle
 import warnings
 from functools import partial
+from itertools import zip_longest
 from typing import Callable, List, Optional, Union
 
 import numpy as np
@@ -110,7 +111,8 @@ def _to_optimizer(optimizer, learning_rate, clipnorm):
   return all_optimizers
 
 
-def _parse_network_alias(encoder, decoder):
+def _parse_network_alias(encoder):
+  decoder = None
   if isinstance(encoder, string_types):
     encoder = str(encoder).lower().strip()
     from odin.bay.vi.autoencoder.networks import ImageNet
@@ -149,6 +151,16 @@ def _parse_network_alias(encoder, decoder):
           "No support for predefined network for dataset with name: '%s'" %
           encoder)
   return encoder, decoder
+
+
+def _iter_lists(X, Y):
+  r""" Try to match the length of list-Y to list-X,
+  the yield a pair of (x, y) with the condition x is not None
+  """
+  Y = Y * len(X) if len(Y) == 1 else Y
+  for x, y in zip_longest(X, Y):
+    if x is not None:
+      yield x, y
 
 
 # ===========================================================================
@@ -283,20 +295,31 @@ class VariationalAutoencoder(keras.Model):
       warnings.warn(
           f"Input shape not provide, infer using output shape {input_shape}"
           f" , the final input shape is: {tf.nest.flatten(input_shape)}")
+    ### prepare support multiple encoders decoders
+    all_encoder = list(encoder) if isinstance(encoder, (tuple, list)) else \
+      [encoder]
+    all_decoder = list(decoder) if isinstance(decoder, (tuple, list)) else \
+      [decoder]
+    all_encoder = [i for i in all_encoder if i is not None]
+    all_decoder = [i for i in all_decoder if i is not None]
     ### Then, create the encoder, so we know the input_shape to latent layers
-    config = None
-    encoder, decoder = _parse_network_alias(encoder, decoder)
-    if isinstance(encoder, NetworkConfig):
-      config = encoder
-      encoder = encoder.create_network(input_shape, name="Encoder")
-    elif hasattr(encoder, 'input_shape') and \
-      list(encoder.input_shape[1:]) != input_shape:
-      warnings.warn("encoder has input_shape=%s but VAE output_shape=%s" %
-                    (str(encoder.input_shape[1:]), str(input_shape)))
+    for i, encoder in enumerate(list(all_encoder)):
+      encoder, decoder = _parse_network_alias(encoder)
+      if isinstance(encoder, NetworkConfig):
+        encoder = encoder.create_network(input_shape, name="Encoder")
+      elif hasattr(encoder, 'input_shape') and \
+        list(encoder.input_shape[1:]) != input_shape:
+        warnings.warn("encoder has input_shape=%s but VAE output_shape=%s" %
+                      (str(encoder.input_shape[1:]), str(input_shape)))
+      # assign the parse encoder
+      all_encoder[i] = encoder
+      if decoder is not None:
+        all_decoder.append(decoder)
     ### check latent and input distribution
+    latents = tf.nest.flatten(latents)
     all_latents = [
-        _check_rv(z, input_shape=encoder.output_shape[1:])
-        for z in tf.nest.flatten(latents)
+        _check_rv(z, input_shape=e.output_shape[1:] if e is not None else None)
+        for z, e in _iter_lists(latents, all_encoder)
     ]
     self.latent_layers = [z[0] for z in all_latents]
     self.latent_args = [_get_args(i) for i in self.latent_layers]
@@ -324,24 +347,24 @@ class VariationalAutoencoder(keras.Model):
       latent_shape = list(reduce_latent(zs).shape[1:])
     self.reduce_latent = reduce_latent
     ### Create the decoder
-    n_parameterization = 1
-    if isinstance(outputs[0], RV):
-      n_parameterization = outputs[0].n_parameterization
-    if isinstance(decoder, partial):
-      decoder = decoder(latent_shape=latent_shape)
-    if decoder is not None:
-      if isinstance(decoder, NetworkConfig):
+    for i, decoder in enumerate(list(all_decoder)):
+      if isinstance(decoder, partial):
+        decoder = decoder(latent_shape=latent_shape)
+      elif isinstance(decoder, NetworkConfig):
         decoder = decoder.create_network(latent_shape, name="Decoder")
-      elif hasattr(decoder, 'input_shape') and \
-        list(decoder.input_shape[-1:]) != latent_shape:
-        warnings.warn("decoder has input_shape=%s but latent_shape=%s" %
-                      (str(decoder.input_shape[-1:]), str(latent_shape)))
-    else:
-      decoder = config.create_decoder(encoder=encoder,
-                                      latent_shape=latent_shape,
-                                      n_parameterization=n_parameterization)
+      elif isinstance(decoder, keras.layers.Layer):
+        if (hasattr(decoder, 'input_shape') and
+            list(decoder.input_shape[-1:]) != latent_shape):
+          warnings.warn("decoder has input_shape=%s but latent_shape=%s" %
+                        (str(decoder.input_shape[-1:]), str(latent_shape)))
+      else:
+        raise ValueError("No support for decoder type: %s" % str(type(decoder)))
+      all_decoder[i] = decoder
     ### Finally the output distributions
-    all_outputs = [_check_rv(x, decoder.output_shape[1:]) for x in outputs]
+    all_outputs = [
+        _check_rv(x, d.output_shape[1:] if d is not None else None)
+        for x, d in _iter_lists(outputs, all_decoder)
+    ]
     self.output_layers = [x[0] for x in all_outputs]
     self.output_args = [_get_args(i) for i in self.output_layers]
     ### check type
@@ -351,11 +374,12 @@ class VariationalAutoencoder(keras.Model):
     assert isinstance(decoder, Layer), \
       "decoder must be instance of keras.Layer, but given: %s" % \
         str(type(decoder))
-    self.encoder = encoder
-    self.decoder = decoder
+    self.encoder = all_encoder[0] if len(all_encoder) == 1 else all_encoder
+    self.decoder = all_decoder[0] if len(all_decoder) == 1 else all_decoder
     ### build the latent and output layers
     for layer in self.latent_layers + self.output_layers:
-      if hasattr(layer, '_batch_input_shape') and not layer.built:
+      if (hasattr(layer, '_batch_input_shape') and not layer.built and
+          layer.projection):
         shape = layer._batch_input_shape
         # call this dummy input to build the layer
         layer(keras.Input(shape=shape[1:], batch_size=shape[0]))
@@ -452,11 +476,13 @@ class VariationalAutoencoder(keras.Model):
 
   @property
   def input_shape(self):
-    return self.encoder.input_shape
+    shape = [e.input_shape for e in tf.nest.flatten(self.encoder)]
+    return shape[0] if len(shape) == 1 else shape
 
   @property
   def latent_shape(self):
-    return self.decoder.input_shape
+    shape = [d.input_shape for d in tf.nest.flatten(self.decoder)]
+    return shape[0] if len(shape) == 1 else shape
 
   def sample_prior(self, sample_shape=(), seed=1):
     r""" Sampling from prior distribution """
@@ -506,11 +532,9 @@ class VariationalAutoencoder(keras.Model):
         encoder(inputs, training=training, mask=mask, **kwargs)
         for encoder in tf.nest.flatten(self.encoder)
     ]
-    if len(outputs) == 1:
-      outputs = [outputs] * len(self.latent_layers)
     qZ_X = [
         latent(code, training=training, sample_shape=sample_shape)
-        for latent, code in zip(self.latent_layers, outputs)
+        for latent, code in _iter_lists(self.latent_layers, outputs)
     ]
     for q in qZ_X:  # remember to store the keras mask in outputs
       q._keras_mask = mask
@@ -526,25 +550,26 @@ class VariationalAutoencoder(keras.Model):
     reconstructed distribution """
     sample_shape = tf.nest.flatten(sample_shape)
     latents = self._prepare_decode_latents(latents, sample_shape)
-    outputs = self.decoder(
-        latents,
-        training=training,
-        mask=mask,
-        **kwargs,
-    )
-    # get back the sample shape
-    if len(sample_shape) > 0:
-      list_outputs = False
-      if not tf.is_tensor(outputs):
-        list_outputs = True
-      outputs = [
-          tf.reshape(o, tf.concat([sample_shape, (-1,), o.shape[1:]], axis=0))
-          for o in tf.nest.flatten(outputs)
-      ]
-      if not list_outputs:
-        outputs = outputs[0]
+    # apply the decoder and get back the sample shape
+    outputs = []
+    for decoder in tf.nest.flatten(self.decoder):
+      out = decoder(latents, training=training, mask=mask, **kwargs)
+      if len(sample_shape) > 0:
+        list_outputs = False
+        if not tf.is_tensor(out):
+          list_outputs = True
+        out = [
+            tf.reshape(o, tf.concat([sample_shape, (-1,), o.shape[1:]], axis=0))
+            for o in tf.nest.flatten(out)
+        ]
+        if not list_outputs:
+          out = out[0]
+      outputs.append(out)
     # create the output distribution
-    dist = [layer(outputs, training=training) for layer in self.output_layers]
+    dist = [
+        layer(o, training=training)
+        for layer, o in _iter_lists(self.output_layers, outputs)
+    ]
     for p in dist:  # remember to store the keras mask in outputs
       p._keras_mask = mask
     return dist[0] if len(self.output_layers) == 1 else tuple(dist)
@@ -967,24 +992,26 @@ class VariationalAutoencoder(keras.Model):
         "->".join([i.__name__ for i in cls[::-1]]), self.is_semi_supervised,
         self.is_self_supervised, self.is_weak_supervised)
     ## encoder
-    text += "\n Encoder:\n  "
-    text += "\n  ".join(_net2str(self.encoder).split('\n'))
+    for i, encoder in enumerate(tf.nest.flatten(self.encoder)):
+      text += f"\n Encoder#{i}:\n  "
+      text += "\n  ".join(_net2str(encoder).split('\n'))
     ## Decoder
-    text += "\n Decoder:\n  "
-    text += "\n  ".join(_net2str(self.decoder).split('\n'))
+    for i, decoder in enumerate(tf.nest.flatten(self.decoder)):
+      text += f"\n Decoder#{i}:\n  "
+      text += "\n  ".join(_net2str(decoder).split('\n'))
     ## Latent
     for i, latent in enumerate(self.latent_layers):
-      text += "\n Latent#%d:\n  " % i
+      text += f"\n Latent#{i}:\n  "
       text += "\n  ".join(_net2str(latent).split('\n'))
     ## Output
     for i, output in enumerate(self.output_layers):
-      text += "\n Output#%d:\n  " % i
+      text += f"\n Output#{i}:\n  "
       text += "\n  ".join(_net2str(output).split('\n'))
     ## Optimizer
     if hasattr(self, 'optimizer'):
       for i, opt in enumerate(tf.nest.flatten(self.optimizer)):
         if isinstance(opt, tf.optimizers.Optimizer):
-          text += "\n Optimizer#%d:\n  " % i
+          text += f"\n Optimizer#{i}:\n  "
           text += "\n  ".join(
               ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
     return text

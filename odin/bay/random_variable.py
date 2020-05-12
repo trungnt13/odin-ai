@@ -359,4 +359,7 @@ class RandomVariable:
     ### set attributes
     if not hasattr(layer, 'event_shape'):
       layer.event_shape = event_shape
+    # build the layer in advance
+    if input_shape is not None and layer.projection:
+      layer(keras.Input(shape=input_shape, batch_size=None))
     return layer
