@@ -213,7 +213,6 @@ class Trainer(object):
                  threshold=0.001,
                  progress_length=0,
                  min_epoch=-np.inf,
-                 terminate_on_nan=True,
                  verbose=0):
     r""" Early stopping based on generalization loss and the three rules:
 
@@ -240,8 +239,6 @@ class Trainer(object):
         progression for early stopping.
       min_epoch: Minimum number of epoch until early stop kicks in.
         Note, all the metrics won't be updated until the given epoch.
-      terminate_on_nan : Boolean. Terminate the training progress if NaN or Inf
-        appear in the losses.
 
     Return:
       Trainer.SIGNAL_TERMINATE : stop training
@@ -253,8 +250,6 @@ class Trainer(object):
     """
     if len(losses) == 0:
       return
-    if terminate_on_nan and (np.isnan(losses[-1]) or np.isinf(losses[-1])):
-      return Trainer.SIGNAL_TERMINATE
     if len(losses) < max(2., min_epoch):
       tf.print("[EarlyStop] First 2 warmup epochs.")
       return Trainer.SIGNAL_BEST

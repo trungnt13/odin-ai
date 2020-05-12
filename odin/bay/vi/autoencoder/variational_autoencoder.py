@@ -835,6 +835,7 @@ class VariationalAutoencoder(keras.Model):
       # update metrics and loss
       all_metrics.update(metrics)
       total_loss += loss
+
     return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
 
   def fit(
@@ -919,6 +920,9 @@ class VariationalAutoencoder(keras.Model):
     def _callback():
       for f in callback_functions:
         f()
+      if terminate_on_nan and (np.isnan(trainer.train_loss[-1]) or
+                               np.isinf(trainer.train_loss[-1])):
+        return Trainer.SIGNAL_TERMINATE
       if earlystop_patience > 0:
         if valid is not None:
           losses = trainer.valid_loss_epoch
@@ -930,7 +934,6 @@ class VariationalAutoencoder(keras.Model):
                                     threshold=earlystop_threshold,
                                     progress_length=earlystop_progress_length,
                                     min_epoch=earlystop_min_epoch,
-                                    terminate_on_nan=terminate_on_nan,
                                     verbose=True)
         if signal == Trainer.SIGNAL_BEST:
           saved_weights[0] = self.step.numpy()
