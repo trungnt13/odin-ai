@@ -6,7 +6,8 @@ from tensorflow_probability.python.distributions import distribution
 from tensorflow_probability.python.internal import (assert_util,
                                                     distribution_util,
                                                     dtype_util,
-                                                    reparameterization)
+                                                    reparameterization,
+                                                    tensor_util)
 from tensorflow_probability.python.util.seed_stream import SeedStream
 
 
@@ -36,10 +37,11 @@ class NegativeBinomialDisp(distribution.Distribution):
   def __init__(self,
                loc,
                disp,
+               eps=1e-7,
                validate_args=False,
                allow_nan_stats=True,
                name="NegativeBinomialDisp"):
-    """Construct NegativeBinomial distributions.
+    r"""Construct NegativeBinomial distributions.
 
     Args:
       loc: Non-negative floating-point `Tensor` with shape
@@ -49,7 +51,7 @@ class NegativeBinomialDisp(distribution.Distribution):
         the number of negative Bernoulli trials to stop at (the `total_count`
         of failures), but this is still a valid distribution when
         `total_count` is a non-integer.
-      disp: Non-negative floating-point `Tensor` with shape broadcastable to
+      disp: Positive floating-point `Tensor` with shape broadcastable to
         `[B1, ..., Bb]` where `b >= 0` indicates the number of batch dimensions.
         Each entry represents logits for the probability of success for
         independent Negative Binomial distributions and must be in the open
@@ -69,20 +71,21 @@ class NegativeBinomialDisp(distribution.Distribution):
     parameters = dict(locals())
     with tf.name_scope(name) as name:
       dtype = dtype_util.common_dtype([loc, disp], dtype_hint=tf.float32)
-      loc = tf.convert_to_tensor(value=loc, name="loc", dtype=dtype)
-      disp = tf.convert_to_tensor(value=disp, name="disp", dtype=dtype)
-      with tf.control_dependencies(
-          [assert_util.assert_positive(loc),
-           assert_util.assert_positive(disp)] if validate_args else []):
-        self._loc = tf.identity(loc, name="loc")
-        self._disp = tf.identity(disp, name="disp")
+      self._loc = tensor_util.convert_nonref_to_tensor(value=loc,
+                                                       name="loc",
+                                                       dtype_hint=dtype)
+      self._disp = tensor_util.convert_nonref_to_tensor(value=disp,
+                                                        name="disp",
+                                                        dtype_hint=dtype)
+      self._eps = tensor_util.convert_nonref_to_tensor(eps,
+                                                       name="eps",
+                                                       dtype_hint=dtype)
     super(NegativeBinomialDisp, self).__init__(
         dtype=self._loc.dtype,
         reparameterization_type=reparameterization.NOT_REPARAMETERIZED,
         validate_args=validate_args,
         allow_nan_stats=allow_nan_stats,
         parameters=parameters,
-        graph_parents=[self._loc, self._disp],
         name=name)
 
   @classmethod
@@ -91,12 +94,12 @@ class NegativeBinomialDisp(distribution.Distribution):
 
   @property
   def loc(self):
-    """Mean."""
+    r""" Mean."""
     return self._loc
 
   @property
   def disp(self):
-    """Dispersion"""
+    r""" Dispersion"""
     return self._disp
 
   def _batch_shape_tensor(self):
@@ -143,13 +146,12 @@ class NegativeBinomialDisp(distribution.Distribution):
   def _log_prob(self, x):
     return self._log_unnormalized_prob(x) - self._log_normalization(x)
 
-  def _log_unnormalized_prob(self, x, eps=1e-8):
+  def _log_unnormalized_prob(self, x):
     if self.validate_args:
       x = distribution_util.embed_check_nonnegative_integer_form(x)
-    eps = tf.cast(eps, dtype=self.dtype)
-    log_loc_disp_eps = tf.math.log(self.disp + self.loc + eps)
-    return self.disp * (tf.math.log(self.disp + eps) - log_loc_disp_eps) \
-            + x * (tf.math.log(self.loc + eps) - log_loc_disp_eps)
+    log_loc_disp_eps = tf.math.log(self.disp + self.loc + self._eps)
+    return self.disp * (tf.math.log(self.disp + self._eps) - log_loc_disp_eps) \
+            + x * (tf.math.log(self.loc + self._eps) - log_loc_disp_eps)
 
   def _log_normalization(self, x):
     if self.validate_args:
@@ -167,3 +169,33 @@ class NegativeBinomialDisp(distribution.Distribution):
   def _variance(self):
     mean = self._mean()
     return mean + tf.square(mean) / self.disp
+
+  def _parameter_control_dependencies(self, is_init):
+    if not self.validate_args:
+      return []
+    assertions = []
+    loc = self._loc
+    disp = self._disp
+    if is_init != tensor_util.is_ref(loc):
+      assertions.extend([
+          assert_util.assert_non_negative(
+              loc, message='`loc` has components less than 0.'),
+          distribution_util.assert_integer_form(
+              loc, message='`loc` has fractional components.')
+      ])
+    if is_init != tensor_util.is_ref(disp):
+      assertions.extend([
+          assert_util.assert_positive(
+              disp, message='`disp` has components less than or equal to 0.'),
+          distribution_util.assert_integer_form(
+              disp, message='`disp` has fractional components.')
+      ])
+    return assertions
+
+  def _sample_control_dependencies(self, x):
+    """Check counts for proper shape and values, then return tensor version."""
+    assertions = []
+    if not self.validate_args:
+      return assertions
+    assertions.extend(distribution_util.assert_nonnegative_integer_form(x))
+    return assertions

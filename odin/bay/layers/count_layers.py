@@ -415,12 +415,13 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
                                                  dtype='int32'),
                                    keepdims=True)
     # as count value, do exp if necessary
-    loc_params = mean_activation(loc_params)
+    loc_params = tf.reshape(mean_activation(loc_params), output_shape)
     disp_params = disp_activation(disp_params)
+    if dispersion == 'full':
+      disp_params = tf.reshape(disp_params, output_shape)
     # create the distribution
-    nb = NegativeBinomialDisp(loc=tf.reshape(loc_params, output_shape),
-                              disp=tf.reshape(disp_params, output_shape)
-                              if dispersion == 'full' else disp_params,
+    nb = NegativeBinomialDisp(loc=loc_params,
+                              disp=disp_params,
                               validate_args=validate_args)
     zinb = ZeroInflated(count_distribution=nb,
                         logits=tf.reshape(rate_params, output_shape),

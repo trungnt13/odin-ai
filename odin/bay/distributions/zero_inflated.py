@@ -23,7 +23,8 @@ from __future__ import absolute_import, division, print_function
 import tensorflow as tf
 from tensorflow_probability.python.distributions import (Bernoulli, Independent,
                                                          distribution)
-from tensorflow_probability.python.internal import reparameterization
+from tensorflow_probability.python.internal import (reparameterization,
+                                                    tensor_util)
 from tensorflow_probability.python.util.seed_stream import SeedStream
 
 __all__ = ['ZeroInflated']
@@ -48,7 +49,7 @@ def _broadcast_rate(probs, *others):
 
 
 class ZeroInflated(distribution.Distribution):
-  """Zero-inflated distribution.
+  r"""Zero-inflated distribution.
 
   The `zero-inflated` object implements batched zero-inflated distributions.
   The zero-inflated model is defined by a zero-inflation rate
@@ -63,10 +64,11 @@ class ZeroInflated(distribution.Distribution):
                inflated_distribution=None,
                logits=None,
                probs=None,
+               eps=1e-7,
                validate_args=False,
                allow_nan_stats=True,
                name="ZeroInflated"):
-    """Initialize a zero-inflated distribution.
+    r"""Initialize a zero-inflated distribution.
 
     A `ZeroInflated` is defined by a zero-inflation rate (`inflated_distribution`,
     representing the probabilities of excess zeros) and a `Distribution` object
@@ -156,6 +158,8 @@ class ZeroInflated(distribution.Distribution):
             "than %d-D batch_shape of inflated_distribution" %
             (count_batch_ndims, inflated_batch_ndims))
 
+      self._eps = tensor_util.convert_nonref_to_tensor(
+          eps, dtype_hint=count_distribution.dtype, name='eps')
       # Ensure that all batch and event ndims are consistent.
       if validate_args:
         self._runtime_assertions.append(
@@ -235,10 +239,11 @@ class ZeroInflated(distribution.Distribution):
       return (1 - probs) * d_mean
 
   def _variance(self):
-    """
+    r"""
     (1 - pi) * (d.var + d.mean^2) - [(1 - pi) * d.mean]^2
 
     Note: mean(ZeroInflated) = (1 - pi) * d.mean
+
     where:
      - pi is zero-inflated rate
      - d is count distribution
@@ -256,10 +261,10 @@ class ZeroInflated(distribution.Distribution):
 
   def _log_prob(self, x):
     with tf.compat.v1.control_dependencies(self._runtime_assertions):
-      eps = tf.cast(1e-8, x.dtype)
       x = tf.convert_to_tensor(x, name="x")
       d = self._count_distribution
       pi = self.probs
+      eps = self._eps
 
       log_prob = d.log_prob(x)
       prob = tf.math.exp(log_prob)
@@ -270,12 +275,13 @@ class ZeroInflated(distribution.Distribution):
 
       # This equation is validated
       # Equation (13) reference: u_{ij} = 1 - pi_{ij}
-      y_0 = tf.math.log(pi + (1 - pi) * prob)
-      y_1 = tf.math.log(1 - pi) + log_prob
+      y_0 = tf.math.log(pi + (1 - pi) * prob + eps)
+      y_1 = tf.math.log(1 - pi + eps) + log_prob
+      # note: sometimes pi can get to 1 and y_1 -> -inf
       return tf.where(x <= eps, y_0, y_1)
 
-  def _prob(self, x):
-    return tf.math.exp(self._log_prob(x))
+  # def _prob(self, x):
+  #   return tf.math.exp(self._log_prob(x))
 
   def _sample_n(self, n, seed):
     with tf.compat.v1.control_dependencies(self._runtime_assertions):
