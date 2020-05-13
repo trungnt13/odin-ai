@@ -94,9 +94,13 @@ class NegativeBinomialLayer(DistributionLambda):
     if dispersion == 'single':
       logits_params = tf.reduce_mean(logits_params)
     elif dispersion == 'share':
-      logits_params = tf.reduce_mean(logits_params,
-                                     axis=tf.range(0, ndims - 1, dtype='int32'),
-                                     keepdims=True)
+      logits_params = tf.reduce_mean(
+          logits_params,
+          axis=tf.range(0, ndims - 1, dtype='int32'),
+          keepdims=True,
+      )
+    elif dispersion != 'full':
+      raise ValueError(f"No support for dispersion type: {dispersion}")
     total_count_params = count_activation(total_count_params)
     return tfd.Independent(
         tfd.NegativeBinomial(total_count=tf.reshape(total_count_params,
@@ -183,11 +187,13 @@ class NegativeBinomialDispLayer(DistributionLambda):
     if dispersion == 'single':
       disp_params = tf.reduce_mean(disp_params)
     elif dispersion == 'share':
-      disp_params = tf.reduce_mean(disp_params,
-                                   axis=tf.range(0,
-                                                 output_shape.shape[0] - 1,
-                                                 dtype='int32'),
-                                   keepdims=True)
+      disp_params = tf.reduce_mean(
+          disp_params,
+          axis=tf.range(0, output_shape.shape[0] - 1, dtype='int32'),
+          keepdims=True,
+      )
+    elif dispersion != 'full':
+      raise ValueError(f"No support for dispersion type: {dispersion}")
     loc_params = mean_activation(loc_params)
     disp_params = disp_activation(disp_params)
     return tfd.Independent(

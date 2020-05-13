@@ -278,7 +278,7 @@ class ZeroInflated(distribution.Distribution):
       y_0 = tf.math.log(pi + (1 - pi) * prob + eps)
       y_1 = tf.math.log(1 - pi + eps) + log_prob
       # note: sometimes pi can get to 1 and y_1 -> -inf
-      return tf.where(x <= eps, y_0, y_1)
+      return tf.where(x > eps, y_1, y_0)
 
   # def _prob(self, x):
   #   return tf.math.exp(self._log_prob(x))

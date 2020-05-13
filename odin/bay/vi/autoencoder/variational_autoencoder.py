@@ -7,6 +7,7 @@ import pickle
 import warnings
 from functools import partial
 from itertools import zip_longest
+from numbers import Number
 from typing import Callable, List, Optional, Union
 
 import numpy as np
@@ -261,6 +262,26 @@ class VariationalAutoencoder(keras.Model):
       the output variable (random or deterministic variable)
   """
 
+  def __new__(cls, *args, **kwargs):
+    class_tree = [
+        c for c in type.mro(cls) if issubclass(c, VariationalAutoencoder)
+    ][::-1]
+    # get default arguments from parents classes
+    kw = dict()
+    for c in class_tree:
+      spec = inspect.getfullargspec(c.__init__)
+      if spec.defaults is not None:
+        for key, val in zip(spec.args[::-1], spec.defaults[::-1]):
+          kw[key] = val
+    # update the user provided arguments
+    for k, v in zip(spec.args[1:], args):
+      kw[k] = v
+    kw.update(kwargs)
+    # create the instance
+    instance = super().__new__(cls, *args, **kwargs)
+    instance._init_args = kw
+    return instance
+
   def __init__(
       self,
       encoder: Union[Layer, NetworkConfig] = NetworkConfig(),
@@ -405,6 +426,11 @@ class VariationalAutoencoder(keras.Model):
     self._decode_kw = inspect.getfullargspec(self.decode).args[1:]
 
   @property
+  def init_args(self) -> dict:
+    r""" Return a dictionary of arguments used for initialized this class """
+    return self._init_args
+
+  @property
   def save_path(self):
     return self._save_path
 
@@ -513,6 +539,8 @@ class VariationalAutoencoder(keras.Model):
     if isinstance(latents, tfd.Distribution) or tf.is_tensor(latents):
       list_latents = False
     latents = tf.nest.flatten(latents)
+    if isinstance(sample_shape, Number):
+      sample_shape = (int(sample_shape),)
     # remove sample_shape
     if len(sample_shape) > 0:
       # if we call tf.convert_to_tensor or tf.reshape directly here the llk
@@ -601,18 +629,27 @@ class VariationalAutoencoder(keras.Model):
                         inputs,
                         training=False,
                         mask=None,
-                        sample_shape=100):
-    r"""
+                        sample_shape=100,
+                        **kwargs):
+    r""" Marginal log likelihood `log(p(X))`, an biased estimation.
+
+    With sufficient amount of MCMC samples (-> inf), the value will converges
+    to `log(p(X))`
+
+    With large amount of sample, recommending reduce the batch size to very
+    small number or use CPU for the calculation `with tf.device("/CPU:0"):`
+
     Return:
       a Tensor of shape [batch_size]
-        marginal log-likelihood
+        marginal log-likelihood of p(X)
     """
-    sample_shape = tf.cast(tf.reduce_prod(sample_shape), tf.int32)
-    iw_const = tf.math.log(tf.cast(tf.reduce_prod(sample_shape), self.dtype))
+    sample_shape = [tf.cast(tf.reduce_prod(sample_shape), tf.int32)]
     pX_Z, qZ_X = self.call(inputs,
                            training=training,
                            mask=mask,
-                           sample_shape=sample_shape)
+                           sample_shape=sample_shape,
+                           **kwargs)
+    iw_const = tf.math.log(tf.cast(tf.reduce_prod(sample_shape), self.dtype))
     llk = []
     for i, (p,
             x) in enumerate(zip(tf.nest.flatten(pX_Z),
@@ -922,6 +959,7 @@ class VariationalAutoencoder(keras.Model):
         f()
       if terminate_on_nan and (np.isnan(trainer.train_loss[-1]) or
                                np.isinf(trainer.train_loss[-1])):
+        tf.print("[EarlyStop] Terminate on NaN")
         return Trainer.SIGNAL_TERMINATE
       if earlystop_patience > 0:
         if valid is not None:
@@ -986,6 +1024,20 @@ class VariationalAutoencoder(keras.Model):
                                       dpi=dpi,
                                       title=title)
     return self
+
+  @property
+  def md5_checksum(self):
+    r""" Return an unique checksum based on variables shape and values of this
+    model """
+    from odin.utils.crypto import md5_checksum
+    varray = []
+    for n, v in enumerate(self.variables):
+      v = v.numpy()
+      varray.append(v.shape)
+      varray.append(v.ravel())
+    varray.append([n])
+    varray = np.concatenate(varray, axis=0)
+    return md5_checksum(varray)
 
   def __str__(self):
     cls = [

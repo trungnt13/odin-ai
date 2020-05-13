@@ -147,11 +147,12 @@ class NegativeBinomialDisp(distribution.Distribution):
     return self._log_unnormalized_prob(x) - self._log_normalization(x)
 
   def _log_unnormalized_prob(self, x):
+    loc, disp, eps = self.loc, self.disp, self._eps
     if self.validate_args:
       x = distribution_util.embed_check_nonnegative_integer_form(x)
-    log_loc_disp_eps = tf.math.log(self.disp + self.loc + self._eps)
-    return self.disp * (tf.math.log(self.disp + self._eps) - log_loc_disp_eps) \
-            + x * (tf.math.log(self.loc + self._eps) - log_loc_disp_eps)
+    log_loc_disp_eps = tf.math.log(disp + loc + eps)
+    return disp * (tf.math.log(disp + eps) - log_loc_disp_eps) \
+            + x * (tf.math.log(loc + eps) - log_loc_disp_eps)
 
   def _log_normalization(self, x):
     if self.validate_args:
