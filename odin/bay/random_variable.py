@@ -187,7 +187,11 @@ class RandomVariable:
     shape = self.event_shape
     if not (tf.is_tensor(shape) or isinstance(shape, tf.TensorShape) or
             isinstance(shape, np.ndarray)):
-      self.event_shape = tf.nest.flatten(self.event_shape)
+      try:
+        shape = [int(i) for i in tf.nest.flatten(self.event_shape)]
+      except Exception as e:
+        raise ValueError(f"No support for event_shape={shape}, error: {e}")
+    self.event_shape = shape
     self.name = str(self.name)
 
   ######## Basic methods

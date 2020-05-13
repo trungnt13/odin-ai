@@ -35,20 +35,19 @@ __all__ = [
 # ===========================================================================
 def _dist(dist):
   # distribution layer
-  if isinstance(dist, DistributionLambda):
+  if isinstance(dist, tfd.Distribution):
+    while isinstance(dist, tfd.Independent):
+      dist = dist.distribution
+    dist = type(dist)
+  elif isinstance(dist, DistributionLambda):
     dist = dist((array_ops.empty(shape=(1, dist.params_size((1,))),
                                  dtype=tf.float32)))
   elif inspect.isclass(dist) and issubclass(dist, DistributionLambda):
     dist = dist()(array_ops.empty(shape=(1, dist.params_size((1,))),
                                   dtype=tf.float32))
-  # distribution object
-  if not inspect.isclass(dist):
-    assert isinstance(dist, tfd.Distribution), \
-      "dist must be instance of Distribution, but given: %s" % str(type(dist))
-    while isinstance(dist, tfd.Independent):
-      dist = dist.distribution
-    dist = type(dist)
-  # remove unecessary classes
+  else:
+    raise ValueError("No support for distribution of type: %s" % str(dist))
+  # remove unnecessary classes
   dist = [
       t for t in type.mro(dist)
       if issubclass(t, tfd.Distribution) and t not in (
@@ -59,6 +58,9 @@ def _dist(dist):
 
 
 def is_binary_distribution(dist):
+  if isinstance(dist, tfd.Distribution):
+    s = dist.sample(100).numpy()
+    return np.all(np.unique(s.astype('float32')) == [0., 1.])
   for dist in _dist(dist):
     if issubclass(dist, (obd.OneHotCategorical, obd.RelaxedOneHotCategorical,
                          obd.Bernoulli, obd.RelaxedBernoulli)):
@@ -67,6 +69,9 @@ def is_binary_distribution(dist):
 
 
 def is_discrete_distribution(dist):
+  if isinstance(dist, tfd.Distribution):
+    s = dist.sample(100).numpy()
+    return np.all(s.astype('float32') == s.astype('int32'))
   for dist in _dist(dist):
     if issubclass(dist,
                   (obd.Poisson, obd.NegativeBinomial, obd.NegativeBinomialDisp,

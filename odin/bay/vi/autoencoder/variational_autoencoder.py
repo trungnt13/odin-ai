@@ -542,7 +542,7 @@ class VariationalAutoencoder(keras.Model):
     if isinstance(sample_shape, Number):
       sample_shape = (int(sample_shape),)
     # remove sample_shape
-    if len(sample_shape) > 0:
+    if sample_shape:
       # if we call tf.convert_to_tensor or tf.reshape directly here the llk
       # could go worse for some unknown reason, but using keras layers is ok!
       ndim = len(sample_shape) + 1
@@ -639,6 +639,13 @@ class VariationalAutoencoder(keras.Model):
     With large amount of sample, recommending reduce the batch size to very
     small number or use CPU for the calculation `with tf.device("/CPU:0"):`
 
+    Note: this function will need further modification for more complicated
+    prior and latent space, only work for:
+
+      - vanilla-VAE or
+      - with proper prior injected into qZ_X and pZ_X using
+        `qZ_X.KL_divergence.prior = ...` during `encode` or `decode` methods
+
     Return:
       a Tensor of shape [batch_size]
         marginal log-likelihood of p(X)
@@ -649,15 +656,34 @@ class VariationalAutoencoder(keras.Model):
                            mask=mask,
                            sample_shape=sample_shape,
                            **kwargs)
-    iw_const = tf.math.log(tf.cast(tf.reduce_prod(sample_shape), self.dtype))
     llk = []
+    # reconstruction (a.k.a distortion)
     for i, (p,
             x) in enumerate(zip(tf.nest.flatten(pX_Z),
                                 tf.nest.flatten(inputs))):
       batch_llk = p.log_prob(x)
-      batch_llk = tf.reduce_logsumexp(batch_llk, axis=0) - iw_const
       llk.append(batch_llk)
-    return llk[0] if len(llk) == 1 else llk
+    # kl-divergence (a.k.a rate)
+    for qZ in tf.nest.flatten(qZ_X):
+      z = tf.convert_to_tensor(qZ)
+      # the prior is injected into the distribution during the call method of
+      # DenseDistribution, or modified during the encode method by setting
+      # qZ_X.KL_divergence.prior = ...
+      pZ = qZ.KL_divergence.prior
+      if pZ is None:
+        pZ = tfd.Normal(loc=tf.zeros(qZ.event_shape, dtype=z.dtype),
+                        scale=tf.ones(qZ.event_shape, dtype=z.dtype))
+      llk_pz = pZ.log_prob(z)
+      llk_qz_x = qZ.log_prob(z)
+      llk.append(llk_pz)
+      llk.append(llk_qz_x)
+    # sum all llk
+    iw_const = tf.math.log(tf.cast(tf.reduce_prod(sample_shape), self.dtype))
+    mllk = 0.
+    for i in llk:
+      mllk += i
+    mllk = tf.reduce_logsumexp(mllk, axis=0) - iw_const
+    return mllk
 
   def _elbo(self,
             X,
@@ -949,18 +975,27 @@ class VariationalAutoencoder(keras.Model):
                               elbo_kw=dict(analytic=analytic))
     self._allow_none_gradients = bool(allow_none_gradients)
     callback_functions = [i for i in tf.nest.flatten(callback) if callable(i)]
-    saved_weights = [0]
     earlystop_patience = int(earlystop_patience)
     patience = [earlystop_patience]
+    best_weights = [0, None, None]
 
-    # run early stop and callback
+    ## run early stop and callback
     def _callback():
       for f in callback_functions:
         f()
-      if terminate_on_nan and (np.isnan(trainer.train_loss[-1]) or
-                               np.isinf(trainer.train_loss[-1])):
-        tf.print("[EarlyStop] Terminate on NaN")
-        return Trainer.SIGNAL_TERMINATE
+      saved_weights = False
+      # terminate on nan
+      if terminate_on_nan:
+        if (np.isnan(trainer.train_loss[-1]) or
+            np.isinf(trainer.train_loss[-1])):
+          tf.print("[EarlyStop] Terminate on NaN")
+          best_weights[2] = Trainer.SIGNAL_TERMINATE
+          return Trainer.SIGNAL_TERMINATE
+        elif not saved_weights:
+          best_weights[0] = self.step.numpy()
+          best_weights[1] = self.get_weights()
+          saved_weights = True
+      # early stopping
       if earlystop_patience > 0:
         if valid is not None:
           losses = trainer.valid_loss_epoch
@@ -974,10 +1009,13 @@ class VariationalAutoencoder(keras.Model):
                                     min_epoch=earlystop_min_epoch,
                                     verbose=True)
         if signal == Trainer.SIGNAL_BEST:
-          saved_weights[0] = self.step.numpy()
           patience[0] = min(patience[0] + 1. / earlystop_patience,
                             earlystop_patience)
-          Trainer.save_weights(self)
+          if not saved_weights:
+            best_weights[0] = self.step.numpy()
+            best_weights[1] = self.get_weights()
+            best_weights[2] = Trainer.SIGNAL_TERMINATE
+            saved_weights = True
         elif signal == Trainer.SIGNAL_TERMINATE:
           patience[0] -= 1
           tf.print(
@@ -1004,10 +1042,10 @@ class VariationalAutoencoder(keras.Model):
                      callback=_callback)
     self._trainstep_kw = dict()
     # restore best weights
-    if saved_weights[0] > 0:
+    if best_weights[0] > 0 and best_weights[2] is not None:
       tf.print("[EarlyStop] Restore best weights from step %d" %
-               saved_weights[0])
-      Trainer.restore_weights(self)
+               best_weights[0])
+      self.set_weights(best_weights[1])
     return self
 
   def plot_learning_curves(self,
