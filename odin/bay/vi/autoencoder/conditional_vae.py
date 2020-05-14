@@ -87,8 +87,9 @@ class ConditionalM2VAE(BetaVAE):
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name="alpha")
     self.labels = labels.create_posterior()
     if self.labels.prior is None:
+      p = 1. / self.n_labels
       self.labels.prior = OneHotCategorical(
-          logits=np.log([1. / self.n_labels] * self.n_labels),
+          logits=[np.log(p / (1. - p))] * self.n_labels,
           name="LabelPrior",
       )
     # create the classifier

@@ -1,6 +1,8 @@
 from __future__ import absolute_import, division, print_function
 
+import numpy as np
 import tensorflow as tf
+from tensorflow.python import keras
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
 from tensorflow_probability.python.internal import \
@@ -27,6 +29,17 @@ __all__ = [
 PoissonLayer = tfl.IndependentPoisson
 
 
+# ===========================================================================
+# Negative binomial
+# ===========================================================================
+def _dispersion(disp):
+  dispersion = str(disp).lower().strip()
+  assert dispersion in ('full', 'single', 'share'), \
+    "Only support three different dispersion value: 'full', 'single' and " + \
+      "'share', but given: %s" % dispersion
+  return dispersion
+
+
 class NegativeBinomialLayer(DistributionLambda):
   r"""An independent NegativeBinomial Keras layer.
 
@@ -36,9 +49,9 @@ class NegativeBinomialLayer(DistributionLambda):
     count_activation: activation function return non-negative floating-point,
       i.e. the `total_count` of failures
     dispersion : {'full', 'share', 'single'}
-      'full' creates a dispersion value for each individual data point,
-      'share' creates a single vector of dispersion for all examples, and
-      'single' uses a single value as dispersion for all data points.
+      - 'full' creates a dispersion value for each individual data point,
+      - 'share' creates a single vector of dispersion for all examples, and
+      - 'single' uses a single value as dispersion for all data points.
       Note: the dispersion in this case is the probability of success.
     convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
       instance and returns a `tf.Tensor`-like object.
@@ -59,23 +72,35 @@ class NegativeBinomialLayer(DistributionLambda):
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
-    dispersion = str(dispersion).lower()
-    assert dispersion in ('full', 'single', 'share'), \
-      "Only support three different dispersion value: 'full', 'single' and " + \
-        "'share', but given: %s" % dispersion
+    dispersion = _dispersion(dispersion)
+    disp = None
+    if dispersion == 'single':
+      disp = tf.Variable(0.,
+                         trainable=True,
+                         dtype=keras.backend.floatx(),
+                         name="nb_logits")
+    elif dispersion == 'share':
+      disp = tf.Variable(np.zeros(event_shape),
+                         trainable=True,
+                         dtype=keras.backend.floatx(),
+                         name="nb_logits")
     super(NegativeBinomialLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape,
-                                 parse_activation(count_activation, self),
-                                 dispersion, validate_args),
-        convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(
+            t,
+            event_shape,
+            count_activation=parse_activation(count_activation, self),
+            validate_args=validate_args,
+            disp=disp,
+        ), convert_to_tensor_fn, **kwargs)
+    self.disp = disp
 
   @staticmethod
   def new(params,
           event_shape=(),
           count_activation=tf.exp,
-          dispersion='full',
           validate_args=False,
-          name="NegativeBinomialLayer"):
+          name="NegativeBinomialLayer",
+          disp=None):
     r"""Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(
@@ -88,34 +113,30 @@ class NegativeBinomialLayer(DistributionLambda):
         [tf.shape(input=params)[:-1], event_shape],
         axis=0,
     )
-    ndims = output_shape.shape[0]
-    #
-    total_count_params, logits_params = tf.split(params, 2, axis=-1)
-    if dispersion == 'single':
-      logits_params = tf.reduce_mean(logits_params)
-    elif dispersion == 'share':
-      logits_params = tf.reduce_mean(
-          logits_params,
-          axis=tf.range(0, ndims - 1, dtype='int32'),
-          keepdims=True,
-      )
-    elif dispersion != 'full':
-      raise ValueError(f"No support for dispersion type: {dispersion}")
-    total_count_params = count_activation(total_count_params)
+    if disp is None:
+      total_count, logits = tf.split(params, 2, axis=-1)
+      logits = tf.reshape(logits, output_shape)
+    else:
+      total_count = params
+      logits = disp
+    total_count = tf.reshape(total_count, output_shape)
+    total_count = count_activation(total_count)
     return tfd.Independent(
-        tfd.NegativeBinomial(total_count=tf.reshape(total_count_params,
-                                                    output_shape),
-                             logits=tf.reshape(logits_params, output_shape)
-                             if dispersion == 'full' else logits_params,
+        tfd.NegativeBinomial(total_count=total_count,
+                             logits=logits,
                              validate_args=validate_args),
         reinterpreted_batch_ndims=tf.size(input=event_shape),
         name=name,
     )
 
   @staticmethod
-  def params_size(event_shape=(), name="NegativeBinomialLayer_params_size"):
+  def params_size(event_shape=(),
+                  dispersion='full',
+                  name="NegativeBinomialLayer_params_size"):
     r"""The number of `params` needed to create a single distribution."""
-    return 2 * _event_size(event_shape, name=name)
+    if dispersion == 'full':
+      return 2 * _event_size(event_shape, name=name)
+    return _event_size(event_shape, name=name)
 
 
 class NegativeBinomialDispLayer(DistributionLambda):
@@ -152,25 +173,37 @@ class NegativeBinomialDispLayer(DistributionLambda):
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
-    dispersion = str(dispersion).lower()
-    self.dispersion = dispersion
-    assert dispersion in ('full', 'single', 'share'), \
-      "Only support three different dispersion value: 'full', 'single' and " + \
-        "'share', but given: %s" % dispersion
+    dispersion = _dispersion(dispersion)
+    disp = None
+    if dispersion == 'single':
+      disp = tf.Variable(tf.random.normal((1,)),
+                         trainable=True,
+                         dtype=keras.backend.floatx(),
+                         name="dispersion")
+    elif dispersion == 'share':
+      disp = tf.Variable(tf.random.normal(tf.nest.flatten(event_shape)),
+                         trainable=True,
+                         dtype=keras.backend.floatx(),
+                         name="dispersion")
     super(NegativeBinomialDispLayer, self).__init__(
         lambda t: type(self).new(
-            t, event_shape, parse_activation(mean_activation, self),
-            parse_activation(disp_activation, self), dispersion, validate_args),
-        convert_to_tensor_fn, **kwargs)
+            t,
+            event_shape,
+            mean_activation=parse_activation(mean_activation, self),
+            disp_activation=parse_activation(disp_activation, self),
+            validate_args=validate_args,
+            disp=disp,
+        ), convert_to_tensor_fn, **kwargs)
+    self.disp = disp
 
   @staticmethod
   def new(params,
           event_shape=(),
           mean_activation=tf.nn.softplus,
           disp_activation=softplus1,
-          dispersion='full',
           validate_args=False,
-          name="NegativeBinomialDispLayer"):
+          name="NegativeBinomialDispLayer",
+          disp=None):
     r""" Create the distribution instance from a `params` vector. """
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(
@@ -183,32 +216,28 @@ class NegativeBinomialDispLayer(DistributionLambda):
         [tf.shape(input=params)[:-1], event_shape],
         axis=0,
     )
-    loc_params, disp_params = tf.split(params, 2, axis=-1)
-    if dispersion == 'single':
-      disp_params = tf.reduce_mean(disp_params)
-    elif dispersion == 'share':
-      disp_params = tf.reduce_mean(
-          disp_params,
-          axis=tf.range(0, output_shape.shape[0] - 1, dtype='int32'),
-          keepdims=True,
-      )
-    elif dispersion != 'full':
-      raise ValueError(f"No support for dispersion type: {dispersion}")
-    loc_params = mean_activation(loc_params)
-    disp_params = disp_activation(disp_params)
+    if disp is None:
+      loc, disp = tf.split(params, 2, axis=-1)
+      disp = tf.reshape(disp, output_shape)
+    else:
+      loc = params
+    loc = tf.reshape(loc, output_shape)
+    loc = mean_activation(loc)
+    disp = disp_activation(disp)
     return tfd.Independent(
-        NegativeBinomialDisp(loc=tf.reshape(loc_params, output_shape),
-                             disp=tf.reshape(disp_params, output_shape)
-                             if dispersion == 'full' else disp_params,
-                             validate_args=validate_args),
+        NegativeBinomialDisp(loc=loc, disp=disp, validate_args=validate_args),
         reinterpreted_batch_ndims=tf.size(input=event_shape),
         name=name,
     )
 
   @staticmethod
-  def params_size(event_shape=(), name="NegativeBinomialDispLayer_params_size"):
+  def params_size(event_shape=(),
+                  dispersion='full',
+                  name="NegativeBinomialDispLayer_params_size"):
     r"""The number of `params` needed to create a single distribution."""
-    return 2 * _event_size(event_shape, name=name)
+    if dispersion == 'full':
+      return 2 * _event_size(event_shape, name=name)
+    return _event_size(event_shape, name=name)
 
 
 # ===========================================================================
@@ -294,19 +323,35 @@ class ZINegativeBinomialLayer(DistributionLambda):
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
+    dispersion = _dispersion(dispersion)
+    disp = None
+    if dispersion == 'single':
+      disp = tf.Variable(0.,
+                         trainable=True,
+                         dtype=keras.backend.floatx(),
+                         name="nb_logits")
+    elif dispersion == 'share':
+      disp = tf.Variable(np.zeros(event_shape),
+                         trainable=True,
+                         dtype=keras.backend.floatx(),
+                         name="nb_logits")
     super(ZINegativeBinomialLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape,
-                                 parse_activation(count_activation, self),
-                                 dispersion, validate_args),
-        convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(
+            t,
+            event_shape,
+            count_activation=parse_activation(count_activation, self),
+            validate_args=validate_args,
+            disp=disp,
+        ), convert_to_tensor_fn, **kwargs)
+    self.disp = disp
 
   @staticmethod
   def new(params,
           event_shape=(),
           count_activation=tf.exp,
-          dispersion='full',
           validate_args=False,
-          name="ZINegativeBinomialLayer"):
+          name="ZINegativeBinomialLayer",
+          disp=None):
     r"""Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(
@@ -319,34 +364,33 @@ class ZINegativeBinomialLayer(DistributionLambda):
         [tf.shape(input=params)[:-1], event_shape],
         axis=0,
     )
-    ndims = output_shape.shape[0]
-    (total_count_params, logits_params, rate_params) = tf.split(params,
-                                                                3,
-                                                                axis=-1)
-    if dispersion == 'single':
-      logits_params = tf.reduce_mean(logits_params)
-    elif dispersion == 'share':
-      logits_params = tf.reduce_mean(logits_params,
-                                     axis=tf.range(0, ndims - 1, dtype='int32'),
-                                     keepdims=True)
-    total_count_params = count_activation(total_count_params)
-    nb = tfd.NegativeBinomial(total_count=tf.reshape(total_count_params,
-                                                     output_shape),
-                              logits=tf.reshape(logits_params, output_shape)
-                              if dispersion == 'full' else logits_params,
+    if disp is None:
+      total_count, logits, rate = tf.split(params, 3, axis=-1)
+      logits = tf.reshape(logits, output_shape)
+    else:
+      total_count, rate = tf.split(params, 2, axis=-1)
+      logits = disp
+    rate = tf.reshape(rate, output_shape)
+    total_count = tf.reshape(total_count, output_shape)
+    total_count = count_activation(total_count)
+    nb = tfd.NegativeBinomial(total_count=total_count,
+                              logits=logits,
                               validate_args=validate_args)
     zinb = ZeroInflated(count_distribution=nb,
-                        logits=tf.reshape(rate_params, output_shape),
+                        logits=rate,
                         validate_args=validate_args)
     return tfd.Independent(zinb,
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
                            name=name)
 
   @staticmethod
-  def params_size(
-      event_shape=(), name="ZeroInflatedNegativeBinomial_params_size"):
+  def params_size(event_shape=(),
+                  dispersion='full',
+                  name="ZeroInflatedNegativeBinomial_params_size"):
     r"""The number of `params` needed to create a single distribution."""
-    return 3 * _event_size(event_shape, name=name)
+    if dispersion == 'full':
+      return 3 * _event_size(event_shape, name=name)
+    return 2 * _event_size(event_shape, name=name)
 
 
 class ZINegativeBinomialDispLayer(DistributionLambda):
@@ -383,22 +427,38 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
-    self.dispersion = dispersion
+    dispersion = _dispersion(dispersion)
+    disp = None
+    if dispersion == 'single':
+      disp = tf.Variable(tf.random.normal((1,)),
+                         trainable=True,
+                         dtype=keras.backend.floatx(),
+                         name="dispersion")
+    elif dispersion == 'share':
+      disp = tf.Variable(tf.random.normal(tf.nest.flatten(event_shape)),
+                         trainable=True,
+                         dtype=keras.backend.floatx(),
+                         name="dispersion")
     super(ZINegativeBinomialDispLayer, self).__init__(
         lambda t: type(self).new(
-            t, event_shape, parse_activation(mean_activation, self),
-            parse_activation(disp_activation, self), dispersion, validate_args),
-        convert_to_tensor_fn, **kwargs)
+            t,
+            event_shape,
+            mean_activation=parse_activation(mean_activation, self),
+            disp_activation=parse_activation(disp_activation, self),
+            disp=disp,
+            validate_args=validate_args,
+        ), convert_to_tensor_fn, **kwargs)
+    self.disp = disp
 
   @staticmethod
   def new(params,
           event_shape=(),
           mean_activation=tf.nn.softplus,
           disp_activation=softplus1,
-          dispersion='full',
           validate_args=False,
-          name="ZINegativeBinomialDispLayer"):
-    """Create the distribution instance from a `params` vector."""
+          name="ZINegativeBinomialDispLayer",
+          disp=None):
+    r"""Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(
         tf.convert_to_tensor(value=event_shape,
@@ -411,35 +471,33 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
         axis=0,
     )
     # splitting the parameters
-    (loc_params, disp_params, rate_params) = tf.split(params, 3, axis=-1)
-    if dispersion == 'single':
-      disp_params = tf.reduce_mean(disp_params)
-    elif dispersion == 'share':
-      disp_params = tf.reduce_mean(disp_params,
-                                   axis=tf.range(0,
-                                                 output_shape.shape[0] - 1,
-                                                 dtype='int32'),
-                                   keepdims=True)
+    if disp is None:
+      loc, disp, rate = tf.split(params, 3, axis=-1)
+      disp = tf.reshape(disp, output_shape)
+    else:
+      loc, rate = tf.split(params, 2, axis=-1)
     # as count value, do exp if necessary
-    loc_params = tf.reshape(mean_activation(loc_params), output_shape)
-    disp_params = disp_activation(disp_params)
-    if dispersion == 'full':
-      disp_params = tf.reshape(disp_params, output_shape)
+    rate = tf.reshape(rate, output_shape)
+    loc = tf.reshape(loc, output_shape)
+    loc = mean_activation(loc)
+    disp = disp_activation(disp)
     # create the distribution
-    nb = NegativeBinomialDisp(loc=loc_params,
-                              disp=disp_params,
-                              validate_args=validate_args)
+    nb = NegativeBinomialDisp(loc=loc, disp=disp, validate_args=validate_args)
     zinb = ZeroInflated(count_distribution=nb,
-                        logits=tf.reshape(rate_params, output_shape),
+                        logits=rate,
                         validate_args=validate_args)
     return tfd.Independent(zinb,
                            reinterpreted_batch_ndims=tf.size(input=event_shape),
                            name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name="ZINegativeBinomialDisp_params_size"):
-    """The number of `params` needed to create a single distribution."""
-    return 3 * _event_size(event_shape, name=name)
+  def params_size(event_shape=(),
+                  dispersion='full',
+                  name="ZINegativeBinomialDisp_params_size"):
+    r"""The number of `params` needed to create a single distribution."""
+    if dispersion == 'full':
+      return 3 * _event_size(event_shape, name=name)
+    return 2 * _event_size(event_shape, name=name)
 
 
 # ===========================================================================

@@ -271,7 +271,7 @@ class GaussianMixture(MixtureSameFamily):
     gmm.fit(X)
     ## convert sklearn GMM to tensorflow_probability
     loc = tf.convert_to_tensor(gmm.means_)
-    logits = tf.convert_to_tensor(np.log(gmm.weights_ + 1e-8))
+    logits = tf.convert_to_tensor(np.log(gmm.weights_ / (1. - gmm.weights_)))
     cov = gmm.covariance_type
     covariance = gmm.covariances_
     ## processing the covariance

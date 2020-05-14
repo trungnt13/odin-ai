@@ -128,11 +128,12 @@ class DenseDistribution(Dense):
                            posterior.__class__.__name__)
     kwargs['name'] = name
     # params_size could be static function or method
-    params_size = _params_size(self.posterior_layer, event_shape,
-                               **self._posterior_kwargs)
+    self._params_size = int(
+        _params_size(self.posterior_layer, event_shape,
+                     **self._posterior_kwargs))
     self._projection = bool(projection)
     super(DenseDistribution,
-          self).__init__(units=params_size,
+          self).__init__(units=self._params_size,
                          activation=activation,
                          use_bias=use_bias,
                          kernel_initializer=kernel_initializer,
@@ -149,13 +150,17 @@ class DenseDistribution(Dense):
     #   self.build(kwargs['input_shape'])
 
   def build(self, input_shape):
-    if self._projection and not self.built:
+    if self.projection and not self.built:
       super().build(input_shape)
     self.built = True
 
   @property
+  def params_size(self) -> int:
+    return self._params_size
+
+  @property
   def projection(self):
-    return self._projection
+    return self._projection and self.params_size > 0
 
   @property
   def is_binary(self):
@@ -229,9 +234,13 @@ class DenseDistribution(Dense):
     # projection by Dense layer could be skipped by setting projection=False
     # NOTE: a 2D inputs is important here, but we don't want to flatten
     # automatically
+    params = inputs
     if projection is None:
-      projection = self._projection
-    params = super().call(inputs) if projection else inputs
+      projection = self.projection
+    else:
+      projection = self.projection and projection
+    if projection:
+      params = super().call(params)
     # applying dropout
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
@@ -303,7 +312,7 @@ class DenseDistribution(Dense):
               self.prior.event_shape))
     posterior = self._posterior_class.__name__
     text = "<'%s' proj:%s built:%s event:%s #params:%d post:%s prior:%s dropout:%.2f kw:%s>" % \
-      (self.name, self._projection,
+      (self.name, self.projection,
        self.built if not hasattr(self, 'input_shape') else self.input_shape,
        self.event_shape, self.units,
        posterior, prior,
@@ -318,7 +327,7 @@ class DenseDistribution(Dense):
     config['prior'] = self._prior
     config['dropout'] = self._dropout
     config['posterior_kwargs'] = self._posterior_kwargs
-    config['projection'] = self._projection
+    config['projection'] = self.projection
     return config
 
 
@@ -338,7 +347,8 @@ class MixtureDensityNetwork(DenseDistribution):
                n_components=2,
                covariance='none',
                tie_mixtures=False,
-               tie_components=False,
+               tie_loc=False,
+               tie_scale=False,
                loc_activation='linear',
                scale_activation='softplus1',
                convert_to_tensor_fn=Distribution.sample,
@@ -361,7 +371,8 @@ class MixtureDensityNetwork(DenseDistribution):
                                            loc_activation=loc_activation,
                                            scale_activation=scale_activation,
                                            tie_mixtures=bool(tie_mixtures),
-                                           tie_components=bool(tie_components)),
+                                           tie_loc=bool(tie_loc),
+                                           tie_scale=bool(tie_scale)),
                      convert_to_tensor_fn=convert_to_tensor_fn,
                      dropout=dropout,
                      activation='linear',
@@ -375,7 +386,10 @@ class MixtureDensityNetwork(DenseDistribution):
                      bias_constraint=bias_constraint,
                      **kwargs)
 
-  def set_prior(self, loc=0., log_scale=np.log(np.expm1(1)), mixture_logits=1.):
+  def set_prior(self,
+                loc=0.,
+                log_scale=np.log(np.expm1(1)),
+                mixture_logits=None):
     r""" Set the prior for mixture density network
 
     loc : Scalar or Tensor with shape `[n_components, event_size]`
@@ -404,7 +418,8 @@ class MixtureDensityNetwork(DenseDistribution):
       log_scale = tf.fill(scale_shape, log_scale)
     #
     if mixture_logits is None:
-      mixture_logits = 1.
+      p = 1. / n_components
+      mixture_logits = np.log(p / (1. - p))
     if isinstance(mixture_logits, Number) or tf.rank(mixture_logits) == 0:
       mixture_logits = tf.fill([self.n_components], mixture_logits)
     #
@@ -429,7 +444,9 @@ class MixtureMassNetwork(DenseDistribution):
                n_components=2,
                dispersion='full',
                tie_mixtures=False,
-               tie_components=False,
+               tie_mean=False,
+               tie_disp=False,
+               tie_rate=False,
                mean_activation='softplus1',
                disp_activation=None,
                alternative=False,
@@ -459,7 +476,9 @@ class MixtureMassNetwork(DenseDistribution):
                                            alternative=alternative,
                                            zero_inflated=zero_inflated,
                                            tie_mixtures=bool(tie_mixtures),
-                                           tie_components=bool(tie_components)),
+                                           tie_mean=bool(tie_mean),
+                                           tie_disp=bool(tie_disp),
+                                           tie_rate=bool(tie_rate)),
                      convert_to_tensor_fn=convert_to_tensor_fn,
                      dropout=dropout,
                      activation='linear',

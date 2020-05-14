@@ -107,21 +107,24 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
     loc = tf.cast(tf.fill([n_components, event_size], 0.), dtype=tf.float32)
     log_scale = tf.cast(tf.fill(scale_shape, np.log(np.expm1(1.))),
                         dtype=tf.float32)
-    mixture_logits = tf.cast(tf.fill([n_components], 1.), dtype=tf.float32)
+    p = 1. / n_components
+    mixture_logits = tf.cast(tf.fill([n_components], np.log(p / (1 - p))),
+                             dtype=tf.float32)
     prior = obd.MixtureSameFamily(
         components_distribution=fn(loc, log_scale),
         mixture_distribution=obd.Categorical(logits=mixture_logits))
   ## discrete
   elif dist in (obd.OneHotCategorical, obd.Categorical) or \
     layer == obl.RelaxedOneHotCategoricalLayer:
-    prior = dist(**_kwargs(logits=np.log([1. / event_size] * event_size),
-                           dtype=tf.float32))
+    p = 1. / event_size
+    prior = dist(**_kwargs(logits=[np.log(p / (1 - p))] * event_size),
+                 dtype=tf.float32)
   elif dist == obd.Dirichlet:
     prior = dist(**_kwargs(concentration=[1.] * event_size))
   elif dist == obd.Bernoulli:
     prior = obd.Independent(
-        obd.Bernoulli(**_kwargs(logits=np.full(event_shape, np.log(0.5)),
-                                dtype=tf.float32)), len(event_shape))
+        obd.Bernoulli(**_kwargs(logits=np.zeros(event_shape)),
+                      dtype=tf.float32)), len(event_shape)
   ## other
   return prior
 
