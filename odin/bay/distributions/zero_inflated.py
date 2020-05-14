@@ -64,7 +64,7 @@ class ZeroInflated(distribution.Distribution):
                inflated_distribution=None,
                logits=None,
                probs=None,
-               eps=1e-7,
+               eps=1e-8,
                validate_args=False,
                allow_nan_stats=True,
                name="ZeroInflated"):

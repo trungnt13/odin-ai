@@ -35,6 +35,8 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
         'spherical' - all components use the same single variance
     tie_mixtures : a Boolean. If True, force all samples in minibatch use the
       same Categorical distribution (mixture), by taking the mean of the logits
+    tie_components : a Boolean. If True, force all samples in the minibatch
+      has the same parameters for components distribution
     loc_activation: activation function return non-negative floating-point,
       i.e. the `total_count` of failures in default parameterization, or
       `mean` in alternative approach.
@@ -68,9 +70,10 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
                event_shape=(),
                n_components=2,
                covariance='none',
+               tie_mixtures=False,
+               tie_components=False,
                loc_activation='linear',
                scale_activation='softplus1',
-               tie_mixtures=False,
                convert_to_tensor_fn=tfp.distributions.Distribution.sample,
                validate_args=False,
                **kwargs):
@@ -81,6 +84,7 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
             n_components=n_components,
             covariance=covariance,
             tie_mixtures=tie_mixtures,
+            tie_components=tie_components,
             loc_activation=parse_activation(loc_activation, self),
             scale_activation=parse_activation(scale_activation, self),
             validate_args=validate_args), convert_to_tensor_fn, **kwargs)
@@ -94,18 +98,23 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
           n_components=2,
           covariance='none',
           tie_mixtures=False,
+          tie_components=False,
           loc_activation=tf.identity,
           scale_activation='softplus1',
           validate_args=False,
+          logits=None,
+          loc=None,
+          scale=None,
           name=None):
     r""" Create the distribution instance from a `params` vector. """
-    params = tf.convert_to_tensor(value=params, name='params')
     n_components = tf.convert_to_tensor(value=n_components,
                                         name='n_components',
                                         dtype_hint=tf.int32)
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
                                              tensor_name='event_shape')
+
+    params = tf.convert_to_tensor(value=params, name='params')
     components_size = MixtureGaussianLayer.components_size(
         event_shape, covariance)
     output_shape = tf.concat([
@@ -115,11 +124,7 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
     ],
                              axis=0)
     ### Create the mixture
-    logits = params[..., :n_components]
-    if tie_mixtures:
-      logits = tf.reduce_mean(logits,
-                              axis=tf.range(len(logits.shape) - 1),
-                              keepdims=False)
+    logits = params[..., :n_components] if logits is None else logits
     mixture = tfp.distributions.Categorical(logits=logits,
                                             name="MixtureWeights")
     ### Create the components
@@ -248,10 +253,11 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
   def __init__(self,
                event_shape=(),
                n_components=2,
-               mean_activation='softplus1',
-               disp_activation=None,
                dispersion='full',
                tie_mixtures=False,
+               tie_components=False,
+               mean_activation='softplus1',
+               disp_activation=None,
                alternative=False,
                zero_inflated=False,
                convert_to_tensor_fn=tfp.distributions.Distribution.sample,
@@ -265,6 +271,7 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
             event_shape,
             n_components=n_components,
             tie_mixtures=tie_mixtures,
+            tie_components=tie_components,
             dispersion=dispersion,
             mean_activation=parse_activation(mean_activation, self),
             disp_activation=parse_activation(disp_activation, self),
@@ -282,6 +289,7 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
       n_components=2,
       dispersion='full',
       tie_mixtures=False,
+      tie_components=False,
       mean_activation=softplus1,
       disp_activation=tf.identity,
       alternative=False,

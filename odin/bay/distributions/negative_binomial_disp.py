@@ -37,7 +37,7 @@ class NegativeBinomialDisp(distribution.Distribution):
   def __init__(self,
                loc,
                disp,
-               eps=1e-7,
+               eps=1e-8,
                validate_args=False,
                allow_nan_stats=True,
                name="NegativeBinomialDisp"):
@@ -147,7 +147,7 @@ class NegativeBinomialDisp(distribution.Distribution):
     return self._log_unnormalized_prob(x) - self._log_normalization(x)
 
   def _log_unnormalized_prob(self, x):
-    loc, disp, eps = self.loc, self.disp, self._eps
+    loc, disp, eps = self._loc, self._disp, self._eps
     if self.validate_args:
       x = distribution_util.embed_check_nonnegative_integer_form(x)
     log_loc_disp_eps = tf.math.log(disp + loc + eps)
@@ -155,11 +155,15 @@ class NegativeBinomialDisp(distribution.Distribution):
             + x * (tf.math.log(loc + eps) - log_loc_disp_eps)
 
   def _log_normalization(self, x):
+    dis, eps = self._disp, self._eps
     if self.validate_args:
       x = distribution_util.embed_check_nonnegative_integer_form(x)
-    return tf.math.lgamma(self.disp) \
-      + tf.math.lgamma(x + 1) \
-        - tf.math.lgamma(x + self.disp)
+    # lgamma(0) = inf, so we need eps here
+    # dispersion could get down to zero during training,
+    # however, need very very small eps here, cannot use the provided
+    # note: sometimes, x could be zeros also
+    return (tf.math.lgamma(disp + eps) + tf.math.lgamma(x + 1) -
+            tf.math.lgamma(x + disp + eps))
 
   def _mean(self):
     return self._loc

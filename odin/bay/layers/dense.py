@@ -115,9 +115,12 @@ class DenseDistribution(Dense):
     self._posterior = posterior
     self._prior = prior
     self._event_shape = event_shape
+    self._dropout = dropout
+    # for initializing the posterior
     self._posterior_class = post_layer_cls
     self._posterior_kwargs = posterior_kwargs
-    self._dropout = dropout
+    self._posterior_sample_shape = ()
+    self._posterior_layer = None
     # set more descriptive name
     name = kwargs.pop('name', None)
     if name is None:
@@ -125,7 +128,7 @@ class DenseDistribution(Dense):
                            posterior.__class__.__name__)
     kwargs['name'] = name
     # params_size could be static function or method
-    params_size = _params_size(self.posterior_layer(), event_shape,
+    params_size = _params_size(self.posterior_layer, event_shape,
                                **self._posterior_kwargs)
     self._projection = bool(projection)
     super(DenseDistribution,
@@ -141,7 +144,7 @@ class DenseDistribution(Dense):
                          bias_constraint=bias_constraint,
                          **kwargs)
     # store the distribution from last call
-    self._last_distribution = None
+    self._most_recent_distribution = None
     # if 'input_shape' in kwargs and not self.built:
     #   self.build(kwargs['input_shape'])
 
@@ -190,20 +193,23 @@ class DenseDistribution(Dense):
     assert isinstance(p, (Distribution, type(None)))
     self._prior = p
 
-  def posterior_layer(self, sample_shape=()) -> DistributionLambda:
-    if self._convert_to_tensor_fn == Distribution.sample:
-      fn = partial(Distribution.sample, sample_shape=sample_shape)
-    else:
-      fn = self._convert_to_tensor_fn
-    return self._posterior_class(self._event_shape,
-                                 convert_to_tensor_fn=fn,
-                                 **self._posterior_kwargs)
+  @property
+  def posterior_layer(self) -> DistributionLambda:
+    if self._posterior_layer is None:
+      if self._convert_to_tensor_fn == Distribution.sample:
+        fn = lambda dist: dist.sample(sample_shape=self._posterior_sample_shape)
+      else:
+        fn = self._convert_to_tensor_fn
+      self._posterior_layer = self._posterior_class(self._event_shape,
+                                                    convert_to_tensor_fn=fn,
+                                                    **self._posterior_kwargs)
+    return self._posterior_layer
 
   @property
   def posterior(self) -> Distribution:
-    r""" Return the last parametrized distribution, i.e. the result from the
-    last `call` """
-    return self._last_distribution
+    r""" Return the most recent parametrized distribution,
+    i.e. the result from the last `call` """
+    return self._most_recent_distribution
 
   @tf.function
   def sample(self, sample_shape=(), seed=None):
@@ -229,10 +235,10 @@ class DenseDistribution(Dense):
     # applying dropout
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
-    # create posterior distribution (this will create a new layer everytime)
-    posterior = self.posterior_layer(sample_shape=sample_shape)(
-        params, training=training)
-    self._last_distribution = posterior
+    # create posterior distribution
+    self._posterior_sample_shape = sample_shape
+    posterior = self.posterior_layer(params, training=training)
+    self._most_recent_distribution = posterior
     # NOTE: all distribution has the method kl_divergence, so we cannot use it
     prior = self.prior if prior is None else prior
     posterior.KL_divergence = KLdivergence(
@@ -320,11 +326,19 @@ class DenseDistribution(Dense):
 # Shortcuts
 # ===========================================================================
 class MixtureDensityNetwork(DenseDistribution):
+  r""" Mixture Density Network
+
+  Mixture of Gaussian parameterized by neural network
+
+  For arguments information: `odin.bay.layers.mixture_layers.MixtureGaussianLayer`
+  """
 
   def __init__(self,
                units,
                n_components=2,
                covariance='none',
+               tie_mixtures=False,
+               tie_components=False,
                loc_activation='linear',
                scale_activation='softplus1',
                convert_to_tensor_fn=Distribution.sample,
@@ -345,7 +359,9 @@ class MixtureDensityNetwork(DenseDistribution):
                      posterior_kwargs=dict(n_components=int(n_components),
                                            covariance=str(covariance),
                                            loc_activation=loc_activation,
-                                           scale_activation=scale_activation),
+                                           scale_activation=scale_activation,
+                                           tie_mixtures=bool(tie_mixtures),
+                                           tie_components=bool(tie_components)),
                      convert_to_tensor_fn=convert_to_tensor_fn,
                      dropout=dropout,
                      activation='linear',
@@ -403,13 +419,19 @@ class MixtureDensityNetwork(DenseDistribution):
 
 
 class MixtureMassNetwork(DenseDistribution):
+  r""" Mixture Mass Network
+
+  Mixture of NegativeBinomial parameterized by neural network
+  """
 
   def __init__(self,
                event_shape=(),
                n_components=2,
+               dispersion='full',
+               tie_mixtures=False,
+               tie_components=False,
                mean_activation='softplus1',
                disp_activation=None,
-               dispersion='full',
                alternative=False,
                zero_inflated=False,
                convert_to_tensor_fn=Distribution.sample,
@@ -430,14 +452,14 @@ class MixtureMassNetwork(DenseDistribution):
     super().__init__(event_shape=event_shape,
                      posterior='mixnb',
                      prior=None,
-                     posterior_kwargs=dict(
-                         n_components=int(n_components),
-                         mean_activation=mean_activation,
-                         disp_activation=disp_activation,
-                         dispersion=dispersion,
-                         alternative=alternative,
-                         zero_inflated=zero_inflated,
-                     ),
+                     posterior_kwargs=dict(n_components=int(n_components),
+                                           mean_activation=mean_activation,
+                                           disp_activation=disp_activation,
+                                           dispersion=dispersion,
+                                           alternative=alternative,
+                                           zero_inflated=zero_inflated,
+                                           tie_mixtures=bool(tie_mixtures),
+                                           tie_components=bool(tie_components)),
                      convert_to_tensor_fn=convert_to_tensor_fn,
                      dropout=dropout,
                      activation='linear',
