@@ -31,21 +31,7 @@ __all__ = ['ZeroInflated']
 
 
 def _make_broadcastable(probs, *others):
-  # make the shape broadcast-able
-  others = list(others)
-  others_ndims = [o.shape.ndims for o in others]
-  assert len(set(others_ndims)) == 1
-  others_ndims = others_ndims[0]
-
-  probs_ndims = probs.shape.ndims
-
-  if others_ndims < probs_ndims:
-    for i in range(probs_ndims - others_ndims):
-      others = [tf.expand_dims(o, -1) for o in others]
-  elif others_ndims > probs_ndims:
-    for i in range(others_ndims - probs_ndims):
-      probs = tf.expand_dims(probs, -1)
-  return [probs] + others
+  return [probs] + [tf.broadcast_to(i, tf.shape(probs)) for i in others]
 
 
 class ZeroInflated(distribution.Distribution):
@@ -108,14 +94,12 @@ class ZeroInflated(distribution.Distribution):
 
     """
     parameters = dict(locals())
-    self._runtime_assertions = []
-
     with tf.compat.v1.name_scope(name) as name:
       if not isinstance(count_distribution, distribution.Distribution):
         raise TypeError("count_distribution must be a Distribution instance"
                         " but saw: %s" % count_distribution)
       self._count_distribution = count_distribution
-
+      #
       if inflated_distribution is None:
         inflated_distribution = Bernoulli(logits=logits,
                                           probs=probs,
@@ -127,61 +111,26 @@ class ZeroInflated(distribution.Distribution):
         raise TypeError("inflated_distribution must be a Distribution instance"
                         " but saw: %s" % inflated_distribution)
       self._inflated_distribution = inflated_distribution
-
+      #
       if self._count_distribution.batch_shape.ndims is None:
         raise ValueError(
-            "Expected to know rank(batch_shape) from count_disttribution")
+            "Expected to know rank(batch_shape) from count_distribution")
       if self._inflated_distribution.batch_shape.ndims is None:
         raise ValueError(
             "Expected to know rank(batch_shape) from inflated_distribution")
-
-      # create Independent Bernoulli distribution that the batch_shape
-      # of count_distribution matching batch_shape of inflated_distribution
-      inflated_batch_ndims = self._inflated_distribution.batch_shape.ndims
-      count_batch_ndims = self._count_distribution.batch_shape.ndims
-      if count_batch_ndims < inflated_batch_ndims:
-        self._inflated_distribution = Independent(
-            self._inflated_distribution,
-            reinterpreted_batch_ndims=inflated_batch_ndims - count_batch_ndims,
-            name="ZeroInflatedRate")
-      elif count_batch_ndims > inflated_batch_ndims:
-        raise ValueError(
-            "count_distribution has %d-D batch_shape, which smaller"
-            "than %d-D batch_shape of inflated_distribution" %
-            (count_batch_ndims, inflated_batch_ndims))
-
       self._eps = tensor_util.convert_nonref_to_tensor(
           eps, dtype_hint=count_distribution.dtype, name='eps')
-      # Ensure that all batch and event ndims are consistent.
-      if validate_args:
-        self._runtime_assertions.append(
-            tf.assert_equal(
-                self._count_distribution.batch_shape_tensor(),
-                self._inflated_distribution.batch_shape_tensor(),
-                message=(
-                    "dist batch shape must match logits|probs batch shape")))
-
     # We let the zero-inflated distribution access _graph_parents since its arguably
     # more like a baseclass.
-    reparameterization_type = [
-        self._count_distribution.reparameterization_type,
-        self._inflated_distribution.reparameterization_type
-    ]
-    if any(i == reparameterization.NOT_REPARAMETERIZED
-           for i in reparameterization_type):
-      reparameterization_type = reparameterization.NOT_REPARAMETERIZED
-    else:
-      reparameterization_type = reparameterization.FULLY_REPARAMETERIZED
-
-    super(ZeroInflated,
-          self).__init__(dtype=self._count_distribution.dtype,
-                         reparameterization_type=reparameterization_type,
-                         validate_args=validate_args,
-                         allow_nan_stats=allow_nan_stats,
-                         parameters=parameters,
-                         graph_parents=self._count_distribution._graph_parents +
-                         self._inflated_distribution._graph_parents,
-                         name=name)
+    super(ZeroInflated, self).__init__(
+        dtype=self._count_distribution.dtype,
+        reparameterization_type=self._count_distribution.
+        reparameterization_type,
+        validate_args=validate_args,
+        allow_nan_stats=allow_nan_stats,
+        parameters=parameters,
+        name=name,
+    )
 
   def __getitem__(self, slices):
     return self.copy(
@@ -223,12 +172,11 @@ class ZeroInflated(distribution.Distribution):
     return self._count_distribution._event_shape()
 
   def _mean(self):
-    with tf.compat.v1.control_dependencies(self._runtime_assertions):
-      # These should all be the same shape by virtue of matching
-      # batch_shape and event_shape.
-      probs, d_mean = _make_broadcastable(self.probs,
-                                          self._count_distribution.mean())
-      return (1 - probs) * d_mean
+    # These should all be the same shape by virtue of matching
+    # batch_shape and event_shape.
+    probs, d_mean = _make_broadcastable(self.probs,
+                                        self._count_distribution.mean())
+    return (1 - probs) * d_mean
 
   def _variance(self):
     r"""
@@ -240,16 +188,13 @@ class ZeroInflated(distribution.Distribution):
      - pi is zero-inflated rate
      - d is count distribution
     """
-    with tf.compat.v1.control_dependencies(self._runtime_assertions):
-      # These should all be the same shape by virtue of matching
-      # batch_shape and event_shape.
-      d = self._count_distribution
-
-      probs, d_mean, d_variance = _make_broadcastable(self.probs, d.mean(),
-                                                      d.variance())
-      return (1 - probs) * \
-      (d_variance + tf.square(d_mean)) - \
-      tf.math.square(self._mean())
+    # These should all be the same shape by virtue of matching
+    # batch_shape and event_shape.
+    d = self._count_distribution
+    probs, d_mean, d_variance = _make_broadcastable(self.probs, d.mean(),
+                                                    d.variance())
+    return ((1 - probs) * (d_variance + tf.square(d_mean)) -
+            tf.math.square(self._mean()))
 
   def _log_prob(self, x):
     # this version use logits and log_prob which is more numerical stable
@@ -258,6 +203,8 @@ class ZeroInflated(distribution.Distribution):
     eps = self._eps
     pi = self.logits
     llk = d.log_prob(x)
+    # prepare broadcast
+    llk, pi = _make_broadcastable(llk, pi)
     #
     t1 = llk - pi
     t2 = tf.nn.softplus(-pi)
@@ -286,14 +233,13 @@ class ZeroInflated(distribution.Distribution):
   #   return tf.where(x > eps, y_1, y_0)
 
   def _sample_n(self, n, seed):
-    with tf.compat.v1.control_dependencies(self._runtime_assertions):
-      seed = SeedStream(seed, salt="ZeroInflated")
-      mask = self.inflated_distribution.sample(n, seed())
-      samples = self.count_distribution.sample(n, seed())
-      mask, samples = _make_broadcastable(mask, samples)
-      # mask = 1 => new_sample = 0
-      # mask = 0 => new_sample = sample
-      return samples * tf.cast(1 - mask, samples.dtype)
+    seed = SeedStream(seed, salt="ZeroInflated")
+    mask = self.inflated_distribution.sample(n, seed())
+    samples = self.count_distribution.sample(n, seed())
+    samples, mask = _make_broadcastable(samples, mask)
+    # mask = 1 => new_sample = 0
+    # mask = 0 => new_sample = sample
+    return samples * tf.cast(1 - mask, samples.dtype)
 
   # ******************** shortcut for denoising ******************** #
   def denoised_mean(self):
