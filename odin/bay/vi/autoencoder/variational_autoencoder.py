@@ -894,7 +894,7 @@ class VariationalAutoencoder(keras.Model):
         opt.apply_gradients(grad_param)
       else:
         tape = None
-        loss, metrics = step()
+        loss, metrics = step(**kwargs) # addition kwargs for vae.call(...)
       # update metrics and loss
       all_metrics.update(metrics)
       total_loss += loss

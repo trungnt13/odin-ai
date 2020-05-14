@@ -155,7 +155,7 @@ class NegativeBinomialDisp(distribution.Distribution):
             + x * (tf.math.log(loc + eps) - log_loc_disp_eps)
 
   def _log_normalization(self, x):
-    dis, eps = self._disp, self._eps
+    disp, eps = self._disp, self._eps
     if self.validate_args:
       x = distribution_util.embed_check_nonnegative_integer_form(x)
     # lgamma(0) = inf, so we need eps here

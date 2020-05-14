@@ -30,7 +30,7 @@ from tensorflow_probability.python.util.seed_stream import SeedStream
 __all__ = ['ZeroInflated']
 
 
-def _broadcast_rate(probs, *others):
+def _make_broadcastable(probs, *others):
   # make the shape broadcast-able
   others = list(others)
   others_ndims = [o.shape.ndims for o in others]
@@ -75,44 +75,36 @@ class ZeroInflated(distribution.Distribution):
     having matching dtype, batch shape, event shape, and continuity
     properties (the dist).
 
-    Parameters
-    ----------
-    count_distribution : A `tfp.distributions.Distribution` instance.
-      The instance must have `batch_shape` matching the zero-inflation
-      distribution.
+    Arguments:
+      count_distribution : A `tfp.distributions.Distribution` instance.
+        The instance must have `batch_shape` matching the zero-inflation
+        distribution.
+      inflated_distribution: `tfp.distributions.Bernoulli`-like instance.
+        Manages the probability of excess zeros, the zero-inflated rate.
+        Must have either scalar `batch_shape` or `batch_shape` matching
+        `count_distribution.batch_shape`.
+      logits: An N-D `Tensor` representing the log-odds of a excess zeros
+        A zero-inflation rate, where the probability of excess zeros is
+        sigmoid(logits).
+        Only one of `logits` or `probs` should be passed in.
+      probs: An N-D `Tensor` representing the probability of a zero event.
+        Each entry in the `Tensor` parameterizes an independent
+        ZeroInflated distribution.
+        Only one of `logits` or `probs` should be passed in.
+      validate_args: Python `bool`, default `False`. If `True`, raise a runtime
+        error if batch or event ranks are inconsistent between pi and any of
+        the distributions. This is only checked if the ranks cannot be
+        determined statically at graph construction time.
+      allow_nan_stats: Boolean, default `True`. If `False`, raise an
+       exception if a statistic (e.g. mean/mode/etc...) is undefined for any
+        batch member. If `True`, batch members with valid parameters leading to
+        undefined statistics will return NaN for this statistic.
+      name: A name for this distribution (optional).
 
-    inflated_distribution: `tfp.distributions.Bernoulli`-like instance.
-      Manages the probability of excess zeros, the zero-inflated rate.
-      Must have either scalar `batch_shape` or `batch_shape` matching
-      `count_distribution.batch_shape`.
-
-    logits: An N-D `Tensor` representing the log-odds of a excess zeros
-      A zero-inflation rate, where the probability of excess zeros is
-      sigmoid(logits).
-      Only one of `logits` or `probs` should be passed in.
-
-    probs: An N-D `Tensor` representing the probability of a zero event.
-      Each entry in the `Tensor` parameterizes an independent
-      ZeroInflated distribution.
-      Only one of `logits` or `probs` should be passed in.
-
-    validate_args: Python `bool`, default `False`. If `True`, raise a runtime
-      error if batch or event ranks are inconsistent between pi and any of
-      the distributions. This is only checked if the ranks cannot be
-      determined statically at graph construction time.
-
-    allow_nan_stats: Boolean, default `True`. If `False`, raise an
-     exception if a statistic (e.g. mean/mode/etc...) is undefined for any
-      batch member. If `True`, batch members with valid parameters leading to
-      undefined statistics will return NaN for this statistic.
-
-    name: A name for this distribution (optional).
-
-    References
-    ----------
-    Liu, L. & Blei, D.M.. (2017). Zero-Inflated Exponential Family Embeddings.
-    Proceedings of the 34th International Conference on Machine Learning,
-    in PMLR 70:2140-2148
+    References:
+      Liu, L. & Blei, D.M.. (2017). Zero-Inflated Exponential Family Embeddings.
+        Proceedings of the 34th International Conference on Machine Learning,
+        in PMLR 70:2140-2148
 
     """
     parameters = dict(locals())
@@ -234,8 +226,8 @@ class ZeroInflated(distribution.Distribution):
     with tf.compat.v1.control_dependencies(self._runtime_assertions):
       # These should all be the same shape by virtue of matching
       # batch_shape and event_shape.
-      probs, d_mean = _broadcast_rate(self.probs,
-                                      self._count_distribution.mean())
+      probs, d_mean = _make_broadcastable(self.probs,
+                                          self._count_distribution.mean())
       return (1 - probs) * d_mean
 
   def _variance(self):
@@ -253,42 +245,52 @@ class ZeroInflated(distribution.Distribution):
       # batch_shape and event_shape.
       d = self._count_distribution
 
-      probs, d_mean, d_variance = _broadcast_rate(self.probs, d.mean(),
-                                                  d.variance())
+      probs, d_mean, d_variance = _make_broadcastable(self.probs, d.mean(),
+                                                      d.variance())
       return (1 - probs) * \
       (d_variance + tf.square(d_mean)) - \
       tf.math.square(self._mean())
 
   def _log_prob(self, x):
-    with tf.compat.v1.control_dependencies(self._runtime_assertions):
-      x = tf.convert_to_tensor(x, name="x")
-      d = self._count_distribution
-      pi = self.probs
-      eps = self._eps
+    # this version use logits and log_prob which is more numerical stable
+    x = tf.convert_to_tensor(x, dtype=self.dtype)
+    d = self._count_distribution
+    eps = self._eps
+    pi = self.logits
+    llk = d.log_prob(x)
+    #
+    t1 = llk - pi
+    t2 = tf.nn.softplus(-pi)
+    y_0 = tf.nn.softplus(t1) - t2
+    y_1 = t1 - t2
+    return tf.where(x > eps, y_1, y_0)
 
-      log_prob = d.log_prob(x)
-      prob = tf.math.exp(log_prob)
-
-      # make pi and anything come out of count_distribution
-      # broadcast-able
-      pi, prob, log_prob = _broadcast_rate(pi, prob, log_prob)
-
-      # This equation is validated
-      # Equation (13) reference: u_{ij} = 1 - pi_{ij}
-      y_0 = tf.math.log(pi + (1 - pi) * prob + eps)
-      y_1 = tf.math.log(1 - pi + eps) + log_prob
-      # note: sometimes pi can get to 1 and y_1 -> -inf
-      return tf.where(x > eps, y_1, y_0)
-
-  # def _prob(self, x):
-  #   return tf.math.exp(self._log_prob(x))
+  # def _log_prob(self, x):
+  #   x = tf.convert_to_tensor(x, name="x")
+  #   d = self._count_distribution
+  #   logits = self.logits
+  #   pi = self.probs
+  #   eps = self._eps
+  #   # count distribution llk
+  #   log_prob = d.log_prob(x)
+  #   prob = tf.math.exp(log_prob)
+  #   # make pi and anything come out of count_distribution
+  #   # broadcast-able
+  #   pi, prob, log_prob = _make_broadcastable(pi, prob, log_prob)
+  #   # This equation is validated
+  #   # Equation (13) reference: u_{ij} = 1 - pi_{ij}
+  #   y_0 = tf.math.log(pi + (1. - pi) * prob + eps)
+  #   # y_0 = tf.nn.softplus(log_prob - logits) + tf.nn.softplus(-logits)
+  #   y_1 = tf.math.log(1. - pi + eps) + log_prob
+  #   # note: sometimes pi can get to 1 and y_1 -> -inf
+  #   return tf.where(x > eps, y_1, y_0)
 
   def _sample_n(self, n, seed):
     with tf.compat.v1.control_dependencies(self._runtime_assertions):
       seed = SeedStream(seed, salt="ZeroInflated")
       mask = self.inflated_distribution.sample(n, seed())
       samples = self.count_distribution.sample(n, seed())
-      mask, samples = _broadcast_rate(mask, samples)
+      mask, samples = _make_broadcastable(mask, samples)
       # mask = 1 => new_sample = 0
       # mask = 0 => new_sample = sample
       return samples * tf.cast(1 - mask, samples.dtype)

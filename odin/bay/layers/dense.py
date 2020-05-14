@@ -159,19 +159,19 @@ class DenseDistribution(Dense):
 
   @property
   def is_binary(self):
-    return is_binary_distribution(self._posterior_class)
+    return is_binary_distribution(self.posterior_layer)
 
   @property
   def is_discrete(self):
-    return is_discrete_distribution(self._posterior_class)
+    return is_discrete_distribution(self.posterior_layer)
 
   @property
   def is_mixture(self):
-    return is_mixture_distribution(self._posterior_class)
+    return is_mixture_distribution(self.posterior_layer)
 
   @property
   def is_zero_inflated(self):
-    return is_zeroinflated_distribution(self._posterior_class)
+    return is_zeroinflated_distribution(self.posterior_layer)
 
   @property
   def event_shape(self):

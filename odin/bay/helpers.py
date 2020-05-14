@@ -7,6 +7,7 @@ from numbers import Number
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python import keras
 from tensorflow.python import array_ops
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.layers import DistributionLambda
@@ -34,14 +35,13 @@ __all__ = [
 # distribution type
 # ===========================================================================
 def _dist(dist):
+  if isinstance(dist, DistributionLambda):
+    dist = dist(keras.Input((None,), None))
   # distribution layer
   if isinstance(dist, tfd.Distribution):
     while isinstance(dist, tfd.Independent):
       dist = dist.distribution
     dist = type(dist)
-  elif isinstance(dist, DistributionLambda):
-    dist = dist((array_ops.empty(shape=(1, dist.params_size((1,))),
-                                 dtype=tf.float32)))
   elif inspect.isclass(dist) and issubclass(dist, DistributionLambda):
     dist = dist()(array_ops.empty(shape=(1, dist.params_size((1,))),
                                   dtype=tf.float32))
