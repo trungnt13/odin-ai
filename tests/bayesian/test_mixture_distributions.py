@@ -2,14 +2,20 @@ from __future__ import absolute_import, division, print_function
 
 import os
 import unittest
+from itertools import product
 from tempfile import mkstemp
 
 import numpy as np
 import tensorflow as tf
 
 from odin.bay import distributions as obd
+from odin.bay.layers import MixtureDensityNetwork, MixtureMassNetwork
+
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
+os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 np.random.seed(8)
+tf.random.set_seed(1)
 
 
 class MixtureTest(unittest.TestCase):
@@ -49,6 +55,54 @@ class MixtureTest(unittest.TestCase):
                                    max_samples=64,
                                    trainable=True)
     gmm.fit(X, verbose=True, max_iter=1000)
+
+  def test_mixture_density_network(self):
+    x = tf.random.uniform((8, 4), dtype='float32')
+    it = [True, False]
+    for i, (covariance, tie_mixtures, tie_loc, tie_scale) in enumerate(
+        product(['none', 'diag', 'tril'], it, it, it)):
+      print(f"#{i} MixtureDensityNetwork tie_mixtures:{tie_mixtures} "
+            f"tie_loc:{tie_loc} tie_scale:{tie_scale} covariance:{covariance}")
+      kw = dict(covariance=covariance,
+                tie_mixtures=tie_mixtures,
+                tie_loc=tie_loc,
+                tie_scale=tie_scale)
+      try:
+        net = MixtureDensityNetwork(units=5, **kw)
+        y = net(x)
+      except ValueError as e:
+        pass
+      except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise e
+
+  def test_mixture_mass_network(self):
+    x = tf.random.uniform((8, 4), dtype='float32')
+    it = [True, False]
+
+    for i, (alternative, tie_mixtures, tie_mean, dispersion,
+            inflation) in enumerate(
+                product(it, it, it, ['full', 'share', 'single'],
+                        ['full', 'share', 'single', None])):
+      print(f"#{i} MixtureMassNetwork tie_mixtures:{tie_mixtures} "
+            f"tie_mean:{tie_mean} disp:{dispersion} inflated:{inflation}")
+      kw = dict(tie_mixtures=tie_mixtures,
+                tie_mean=tie_mean,
+                zero_inflated=inflation is not None,
+                dispersion=dispersion,
+                inflation='full' if inflation is None else inflation,
+                alternative=alternative)
+      try:
+        net = MixtureMassNetwork(event_shape=(5,), **kw)
+        y = net(x)
+      except ValueError as e:
+        pass
+      except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise e
+
 
 if __name__ == '__main__':
   unittest.main()

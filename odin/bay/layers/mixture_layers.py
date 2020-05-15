@@ -12,6 +12,7 @@ from tensorflow_probability.python.layers import (
 from odin.backend import parse_activation
 from odin.backend.maths import softplus1
 from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
+from odin.bay.layers.count_layers import _dispersion
 
 __all__ = [
     'MixtureLogisticLayer', 'MixtureSameFamilyLayer', 'MixtureGaussianLayer',
@@ -98,6 +99,11 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
                convert_to_tensor_fn=tfp.distributions.Distribution.sample,
                validate_args=False,
                **kwargs):
+    if not tie_mixtures:
+      if tie_loc and tie_scale:
+        raise ValueError(
+            "Mixture distribution has no support for tie_mixtures=False "
+            "and both loc and scale are tied")
     logits, loc, scale = None, None, None
     event_size = tf.convert_to_tensor(value=tf.reduce_prod(event_shape),
                                       name='params_size',
@@ -108,18 +114,27 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
                            dtype=keras.backend.floatx(),
                            name="mixture_logits")
     if tie_loc:
+      if covariance == 'none':
+        shape = tf.concat(
+            [[n_components], tf.nest.flatten(event_shape)], axis=0)
+      else:
+        shape = (n_components, event_size)
       loc = tf.Variable(
-          tf.random.normal(shape=(n_components, event_size)),
+          tf.random.normal(shape),
           trainable=True,
           dtype=keras.backend.floatx(),
           name="components_loc",
       )
     if tie_scale:
-      scale_size = event_size
-      if covariance not in ('none', 'diag'):
-        scale_size = event_size * (event_size + 1) // 2
+      if covariance == 'none':
+        shape = tf.concat(
+            [[n_components], tf.nest.flatten(event_shape)], axis=0)
+      elif covariance == 'diag':
+        shape = (n_components, event_size)
+      else:
+        shape = (n_components, event_size * (event_size + 1) // 2)
       scale = tf.Variable(
-          tf.random.normal(shape=(n_components, scale_size)),
+          tf.random.normal(shape),
           trainable=True,
           dtype=keras.backend.floatx(),
           name="components_scale",
@@ -286,6 +301,9 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
     return total
 
 
+# ===========================================================================
+# Mixture mass layer
+# ===========================================================================
 class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
   r"""Initialize the mixture of NegativeBinomial distributions layer.
 
@@ -335,11 +353,10 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
   def __init__(self,
                event_shape=(),
                n_components=2,
-               dispersion='full',
                tie_mixtures=False,
                tie_mean=False,
-               tie_disp=False,
-               tie_rate=False,
+               dispersion='full',
+               inflation='full',
                mean_activation='softplus1',
                disp_activation=None,
                alternative=False,
@@ -347,12 +364,38 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
                convert_to_tensor_fn=tfp.distributions.Distribution.sample,
                validate_args=False,
                **kwargs):
+    if not tie_mixtures:
+      if tie_mean and dispersion != 'full':
+        raise ValueError(
+            "Mixture distribution has no support for tie_mixtures=False "
+            "and both mean and dispersion are tied")
+    if zero_inflated:
+      if inflation == 'full' and tie_mean and dispersion != 'full':
+        raise ValueError("ZeroInflated distribution has no support for "
+                         "batch-wise inflation rate but tied mean and "
+                         "dispersion (this is broadcasting issue).")
     logits, mean, disp, rate = None, None, None, None
+    shape = tf.concat([[n_components], tf.nest.flatten(event_shape)], axis=0)
     if tie_mixtures:
       logits = tf.Variable([0.] * n_components,
                            trainable=True,
                            dtype=keras.backend.floatx(),
                            name="mixture_logits")
+    if tie_mean:
+      mean = tf.Variable(tf.random.normal(shape),
+                         trainable=True,
+                         dtype=keras.backend.floatx(),
+                         name="components_mean")
+    disp = _dispersion(dispersion,
+                       event_shape,
+                       is_logits=not alternative,
+                       name='dispersion',
+                       n_components=n_components)
+    rate = _dispersion(inflation,
+                       event_shape,
+                       is_logits=True,
+                       name='inflation',
+                       n_components=n_components)
     if disp_activation is None:
       disp_activation = 'softplus1' if alternative else 'linear'
     super().__init__(
@@ -360,7 +403,6 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
             params,
             event_shape,
             n_components=n_components,
-            dispersion=dispersion,
             mean_activation=parse_activation(mean_activation, self),
             disp_activation=parse_activation(disp_activation, self),
             alternative=alternative,
@@ -382,7 +424,6 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
   def new(params,
           event_shape=(),
           n_components=2,
-          dispersion='full',
           mean_activation=softplus1,
           disp_activation=tf.identity,
           alternative=False,
@@ -396,6 +437,12 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
     n_components = tf.convert_to_tensor(value=n_components,
                                         name='n_components',
                                         dtype_hint=tf.int32)
+    event_size = tf.convert_to_tensor(
+        tf.reduce_prod(event_shape),
+        dtype_hint=tf.int32,
+        name='event_size',
+    )
+    ### prepare params
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
         value=event_shape, name='event_shape', dtype=tf.int32),
@@ -414,24 +461,27 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
                                             name="MixtureWeights")
     ### zero_inflated
     if zero_inflated:
-      mean, disp, rate = tf.split(params, 3, axis=-1)
-      rate = tf.reshape(rate, output_shape)
-    else:
-      mean, disp = tf.split(params, 2, axis=-1)
+      if mean is None:
+        mean = params[..., :n_components * event_size]
+        mean = tf.reshape(mean, output_shape)
+        params = params[..., n_components * event_size:]
+      disp, rate = _to_loc_scale(lambda: tf.split(params, 2, axis=-1),
+                                 params,
+                                 loc=disp,
+                                 scale=rate,
+                                 shape=output_shape)
+    else:  # negative binomial
       rate = None
-    ### negative binomial
-    mean = tf.reshape(mean, output_shape)
-    disp = tf.reshape(disp, output_shape)
-    if dispersion == 'single':
-      disp = tf.reduce_mean(disp)
-    elif dispersion == 'share':
-      disp = tf.reduce_mean(disp,
-                            axis=tf.range(0,
-                                          output_shape.shape[0] - 1,
-                                          dtype='int32'),
-                            keepdims=True)
+      mean, disp = _to_loc_scale(lambda: tf.split(params, 2, axis=-1),
+                                 params,
+                                 loc=mean,
+                                 scale=disp,
+                                 shape=output_shape)
+    ### applying activation
     mean = mean_activation(mean)
     disp = disp_activation(disp)
+    # print(mean.shape, disp.shape, rate.shape)
+    # exit()
     ### alternative parameterization
     if alternative:
       NBtype = NegativeBinomialDisp
@@ -443,6 +493,7 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
         NBtype(mean, disp, validate_args=validate_args),
         reinterpreted_batch_ndims=tf.size(input=event_shape),
         validate_args=validate_args)
+    ### zero-inflated
     if zero_inflated:
       name = 'ZI' + name
       components = ZeroInflated(count_distribution=components,
@@ -457,10 +508,10 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
   def params_size(event_shape,
                   n_components=2,
                   zero_inflated=False,
+                  dispersion='full',
+                  inflation='full',
                   tie_mixtures=False,
-                  tie_mean=False,
-                  tie_disp=False,
-                  tie_rate=False):
+                  tie_mean=False):
     r"""Number of `params` needed to create a `MixtureNegativeBinomialLayer`
     distribution.
 
@@ -469,17 +520,26 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
        distribution.
     """
     n_components = tf.convert_to_tensor(
-        value=n_components,
+        n_components,
         dtype_hint=tf.int32,
         name='n_components',
     )
-    params_size = tf.convert_to_tensor(
-        value=tf.reduce_prod(event_shape) * (3 if zero_inflated else 2),
+    event_size = tf.convert_to_tensor(
+        tf.reduce_prod(event_shape),
         dtype_hint=tf.int32,
-        name='params_size',
+        name='event_size',
     )
     n_components = dist_util.prefer_static_value(n_components)
-    params_size = dist_util.prefer_static_value(params_size)
+    event_size = dist_util.prefer_static_value(event_size)
+    # single components
+    params_size = (3 if zero_inflated else 2) * event_size
+    if tie_mean:
+      params_size -= event_size
+    if dispersion != 'full':
+      params_size -= event_size
+    if zero_inflated and inflation != 'full':
+      params_size -= event_size
+    # total number of all components
     total = n_components + n_components * params_size
     if tie_mixtures:
       total -= n_components

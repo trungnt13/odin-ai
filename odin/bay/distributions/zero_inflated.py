@@ -30,8 +30,18 @@ from tensorflow_probability.python.util.seed_stream import SeedStream
 __all__ = ['ZeroInflated']
 
 
-def _make_broadcastable(probs, *others):
-  return [probs] + [tf.broadcast_to(i, tf.shape(probs)) for i in others]
+def _make_broadcastable(*tensors):
+  # TODO: still hard for broadcastable here
+  shape = None
+  max_rank = 0
+  for t in tensors:
+    if len(t.shape) > max_rank:
+      max_rank = len(t.shape)
+      shape = tf.shape(t)
+  return [
+      tf.broadcast_to(t, shape) if len(t.shape) < max_rank else t
+      for t in tensors
+  ]
 
 
 class ZeroInflated(distribution.Distribution):
@@ -95,11 +105,11 @@ class ZeroInflated(distribution.Distribution):
     """
     parameters = dict(locals())
     with tf.compat.v1.name_scope(name) as name:
+      # main count distribution
       if not isinstance(count_distribution, distribution.Distribution):
         raise TypeError("count_distribution must be a Distribution instance"
                         " but saw: %s" % count_distribution)
-      self._count_distribution = count_distribution
-      #
+      # Zero inflation distribution
       if inflated_distribution is None:
         inflated_distribution = Bernoulli(logits=logits,
                                           probs=probs,
@@ -110,6 +120,13 @@ class ZeroInflated(distribution.Distribution):
       elif not isinstance(inflated_distribution, distribution.Distribution):
         raise TypeError("inflated_distribution must be a Distribution instance"
                         " but saw: %s" % inflated_distribution)
+      # Matching the event shape
+      inflated_ndim = len(inflated_distribution.event_shape)
+      count_ndim = len(count_distribution.event_shape)
+      if inflated_ndim < count_ndim:
+        inflated_distribution = Independent(inflated_distribution,
+                                            count_ndim - inflated_ndim)
+      self._count_distribution = count_distribution
       self._inflated_distribution = inflated_distribution
       #
       if self._count_distribution.batch_shape.ndims is None:
@@ -236,6 +253,11 @@ class ZeroInflated(distribution.Distribution):
     seed = SeedStream(seed, salt="ZeroInflated")
     mask = self.inflated_distribution.sample(n, seed())
     samples = self.count_distribution.sample(n, seed())
+    tf.assert_equal(
+        tf.rank(samples) >= tf.rank(mask),
+        True,
+        message=f"Cannot broadcast zero inflated mask of shape {mask.shape} "
+        f"to sample shape {samples.shape}")
     samples, mask = _make_broadcastable(samples, mask)
     # mask = 1 => new_sample = 0
     # mask = 0 => new_sample = sample

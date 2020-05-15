@@ -32,33 +32,40 @@ PoissonLayer = tfl.IndependentPoisson
 # ===========================================================================
 # Negative binomial
 # ===========================================================================
-def _dispersion(disp, event_shape, is_logits, name):
+def _dispersion(disp, event_shape, is_logits, name, n_components=1):
   dispersion = str(disp).lower().strip()
   assert dispersion in ('full', 'single', 'share'), \
     "Only support three different dispersion value: 'full', 'single' and " + \
       "'share', but given: %s" % dispersion
   disp = None
+  if n_components > 1:
+    shape_single = (n_components, 1)
+    shape_share = tf.concat(
+        [[n_components], tf.nest.flatten(event_shape)], axis=0)
+  else:
+    shape_single = (1,)
+    shape_share = tf.nest.flatten(event_shape)
   ######## logits values
   if is_logits:
     if dispersion == 'single':
-      disp = tf.Variable(0.,
+      disp = tf.Variable(tf.zeros(shape_single),
                          trainable=True,
                          dtype=keras.backend.floatx(),
                          name=f"{name}_logits")
     elif dispersion == 'share':
-      disp = tf.Variable(np.zeros(event_shape),
+      disp = tf.Variable(tf.zeros(shape_share),
                          trainable=True,
                          dtype=keras.backend.floatx(),
                          name=f"{name}_logits")
   ######## raw dispersion values
   else:
     if dispersion == 'single':
-      disp = tf.Variable(tf.random.normal((1,)),
+      disp = tf.Variable(tf.random.normal(shape_single),
                          trainable=True,
                          dtype=keras.backend.floatx(),
                          name=f"{name}_raw")
     elif dispersion == 'share':
-      disp = tf.Variable(tf.random.normal(tf.nest.flatten(event_shape)),
+      disp = tf.Variable(tf.random.normal(shape_share),
                          trainable=True,
                          dtype=keras.backend.floatx(),
                          name=f"{name}_raw")

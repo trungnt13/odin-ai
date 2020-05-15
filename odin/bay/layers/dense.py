@@ -198,11 +198,14 @@ class DenseDistribution(Dense):
     assert isinstance(p, (Distribution, type(None)))
     self._prior = p
 
+  def _sample_fn(self, dist):
+    return dist.sample(sample_shape=self._posterior_sample_shape)
+
   @property
   def posterior_layer(self) -> DistributionLambda:
     if self._posterior_layer is None:
       if self._convert_to_tensor_fn == Distribution.sample:
-        fn = lambda dist: dist.sample(sample_shape=self._posterior_sample_shape)
+        fn = self._sample_fn
       else:
         fn = self._convert_to_tensor_fn
       self._posterior_layer = self._posterior_class(self._event_shape,
@@ -418,7 +421,7 @@ class MixtureDensityNetwork(DenseDistribution):
       log_scale = tf.fill(scale_shape, log_scale)
     #
     if mixture_logits is None:
-      p = 1. / n_components
+      p = 1. / self.n_components
       mixture_logits = np.log(p / (1. - p))
     if isinstance(mixture_logits, Number) or tf.rank(mixture_logits) == 0:
       mixture_logits = tf.fill([self.n_components], mixture_logits)
@@ -443,10 +446,9 @@ class MixtureMassNetwork(DenseDistribution):
                event_shape=(),
                n_components=2,
                dispersion='full',
+               inflation='full',
                tie_mixtures=False,
                tie_mean=False,
-               tie_disp=False,
-               tie_rate=False,
                mean_activation='softplus1',
                disp_activation=None,
                alternative=False,
@@ -473,12 +475,11 @@ class MixtureMassNetwork(DenseDistribution):
                                            mean_activation=mean_activation,
                                            disp_activation=disp_activation,
                                            dispersion=dispersion,
+                                           inflation=inflation,
                                            alternative=alternative,
                                            zero_inflated=zero_inflated,
                                            tie_mixtures=bool(tie_mixtures),
-                                           tie_mean=bool(tie_mean),
-                                           tie_disp=bool(tie_disp),
-                                           tie_rate=bool(tie_rate)),
+                                           tie_mean=bool(tie_mean)),
                      convert_to_tensor_fn=convert_to_tensor_fn,
                      dropout=dropout,
                      activation='linear',
