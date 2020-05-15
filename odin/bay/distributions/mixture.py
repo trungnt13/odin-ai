@@ -7,9 +7,13 @@ import numpy as np
 import tensorflow as tf
 from six import string_types
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 
 __all__ = ['GaussianMixture']
 
@@ -42,6 +46,16 @@ class GaussianMixture(MixtureSameFamily):
       'diag' - each component has its own diagonal covariance matrix
       'none' - independent gaussian each component has its own variance
   """
+
+  @staticmethod
+  def scale_size(event_shape, covariance):
+    r""" Return the number of parameters needed for parameterizing scale
+    given the covariance type. """
+    event_size = tf.cast(tf.reduce_prod(tf.nest.flatten(event_shape)),
+                          dtype=tf.int32)
+    if covariance in ('none', 'diag'):
+      return event_size
+    return event_size * (event_size + 1) // 2
 
   def __init__(self,
                loc,

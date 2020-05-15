@@ -251,7 +251,7 @@ class RandomVariable:
     param_shape = (1, size)
     # create a dummy dist
     params = array_ops.empty(shape=param_shape, dtype=tf.float32)
-    dist = layer(event_shape)(params)
+    dist = layer(event_shape, **self.kwargs)(params)
     # get original distribution
     if remove_independent:
       while isinstance(dist, obd.Independent):

@@ -29,7 +29,7 @@ class MixtureTest(unittest.TestCase):
       gmm = obd.GaussianMixture(
           loc=np.random.rand(nsamples, 2, ndims).astype('float32'),
           scale=np.random.rand(nsamples, 2,
-                               obd.GaussianMixture.params_size(
+                               obd.GaussianMixture.scale_size(
                                    ndims, cov)).astype('float32'),
           logits=np.random.rand(nsamples, 2).astype('float32'),
           covariance_type=cov)
@@ -37,10 +37,10 @@ class MixtureTest(unittest.TestCase):
       gmm.log_prob(x)
     #
     for cov in ('tied', 'full', 'diag', 'spherical'):
-      tfp_gmm, sk_gmm = obd.GaussianMixture.fit(x,
-                                                n_components=2,
-                                                covariance_type=cov,
-                                                return_sklearn=True)
+      tfp_gmm, sk_gmm = obd.GaussianMixture.init(x,
+                                                 n_components=2,
+                                                 covariance_type=cov,
+                                                 return_sklearn=True)
       print(cov, tfp_gmm, tfp_gmm.sample().shape)
       llk1 = tfp_gmm.log_prob(x).numpy()
       llk2 = sk_gmm.score_samples(x)
