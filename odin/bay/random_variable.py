@@ -368,5 +368,6 @@ class RandomVariable:
       layer.event_shape = event_shape
     # build the layer in advance
     if input_shape is not None and layer.projection:
-      layer(keras.Input(shape=input_shape, batch_size=None))
+      inputs = keras.Input(shape=input_shape, batch_size=None)
+      layer(inputs)
     return layer

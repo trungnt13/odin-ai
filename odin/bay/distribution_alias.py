@@ -24,7 +24,7 @@ _dist_mapping = multikeysdict({
                       covariance='tril'), tfd.MultivariateNormalTriL),
     ('lognormal', 'lognorm', 'loggaus'): (obl.LogNormalLayer, tfd.LogNormal),
     # ====== Mixture of Gaussian ====== #
-    ('mixnormal', 'mdn', 'mixgaussian', 'mixdensity'):
+    ('mixnormal', 'mdn', 'mixgaussian', 'mixdensity', 'mixgaus', 'mixgauss'):
         (obl.MixtureGaussianLayer, tfd.MixtureSameFamily),
     'mixdiag': (partialclass(obl.MixtureGaussianLayer,
                              covariance='diag'), tfd.MixtureSameFamily),

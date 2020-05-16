@@ -12,9 +12,13 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -203,7 +207,7 @@ class DenseDistribution(Dense):
 
   @property
   def posterior_layer(self) -> DistributionLambda:
-    if self._posterior_layer is None:
+    if not isinstance(self._posterior_layer, DistributionLambda):
       if self._convert_to_tensor_fn == Distribution.sample:
         fn = self._sample_fn
       else:
@@ -242,6 +246,8 @@ class DenseDistribution(Dense):
       projection = self.projection
     else:
       projection = self.projection and projection
+    # do not use tf.cond here, it infer the wrong shape when trying to build
+    # the layer in Graph mode.
     if projection:
       params = super().call(params)
     # applying dropout
