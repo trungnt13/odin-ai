@@ -45,11 +45,15 @@ def _data(x):
     if float(x).is_integer():
       return int(x)
     return float(x)
-  b = BytesIO()
-  np.savez_compressed(b, x=x)
-  b.seek(0)
-  data = b.read()
-  b.close()
+  try:
+    b = BytesIO()
+    np.savez_compressed(b, x=x)
+    b.seek(0)
+    data = b.read()
+    b.close()
+  except Exception as e:
+    print(f"Cannot convert data {x} of type {type(x)} to SQL data.")
+    raise e
   return data
 
 
@@ -267,18 +271,19 @@ class ScoreBoard:
     for k, v in row.items():
       k = str(k).strip().lower()
       keys_name.append(k)
-      keys.append([k, _to_sqltype(v)])
+      keys.append([f"'{k}'", _to_sqltype(v)])
     keys = ", ".join([" ".join(i) for i in keys])
     if unique:
       if isinstance(unique, string_types):  # a single columns
-        unique = ", UNIQUE (%s)" % unique
+        unique = f", UNIQUE ('{unique}')"
       elif isinstance(unique, (tuple, list)):  # list of columns
-        unique = ", UNIQUE (%s)" % ','.join([str(i) for i in unique])
-      else:  # use all columns for unique
-        unique = ", UNIQUE (%s)" % ','.join(keys_name[:-1])  # no timestamp
+        unique = ", UNIQUE (%s)" % ','.join([f"'{str(i)}'" for i in unique])
+      else:  # use all columns for unique (no timestamp)
+        unique = ", UNIQUE (%s)" % ','.join(
+            [f"'{str(i)}'" for i in keys_name[:-1]])
     else:
       unique = ""
-    query = f""" CREATE TABLE IF NOT EXISTS {name} ({keys}{unique});"""
+    query = f"""CREATE TABLE IF NOT EXISTS {name} ({keys}{unique});"""
     try:
       _cursor.execute(query)
     except sqlite3.OperationalError as e:
@@ -292,17 +297,20 @@ class ScoreBoard:
     row['timestamp'] = datetime.now().timestamp()
     self._create_table(_cursor, table, row, unique)
     table_name = str(table).strip().lower()
-    cols = ",".join([str(k).strip().lower() for k in row.keys()])
+    cols = ",".join([f"'{str(k).strip().lower()}'" for k in row.keys()])
     fmt = ','.join(['?'] * len(row))
     write_mode = "REPLACE" if override else "INSERT"
+    query = f"""{write_mode} INTO {table_name} ({cols}) VALUES({fmt});"""
     try:
-      _cursor.execute(f"""{write_mode} INTO {table_name} ({cols}) VALUES({fmt});""",
-                      [_data(v) for v in row.values()])
+      _cursor.execute(query, [_data(v) for v in row.values()])
     except sqlite3.IntegrityError as e:
       if unique:
         pass
       else:
         raise e
+    except sqlite3.OperationalError as e:
+      print(query)
+      raise e
 
   def write(self, table, unique=False, override=False, **row):
     row.pop('table', None)

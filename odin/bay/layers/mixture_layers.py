@@ -244,8 +244,7 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
     elif covariance in ('full', 'tril'):
       def_name = 'MultivariateGaussianTriL'
       scale_shape = tf.concat(
-          (params_shape, [n_components],
-           [event_size * (event_size + 1) // 2]),
+          (params_shape, [n_components], [event_size * (event_size + 1) // 2]),
           axis=0)
       loc, scale = _to_loc_scale(
           lambda: (params[..., :event_size], params[..., event_size:]),

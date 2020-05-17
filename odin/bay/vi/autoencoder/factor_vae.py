@@ -1,3 +1,4 @@
+import collections
 from typing import Optional
 
 import numpy as np
@@ -10,6 +11,18 @@ from odin.bay.vi.autoencoder.networks import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 
 
+# ===========================================================================
+# Helpers
+# ===========================================================================
+def _split_if_tensor(x):
+  if tf.is_tensor(x):
+    x1, x2 = tf.split(x, 2, axis=0)
+  else:
+    x1 = x
+    x2 = x
+  return x1, x2
+
+
 class FactorDiscriminatorStep(TrainStep):
 
   def call(self, inputs, mask, qZ_X, qZ_Xprime, training):
@@ -20,7 +33,8 @@ class FactorDiscriminatorStep(TrainStep):
     metrics = dict(dtc_loss=dtc_loss)
     ## applying the classifier loss
     classifier_loss = 0.
-    if len(tf.nest.flatten(inputs)) > len(self.vae.output_layers):
+    if (len(tf.nest.flatten(inputs)) > len(self.vae.output_layers) and
+        hasattr(self.vae, 'classifier_loss')):
       labels = inputs[len(self.vae.output_layers):]
       classifier_loss = self.vae.classifier_loss(labels,
                                                  qZ_X,
@@ -34,10 +48,12 @@ class FactorDiscriminatorStep(TrainStep):
     inputs, qZ_X = self.inputs
     mask = self.mask
     training = self.training
+    call_kw = self.call_kw
     qZ_Xprime = self.vae.encode(inputs,
                                 training=training,
                                 mask=mask,
-                                sample_shape=self.sample_shape)
+                                sample_shape=self.sample_shape,
+                                **call_kw)
     return self.call(inputs, mask, qZ_X, qZ_Xprime, training)
 
 
@@ -47,10 +63,12 @@ class Factor2DiscriminatorStep(FactorDiscriminatorStep):
     inputs, qZ_X = self.inputs
     mask = self.mask
     training = self.training
+    call_kw = self.call_kw
     qZ_Xprime = self.vae.encode(inputs,
                                 training=training,
                                 mask=mask,
-                                sample_shape=self.sample_shape)
+                                sample_shape=self.sample_shape,
+                                **call_kw)
     # only select the last latent space
     return self.call(inputs, mask, qZ_X[-1], qZ_Xprime[-1], training)
 
@@ -194,7 +212,7 @@ class FactorVAE(BetaVAE):
       loss = self.lamda * loss
     return loss
 
-  def _prepare_steps(self, inputs, mask):
+  def _prepare_steps(self, inputs, mask, call_kw):
     r""" Split the data into 2 partitions for training the VAE and Discriminator """
     self.step.assign_add(1.)
     # split inputs into 2 mini-batches here
@@ -214,15 +232,29 @@ class FactorVAE(BetaVAE):
         mask = [tf.split(m, 2, axis=0) for m in tf.nest.flatten(mask)]
         mask1 = [i[0] for i in mask]
         mask2 = [i[1] for i in mask]
-    return (x1, mask1), (x2, mask2)
+    # split the call_kw
+    call_kw1 = {}
+    call_kw2 = {}
+    for k, v in call_kw.items():
+      is_list = False
+      if isinstance(v, collections.Sequence):
+        v = [_split_if_tensor(i) for i in v]
+        call_kw1[k] = [i[0] for i in v]
+        call_kw2[k] = [i[1] for i in v]
+      else:
+        v1, v2 = _split_if_tensor(v)
+        call_kw1[k] = v1
+        call_kw2[k] = v2
+    return (x1, mask1, call_kw1), (x2, mask2, call_kw2)
 
   def train_steps(self,
                   inputs,
-                  training=None,
+                  training=True,
                   mask=None,
                   sample_shape=(),
                   iw=False,
-                  elbo_kw=dict()) -> TrainStep:
+                  elbo_kw={},
+                  call_kw={}) -> TrainStep:
     r""" Facilitate multiple steps training for each iteration (similar to GAN)
 
     Example:
@@ -242,7 +274,9 @@ class FactorVAE(BetaVAE):
       tape.gradient(loss, discriminator_step.parameters)
     ```
     """
-    (x1, mask1), (x2, mask2) = self._prepare_steps(inputs, mask)
+    (x1, mask1,
+     call_kw1), (x2, mask2,
+                 call_kw2) = self._prepare_steps(inputs, mask, call_kw)
     # first step optimize VAE with total correlation loss
     step1 = TrainStep(vae=self,
                       inputs=x1,
@@ -251,6 +285,7 @@ class FactorVAE(BetaVAE):
                       sample_shape=sample_shape,
                       iw=iw,
                       elbo_kw=elbo_kw,
+                      call_kw=call_kw1,
                       parameters=self.vae_params)
     yield step1
     # second step optimize the discriminator for discriminate permuted code
@@ -260,44 +295,23 @@ class FactorVAE(BetaVAE):
                                inputs=[x2, step1.qZ_X],
                                training=training,
                                mask=mask2,
+                               call_kw=call_kw2,
                                sample_shape=sample_shape,
                                parameters=self.disc_params)
       yield step2
 
-  def fit(
-      self,
-      train: tf.data.Dataset,
-      valid: Optional[tf.data.Dataset] = None,
-      valid_freq=1000,
-      valid_interval=0,
-      optimizer=[
-          tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
-          tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
-      ],
-      learning_rate=1e-3,
-      clipnorm=None,
-      epochs=-1,
-      max_iter=1000,
-      sample_shape=(),  # for ELBO
-      analytic=False,  # for ELBO
-      iw=False,  # for ELBO
-      callback=lambda: None,
-      compile_graph=True,
-      autograph=False,
-      logging_interval=2,
-      log_tag='',
-      log_path=None,
-      skip_fitted=False,
-      **kwargs):
+  def fit(self,
+          train,
+          valid=None,
+          optimizer=[
+              tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
+              tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
+          ],
+          **kwargs):
     r""" Override the original fit method of keras to provide simplified
     procedure with `VariationalAutoencoder.optimize` and
     `VariationalAutoencoder.train_steps` """
-    kw = dict(locals())
-    del kw['self']
-    del kw['__class__']
-    kwargs = kw.pop('kwargs')
-    kw.update(kwargs)
-    return super().fit(**kw)
+    return super().fit(train=train, valid=valid, optimizer=optimizer, **kwargs)
 
   def __str__(self):
     text = super().__str__()

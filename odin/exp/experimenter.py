@@ -36,7 +36,7 @@ try:
   from hydra.plugins.common.utils import (configure_log, filter_overrides,
                                           run_job, setup_globals,
                                           split_config_path)
-  from omegaconf import DictConfig, OmegaConf, open_dict
+  from omegaconf import DictConfig, ListConfig, OmegaConf, open_dict
 except ImportError as e:
   BasicLauncher = object
   DictConfig = dict
@@ -120,6 +120,31 @@ def _prepare_conditions(conditions={}):
         for key, values in conditions
   }
   return conditions
+
+
+def flatten_config(cfg: dict, base='') -> dict:
+  r""" Flatten a dictionary and its sub-dictionary into a single dictionary
+  by concatenating the key with '.' character """
+  c = {}
+  for k, v in cfg.items():
+    if '.' in k:
+      raise KeyError(f"Invalid key {k} contain '.' character")
+    if len(base) > 0:
+      k = base + '.' + k
+    if isinstance(v, ListConfig):
+      v = list(v)
+    elif isinstance(v, DictConfig):
+      v = dict(v)
+    if isinstance(v, dict):
+      for i, j in flatten_config(v, base=k).items():
+        if i in c:
+          raise KeyError(f"Duplicated key={i}, the config is {cfg}")
+        c[i] = j
+    else:
+      if k in c:
+        raise KeyError(f"Duplicated key={k}, the config is {cfg}")
+      c[k] = v
+  return c
 
 
 def pretty_config(cfg: dict, ncol=4) -> str:
@@ -370,6 +395,7 @@ class Experimenter():
     """
     assert isinstance(cfg, (DictConfig, dict))
     cfg = Experimenter.remove_keys(cfg, copy=True, keys=exclude_keys)
+    cfg = flatten_config(cfg)
     return md5_checksum(cfg)[:self.hash_length]
 
   ####################### Static helpers
@@ -683,12 +709,13 @@ class Experimenter():
   ####################### Basic logics
   def _run(self, cfg: DictConfig):
     cfg = deepcopy(cfg)
+    self._running_configs = cfg
+    # store config in database
     hash_key = self.hash_config(cfg, self.exclude_keys)
     self.db.write('config',
-                  unique=[k for k in cfg.keys() if k not in self.exclude_keys],
+                  unique='hash',
                   hash=hash_key,
-                  **{k: v for k, v in cfg.items()})
-    self._running_configs = cfg
+                  config=str(flatten_config(cfg)))
     # the cfg is dispatched by hydra.run_job, we couldn't change anything here
     logger = LOGGER
     with warnings.catch_warnings():

@@ -191,8 +191,9 @@ class TrainStep:
                mask=None,
                sample_shape=(),
                iw=False,
-               elbo_kw=dict(),
-               parameters=None):
+               parameters=None,
+               elbo_kw={},
+               call_kw={}):
     self.vae = vae
     assert isinstance(vae, VariationalAutoencoder)
     self.parameters = (vae.trainable_variables
@@ -200,16 +201,17 @@ class TrainStep:
     self.inputs = inputs
     self.mask = mask
     self.sample_shape = sample_shape
+    self.training = training
+    self.call_kw = call_kw
     self.iw = iw
     self.elbo_kw = elbo_kw
-    self.training = training
 
-  def __call__(self, **kwargs):
+  def __call__(self):
     pX_Z, qZ_X = self.vae(self.inputs,
                           training=self.training,
                           mask=self.mask,
                           sample_shape=self.sample_shape,
-                          **kwargs)
+                          **self.call_kw)
     # store so it could be reused
     self.pX_Z = pX_Z
     self.qZ_X = qZ_X
@@ -410,7 +412,6 @@ class VariationalAutoencoder(keras.Model):
                             trainable=False,
                             name="Step")
     self.trainer = None
-    self._trainstep_kw = dict()
     self.latent_names = [i.name for i in self.latent_layers]
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
@@ -434,11 +435,14 @@ class VariationalAutoencoder(keras.Model):
   def save_path(self):
     return self._save_path
 
-  def load_weights(self, filepath, raise_notfound=False):
+  def load_weights(self, filepath, raise_notfound=False, verbose=False):
+    r""" Load all the saved weights in tensorflow format at given path """
     if isinstance(filepath, string_types):
       files = glob.glob(filepath + '*')
       # load weights
       if len(files) > 0 and all(os.path.isfile(f) for f in files):
+        if verbose:
+          print(f"Loading weights at path: {filepath}")
         super().load_weights(filepath, by_name=False, skip_mismatch=False)
       elif raise_notfound:
         raise FileNotFoundError(
@@ -446,6 +450,8 @@ class VariationalAutoencoder(keras.Model):
       # load trainer
       trainer_path = filepath + '.trainer'
       if os.path.exists(trainer_path):
+        if verbose:
+          print(f"Loading Trainer at path: {trainer_path}")
         with open(trainer_path, 'rb') as f:
           self.trainer = pickle.load(f)
     self._save_path = filepath
@@ -828,7 +834,8 @@ class VariationalAutoencoder(keras.Model):
                   mask=None,
                   sample_shape=(),
                   iw=False,
-                  elbo_kw=dict()) -> TrainStep:
+                  elbo_kw={},
+                  call_kw={}) -> TrainStep:
     r""" Facilitate multiple steps training for each iteration (smilar to GAN)
 
     Example:
@@ -857,14 +864,20 @@ class VariationalAutoencoder(keras.Model):
                     mask=mask,
                     sample_shape=sample_shape,
                     iw=iw,
-                    elbo_kw=elbo_kw)
+                    elbo_kw=elbo_kw,
+                    call_kw=call_kw)
 
   def optimize(self,
                inputs,
                training=True,
                mask=None,
                optimizer=None,
-               **kwargs):
+               sample_shape=(),
+               allow_none_gradients=False,
+               track_gradient_norms=False,
+               iw=False,
+               elbo_kw={},
+               **call_kw):
     if optimizer is None:
       optimizer = tf.nest.flatten(self.optimizer)
     all_metrics = {}
@@ -875,30 +888,38 @@ class VariationalAutoencoder(keras.Model):
         self.train_steps(inputs=inputs,
                          training=training,
                          mask=mask,
-                         **self._trainstep_kw)):
+                         sample_shape=sample_shape,
+                         iw=iw,
+                         call_kw=call_kw,
+                         elbo_kw=elbo_kw)):
       opt = optimizer[i % n_optimizer]
       parameters = step.parameters
-      # this GradientTape somehow more inconvenient than pytorch
+      ## for training
       if training:
+        # this GradientTape somehow more inconvenient than pytorch
         with tf.GradientTape(watch_accessed_variables=False) as tape:
           tape.watch(parameters)
-          loss, metrics = step(**kwargs)  # addition kwargs for vae.call(...)
+          loss, metrics = step()
         # applying the gradients
         gradients = tape.gradient(loss, parameters)
-        if self._allow_none_gradients:  # for debugging
+        # for debugging gradients
+        if allow_none_gradients:
           grad_param = zip(gradients, parameters)
         else:
           grad_param = [
               (g, p) for g, p in zip(gradients, parameters) if g is not None
           ]
         opt.apply_gradients(grad_param)
+        # tracking the gradient norms for debugging
+        if track_gradient_norms:
+          metrics['grad_norms'] = tf.linalg.global_norm(gradients)
+      ## for validation
       else:
         tape = None
-        loss, metrics = step(**kwargs) # addition kwargs for vae.call(...)
+        loss, metrics = step()
       # update metrics and loss
       all_metrics.update(metrics)
       total_loss += loss
-
     return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
 
   def fit(
@@ -925,11 +946,12 @@ class VariationalAutoencoder(keras.Model):
       earlystop_threshold=0.001,
       earlystop_progress_length=0,
       earlystop_patience=-1,
-      earlystop_min_epoch=-np.inf,
+      earlystop_min_epoch=-1,
       terminate_on_nan=True,
       checkpoint=None,
       allow_rollback=False,
-      allow_none_gradients=False):
+      allow_none_gradients=False,
+      track_gradient_norms=False):
     r""" Override the original fit method of keras to provide simplified
     procedure with `VariationalAutoencoder.optimize` and
     `VariationalAutoencoder.train_steps`
@@ -970,10 +992,7 @@ class VariationalAutoencoder(keras.Model):
       self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
     if self.optimizer is None:
       raise RuntimeError("No optimizer found!")
-    self._trainstep_kw = dict(sample_shape=sample_shape,
-                              iw=iw,
-                              elbo_kw=dict(analytic=analytic))
-    self._allow_none_gradients = bool(allow_none_gradients)
+    # prepare the callback
     callback_functions = [i for i in tf.nest.flatten(callback) if callable(i)]
     earlystop_patience = int(earlystop_patience)
     patience = [earlystop_patience]
@@ -998,7 +1017,7 @@ class VariationalAutoencoder(keras.Model):
       # early stopping
       if earlystop_patience > 0:
         if valid is not None:
-          losses = trainer.valid_loss_epoch
+          losses = trainer.valid_loss
         else:
           losses = trainer.train_loss
           ids = list(range(0, len(losses), valid_freq)) + [len(losses)]
@@ -1028,19 +1047,25 @@ class VariationalAutoencoder(keras.Model):
     # if already called repeat, then no need to repeat more
     if hasattr(train, 'repeat'):
       train = train.repeat(int(epochs))
-    self.trainer.fit(train_ds=train,
-                     optimize=self.optimize,
-                     valid_ds=valid,
-                     valid_freq=valid_freq,
-                     valid_interval=valid_interval,
-                     compile_graph=compile_graph,
-                     autograph=autograph,
-                     logging_interval=logging_interval,
-                     log_tag=log_tag,
-                     log_path=log_path,
-                     max_iter=max_iter,
-                     callback=_callback)
-    self._trainstep_kw = dict()
+    self.trainer.fit(
+        train_ds=train,
+        optimize=partial(self.optimize,
+                         sample_shape=sample_shape,
+                         iw=iw,
+                         elbo_kw=dict(analytic=analytic),
+                         allow_none_gradients=allow_none_gradients,
+                         track_gradient_norms=track_gradient_norms),
+        valid_ds=valid,
+        valid_freq=valid_freq,
+        valid_interval=valid_interval,
+        compile_graph=compile_graph,
+        autograph=autograph,
+        logging_interval=logging_interval,
+        log_tag=log_tag,
+        log_path=log_path,
+        max_iter=max_iter,
+        callback=_callback,
+    )
     # restore best weights
     if best_weights[0] > 0 and best_weights[2] is not None:
       tf.print("[EarlyStop] Restore best weights from step %d" %

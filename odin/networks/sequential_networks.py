@@ -1,10 +1,12 @@
 from __future__ import absolute_import, division, print_function
 
+import collections
 import dataclasses
 import inspect
 import types
 from copy import deepcopy
 from numbers import Number
+from typing import MutableSequence
 
 import numpy as np
 import tensorflow as tf
@@ -311,7 +313,7 @@ def deconv_network(units,
                        eq=True,
                        order=False,
                        unsafe_hash=False,
-                       frozen=True)
+                       frozen=False)
 class NetworkConfig(dict):
   r""" A dataclass for storing the autoencoder networks (encoder and decoder)
   configuration. Number of layers is determined by length of `units`
@@ -361,6 +363,9 @@ class NetworkConfig(dict):
   name: str = None
 
   def __post_init__(self):
+    if not isinstance(self.units, collections.Iterable):
+      self.units = tf.nest.flatten(self.units)
+    self.units = [int(i) for i in self.units]
     network_types = ('deconv', 'conv', 'dense', 'lstm', 'gru', 'rnn')
     assert self.network in network_types, \
       "Given network '%s', only support: %s" % (self.network, network_types)

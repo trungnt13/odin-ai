@@ -69,7 +69,7 @@ class IndexedList(list):
     return False
 
   def __getitem__(self, key):
-    if isinstance(key, int):
+    if isinstance(key, (int, slice)):
       return super().__getitem__(key)
     found = []
     for i in range(len(self))[::-1]:

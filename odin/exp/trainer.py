@@ -212,7 +212,7 @@ class Trainer(object):
   def early_stop(losses,
                  threshold=0.001,
                  progress_length=0,
-                 min_epoch=-np.inf,
+                 min_epoch=-1,
                  verbose=0):
     r""" Early stopping based on generalization loss and the three rules:
 
@@ -248,10 +248,8 @@ class Trainer(object):
     Reference:
       Prechelt, L. (1998). "Early Stopping | but when?".
     """
-    if len(losses) == 0:
-      return
     if len(losses) < max(2., min_epoch):
-      tf.print("[EarlyStop] First 2 warmup epochs.")
+      tf.print("[EarlyStop] Priming first 2 warmup epochs.")
       return Trainer.SIGNAL_BEST
     # generalization error (smaller is better)
     current = losses[-1]

@@ -6,6 +6,7 @@ import os
 import pickle
 import struct
 import zipfile
+from collections import Sequence
 from io import BytesIO
 from numbers import Number
 
@@ -123,6 +124,9 @@ def md5_checksum(file_or_path,
   chunksize = int(chunksize)
   hash_md5 = hashlib.md5()
   digest = None
+  # special case for omegaconfig
+  if 'omegaconf.listconfig.ListConfig' in str(type(file_or_path)):
+    file_or_path = list(file_or_path)
   # ====== dictionary ====== #
   if _is_dictionary(file_or_path):
     digest = md5_checksum(''.join([
@@ -142,7 +146,7 @@ def md5_checksum(file_or_path,
   # ====== numpy array or list of numpy array ====== #
   elif isinstance(file_or_path, np.ndarray) or \
   (isinstance(file_or_path, (tuple, list)) and
-   all(isinstance(i, np.ndarray) for i in file_or_path)):
+   all(isinstance(i, (np.ndarray, Number, str, bool)) for i in file_or_path)):
     if not isinstance(file_or_path, (tuple, list)):
       file_or_path = (file_or_path,)
     # copy data
@@ -187,8 +191,8 @@ def md5_checksum(file_or_path,
       hash_md5.update(x)
   # ====== NO support ====== #
   else:
-    raise ValueError("MD5 checksum has NO support for input: %s" %
-                     str(file_or_path))
+    raise ValueError(f"MD5 checksum has NO support for input: {file_or_path} "
+                     f"of type: {type(file_or_path)}")
   # ====== base64 encode ====== #
   if digest is None:
     digest = hash_md5.hexdigest()
