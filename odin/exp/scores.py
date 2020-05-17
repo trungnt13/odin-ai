@@ -313,6 +313,14 @@ class ScoreBoard:
       raise e
 
   def write(self, table, unique=False, override=False, **row):
+    r""" Write one row of data to SQL table.
+
+    Arguments:
+      table : String, SQL table name.
+      unique : list of String, name of unique keys.
+      override : a Boolean. In case unique, override existing row.
+      **row : mapping key, value for the row.
+    """
     row.pop('table', None)
     row.pop('unique', None)
     row.pop('override', None)

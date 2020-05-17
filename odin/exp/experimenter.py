@@ -9,11 +9,13 @@ import re
 import shutil
 import sqlite3
 import sys
+import traceback
 import types
 import warnings
 from collections import OrderedDict, defaultdict
 from contextlib import contextmanager
 from copy import deepcopy
+from io import StringIO
 from numbers import Number
 
 import tensorflow as tf
@@ -707,15 +709,37 @@ class Experimenter():
     self.on_compare(models, self.save_path)
 
   ####################### Basic logics
+  def _call_and_catch(self, method, **kwargs):
+    r""" Return True to stop the run, False for continue running """
+    method_name = method.__func__.__name__
+    try:
+      method(**kwargs)
+      return False
+    except:
+      text = StringIO()
+      traceback.print_exception(*sys.exc_info(),
+                                limit=None,
+                                file=text,
+                                chain=True)
+      text.seek(0)
+      text = text.read().strip()
+      self.db.write(table='error',
+                    hash=self._running_hash,
+                    method=method_name,
+                    traceback=text,
+                    datetime=get_formatted_datetime(only_number=False))
+      return True
+
   def _run(self, cfg: DictConfig):
     cfg = deepcopy(cfg)
-    self._running_configs = cfg
     # store config in database
     hash_key = self.hash_config(cfg, self.exclude_keys)
-    self.db.write('config',
+    self.db.write(table='config',
                   unique='hash',
                   hash=hash_key,
                   config=str(flatten_config(cfg)))
+    self._running_configs = cfg
+    self._running_hash = hash_key
     # the cfg is dispatched by hydra.run_job, we couldn't change anything here
     logger = LOGGER
     with warnings.catch_warnings():
@@ -733,25 +757,36 @@ class Experimenter():
         OmegaConf.save(cfg, f)
       logger.info("Save config: %s" % config_path)
       ## load data
-      self.on_load_data(cfg)
+      if self._call_and_catch(self.on_load_data, cfg=cfg):
+        return
       logger.info("Loaded data")
       ## create or load model
       md5_saved = None
       if os.path.exists(md5_path):
         with open(md5_path, 'r') as f:
           md5_saved = f.read().strip()
-      self.on_create_model(cfg, model_dir, md5_saved)
+      if self._call_and_catch(self.on_create_model,
+                              cfg=cfg,
+                              model_dir=model_dir,
+                              md5=md5_saved):
+        return
       logger.info("Create model: %s (md5:%s)" % (model_dir, str(md5_saved)))
       ## training
       logger.info("Start experiment in mode '%s'" % self._running_mode)
       if self._running_mode == 'train':
-        self.on_train(cfg, output_dir, model_dir)
+        if self._call_and_catch(self.on_train,
+                                cfg=cfg,
+                                output_dir=output_dir,
+                                model_dir=model_dir):
+          return
         logger.info("Finish training")
       elif self._running_mode == 'eval':
-        self.on_eval(cfg, output_dir)
+        if self._call_and_catch(self.on_eval, output_dir=output_dir):
+          return
         logger.info("Finish evaluating")
       elif self._running_mode == 'plot':
-        self.on_plot(cfg, output_dir)
+        if self._call_and_catch(self.on_plot, output_dir=output_dir):
+          return
         logger.info("Finish plotting")
       ## saving the model hash
       if os.path.exists(model_dir) and len(os.listdir(model_dir)) > 0:
@@ -760,6 +795,7 @@ class Experimenter():
           f.write(md5)
         logger.info("Saved model at path:%s  (MD5: %s)" % (model_dir, md5))
 
+  ####################### main
   def run(self, overrides=[], ncpu=None, **configs):
     r""" Extra options for controlling the experiment:
 
@@ -962,6 +998,9 @@ class Experimenter():
     except Exception as e:
       print("Error:", e)
     return self
+
+  def __call__(self, **kwargs):
+    return self.run(**kwargs)
 
   ####################### For evaluation
   def fetch_exp_cfg(self, conditions={}, require_model=True) -> dict:
