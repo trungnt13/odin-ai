@@ -6,6 +6,7 @@ import itertools
 
 import numpy as np
 from numba import njit
+from scipy.optimize import linear_sum_assignment
 
 
 @njit()
@@ -23,6 +24,10 @@ def diagonal_bruteforce_search(matrix):
 
   The function is acclerated by numba which decrease the duration by at least
   5 times.
+
+  Return:
+    indices : array
+      the columns order that give the maximum diagonal sum
 
   Reference:
     Heap's Algorithm: https://en.wikipedia.org/wiki/Heap%27s_algorithm
@@ -75,12 +80,41 @@ def diagonal_bruteforce_search(matrix):
   return best_perm
 
 
+def diagonal_linear_assignment(matrix):
+  r""" Solve the diagonal linear assignment problem using the
+  Hungarian algorithm, this version find the best permutation of columns
+  (instead of rows).
+
+  Return:
+    indices : array
+      the columns order that give the maximum diagonal sum
+  """
+  nrow, ncol = matrix.shape
+  if nrow > ncol:
+    matrix = matrix[:ncol]
+  indices = linear_sum_assignment(matrix.T, maximize=True)
+  if nrow < ncol:
+    indices = indices[0][np.argsort(indices[1])]
+    indices = indices.tolist()
+    for i in range(ncol):
+      if i not in indices:
+        indices.append(i)
+    indices = np.array(indices)
+  else:
+    indices = np.argsort(indices[1])
+  return indices
+
+
 def diagonal_greedy_search(matrix, nonzeros=False):
   r""" Find the best permutation of columns to maximize the summization of
   diagonal entries.
 
   This algorithm use greedy search looking for the maximum pair `(row, col)`
   for each alignment.
+
+  Return:
+    indices : array
+      the columns order that give the maximum diagonal sum
   """
   matrix = np.copy(matrix)
   best_perm = [i for i in range(matrix.shape[1])]
@@ -100,6 +134,10 @@ def diagonal_hillclimb_search(matrix):
 
   This is beam search with `beam_size=1`, this version could perform better
   than greedy search in some case.
+
+  Return:
+    indices : array
+      the columns order that give the maximum diagonal sum
   """
   return diagonal_beam_search(matrix, beam_size=1)
 
@@ -114,6 +152,9 @@ def diagonal_beam_search(matrix, beam_size=-1):
   The implementation is optimized for speed (not memory), the memory complexity
   is: `O(beam_size * matrix.shape[1])`
 
+  Return:
+    indices : array
+      the columns order that give the maximum diagonal sum
   """
   ncol = matrix.shape[1]
   min_dim = min(matrix.shape)

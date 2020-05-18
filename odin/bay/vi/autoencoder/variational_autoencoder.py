@@ -630,7 +630,7 @@ class VariationalAutoencoder(keras.Model):
     )
     return pX_Z, qZ_X
 
-  @tf.function(autograph=False)
+  # @tf.function(autograph=False)
   def marginal_log_prob(self,
                         inputs,
                         training=False,
@@ -671,6 +671,8 @@ class VariationalAutoencoder(keras.Model):
       llk.append(batch_llk)
     # kl-divergence (a.k.a rate)
     for qZ in tf.nest.flatten(qZ_X):
+      if isinstance(qZ, (tfd.Deterministic, tfd.VectorDeterministic)):
+        continue
       z = tf.convert_to_tensor(qZ)
       # the prior is injected into the distribution during the call method of
       # DenseDistribution, or modified during the encode method by setting
@@ -1072,9 +1074,9 @@ class VariationalAutoencoder(keras.Model):
       tf.print("[EarlyStop] Restore best weights from step %d" %
                best_weights[0])
       self.set_weights(best_weights[1])
-      if checkpoint is not None:
-        checkpoint_fn()
-        tf.print(f"[EarlyStop] Saved best checkpoint {str(checkpoint)}")
+    if checkpoint is not None:
+      checkpoint_fn()
+      tf.print(f"[EarlyStop] Saved best checkpoint {str(checkpoint)}")
     return self
 
   def plot_learning_curves(self,
@@ -1083,6 +1085,7 @@ class VariationalAutoencoder(keras.Model):
                            show_validation=True,
                            dpi=100,
                            title=None):
+    r""" Plot the learning curves on train and validation sets. """
     assert self.trainer is not None, \
       "fit method must be called before plotting learning curves"
     self.trainer.plot_learning_curves(path=path,

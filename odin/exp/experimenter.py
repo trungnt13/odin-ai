@@ -18,6 +18,7 @@ from copy import deepcopy
 from io import StringIO
 from numbers import Number
 
+import numpy as np
 import tensorflow as tf
 from pandas import DataFrame
 from six import string_types
@@ -50,30 +51,6 @@ except ImportError as e:
 # Helpers
 # ===========================================================================
 LOGGER = logging.getLogger("Experimenter")
-_APP_HELP = """
-${hydra.help.header}
-
--ncpu (number of process for multirun)
-
---reset (remove all exists experiments' results)
-
-== Configuration groups ==
-Compose your configuration from those groups (group=option)
-
-$APP_CONFIG_GROUPS
-
-== Arguments help ==
-
-%s
-
-
-== Config ==
-Override anything in the config (foo.bar=value)
-
-$CONFIG
-
-"""
-
 YAML_REGEX = re.compile(r"\w+: \w+")
 
 
@@ -318,9 +295,9 @@ class Experimenter():
   Database:
     List of default tables and columns:
     - 'run' (store the called running script and its arguments)
-        path, date, overrides, strict, ncpu, multirun, timestamp
+        path, date, overrides, strict, ncpu, multirun
     - 'config' (store the configuration of each run)
-        hash, ds, model, timestamp
+        hash, ds, model
 
   Example
   ```
@@ -375,6 +352,7 @@ class Experimenter():
     ### running configuration
     self._db = None
     self._running_configs = None
+    self._running_hash = None
     self._running_mode = 'train'
     self._override_mode = False
 
@@ -595,10 +573,13 @@ class Experimenter():
   def save_scores(self, table, override=False, **scores):
     r""" Save scores to the SQLite database, the hash key (primary key) is
     determined by the running configuration. """
-    cfg = self._running_configs
-    if cfg is None:
-      cfg = self._configs
-    hash_key = self.hash_config(cfg, self.exclude_keys)
+    if self._running_hash:
+      hash_key = self._running_hash
+    else:
+      cfg = self._running_configs
+      if cfg is None:
+        cfg = self._configs
+      hash_key = self.hash_config(cfg, self.exclude_keys)
     self.db.write(table=table,
                   unique='hash',
                   override=override,
@@ -616,11 +597,15 @@ class Experimenter():
     return self.db.select(query)
 
   def get_models(self, conditions="", load_models=False):
-    r""" Select all model in the database `exp.db` given the conditions """
+    r""" Select all model in the database `exp.db` given the conditions
+
+    Return:
+      list of Dictionary
+    """
     regex = re.compile(r'\w+[=].+')
     if isinstance(conditions, string_types):
       conditions = conditions.split(' ')
-    arguments = [i for i in conditions if '-' != i[0] and '.' not in i]
+    arguments = [i for i in conditions if '-' != i[0]]
     conditions = []
     expect_condition = True
     ## convert condition to where statement
@@ -640,9 +625,9 @@ class Experimenter():
             v = "'%s'" % v
           sql_vals.append(v)
         if len(sql_vals) > 1:
-          conditions.append(f"{key} in ({','.join(sql_vals)})")
+          conditions.append(f"config.'{key}' in ({','.join(sql_vals)})")
         else:
-          conditions.append(f"{key}={sql_vals[0]}")
+          conditions.append(f"config.'{key}'={sql_vals[0]}")
       else:  # expect and, or ... connector here
         expect_condition = True
         conditions.append(ov)
@@ -655,8 +640,10 @@ class Experimenter():
     ## select only available model
     _path = lambda row: os.path.join(self.save_path, 'exp_%s' % row[0], 'model')
     configs = [
-        row[:-1]
-        for row in configs  # ignore the timestamp
+        # all values must be primitive
+        [i.tolist() if isinstance(i, np.ndarray) else i
+         for i in row]
+        for row in configs
         if os.path.exists(_path(row)) and os.listdir(_path(row))
     ]
     # create the model
@@ -684,11 +671,6 @@ class Experimenter():
     return models
 
   ####################### Base methods
-  @property
-  def args_help(self) -> dict:
-    r""" Return a mapping argument name to list of allowed values """
-    return {}
-
   def on_load_data(self, cfg: DictConfig):
     print("LOAD DATA!")
 
@@ -733,6 +715,7 @@ class Experimenter():
                     hash=self._running_hash,
                     method=method_name,
                     traceback=text,
+                    config=self._running_configs.pretty(),
                     datetime=get_formatted_datetime(only_number=False))
       return True
 
@@ -787,11 +770,11 @@ class Experimenter():
           return
         logger.info("Finish training")
       elif self._running_mode == 'eval':
-        if self._call_and_catch(self.on_eval, output_dir=output_dir):
+        if self._call_and_catch(self.on_eval, cfg=cfg, output_dir=output_dir):
           return
         logger.info("Finish evaluating")
       elif self._running_mode == 'plot':
-        if self._call_and_catch(self.on_plot, output_dir=output_dir):
+        if self._call_and_catch(self.on_plot, cfg=cfg, output_dir=output_dir):
           return
         logger.info("Finish plotting")
       ## saving the model hash
@@ -799,7 +782,7 @@ class Experimenter():
         md5 = md5_folder(model_dir)
         with open(md5_path, 'w') as f:
           f.write(md5)
-        logger.info("Saved model at path:%s  (MD5: %s)" % (model_dir, md5))
+        logger.info("The model stored at path:%s  (MD5: %s)" % (model_dir, md5))
 
   ####################### main
   def run(self, overrides=[], ncpu=None, **configs):
@@ -905,12 +888,14 @@ class Experimenter():
       kw = defaultdict(list)
       for cfg in configs:
         for k, v in cfg.items():
-          kw[k].append(v)
-      # convert the dictionary config to overrides
-      def_configs = self.configs
+          args = kw[k]
+          if all(i != v for i in args):
+            args.append(v)
+      # convert the dictionary config to overrides, need to flatten the config
+      # here to ensure the same key appeared in the database and in def_configs
+      def_configs = flatten_config(self.configs)
       args = []
       for k, v in kw.items():
-        v = list(set(v))
         if k in def_configs and (len(v) > 1 or def_configs[k] != v[0]):
           args.append('%s=%s' % (k, ','.join([str(i) for i in v])))
       # remove old overrides and assign the new ones
@@ -922,11 +907,6 @@ class Experimenter():
       warnings.warn(
           "Multiple overrides are provided but multirun mode not enable, "
           "-m for enabling multirun, %s" % str(sys.argv))
-    # generate app help
-    hlp = '\n\n'.join([
-        "%s - %s" % (str(key), ', '.join(sorted(as_tuple(val, t=str))))
-        for key, val in dict(self.args_help).items()
-    ])
 
     def _run(self, config_file, task_function, overrides):
       if is_multirun:
@@ -971,20 +951,11 @@ class Experimenter():
       # append the new override
       if len(overrides) > 0:
         sys.argv += overrides
-      # help for arguments
-      if '--help' in sys.argv:
-        # sys.argv.append("hydra.help.header='**** %s ****'" %
-        #                 self.__class__.__name__)
-        # sys.argv.append("hydra.help.template=%s" % (_APP_HELP % hlp))
-        # TODO : fix bug here
-        pass
       # append the hydra log path
       job_fmt = "/${now:%d%b%y_%H%M%S}"
       sys.argv.insert(1, "hydra.run.dir=%s" % self.get_hydra_path() + job_fmt)
       sys.argv.insert(1, "hydra.sweep.dir=%s" % self.get_hydra_path() + job_fmt)
       sys.argv.insert(1, "hydra.sweep.subdir=${hydra.job.id}")
-      # sys.argv.append(r"hydra.job_logging.formatters.simple.format=" +
-      #                 r"[\%(asctime)s][\%(name)s][\%(levelname)s] - \%(message)s")
       args_parser = get_args_parser()
       run_hydra(
           args_parser=args_parser,
@@ -1040,12 +1011,16 @@ class Experimenter():
           filter(lambda x: os.path.isdir(os.path.join(x, 'model')), exp_path))
     ret = {}
     for path in exp_path:
-      cfg = sorted([
-          os.path.join(path, i) for i in os.listdir(path) if 'configs_' == i[:8]
-      ],
-                   key=lambda x: get_formatted_datetime(
-                       only_number=False,
-                       convert_text=x.split('_')[-1].split('.')[0]).timestamp())
+      cfg = sorted(
+          [
+              os.path.join(path, i)
+              for i in os.listdir(path)
+              if 'configs_' == i[:8]
+          ],
+          key=lambda x: get_formatted_datetime(only_number=False,
+                                               convert_text=x.split('_')[-1].
+                                               split('.')[0]).timestamp(),
+      )
       if len(cfg) > 0:
         if len(conditions) > 0:
           last_cfg = cfg[-1]  # lastest config
@@ -1128,8 +1103,4 @@ class Experimenter():
         f.write(df.to_html())
       with open(os.path.join(self._save_path, 'summary.txt'), 'w') as f:
         f.write(df.to_string(index=False))
-      try:
-        df.to_excel(os.path.join(self._save_path, 'summary.xlsx'))
-      except ModuleNotFoundError as e:
-        print("Cannot save summary to excel file: %s" % str(e))
     return df

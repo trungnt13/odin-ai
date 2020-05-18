@@ -7,7 +7,6 @@ import sqlite3
 import warnings
 from collections import OrderedDict
 from contextlib import contextmanager
-from datetime import datetime
 from io import BytesIO
 from numbers import Number
 
@@ -60,7 +59,11 @@ def _data(x):
 def _parse(x):
   if isinstance(x, bytes):
     b = BytesIO(x)
-    return np.load(b)['x']
+    x = np.load(b, allow_pickle=True)['x']
+    if x.dtype == np.object:
+      x = x.tolist()
+    elif x.shape == (0,):
+      x = []
   return x
 
 
@@ -157,20 +160,17 @@ class ScoreBoard:
     table = str(table).strip().lower()
     with self.cursor() as c:
       cols = c.execute(f"""PRAGMA table_info({table});""").fetchall()
-      cols = [i[1] for i in cols[:-1]]
+      cols = [i[1] for i in cols]
     return cols
 
-  def get_table(self, table, where="", distinct=False, newest_first=True):
-    r""" Get all rows from given table, exclude the column 'timestamp'
+  def get_table(self, table, where="", distinct=False):
+    r""" Get all rows from given table
 
     Example
     ```
     get_table("t1", where="a=1 and b=2", distinct=True)
     ```
     """
-    order = ""
-    if newest_first:
-      order = "ORDER BY timestamp DESC"
     if distinct:
       distinct = "DISTINCT"
     else:
@@ -178,11 +178,10 @@ class ScoreBoard:
     where = str(where)
     if len(where) > 0 and 'where' not in where.lower():
       where = "WHERE " + where
-    # remove the timestamp
     table = str(table).strip().lower()
     return [
-        row[:-1] for row in self.select(
-            f"SELECT {distinct} * FROM {table} {where} {order}")
+        row for row in self.select(
+            f"SELECT {distinct} * FROM {table} {where};")
     ]
 
   def select(self,
@@ -211,10 +210,6 @@ class ScoreBoard:
       t1.a, t2.g
     HAVING t1.a=1;
     ```
-
-    Note:
-      All table has the 'timestamp' column, select * will return the timestamp
-      as well. For selecting the newest inserted rows, `ORDER BY timestamp desc`
 
     Example:
     ```
@@ -279,9 +274,8 @@ class ScoreBoard:
         unique = f", UNIQUE ('{unique}')"
       elif isinstance(unique, (tuple, list)):  # list of columns
         unique = ", UNIQUE (%s)" % ','.join([f"'{str(i)}'" for i in unique])
-      else:  # use all columns for unique (no timestamp)
-        unique = ", UNIQUE (%s)" % ','.join(
-            [f"'{str(i)}'" for i in keys_name[:-1]])
+      else:  # use all columns for unique
+        unique = ", UNIQUE (%s)" % ','.join([f"'{str(i)}'" for i in keys_name])
     else:
       unique = ""
     query = f"""CREATE TABLE IF NOT EXISTS '{name}' ({keys}{unique});"""
@@ -297,7 +291,6 @@ class ScoreBoard:
       return
     # make sure table exist
     row = {str(k).strip().lower(): v for k, v in row.items()}
-    row['timestamp'] = datetime.now().timestamp()
     self._create_table(_cursor, table, row, unique)
     table_name = str(table).strip().lower()
     new_cols = list(row.keys())
@@ -305,11 +298,16 @@ class ScoreBoard:
     fmt = ','.join(['?'] * len(row))
     # make sure all column exist
     exist_cols = self.get_column_names(table)
-    alter_cols = [k for k in new_cols[:-1] if k not in exist_cols]
+    alter_cols = [k for k in new_cols if k not in exist_cols]
     if len(alter_cols) > 0:
       for c in alter_cols:
         t = _to_sqltype(row[c])
-        _cursor.execute(f"ALTER TABLE '{table_name}' ADD COLUMN '{c}' {t};")
+        try:
+          query = f"ALTER TABLE '{table_name}' ADD COLUMN '{c}' {t};"
+          _cursor.execute(query)
+        except sqlite3.OperationalError as e:
+          print(query)
+          raise e
     # prepare the query
     write_mode = "REPLACE" if override else "INSERT"
     query = f"""{write_mode} INTO '{table_name}' ({cols}) VALUES({fmt});"""
