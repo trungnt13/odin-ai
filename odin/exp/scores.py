@@ -71,6 +71,8 @@ class ScoreBoard:
   r""" Using SQLite database for storing the scores and configuration of
   multiple experiments.
 
+  Note: this object is not optimized for high-frequency inserting.
+
   Note:
     it might be easier to just use NoSQL, however, we are not dealing with
     performance critical app so SQL still a more intuitive approach.
@@ -214,7 +216,6 @@ class ScoreBoard:
       All table has the 'timestamp' column, select * will return the timestamp
       as well. For selecting the newest inserted rows, `ORDER BY timestamp desc`
 
-
     Example:
     ```
     select(table='t1', keys='t1.c', where="", join="INNER JOIN t2 on t1.a=t2.a")
@@ -283,7 +284,7 @@ class ScoreBoard:
             [f"'{str(i)}'" for i in keys_name[:-1]])
     else:
       unique = ""
-    query = f"""CREATE TABLE IF NOT EXISTS {name} ({keys}{unique});"""
+    query = f"""CREATE TABLE IF NOT EXISTS '{name}' ({keys}{unique});"""
     try:
       _cursor.execute(query)
     except sqlite3.OperationalError as e:
@@ -294,13 +295,24 @@ class ScoreBoard:
     if self.read_only:
       warnings.warn("Cannot write to table: %s %s" % (table, str(row)))
       return
+    # make sure table exist
+    row = {str(k).strip().lower(): v for k, v in row.items()}
     row['timestamp'] = datetime.now().timestamp()
     self._create_table(_cursor, table, row, unique)
     table_name = str(table).strip().lower()
-    cols = ",".join([f"'{str(k).strip().lower()}'" for k in row.keys()])
+    new_cols = list(row.keys())
+    cols = ",".join([f"'{k}'" for k in new_cols])
     fmt = ','.join(['?'] * len(row))
+    # make sure all column exist
+    exist_cols = self.get_column_names(table)
+    alter_cols = [k for k in new_cols[:-1] if k not in exist_cols]
+    if len(alter_cols) > 0:
+      for c in alter_cols:
+        t = _to_sqltype(row[c])
+        _cursor.execute(f"ALTER TABLE '{table_name}' ADD COLUMN '{c}' {t};")
+    # prepare the query
     write_mode = "REPLACE" if override else "INSERT"
-    query = f"""{write_mode} INTO {table_name} ({cols}) VALUES({fmt});"""
+    query = f"""{write_mode} INTO '{table_name}' ({cols}) VALUES({fmt});"""
     try:
       _cursor.execute(query, [_data(v) for v in row.values()])
     except sqlite3.IntegrityError as e:

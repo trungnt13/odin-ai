@@ -124,27 +124,32 @@ def _prepare_conditions(conditions={}):
   return conditions
 
 
-def flatten_config(cfg: dict, base='') -> dict:
+def flatten_config(cfg: dict, base='', max_depth=-1) -> dict:
   r""" Flatten a dictionary and its sub-dictionary into a single dictionary
   by concatenating the key with '.' character """
   c = {}
-  for k, v in cfg.items():
+  # use stack for DFS
+  stack = [(0, base, k, v) for k, v in cfg.items()]
+  while len(stack) > 0:
+    # depth, base, key, value
+    d, b, k, v = stack.pop()
+    # name
     if '.' in k:
       raise KeyError(f"Invalid key {k} contain '.' character")
-    if len(base) > 0:
-      k = base + '.' + k
+    if len(b) > 0:
+      k = b + '.' + k
+    # pre-processing
     if isinstance(v, ListConfig):
       v = list(v)
     elif isinstance(v, DictConfig):
       v = dict(v)
-    if isinstance(v, dict):
-      for i, j in flatten_config(v, base=k).items():
-        if i in c:
-          raise KeyError(f"Duplicated key={i}, the config is {cfg}")
-        c[i] = j
+    # going deeper
+    if isinstance(v, dict) and len(v) > 0 and (max_depth < 0 or
+                                               d < max_depth - 1):
+      for i, j in v.items():
+        stack.append((d + 1, k, i, j))
     else:
-      if k in c:
-        raise KeyError(f"Duplicated key={k}, the config is {cfg}")
+      assert k not in c, (f"Duplicated key={k}, the config is {cfg}")
       c[k] = v
   return c
 
@@ -397,7 +402,7 @@ class Experimenter():
     """
     assert isinstance(cfg, (DictConfig, dict))
     cfg = Experimenter.remove_keys(cfg, copy=True, keys=exclude_keys)
-    cfg = flatten_config(cfg)
+    cfg = flatten_config(cfg, base='', max_depth=-1)
     return md5_checksum(cfg)[:self.hash_length]
 
   ####################### Static helpers
@@ -723,6 +728,7 @@ class Experimenter():
                                 chain=True)
       text.seek(0)
       text = text.read().strip()
+      LOGGER.error("\n" + text)
       self.db.write(table='error',
                     hash=self._running_hash,
                     method=method_name,
@@ -737,7 +743,7 @@ class Experimenter():
     self.db.write(table='config',
                   unique='hash',
                   hash=hash_key,
-                  config=str(flatten_config(cfg)))
+                  **flatten_config(cfg))
     self._running_configs = cfg
     self._running_hash = hash_key
     # the cfg is dispatched by hydra.run_job, we couldn't change anything here

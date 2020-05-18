@@ -996,24 +996,18 @@ class VariationalAutoencoder(keras.Model):
     callback_functions = [i for i in tf.nest.flatten(callback) if callable(i)]
     earlystop_patience = int(earlystop_patience)
     patience = [earlystop_patience]
-    best_weights = [0, None, None]
+    best_weights = [int(self.step.numpy()), self.get_weights()]
 
     ## run early stop and callback
     def _callback():
       for f in callback_functions:
         f()
-      saved_weights = False
       # terminate on nan
       if terminate_on_nan:
         if (np.isnan(trainer.train_loss[-1]) or
             np.isinf(trainer.train_loss[-1])):
           tf.print("[EarlyStop] Terminate on NaN")
-          best_weights[2] = Trainer.SIGNAL_TERMINATE
           return Trainer.SIGNAL_TERMINATE
-        elif not saved_weights:
-          best_weights[0] = self.step.numpy()
-          best_weights[1] = self.get_weights()
-          saved_weights = True
       # early stopping
       if earlystop_patience > 0:
         if valid is not None:
@@ -1030,11 +1024,9 @@ class VariationalAutoencoder(keras.Model):
         if signal == Trainer.SIGNAL_BEST:
           patience[0] = min(patience[0] + 1. / earlystop_patience,
                             earlystop_patience)
-          if not saved_weights:
-            best_weights[0] = self.step.numpy()
-            best_weights[1] = self.get_weights()
-            best_weights[2] = Trainer.SIGNAL_TERMINATE
-            saved_weights = True
+          best_weights[0] = int(self.step.numpy())
+          best_weights[1] = self.get_weights()
+          tf.print(f"[EarlyStop] Saved best weights step #{best_weights[0]}")
         elif signal == Trainer.SIGNAL_TERMINATE:
           patience[0] -= 1
           tf.print(
@@ -1067,7 +1059,7 @@ class VariationalAutoencoder(keras.Model):
         callback=_callback,
     )
     # restore best weights
-    if best_weights[0] > 0 and best_weights[2] is not None:
+    if best_weights[0] > 0:
       tf.print("[EarlyStop] Restore best weights from step %d" %
                best_weights[0])
       self.set_weights(best_weights[1])
