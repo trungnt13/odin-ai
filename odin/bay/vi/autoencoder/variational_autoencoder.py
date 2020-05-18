@@ -997,6 +997,13 @@ class VariationalAutoencoder(keras.Model):
     earlystop_patience = int(earlystop_patience)
     patience = [earlystop_patience]
     best_weights = [int(self.step.numpy()), self.get_weights()]
+    if checkpoint is not None:
+      assert isinstance(checkpoint, string_types) or callable(checkpoint), \
+        ("checkpoint can be path for saving weights or callable, "
+         f"but given: {str(type(checkpoint))}")
+    checkpoint_fn = lambda: (self.save_weights(str(checkpoint), overwrite=True)
+                             if isinstance(checkpoint, string_types) else
+                             checkpoint())
 
     ## run early stop and callback
     def _callback():
@@ -1027,11 +1034,13 @@ class VariationalAutoencoder(keras.Model):
           best_weights[0] = int(self.step.numpy())
           best_weights[1] = self.get_weights()
           tf.print(f"[EarlyStop] Saved best weights step #{best_weights[0]}")
+          if checkpoint is not None:
+            checkpoint_fn()
+            tf.print(f"[EarlyStop] Saved checkpoint {str(checkpoint)}")
         elif signal == Trainer.SIGNAL_TERMINATE:
           patience[0] -= 1
-          tf.print(
-              f"[EarlyStop] Patience decreased: {patience[0]:.2f}/{earlystop_patience}"
-          )
+          tf.print("[EarlyStop] Patience decreased: "
+                   f"{patience[0]:.2f}/{earlystop_patience}")
           if patience[0] >= 0:
             signal = None
         return signal
@@ -1063,6 +1072,9 @@ class VariationalAutoencoder(keras.Model):
       tf.print("[EarlyStop] Restore best weights from step %d" %
                best_weights[0])
       self.set_weights(best_weights[1])
+      if checkpoint is not None:
+        checkpoint_fn()
+        tf.print(f"[EarlyStop] Saved best checkpoint {str(checkpoint)}")
     return self
 
   def plot_learning_curves(self,
