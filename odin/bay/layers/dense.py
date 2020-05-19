@@ -12,13 +12,9 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -99,7 +95,8 @@ class DenseDistribution(Dense):
                projection=True,
                **kwargs):
     assert prior is None or isinstance(prior, Distribution), \
-      "prior can be None or instance of tensorflow_probability.Distribution"
+      ("prior can only be None or instance of tensorflow_probability.Distribution"
+       f",  but given: {prior}-{type(prior)}")
     # duplicated event_shape or event_size in posterior_kwargs
     posterior_kwargs = dict(posterior_kwargs)
     if 'event_shape' in posterior_kwargs:

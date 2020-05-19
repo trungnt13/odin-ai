@@ -96,6 +96,12 @@ _dist_mapping = multikeysdict({
     # ====== Discrete distribution ====== #
     'onehot': (obl.OneHotCategoricalLayer, tfd.OneHotCategorical),
     ('cat', 'categorical', 'discrete'): (obl.CategoricalLayer, tfd.Categorical),
+    # binomial and multinomial (aka cat)
+    'binomial': (obl.BinomialLayer, tfd.Binomial),
+    # 'betabinomial': (obl.BetaBinomialLayer, tfd.Binomial),
+    'multinomial': (obl.MultinomialLayer, tfd.Multinomial),
+    'dirimultinomial':
+        (obl.DirichletMultinomialLayer, tfd.DirichletMultinomial),
     # ====== Gumbel ====== #
     ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),
     ('zibernoulli', 'zeroinflatedbernoulli'):

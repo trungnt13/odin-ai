@@ -22,7 +22,7 @@ __all__ = [
     'ZINegativeBinomialLayer',
     'ZIPoissonLayer',
     'MultinomialLayer',
-    'DirichletMultinomial',
+    'DirichletMultinomialLayer',
     'BinomialLayer',
 ]
 
@@ -373,10 +373,7 @@ class ZINegativeBinomialLayer(DistributionLambda):
                              dtype=tf.int32),
         tensor_name='event_shape',
     )
-    output_shape = tf.concat(
-        [tf.shape(input=params)[:-1], event_shape],
-        axis=0,
-    )
+    output_shape = tf.concat((tf.shape(input=params)[:-1], event_shape), axis=0)
     if disp is None:  # full dispersion
       if rate is None:
         total_count, logits, rate = tf.split(params, 3, axis=-1)
@@ -488,10 +485,7 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
                              dtype=tf.int32),
         tensor_name='event_shape',
     )
-    output_shape = tf.concat(
-        [tf.shape(input=params)[:-1], event_shape],
-        axis=0,
-    )
+    output_shape = tf.concat((tf.shape(input=params)[:-1], event_shape), axis=0)
     ### splitting the parameters
     if disp is None:  # full dispersion
       if rate is None:
@@ -570,7 +564,7 @@ class MultinomialLayer(tfl.DistributionLambda):
     return _event_size(event_shape, name=name) + 1.
 
 
-class DirichletMultinomial(tfl.DistributionLambda):
+class DirichletMultinomialLayer(tfl.DistributionLambda):
   r""" Dirichlet-Multinomial compound distribution.
 
   K=2 equal to Beta-Binomial distribution
@@ -584,7 +578,7 @@ class DirichletMultinomial(tfl.DistributionLambda):
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False):
     super().__init__(
-        lambda t: DirichletMultinomial.
+        lambda t: DirichletMultinomialLayer.
         new(t, event_shape, count_activation, alpha_activation, clip_for_stable,
             validate_args), convert_to_tensor_fn)
 
@@ -595,7 +589,7 @@ class DirichletMultinomial(tfl.DistributionLambda):
           alpha_activation=tf.nn.softplus,
           clip_for_stable=True,
           validate_args=False,
-          name='DirichletMultinomial'):
+          name='DirichletMultinomialLayer'):
     r"""Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     count_activation = parse_activation(count_activation, 'tf')
@@ -610,7 +604,7 @@ class DirichletMultinomial(tfl.DistributionLambda):
                                     name=name)
 
   @staticmethod
-  def params_size(event_shape=(), name='DirichletMultinomial_params_size'):
+  def params_size(event_shape=(), name='DirichletMultinomialLayer_params_size'):
     r"""The number of `params` needed to create a single distribution."""
     return _event_size(event_shape, name=name) + 1.
 
@@ -635,6 +629,7 @@ class BinomialLayer(tfl.DistributionLambda):
           validate_args=False,
           name='BinomialLayer'):
     r"""Create the distribution instance from a `params` vector."""
+    count_activation = parse_activation(count_activation, 'tf')
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(
         tf.convert_to_tensor(value=event_shape,
@@ -642,8 +637,10 @@ class BinomialLayer(tfl.DistributionLambda):
                              dtype=tf.int32),
         tensor_name='event_shape',
     )
-    count_activation = parse_activation(count_activation, 'tf')
+    output_shape = tf.concat((tf.shape(params)[:-1], event_shape), axis=0)
     total_count, logits = tf.split(params, 2, axis=-1)
+    total_count = tf.reshape(total_count, output_shape)
+    logits = tf.reshape(logits, output_shape)
     return tfd.Independent(
         tfd.Binomial(total_count=count_activation(total_count),
                      logits=logits,

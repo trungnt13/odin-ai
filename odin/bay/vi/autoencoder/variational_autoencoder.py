@@ -172,9 +172,13 @@ def _validate_implementation(cls):
   call_args = ['inputs', 'training', 'mask', 'sample_shape']
   encode_args = ['inputs', 'training', 'mask', 'sample_shape']
   decode_args = ['latents', 'training', 'mask', 'sample_shape']
-  for args, method in [(elbo_args, cls._elbo), (elbo_args, cls.elbo),
-                       (call_args, cls.call), (encode_args, cls.encode),
-                       (decode_args, cls.decode)]:
+  for args, method in [
+      (elbo_args, cls._elbo),
+      (elbo_args, cls.elbo),
+      (call_args, cls.call),
+      (encode_args, cls.encode),
+      (decode_args, cls.decode),
+  ]:
     spec = inspect.getfullargspec(method)
     assert all(a in spec.args for a in args) and spec.varkw is not None,\
       (f"Invalid implementation of VariationalAutoencoder, class {cls.__name__} "
@@ -307,7 +311,7 @@ class VariationalAutoencoder(keras.Model):
   def __init__(
       self,
       encoder: Union[Layer, NetworkConfig] = NetworkConfig(),
-      decoder: Union[Layer, NetworkConfig] = None,
+      decoder: Union[Layer, NetworkConfig] = NetworkConfig(),
       outputs: Union[Layer, RV] = RV(64, 'gaus', projection=True, name="Input"),
       latents: Union[Layer, RV] = RV(10, 'diag', projection=True,
                                      name="Latent"),
@@ -357,7 +361,10 @@ class VariationalAutoencoder(keras.Model):
       # assign the parse encoder
       all_encoder[i] = encoder
       if decoder is not None:
-        all_decoder.append(decoder)
+        if i < len(all_decoder):
+          all_decoder[i] = decoder
+        else:
+          all_decoder.append(decoder)
     ### check latent and input distribution
     latents = tf.nest.flatten(latents)
     all_latents = [

@@ -128,8 +128,8 @@ class MultiheadVAE(MultitaskVAE):
                      outputs=outputs,
                      labels=[],
                      **kwargs)
-    self.labels = tf.nest.flatten(labels)
     # create and build the semi-supervised output layers
+    self.labels = tf.nest.flatten(labels)
     z = keras.Input(shape=self.latent_shape[1:], batch_size=None)
     semi_layers = [
         l.create_posterior(self.latent_shape[1:]) for l in self.labels

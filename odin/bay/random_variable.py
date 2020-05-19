@@ -60,7 +60,9 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   if layer == obl.GaussianLayer:
     prior = obd.Independent(
         obd.Normal(**_kwargs(loc=tf.zeros(shape=event_shape),
-                             scale=tf.ones(shape=event_shape))), 1)
+                             scale=tf.ones(shape=event_shape))),
+        reinterpreted_batch_ndims=1,
+    )
   ## Multivariate Normal
   elif issubclass(layer, obl.MultivariateNormalLayer):
     cov = layer._partial_kwargs['covariance']
@@ -82,7 +84,9 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   elif layer == obl.LogNormalLayer:
     prior = obd.Independent(
         obd.LogNormal(**_kwargs(loc=tf.zeros(shape=event_shape),
-                                scale=tf.ones(shape=event_shape))), 1)
+                                scale=tf.ones(shape=event_shape))),
+        reinterpreted_batch_ndims=1,
+    )
   ## mixture
   elif issubclass(layer, obl.MixtureGaussianLayer):
     if hasattr(layer, '_partial_kwargs'):
@@ -97,7 +101,9 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
     elif cov == 'none':
       scale_shape = [n_components, event_size]
       fn = lambda l, s: obd.Independent(
-          obd.Normal(loc=l, scale=tf.math.softplus(s)), 1)
+          obd.Normal(loc=l, scale=tf.math.softplus(s)),
+          reinterpreted_batch_ndims=1,
+      )
     elif cov in ('full', 'tril'):
       scale_shape = [n_components, event_size * (event_size + 1) // 2]
       fn = lambda l, s: obd.MultivariateNormalTriL(
@@ -124,7 +130,9 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   elif dist == obd.Bernoulli:
     prior = obd.Independent(
         obd.Bernoulli(**_kwargs(logits=np.zeros(event_shape)),
-                      dtype=tf.float32)), len(event_shape)
+                      dtype=tf.float32),
+        reinterpreted_batch_ndims=len(event_shape),
+    )
   ## other
   return prior
 

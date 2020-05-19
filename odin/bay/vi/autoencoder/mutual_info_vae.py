@@ -29,9 +29,10 @@ class MutualInfoVAE(BetaVAE):
   Arguments:
     resample_zprime : a Boolean. if True, use samples from q(z|x) for z_prime
       instead of sampling z_prime from prior.
-    kl_code : a Boolean (default: True).
-      If False, only maximize the mutual information of the code q(c|X) and
-      the input p(X|z, c), this is the original configuration in the paper.
+    kl_factors : a Boolean (default: True).
+      If False, only maximize the mutual information of the factors code
+      `q(c|X)` and the input `p(X|z, c)`, this is the original configuration
+      in the paper.
       If True, encourage factorized code by pushing the KL divergence to the
       prior (multivariate diagonal normal).
 
@@ -48,21 +49,21 @@ class MutualInfoVAE(BetaVAE):
                beta=1.0,
                gamma=1.0,
                latents=RV(5, 'diag', True, "Latents"),
-               code=RV(5, 'diag', True, 'MutualCodes'),
+               factors=RV(5, 'diag', True, 'Factors'),
                resample_zprime=False,
-               kl_code=True,
+               kl_factors=True,
                **kwargs):
     latents = tf.nest.flatten(latents)
-    latents.append(code)
-    self.is_binary_code = code.is_binary
+    latents.append(factors)
+    self.is_binary_factors = factors.is_binary
     super().__init__(beta=beta,
                      latents=latents,
                      reduce_latent='concat',
                      **kwargs)
-    self.code = self.latent_layers[-1]
+    self.factors = self.latent_layers[-1]
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype)
     self.resample_zprime = bool(resample_zprime)
-    self.kl_code = bool(kl_code)
+    self.kl_factors = bool(kl_factors)
 
   def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training, **kwargs):
@@ -70,7 +71,7 @@ class MutualInfoVAE(BetaVAE):
     # only maximize the mutual information of q(c|X)
     llk, div = super()._elbo(inputs,
                              pX_Z,
-                             qZ_X[:-1] if not self.kl_code else qZ_X,
+                             qZ_X[:-1] if not self.kl_factors else qZ_X,
                              analytic=analytic,
                              reverse=reverse,
                              sample_shape=sample_shape,
@@ -92,7 +93,7 @@ class MutualInfoVAE(BetaVAE):
     # mutual information code
     qC_X = qZ_X[-1]
     c_prime = qC_X.KL_divergence.prior.sample(batch_shape)
-    if self.is_binary_code:
+    if self.is_binary_factors:
       c_prime = _clip_binary(c_prime)
     # decoding
     samples = tf.concat([z_prime, c_prime], axis=-1)
@@ -137,7 +138,7 @@ class SemiInfoVAE(MutualInfoVAE):
     llk, div = super(MutualInfoVAE,
                      self)._elbo(inputs,
                                  pX_Z,
-                                 qZ_X[:-1] if not self.kl_code else qZ_X,
+                                 qZ_X[:-1] if not self.kl_factors else qZ_X,
                                  analytic=analytic,
                                  reverse=reverse,
                                  sample_shape=sample_shape,
@@ -159,7 +160,7 @@ class SemiInfoVAE(MutualInfoVAE):
     # mutual information code
     qC_X = qZ_X[-1]
     c_prime = qC_X.KL_divergence.prior.sample(batch_shape)
-    if self.is_binary_code:
+    if self.is_binary_factors:
       c_prime = _clip_binary(c_prime)
     # decoding
     samples = tf.concat([z_prime, c_prime], axis=-1)
@@ -168,7 +169,7 @@ class SemiInfoVAE(MutualInfoVAE):
     ## mutual information (we want to maximize this, hence, add it to the llk)
     if y is not None:  # label is provided
       # clip the value for RelaxedSigmoid distribution otherwise NaN
-      if self.is_binary_code:
+      if self.is_binary_factors:
         y = _clip_binary(y)
       ss = qC_Xprime.log_prob(y)
       if mask is not None:

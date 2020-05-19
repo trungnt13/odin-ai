@@ -64,13 +64,18 @@ class BernoulliLayer(tfl.DistributionLambda):
         [tf.shape(input=params)[:-1], event_shape],
         axis=0,
     )
-    return tfd.Independent(
+    dist = tfd.Independent(
         tfd.Bernoulli(logits=tf.reshape(params, new_shape),
                       dtype=dtype or params.dtype.base_dtype,
                       validate_args=validate_args),
         reinterpreted_batch_ndims=tf.size(input=event_shape),
         name=name,
     )
+    dist._logits = dist.distribution._logits  # pylint: disable=protected-access
+    dist._probs = dist.distribution._probs  # pylint: disable=protected-access
+    dist.logits = bernoulli_lib.Bernoulli.logits
+    dist.probs = bernoulli_lib.Bernoulli.probs
+    return dist
 
   @staticmethod
   def params_size(event_shape=(), name='BernoulliLayer_params_size'):

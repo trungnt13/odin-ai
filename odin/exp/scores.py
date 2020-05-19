@@ -317,7 +317,8 @@ class ScoreBoard:
       _cursor.execute(query, [_data(v) for v in row.values()])
     except sqlite3.IntegrityError as e:
       if unique:
-        warnings.warn(f"Duplicated row for unique values: {row}")
+        pass
+        # warnings.warn(f"Duplicated row for unique values: {row}")
       else:
         raise e
     except sqlite3.OperationalError as e:
