@@ -570,7 +570,7 @@ class Experimenter():
     rows = self.select(query)
     return {r[0]: r[1] if len(r) == 2 else r[1:] for r in rows}
 
-  def save_scores(self, table, override=False, **scores):
+  def write_scores(self, table, replace=False, **scores):
     r""" Save scores to the SQLite database, the hash key (primary key) is
     determined by the running configuration. """
     if self._running_hash:
@@ -582,7 +582,7 @@ class Experimenter():
       hash_key = self.hash_config(cfg, self.exclude_keys)
     self.db.write(table=table,
                   unique='hash',
-                  override=override,
+                  replace=replace,
                   hash=hash_key,
                   **scores)
     return self

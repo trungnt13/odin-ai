@@ -39,7 +39,7 @@ vae = ConditionalM2VAE(encoder=encoder,
                        conditional_embedding='embed',
                        alpha=0.1 * 10)
 vae.fit(train, compile_graph=True, epochs=-1, max_iter=8000, sample_shape=())
-exit()
+
 x = vae.sample_data(16)
 y = vae.sample_labels(16)
 m = tf.cast(

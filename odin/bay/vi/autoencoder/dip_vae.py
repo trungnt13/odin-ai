@@ -36,9 +36,17 @@ class DIPVAE(BetaVAE):
                                                dtype=self.dtype,
                                                name='lambda_offdiag')
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
-    llk, div = super()._elbo(X, pX_Z, qZ_X, analytic, reverse, sample_shape)
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
+    llk, div = super()._elbo(inputs,
+                             pX_Z,
+                             qZ_X,
+                             analytic=analytic,
+                             reverse=reverse,
+                             sample_shape=sample_shape,
+                             mask=mask,
+                             training=training,
+                             **kwargs)
     for name, q in zip(self.latent_names, qZ_X):
       dip = disentangled_inferred_prior_loss(q,
                                              only_mean=self.only_mean,

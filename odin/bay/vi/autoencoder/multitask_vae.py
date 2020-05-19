@@ -63,21 +63,22 @@ class MultitaskVAE(BetaVAE):
                           sample_shape=sample_shape,
                           **kwargs)
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
     n_semi = len(self.labels)
     # unsupervised ELBO
-    llk, div = super()._elbo(X,
+    llk, div = super()._elbo(inputs,
                              pX_Z[:-n_semi],
                              qZ_X,
-                             analytic,
-                             reverse,
+                             analytic=analytic,
+                             reverse=reverse,
                              sample_shape=sample_shape,
                              mask=mask,
-                             training=training)
+                             training=training,
+                             **kwargs)
     # supervised log-likelihood
-    if len(X) > len(self.output_layers) - n_semi:
-      Y = X[-n_semi:]
+    if len(inputs) > len(self.output_layers) - n_semi:
+      Y = inputs[-n_semi:]
       pY_Z = pX_Z[-n_semi:]
       mask = tf.nest.flatten(mask)
       if len(mask) == 1:

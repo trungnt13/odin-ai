@@ -180,8 +180,7 @@ class ScoreBoard:
       where = "WHERE " + where
     table = str(table).strip().lower()
     return [
-        row for row in self.select(
-            f"SELECT {distinct} * FROM {table} {where};")
+        row for row in self.select(f"SELECT {distinct} * FROM {table} {where};")
     ]
 
   def select(self,
@@ -285,7 +284,7 @@ class ScoreBoard:
       print(query)
       raise e
 
-  def _write_table(self, _cursor, table, unique, override, **row):
+  def _write_table(self, _cursor, table, unique, replace, **row):
     if self.read_only:
       warnings.warn("Cannot write to table: %s %s" % (table, str(row)))
       return
@@ -309,35 +308,38 @@ class ScoreBoard:
           print(query)
           raise e
     # prepare the query
-    write_mode = "REPLACE" if override else "INSERT"
-    query = f"""{write_mode} INTO '{table_name}' ({cols}) VALUES({fmt});"""
+    if replace:
+      write_mode = "REPLACE INTO"
+    else:
+      write_mode = "INSERT INTO"
+    query = f"""{write_mode} '{table_name}' ({cols}) VALUES({fmt});"""
     try:
       _cursor.execute(query, [_data(v) for v in row.values()])
     except sqlite3.IntegrityError as e:
       if unique:
-        pass
+        warnings.warn(f"Duplicated row for unique values: {row}")
       else:
         raise e
     except sqlite3.OperationalError as e:
       print(query)
       raise e
 
-  def write(self, table, unique=False, override=False, **row):
+  def write(self, table, unique=False, replace=False, **row):
     r""" Write one row of data to SQL table.
 
     Arguments:
       table : String, SQL table name.
       unique : list of String, name of unique keys.
-      override : a Boolean. In case unique, override existing row.
+      replace : a Boolean. In case unique, replace existing row and column.
       **row : mapping key, value for the row.
     """
     row.pop('table', None)
     row.pop('unique', None)
-    row.pop('override', None)
+    row.pop('replace', None)
     row.pop('_cursor', None)
     row['table'] = table
     row['unique'] = unique
-    row['override'] = override
+    row['replace'] = replace
     if self._c is None:
       with self.cursor() as c:
         self._write_table(_cursor=c, **row)

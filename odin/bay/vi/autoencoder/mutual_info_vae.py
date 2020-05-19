@@ -64,18 +64,19 @@ class MutualInfoVAE(BetaVAE):
     self.resample_zprime = bool(resample_zprime)
     self.kl_code = bool(kl_code)
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
     # NOTE: the original implementation does not take KL of qC_X,
     # only maximize the mutual information of q(c|X)
-    llk, div = super()._elbo(X,
+    llk, div = super()._elbo(inputs,
                              pX_Z,
                              qZ_X[:-1] if not self.kl_code else qZ_X,
-                             analytic,
-                             reverse,
+                             analytic=analytic,
+                             reverse=reverse,
                              sample_shape=sample_shape,
                              mask=mask,
-                             training=training)
+                             training=training,
+                             **kwargs)
     # the latents, in the implementation, the author reuse z samples here,
     # but in the algorithm, z_prime is re-sampled from the prior.
     # But, reasonably, we want to hold z_prime fix to z, and c_prime is the
@@ -117,28 +118,32 @@ class SemiInfoVAE(MutualInfoVAE):
   def is_semi_supervised(self):
     return True
 
-  def encode(self, inputs, **kwargs):
+  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
     inputs = tf.nest.flatten(inputs)
     if len(inputs) > len(self.output_layers):
       inputs = inputs[:len(self.output_layers)]
-    return super().encode(inputs[0] if len(inputs) == 1 else inputs, **kwargs)
+    return super().encode(inputs[0] if len(inputs) == 1 else inputs,
+                          training=training,
+                          mask=mask,
+                          sample_shape=sample_shape,
+                          **kwargs)
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
     y = None
-    if len(X) > len(pX_Z):
-      y = X[-1]
+    if len(inputs) > len(pX_Z):
+      y = inputs[-1]
     # don't take KL of qC_X
-    llk, div = super(MutualInfoVAE, self)._elbo(
-        X,
-        pX_Z,
-        qZ_X[:-1] if not self.kl_code else qZ_X,
-        analytic,
-        reverse,
-        sample_shape=sample_shape,
-        mask=mask,
-        training=training,
-    )
+    llk, div = super(MutualInfoVAE,
+                     self)._elbo(inputs,
+                                 pX_Z,
+                                 qZ_X[:-1] if not self.kl_code else qZ_X,
+                                 analytic=analytic,
+                                 reverse=reverse,
+                                 sample_shape=sample_shape,
+                                 mask=mask,
+                                 training=training,
+                                 **kwargs)
     # the latents, in the implementation, the author reuse z samples here,
     # but in the algorithm, z_prime is re-sampled from the prior.
     # But, reasonably, we want to hold z_prime fix to z, and c_prime is the
@@ -177,13 +182,13 @@ class SemiInfoVAE(MutualInfoVAE):
     return llk, div
 
 
-class FactorInfoVAE(BetaVAE):
-  r""" This idea combining FactorVAE (Kim et al. 2018) and
-  MutualInfoVAE (Ducau et al. 2017)
+# class FactorInfoVAE(BetaVAE):
+#   r""" This idea combining FactorVAE (Kim et al. 2018) and
+#   MutualInfoVAE (Ducau et al. 2017)
 
-  Reference:
-    Kim, H., Mnih, A., 2018. Disentangling by Factorising.
-      arXiv:1802.05983 [cs, stat].
-    Ducau, F.N., Trénous, S., 2017."Mutual Information in Variational
-      Autoencoders". https://github.com/fducau/infoVAE.
-  """
+#   Reference:
+#     Kim, H., Mnih, A., 2018. Disentangling by Factorising.
+#       arXiv:1802.05983 [cs, stat].
+#     Ducau, F.N., Trénous, S., 2017."Mutual Information in Variational
+#       Autoencoders". https://github.com/fducau/infoVAE.
+#   """

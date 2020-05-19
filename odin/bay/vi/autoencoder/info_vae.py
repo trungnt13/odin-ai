@@ -54,16 +54,17 @@ class InfoVAE(BetaVAE):
   def alpha(self):
     return 1 - self.beta
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
-    llk, div = super()._elbo(X,
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
+    llk, div = super()._elbo(inputs,
                              pX_Z,
                              qZ_X,
-                             analytic,
-                             reverse,
+                             analytic=analytic,
+                             reverse=reverse,
                              sample_shape=sample_shape,
                              mask=mask,
-                             training=training)
+                             training=training,
+                             **kwargs)
     # repeat for each latent
     for name, q in zip(self.latent_names, qZ_X):
       info_div = (self.gamma - self.beta) * self.divergence(

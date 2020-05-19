@@ -164,6 +164,24 @@ def _iter_lists(X, Y):
       yield x, y
 
 
+def _validate_implementation(cls):
+  elbo_args = [
+      'inputs', 'pX_Z', 'qZ_X', 'analytic', 'reverse', 'sample_shape', 'mask',
+      'training'
+  ]
+  call_args = ['inputs', 'training', 'mask', 'sample_shape']
+  encode_args = ['inputs', 'training', 'mask', 'sample_shape']
+  decode_args = ['latents', 'training', 'mask', 'sample_shape']
+  for args, method in [(elbo_args, cls._elbo), (elbo_args, cls.elbo),
+                       (call_args, cls.call), (encode_args, cls.encode),
+                       (decode_args, cls.decode)]:
+    spec = inspect.getfullargspec(method)
+    assert all(a in spec.args for a in args) and spec.varkw is not None,\
+      (f"Invalid implementation of VariationalAutoencoder, class {cls.__name__} "
+       f"method {method} must contain arguments: {elbo_args} and include "
+       f"**kwargs, but given: {spec}")
+
+
 # ===========================================================================
 # Training step
 # ===========================================================================
@@ -265,6 +283,8 @@ class VariationalAutoencoder(keras.Model):
   """
 
   def __new__(cls, *args, **kwargs):
+    _validate_implementation(cls)
+
     class_tree = [
         c for c in type.mro(cls) if issubclass(c, VariationalAutoencoder)
     ][::-1]
@@ -415,7 +435,6 @@ class VariationalAutoencoder(keras.Model):
     self.latent_names = [i.name for i in self.latent_layers]
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
-    self._compiled_call = None
     ### load saved weights if available
     if optimizer is not None:
       self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
@@ -483,12 +502,6 @@ class VariationalAutoencoder(keras.Model):
   @property
   def is_fitted(self):
     return self.step.numpy() > 0
-
-  @property
-  def compiled_call(self) -> Callable:
-    if self._compiled_call is None:
-      self._compiled_call = tf.function(self.call, autograph=False)
-    return self._compiled_call
 
   @property
   def posteriors(self) -> List[DenseDistribution]:
@@ -630,7 +643,7 @@ class VariationalAutoencoder(keras.Model):
     )
     return pX_Z, qZ_X
 
-  # @tf.function(autograph=False)
+  @tf.function(autograph=False)
   def marginal_log_prob(self,
                         inputs,
                         training=False,
@@ -653,8 +666,10 @@ class VariationalAutoencoder(keras.Model):
         `qZ_X.KL_divergence.prior = ...` during `encode` or `decode` methods
 
     Return:
-      a Tensor of shape [batch_size]
+      marginal log-likelihood : a Tensor of shape `[batch_size]`
         marginal log-likelihood of p(X)
+      distortion : a Dictionary mapping from distribution name to Tensor
+        of shape `[batch_size]`, the negative reconstruction cost.
     """
     sample_shape = [tf.cast(tf.reduce_prod(sample_shape), tf.int32)]
     pX_Z, qZ_X = self.call(inputs,
@@ -662,13 +677,16 @@ class VariationalAutoencoder(keras.Model):
                            mask=mask,
                            sample_shape=sample_shape,
                            **kwargs)
+    ## Marginal LLK
     llk = []
+    distortion = {}
     # reconstruction (a.k.a distortion)
-    for i, (p,
+    for i, (pX,
             x) in enumerate(zip(tf.nest.flatten(pX_Z),
                                 tf.nest.flatten(inputs))):
-      batch_llk = p.log_prob(x)
-      llk.append(batch_llk)
+      x_llk = pX.log_prob(x)
+      llk.append(x_llk)
+      distortion[pX.name.split('_')[0]] = x_llk
     # kl-divergence (a.k.a rate)
     for qZ in tf.nest.flatten(qZ_X):
       if isinstance(qZ, (tfd.Deterministic, tfd.VectorDeterministic)):
@@ -691,10 +709,14 @@ class VariationalAutoencoder(keras.Model):
     for i in llk:
       mllk += i
     mllk = tf.reduce_logsumexp(mllk, axis=0) - iw_const
-    return mllk
+    distortion = {
+        k: tf.reduce_logsumexp(v, axis=0) - iw_const
+        for k, v in distortion.items()
+    }
+    return mllk, distortion
 
   def _elbo(self,
-            X,
+            inputs,
             pX_Z,
             qZ_X,
             analytic,
@@ -706,7 +728,7 @@ class VariationalAutoencoder(keras.Model):
     r""" The basic components of all ELBO """
     ### llk
     llk = {}
-    for name, x, pX in zip(self.variable_names, X, pX_Z):
+    for name, x, pX in zip(self.variable_names, inputs, pX_Z):
       llk['llk_%s' % name] = pX.log_prob(x)
     ### kl
     div = {}
@@ -718,9 +740,9 @@ class VariationalAutoencoder(keras.Model):
     return llk, div
 
   def elbo(self,
-           X,
-           pX_Z=None,
-           qZ_X=None,
+           inputs,
+           pX_Z,
+           qZ_X,
            analytic=False,
            reverse=True,
            sample_shape=None,
@@ -750,28 +772,20 @@ class VariationalAutoencoder(keras.Model):
         This won't be applied if `return_components=True` or `rank(elbo)` <= 1.
       return_components : a Boolean. If True return the log-likelihood and the
         KL-divergence instead of final ELBO.
-      return_elbo : a Boolean. If True, gather the components (log-likelihood
-        and KL-divergence) to form and return ELBO.
 
     Return:
-      log-likelihood : dictionary of `Tensor` of shape [sample_shape, batch_size].
-        The sample shape could be ommited in case `sample_shape=()`.
-        The log-likelihood or distortion
-      divergence : dictionary `Tensor` of shape [sample_shape, batch_size].
-        The reversed KL-divergence or rate
+      elbo : a Tensor shape `[sample_shape, batch_size]`.
+      (optional) for `return_components=True`
+        log-likelihood : dictionary of `Tensor` shape [sample_shape, batch_size].
+          The log-likelihood or distortion
+        divergence : dictionary of `Tensor` shape [sample_shape, batch_size].
+          The reversed KL-divergence or rate
     """
-    if qZ_X is None:
-      qZ_X = self.encode(X,
-                         training=training,
-                         mask=mask,
-                         sample_shape=sample_shape)
-    if pX_Z is None:
-      pX_Z = self.decode(qZ_X,
-                         training=training,
-                         mask=mask,
-                         sample_shape=sample_shape)
     # organize all inputs to list
-    X = [tf.convert_to_tensor(x, dtype=self.dtype) for x in tf.nest.flatten(X)]
+    inputs = [
+        tf.convert_to_tensor(x, dtype=self.dtype)
+        for x in tf.nest.flatten(inputs)
+    ]
     pX_Z = tf.nest.flatten(pX_Z)
     qZ_X = tf.nest.flatten(qZ_X)
     # override the default mask
@@ -780,7 +794,7 @@ class VariationalAutoencoder(keras.Model):
     # mask here
     # if hasattr(pX_Z[0], '_keras_mask') and pX_Z[0]._keras_mask is not None:
     # mask = pX_Z[0]._keras_mask
-    llk, div = self._elbo(X,
+    llk, div = self._elbo(inputs,
                           pX_Z,
                           qZ_X,
                           analytic,

@@ -174,16 +174,17 @@ class FactorVAE(BetaVAE):
     self._is_pretraining = False
     return self
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
-    llk, div = super()._elbo(X,
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
+    llk, div = super()._elbo(inputs,
                              pX_Z,
                              qZ_X,
-                             analytic,
-                             reverse,
+                             analytic=analytic,
+                             reverse=reverse,
                              sample_shape=sample_shape,
                              mask=mask,
-                             training=training)
+                             training=training,
+                             **kwargs)
     # by default, this support multiple latents by concatenating all latents
     tc = self.total_correlation(qZ_X, apply_gamma=True, training=training)
     if self.maximize_tc:
@@ -420,16 +421,17 @@ class Factor2VAE(FactorVAE):
     self.factors = factors
     self._FactorStep = Factor2DiscriminatorStep
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
-    llk, div = super(BetaVAE, self)._elbo(X,
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
+    llk, div = super(BetaVAE, self)._elbo(inputs,
                                           pX_Z,
                                           qZ_X,
-                                          analytic,
-                                          reverse,
+                                          analytic=analytic,
+                                          reverse=reverse,
                                           sample_shape=sample_shape,
                                           mask=mask,
-                                          training=training)
+                                          training=training,
+                                          **kwargs)
     # only use the assumed factors space for total correlation
     tc = self.total_correlation(qZ_X[-1], apply_gamma=True, training=training)
     if self.maximize_tc:

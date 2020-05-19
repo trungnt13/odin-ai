@@ -34,16 +34,17 @@ class BetaVAE(VariationalAutoencoder):
     else:
       self._beta = tf.convert_to_tensor(b, dtype=self.dtype, name='beta')
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
-    llk, div = super()._elbo(X,
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
+    llk, div = super()._elbo(inputs,
                              pX_Z,
                              qZ_X,
                              analytic,
                              reverse,
                              sample_shape=sample_shape,
                              mask=mask,
-                             training=training)
+                             training=training,
+                             **kwargs)
     div = {key: self.beta * val for key, val in div.items()}
     return llk, div
 
@@ -61,18 +62,19 @@ class BetaTCVAE(BetaVAE):
       arXiv:1802.04942 [cs, stat].
   """
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
-    llk, div = super()._elbo(X,
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
+    llk, div = super()._elbo(inputs,
                              pX_Z,
                              qZ_X,
                              analytic,
                              reverse,
                              sample_shape=sample_shape,
                              mask=mask,
-                             training=training)
+                             training=training,
+                             **kwargs)
     for name, q in zip(self.latent_names, qZ_X):
-      tc = total_correlation(tf.convert_to_tensor(q), q)
+      tc = total_correlation(q.sample(), q)
       div['tc_%s' % name] = (self.beta - 1.) * tc
     return llk, div
 
@@ -114,16 +116,17 @@ class AnnealedVAE(VariationalAutoencoder):
         vmax=tf.constant(c_max, self.dtype),
         norm=int(iter_max))
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
-    llk, div = super()._elbo(X,
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
+    llk, div = super()._elbo(inputs,
                              pX_Z,
                              qZ_X,
                              analytic,
                              reverse,
                              sample_shape=sample_shape,
                              mask=mask,
-                             training=training)
+                             training=training,
+                             **kwargs)
     # step : training step, updated when call `.train_steps()`
     c = self.interpolation(self.step)
     div = {key: self.gamma * tf.math.abs(val - c) for key, val in div.items()}

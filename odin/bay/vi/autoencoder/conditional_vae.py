@@ -207,11 +207,12 @@ class ConditionalM2VAE(BetaVAE):
       q._keras_mask = mask
     return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
-  def _elbo(self, X, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training):
-    inputs = X[:len(self.output_layers)]
+  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
+            training, **kwargs):
+    org_inputs = inputs
+    inputs = inputs[:len(self.output_layers)]
     if mask is None:
-      if len(X) == len(self.output_layers):  # no labelled
+      if len(org_inputs) == len(self.output_layers):  # no labelled
         X_unlabelled = inputs
       else:  # all data is labelled
         X_unlabelled = [tf.zeros(shape=(0,) + i.shape[1:]) for i in inputs]
@@ -219,16 +220,18 @@ class ConditionalM2VAE(BetaVAE):
       m = tf.logical_not(tf.reshape(mask, (-1,)))
       X_unlabelled = [tf.boolean_mask(i, m, axis=0) for i in inputs]
     ## prepare inputs as usual
-    X, y, mask = self.prepare_inputs(X, mask)
+    org_inputs, y, mask = self.prepare_inputs(org_inputs, mask)
+    X_labelled = [tf.boolean_mask(i, mask, axis=0) for i in org_inputs]
     ## Normal ELBO
-    llk, div = super()._elbo(X,
+    llk, div = super()._elbo(org_inputs,
                              pX_Z,
                              qZ_X,
-                             analytic,
-                             reverse,
-                             sample_shape,
+                             analytic=analytic,
+                             reverse=reverse,
+                             sample_shape=sample_shape,
                              mask=mask,
-                             training=training)
+                             training=training,
+                             **kwargs)
     mask = tf.reshape(mask, (-1,))
     ### for unlabelled data
     mask_unlabelled = tf.logical_not(mask)
@@ -254,7 +257,6 @@ class ConditionalM2VAE(BetaVAE):
                                                     self.labels.prior,
                                                     analytic=True)
     ### for labelled data, add the discriminative objective
-    X_labelled = [tf.boolean_mask(i, mask, axis=0) for i in X]
     # log-likehood
     llk_labelled = {
         name + '_labelled':
