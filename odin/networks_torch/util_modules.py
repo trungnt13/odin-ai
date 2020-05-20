@@ -8,14 +8,14 @@ import torch
 from odin.utils import as_tuple
 
 
-class Sequential(torch.nn.Sequential):
+class SequentialNetwork(torch.nn.Sequential):
 
   def __init__(self, *args):
     args = list(chain(*[as_tuple(a) for a in args]))
     super().__init__(*args)
 
 
-class Parallel(Sequential):
+class ParallelNetwork(Sequential):
 
   def forward(self, input):
     outputs = []

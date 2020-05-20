@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import dataclasses
 import inspect
 import types
+from collections import MutableSequence, Sequence
 from copy import deepcopy
 from numbers import Number
 from typing import List
@@ -39,6 +40,10 @@ def _args_and_defaults(func):
 
 
 def _default_prior(event_shape, posterior, prior, posterior_kwargs):
+  if not isinstance(event_shape, (Sequence, MutableSequence, tf.TensorShape)):
+    raise ValueError(
+        "event_shape must be list of integer but given: "
+        f"{event_shape} type: {type(event_shape)}")
   if isinstance(prior, obd.Distribution):
     return prior
   layer, dist = parse_distribution(posterior)
@@ -128,7 +133,6 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   elif dist == obd.Dirichlet:
     prior = dist(**_kwargs(concentration=[1.] * event_size))
   elif dist == obd.Bernoulli:
-    event_shape = tf.nest.flatten(event_shape)
     prior = obd.Independent(
         obd.Bernoulli(**_kwargs(logits=np.zeros(event_shape)),
                       dtype=tf.float32),
@@ -190,12 +194,12 @@ class RandomVariable:
   event_shape: List[int] = ()
   posterior: str = 'gaus'
   projection: bool = False
-  name: str = 'RandomVariable'
+  name: str = None
   prior: str = None
   kwargs: dict = dataclasses.field(default_factory=dict)
 
   def __post_init__(self):
-    self.posterior = str(self.posterior)
+    self.posterior = str(self.posterior).lower().strip()
     shape = self.event_shape
     if not (tf.is_tensor(shape) or isinstance(shape, tf.TensorShape) or
             isinstance(shape, np.ndarray)):
@@ -204,7 +208,11 @@ class RandomVariable:
       except Exception as e:
         raise ValueError(f"No support for event_shape={shape}, error: {e}")
     self.event_shape = shape
-    self.name = str(self.name)
+    if self.name is None:
+      _, cls = parse_distribution(self.posterior)
+      self.name = f"{cls.__name__}Variable"
+    else:
+      self.name = str(self.name)
 
   ######## Basic methods
   def keys(self):

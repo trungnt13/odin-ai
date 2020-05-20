@@ -31,7 +31,7 @@ sns.set()
 # Configuration
 # TODO: grammarVAE, graphVAE, CycleConsistentVAE, AdaptiveVAE
 # vae=betavae,betatcvae,annealedvae,dipvae,infovae,mutualinfovae,factorvae,factor2vae,semifactorvae,semifactor2vae,multitaskvae,multiheadvae
-# ds=mnist,dsprites,celeba -m -ncpu 3
+# ds=mnist,dspritesc,celeba -m -ncpu 4
 # ===========================================================================
 CONFIG = \
 r"""

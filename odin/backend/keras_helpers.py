@@ -60,7 +60,7 @@ def layer2text(layer, inc_name=False, padding=''):
   if isinstance(layer, keras.Model):
     text = padding + "%sbuilt:%s name:%s\n" % (name, layer.built, layer.name)
     text += "\n".join([
-        padding + layer2text(i, inc_name=False, padding=' ')
+        padding + layer2text(i, inc_name=False, padding=padding + ' ')
         for i in layer.layers
     ])
     return text

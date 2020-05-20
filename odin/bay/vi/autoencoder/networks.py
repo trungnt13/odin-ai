@@ -11,8 +11,8 @@ from tensorflow_probability.python.distributions import (Distribution,
 from odin.backend.keras_helpers import layer2text
 from odin.bay.random_variable import RandomVariable as RV
 from odin.bay.vi.utils import permute_dims
-from odin.networks import (NetworkConfig, SequentialNetwork, SkipConnection,
-                           dense_network)
+from odin.networks import (NetworkConfig, ParallelNetwork, SequentialNetwork,
+                           SkipConnection, dense_network)
 from odin.utils import as_tuple
 
 __all__ = [
@@ -356,10 +356,14 @@ class FactorDiscriminator(SequentialNetwork):
                activation=tf.nn.leaky_relu,
                ss_strategy='logsumexp',
                name="FactorDiscriminator"):
-    assert isinstance(outputs, RV), \
-      f"outputs must be instance of RandomVariable, but given {outputs}"
-    outputs.projection = True
-    outputs.event_shape = (int(np.prod(outputs.event_shape)),)
+    outputs = tf.nest.flatten(outputs)
+    assert all(isinstance(o, RV) for o in outputs), \
+      (f"outputs must be instance of RandomVariable, but given:{outputs}")
+    n_outputs = 0
+    for o in outputs:
+      o.projection = True
+      o.event_shape = (int(np.prod(o.event_shape)),)
+      n_outputs += o.event_shape[0]
     layers = dense_network(units=units,
                            batchnorm=batchnorm,
                            dropout=dropout,
@@ -367,12 +371,18 @@ class FactorDiscriminator(SequentialNetwork):
                            input_dropout=input_dropout,
                            activation=activation,
                            input_shape=tf.nest.flatten(input_shape))
-    layers.append(outputs.create_posterior())
     super().__init__(layers, name=name)
-    self.n_outputs = outputs.event_shape[0]
+    shape = self.output_shape[1:]
+    self.distributions = [o.create_posterior(shape) for o in outputs]
+    self.n_outputs = sum(d.output_shape[-1] for d in self.distributions)
     self.input_ndim = len(self.input_shape) - 1
     self.ss_strategy = str(ss_strategy)
     assert self.ss_strategy in {'sum', 'logsumexp', 'mean', 'max', 'min'}
+
+  def call(self, inputs, **kwargs):
+    outputs = super().call(inputs, **kwargs)
+    distributions = [d(outputs, **kwargs) for d in self.distributions]
+    return distributions[0] if len(distributions) == 1 else tuple(distributions)
 
   def _to_samples(self, qZ_X, mean=False, stop_grad=False):
     qZ_X = tf.nest.flatten(qZ_X)
@@ -388,20 +398,27 @@ class FactorDiscriminator(SequentialNetwork):
   def _tc_logits(self, logits):
     # use ss_strategy to infer appropriate logits value for
     # total-correlation estimator (logits for q(z)) in case of n_outputs > 1
-    if isinstance(logits, Distribution):
-      if isinstance(logits, Independent):
-        logits = logits.distribution
-      if hasattr(logits, 'logits'):
-        logits = logits.logits
-      elif hasattr(logits, 'concentration'):
-        logits = logits.concentration
-      else:
-        raise RuntimeError(
-            f"Distribution {logits} doesn't has 'logits' or 'concentration' "
-            "attributes, cannot not be used for estimating total correlation.")
+    Xs = []
+    for x in tf.nest.flatten(logits):
+      if isinstance(x, Distribution):
+        if isinstance(x, Independent):
+          x = x.distribution
+        if hasattr(x, 'logits'):
+          x = x.logits
+        elif hasattr(x, 'concentration'):
+          x = x.concentration
+        else:
+          raise RuntimeError(
+              f"Distribution {x} doesn't has 'logits' or 'concentration' "
+              "attributes, cannot not be used for estimating total correlation.")
+      Xs.append(x)
+    if len(Xs) == 1:
+      Xs = Xs[0]
+    else:
+      Xs = tf.concat(Xs, axis=-1)
     if self.n_outputs == 1:
-      return logits[..., 0]
-    return getattr(tf, 'reduce_%s' % self.ss_strategy)(logits, axis=-1)
+      return Xs[..., 0]
+    return getattr(tf, 'reduce_%s' % self.ss_strategy)(Xs, axis=-1)
 
   def total_correlation(self, qZ_X, training=None):
     r""" Total correlation Eq(3)
@@ -424,7 +441,7 @@ class FactorDiscriminator(SequentialNetwork):
       TC(z) : a scalar, approximation of the density-ratio that arises in the
         KL-term.
     """
-    z = self._to_samples(qZ_X)
+    z = self._to_samples(qZ_X, stop_grad=False)
     logits = self(z, training=training)
     logits = self._tc_logits(logits)
     # in case using sigmoid, other implementation use -logits here but it

@@ -11,19 +11,29 @@ from tensorflow.python.keras.layers import (Activation, BatchNormalization,
                                             Wrapper)
 from tensorflow.python.keras.utils import conv_utils
 from tensorflow.python.ops import variable_scope
+from tensorflow.python.util import tf_inspect
 from tensorflow_probability.python.distributions import Distribution
 
 __all__ = [
     'Identity',
     'ReshapeMCMC',
     'ExpandDims',
-    'Parallel',
+    'ParallelNetwork',
     'BatchRenormalization',
     'Convolution1DTranspose',
     'Conv1DTranspose',
     'Deconvolution1D',
     'Deconv1D',
 ]
+
+
+def _get_shape_tuple(t):
+  if hasattr(t, 'shape'):
+    shape = t.shape
+    if shape.rank is not None:
+      return tuple(shape.as_list())
+    return None
+  return None
 
 
 class ModuleList(Sequential):
@@ -265,49 +275,69 @@ class ReshapeMCMC(Wrapper):
     return inputs
 
 
-class Parallel(Sequential):
-  """ Similar design to keras `Sequential` but simultanously applying
+class ParallelNetwork(keras.Model):
+  r""" Similar design to keras `Sequential` but simultaneously applying
   all the layer on the input and return all the results.
 
   This layer is important for implementing multitask learning.
   """
 
-  def call(self, inputs, training=None, mask=None, **kwargs):  # pylint: disable=redefined-outer-name
+  def __init__(self, layers, input_shape=None, **kwargs):
+    super().__init__(**kwargs)
+    self.supports_masking = True
+    self._compute_output_and_mask_jointly = True
+    self._layer_call_argspecs = []
+    layers = tf.nest.flatten(layers)
+    assert all(isinstance(i, keras.layers.Layer) for i in layers), \
+      f"All layers must be instance of keras.layers.Layer, but given: {layers}"
+    for layer in layers:
+      self._layer_call_argspecs.append(
+          tf_inspect.getfullargspec(layer.call).args)
+      self._layers.append(layer)
+    if input_shape is not None:
+      inputs = keras.Input(shape=input_shape, batch_size=None, dtype=self.dtype)
+      self(inputs)
+
+  def call(self, inputs, training=None, mask=None):  # pylint: disable=redefined-outer-name
+    if self._build_input_shape is None:
+      input_shapes = tf.nest.map_structure(_get_shape_tuple, inputs)
+      self._build_input_shape = input_shapes
+    # graph build
     if self._is_graph_network:
       if not self.built:
         self._init_graph_network(self.inputs, self.outputs, name=self.name)
-      return super(Parallel, self).call(inputs, training=training, mask=mask)
-
+      return super(ParallelNetwork, self).call(inputs,
+                                               training=training,
+                                               mask=mask)
     outputs = []
-    for layer in self.layers:
+    for argspec, layer in zip(self._layer_call_argspecs, self.layers):
       # During each iteration, `inputs` are the inputs to `layer`, and `outputs`
       # are the outputs of `layer` applied to `inputs`. At the end of each
       # iteration `inputs` is set to `outputs` to prepare for the next layer.
-      kw = {}
-      argspec = self._layer_call_argspecs[layer].args
+      kwargs = {}
       if 'mask' in argspec:
-        kw['mask'] = mask
+        kwargs['mask'] = mask
       if 'training' in argspec:
-        kw['training'] = training
+        kwargs['training'] = training
       # support custom keyword argument also
-      for k, v in kwargs.items():
-        if k in argspec:
-          kw[k] = v
-
-      o = layer(inputs, **kw)
+      kwargs = {k: v for k, v in kwargs.items() if k in argspec}
+      # call the layer
+      o = layer(inputs, **kwargs)
+      # `outputs` will be the inputs to the next layer.
       outputs.append(o)
-
-    return tuple(outputs)
+    outputs = tuple(outputs)
+    return outputs[0] if len(outputs) == 1 else outputs
 
   def compute_output_shape(self, input_shape):
     shape = []
     for layer in self.layers:
       shape.append(layer.compute_output_shape(input_shape))
-    return tuple(shape)
+    return shape[0] if len(shape) == 1 else tuple(shape)
 
   def compute_mask(self, inputs, mask):
     outputs = self.call(inputs, mask=mask)
-    return [o._keras_mask for o in outputs]
+    mask = [o._keras_mask for o in outputs]
+    return mask[0] if len(mask) == 1 else tuple(mask)
 
 
 # ===========================================================================

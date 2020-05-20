@@ -23,6 +23,7 @@ from odin.backend.keras_helpers import layer2text
 from odin.bay.layers.dense import DenseDistribution
 from odin.bay.random_variable import RandomVariable as RV
 from odin.networks import NetworkConfig, SequentialNetwork
+from odin.utils.python_utils import classproperty
 
 
 # ===========================================================================
@@ -287,7 +288,6 @@ class VariationalAutoencoder(keras.Model):
 
   def __new__(cls, *args, **kwargs):
     _validate_implementation(cls)
-
     class_tree = [
         c for c in type.mro(cls) if issubclass(c, VariationalAutoencoder)
     ][::-1]
@@ -455,6 +455,26 @@ class VariationalAutoencoder(keras.Model):
   def init_args(self) -> dict:
     r""" Return a dictionary of arguments used for initialized this class """
     return self._init_args
+
+  @classproperty
+  def default_args(cls) -> dict:
+    r""" Return:
+
+      - a dictionary of the default keyword arguments of all subclass start
+          from VariationalAutoencoder.
+    """
+    kw = dict()
+    args = []
+    for c in type.mro(cls)[::-1]:
+      if not issubclass(c, VariationalAutoencoder):
+        continue
+      spec = inspect.getfullargspec(c.__init__)
+      args += spec.args
+      if spec.defaults is not None:
+        for key, val in zip(spec.args[::-1], spec.defaults[::-1]):
+          kw[key] = val
+    args = [i for i in set(args) if i not in kw and i != 'self']
+    return kw
 
   @property
   def save_path(self):
