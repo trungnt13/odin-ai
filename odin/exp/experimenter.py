@@ -951,6 +951,17 @@ class Experimenter():
       # append the new override
       if len(overrides) > 0:
         sys.argv += overrides
+      # final check for the overrides
+      flat_cfg = flatten_config(self.configs)
+      for arg in sys.argv:
+        if '=' not in arg:
+          continue
+        key = arg.split('=')[0]
+        if key not in flat_cfg:
+          warnings.warn(
+              f"Cannot find key='{key}' in the default config, "
+              f"the argument is:'{arg}', all default keys: {list(flat_cfg.keys())}"
+          )
       # append the hydra log path
       job_fmt = "/${now:%d%b%y_%H%M%S}"
       sys.argv.insert(1, "hydra.run.dir=%s" % self.get_hydra_path() + job_fmt)

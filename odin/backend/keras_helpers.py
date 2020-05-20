@@ -67,8 +67,10 @@ def layer2text(layer, inc_name=False, padding=''):
   ## Dense
   text = str(layer)
   if isinstance(layer, keras.layers.Dense):
-    text = '%sunits:%d bias:%s activ:%s' % \
-      (name, layer.units, layer.use_bias, layer.activation.__name__)
+    text = '%sunits:%d bias:%s activ:%s %s' % \
+      (name, layer.units, layer.use_bias, layer.activation.__name__,
+       layer.posterior_layer.__class__.__name__
+       if hasattr(layer, 'posterior_layer') else '')
   ## Conv
   elif isinstance(layer, Conv):
     text = '%sf:%d k:%s s:%s d:%s pad:%s bias:%s activ:%s' % \

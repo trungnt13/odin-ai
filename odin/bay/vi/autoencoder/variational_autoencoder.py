@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import copy
 import glob
 import inspect
 import os
@@ -13,7 +14,7 @@ from typing import Callable, List, Optional, Union
 import numpy as np
 import tensorflow as tf
 from six import string_types
-from tensorflow.python import keras
+from tensorflow.python import keras, trackable
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
@@ -302,9 +303,15 @@ class VariationalAutoencoder(keras.Model):
     for k, v in zip(spec.args[1:], args):
       kw[k] = v
     kw.update(kwargs)
+    # deep copy is necessary here otherwise the init function will modify
+    # the arguments
+    kw = copy.deepcopy(kw)
     # create the instance
     instance = super().__new__(cls, *args, **kwargs)
-    instance._init_args = kw
+    # must make _init_args NonDependency (i.e. nontrackable and won't be
+    # saved in save_weights)
+    with trackable.no_automatic_dependency_tracking_scope(instance):
+      instance._init_args = kw
     return instance
 
   def __init__(
@@ -1022,9 +1029,10 @@ class VariationalAutoencoder(keras.Model):
     # create the trainer
     from odin.exp.trainer import Trainer
     if self.trainer is None:
-      trainer = Trainer()
-      trainer.early_stop
-      self.trainer = trainer
+      with trackable.no_automatic_dependency_tracking_scope(self):
+        trainer = Trainer()
+        trainer.early_stop
+        self.trainer = trainer
     else:
       trainer = self.trainer
     if log_tag is None or len(log_tag) == 0:
@@ -1156,6 +1164,7 @@ class VariationalAutoencoder(keras.Model):
     text = "%s supervising(semi:%s self:%s weak:%s)" % (
         "->".join([i.__name__ for i in cls[::-1]]), self.is_semi_supervised,
         self.is_self_supervised, self.is_weak_supervised)
+    text += f'\n MD5 checksum: {self.md5_checksum}'
     ## encoder
     for i, encoder in enumerate(tf.nest.flatten(self.encoder)):
       text += f"\n Encoder#{i}:\n  "
