@@ -167,8 +167,10 @@ class BetaLayer(DistributionLambda):
   Arguments:
     event_shape: integer vector `Tensor` representing the shape of single
       draw from this distribution.
-    alpha_activation : activation function for `concentration1`
-    beta_activation : activation function for `concentration0`
+    alpha_activation : activation function for `concentration1`,
+      must return only positive values.
+    beta_activation : activation function for `concentration0`,
+      must return only positive values.
     convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
       instance and returns a `tf.Tensor`-like object.
       Default value: `tfd.Distribution.sample`.
@@ -182,8 +184,8 @@ class BetaLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               alpha_activation='softplus',
-               beta_activation='softplus',
+               alpha_activation='softplus1',
+               beta_activation='softplus1',
                clip_for_stable=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
@@ -196,8 +198,8 @@ class BetaLayer(DistributionLambda):
   @staticmethod
   def new(params,
           event_shape=(),
-          alpha_activation=tf.nn.softplus,
-          beta_activation=tf.nn.softplus,
+          alpha_activation=softplus1,
+          beta_activation=softplus1,
           clip_for_stable=True,
           validate_args=False,
           name="BetaLayer"):
@@ -211,20 +213,21 @@ class BetaLayer(DistributionLambda):
                              dtype=tf.int32),
         tensor_name='event_shape',
     )
-    output_shape = tf.concat(
-        [tf.shape(input=params)[:-1], event_shape],
-        axis=0,
-    )
+    output_shape = tf.concat((tf.shape(input=params)[:-1], event_shape), axis=0)
     # alpha, beta
     concentration1, concentration0 = tf.split(params, 2, axis=-1)
+    #
+    concentration1 = tf.reshape(concentration1, output_shape)
     concentration1 = alpha_activation(concentration1)
+    #
+    concentration0 = tf.reshape(concentration0, output_shape)
     concentration0 = beta_activation(concentration0)
     if clip_for_stable:
       concentration0 = tf.clip_by_value(concentration0, 1e-3, 1e3)
       concentration1 = tf.clip_by_value(concentration1, 1e-3, 1e3)
     return tfd.Independent(
-        tfd.Beta(concentration1=tf.reshape(concentration1, output_shape),
-                 concentration0=tf.reshape(concentration0, output_shape),
+        tfd.Beta(concentration1=concentration1,
+                 concentration0=concentration0,
                  validate_args=validate_args),
         reinterpreted_batch_ndims=tf.size(input=event_shape),
         name=name,
@@ -251,7 +254,7 @@ class DirichletLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               alpha_activation='softplus',
+               alpha_activation='softplus1',
                clip_for_stable=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
@@ -264,7 +267,7 @@ class DirichletLayer(DistributionLambda):
   @staticmethod
   def new(params,
           event_shape=(),
-          alpha_activation=tf.nn.softplus,
+          alpha_activation=softplus1,
           clip_for_stable=True,
           validate_args=False,
           name="DirichletLayer"):
@@ -429,6 +432,8 @@ class GammaLayer(DistributionLambda):
     convert_to_tensor_fn: Python `callable` that takes a `tfd.Distribution`
       instance and returns a `tf.Tensor`-like object.
       Default value: `tfd.Distribution.sample`.
+    alpha_activation : activation function return positive values.
+    rate_activation : activation function return positive values.
     validate_args: Python `bool`, default `False`. When `True` distribution
       parameters are checked for validity despite possibly degrading runtime
       performance. When `False` invalid inputs may silently render incorrect
@@ -441,21 +446,21 @@ class GammaLayer(DistributionLambda):
   def __init__(self,
                event_shape=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
-               concentration_activation='linear',
-               rate_activation='linear',
+               alpha_activation='softplus1',
+               rate_activation='softplus1',
                validate_args=False,
                **kwargs):
     super(GammaLayer, self).__init__(
         lambda t: type(self).new(
-            t, event_shape, parse_activation(concentration_activation, self),
+            t, event_shape, parse_activation(alpha_activation, self),
             parse_activation(rate_activation, self), validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape,
-          concentration_activation,
-          rate_activation,
+          alpha_activation=softplus1,
+          rate_activation=softplus1,
           validate_args=False,
           name="GammaLayer"):
     """Create the distribution instance from a `params` vector."""
@@ -466,14 +471,12 @@ class GammaLayer(DistributionLambda):
                              dtype=tf.int32),
         tensor_name='event_shape',
     )
-    output_shape = tf.concat(
-        [tf.shape(input=params)[:-1], event_shape],
-        axis=0,
-    )
+    output_shape = tf.concat((tf.shape(input=params)[:-1], event_shape), axis=0)
     concentration, rate = tf.split(params, 2, axis=-1)
-    concentration = tf.reshape(concentration_activation(concentration),
-                               output_shape)
-    rate = tf.reshape(rate_activation(rate), output_shape)
+    concentration = tf.reshape(concentration, output_shape)
+    concentration = concentration_activation(concentration)
+    rate = tf.reshape(rate, output_shape)
+    rate = rate_activation(rate)
     return tfd.Independent(
         tfd.Gamma(concentration=concentration,
                   rate=rate,

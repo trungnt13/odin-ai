@@ -532,6 +532,12 @@ class ZINegativeBinomialDispLayer(DistributionLambda):
 # Binomial Multinomial layer
 # ===========================================================================
 class MultinomialLayer(tfl.DistributionLambda):
+  r""" Parameterization:
+
+    - total_count : `[batch_size, 1]`
+    - logits : `[batch_size, ndim]`
+    - sample : `[batch_size, ndim]` with `sum(x, axis=1) = total_count`
+  """
 
   def __init__(self,
                event_shape=(),
@@ -573,7 +579,7 @@ class DirichletMultinomialLayer(tfl.DistributionLambda):
   def __init__(self,
                event_shape=(),
                count_activation='softplus',
-               alpha_activation='softplus',
+               alpha_activation='softplus1',
                clip_for_stable=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False):
@@ -586,7 +592,7 @@ class DirichletMultinomialLayer(tfl.DistributionLambda):
   def new(params,
           event_shape=(),
           count_activation=tf.nn.softplus,
-          alpha_activation=tf.nn.softplus,
+          alpha_activation=softplus1,
           clip_for_stable=True,
           validate_args=False,
           name='DirichletMultinomialLayer'):

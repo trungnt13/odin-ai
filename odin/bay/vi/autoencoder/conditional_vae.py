@@ -95,7 +95,7 @@ class ConditionalM2VAE(BetaVAE):
     # create the classifier
     if not isinstance(classifier, keras.layers.Layer):
       classifier = dict(classifier)
-      classifier['n_outputs'] = self.n_labels
+      classifier['outputs'] = self.n_labels
       if 'input_shape' not in classifier:
         input_shape = [i.event_shape for i in self.output_layers]
         if len(input_shape) == 1:

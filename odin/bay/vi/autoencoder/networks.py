@@ -5,7 +5,8 @@ import numpy as np
 import tensorflow as tf
 from tensorflow.python import keras
 from tensorflow.python.keras.utils import layer_utils
-from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.distributions import (Distribution,
+                                                         Independent)
 
 from odin.backend.keras_helpers import layer2text
 from odin.bay.random_variable import RandomVariable as RV
@@ -325,7 +326,7 @@ class FactorDiscriminator(SequentialNetwork):
 
   If `n_outputs` > 2, suppose the number of classes is `K` then:
 
-    - 0 to K: is the classes' logits for real sample from q(Z)
+    - 0 to K: is the classes' logits for real sample from q(z)
     - K + 1: fake sample from q(z-)
 
   Arguments:
@@ -333,15 +334,15 @@ class FactorDiscriminator(SequentialNetwork):
     n_outputs : an Integer or instance of `RandomVariable`,
       the number of output units and its distribution
     ss_strategy : {'sum', 'logsumexp', 'mean', 'max', 'min'}.
-      Strategy for combining the outputs semi-supervised learning:
+      Strategy for combining the outputs semi-supervised learning into the
+      logit for real sample from q(z):
       - 'logsumexp' : used for semi-supervised GAN in (Salimans T. 2016)
 
   Reference:
     Kim, H., Mnih, A., 2018. "Disentangling by Factorising".
       arXiv:1802.05983 [cs, stat].
     Salimans, T., Goodfellow, I., Zaremba, W., et al 2016.
-      "Improved Techniques for Training GANs".
-      arXiv:1606.03498 [cs.LG].
+      "Improved Techniques for Training GANs". arXiv:1606.03498 [cs.LG].
 
   """
 
@@ -351,17 +352,14 @@ class FactorDiscriminator(SequentialNetwork):
                input_dropout=0.,
                dropout=0.,
                units=[1000, 1000, 1000, 1000, 1000],
-               n_outputs=1,
+               outputs=RV(1, 'bernoulli', name="Discriminator"),
                activation=tf.nn.leaky_relu,
                ss_strategy='logsumexp',
                name="FactorDiscriminator"):
-    if isinstance(n_outputs, RV):
-      distribution = n_outputs.distribution_layer(n_outputs.event_shape)
-      n_outputs = int(np.prod(
-          n_outputs.event_shape)) * distribution.params_size(1)
-    else:
-      distribution = None
-      n_outputs = int(n_outputs)
+    assert isinstance(outputs, RV), \
+      f"outputs must be instance of RandomVariable, but given {outputs}"
+    outputs.projection = True
+    outputs.event_shape = (int(np.prod(outputs.event_shape)),)
     layers = dense_network(units=units,
                            batchnorm=batchnorm,
                            dropout=dropout,
@@ -369,12 +367,10 @@ class FactorDiscriminator(SequentialNetwork):
                            input_dropout=input_dropout,
                            activation=activation,
                            input_shape=tf.nest.flatten(input_shape))
-    layers.append(
-        keras.layers.Dense(n_outputs, activation='linear', name="Output"))
+    layers.append(outputs.create_posterior())
     super().__init__(layers, name=name)
+    self.n_outputs = outputs.event_shape[0]
     self.input_ndim = len(self.input_shape) - 1
-    self.distribution = distribution
-    self.n_outputs = n_outputs
     self.ss_strategy = str(ss_strategy)
     assert self.ss_strategy in {'sum', 'logsumexp', 'mean', 'max', 'min'}
 
@@ -392,6 +388,17 @@ class FactorDiscriminator(SequentialNetwork):
   def _tc_logits(self, logits):
     # use ss_strategy to infer appropriate logits value for
     # total-correlation estimator (logits for q(z)) in case of n_outputs > 1
+    if isinstance(logits, Distribution):
+      if isinstance(logits, Independent):
+        logits = logits.distribution
+      if hasattr(logits, 'logits'):
+        logits = logits.logits
+      elif hasattr(logits, 'concentration'):
+        logits = logits.concentration
+      else:
+        raise RuntimeError(
+            f"Distribution {logits} doesn't has 'logits' or 'concentration' "
+            "attributes, cannot not be used for estimating total correlation.")
     if self.n_outputs == 1:
       return logits[..., 0]
     return getattr(tf, 'reduce_%s' % self.ss_strategy)(logits, axis=-1)
@@ -460,35 +467,27 @@ class FactorDiscriminator(SequentialNetwork):
     loss = 0.5 * (tf.reduce_mean(d_z) + tf.reduce_mean(zperm_logits + d_zperm))
     return loss
 
-  def classifier_loss(self, labels, qZ_X, mean=False, mask=None, training=None):
+  def supervised_loss(self, labels, qZ_X, mean=False, mask=None, training=None):
     labels = tf.nest.flatten(labels)
     z = self._to_samples(qZ_X, mean=mean, stop_grad=True)
-    z_logits = self(z, training=training)
+    distributions = tf.nest.flatten(self(z, training=training))
     ## applying the mask (1-labelled, 0-unlabelled)
     if mask is not None:
       mask = tf.reshape(mask, (-1,))
-      labels = [tf.boolean_mask(y, mask, axis=0) for y in labels]
-      z_logits = tf.boolean_mask(z_logits, mask, axis=0)
-    ## prepare the loss function
-    if self.distribution is None:
-      fn_loss = tf.nn.softmax_cross_entropy_with_logits
-    else:
-      distribution = self.distribution(z_logits)
-      fn_loss = lambda labels, logits: -distribution.log_prob(labels)
+      # labels = [tf.boolean_mask(y, mask, axis=0) for y in labels]
+      # z_logits = tf.boolean_mask(z_logits, mask, axis=0)
     ## calculate the loss
     loss = 0.
-    for y_true in labels:
+    for dist, y_true in zip(distributions, labels):
       tf.assert_rank(y_true, 2)
+      llk = dist.log_prob(y_true)
       # check the mask careful here
-      if mask is None:
-        llk = fn_loss(labels=y_true, logits=z_logits)
-      else:  # if no data for labels, just return 0
-        llk = tf.cond(
-            tf.reduce_all(tf.logical_not(mask)),
-            lambda: 0.,
-            lambda: fn_loss(labels=y_true, logits=z_logits),
-        )
-      loss += llk
+      # if no data for labels, just return 0
+      if mask is not None:
+        llk = tf.cond(tf.reduce_all(tf.logical_not(mask)), lambda: 0.,
+                      lambda: tf.boolean_mask(llk, mask, axis=0))
+      # negative log-likelihood here
+      loss += -llk
     # check non-zero, if zero the gradient must be stop or NaN gradient happen
     loss = tf.reduce_mean(loss)
     loss = tf.cond(

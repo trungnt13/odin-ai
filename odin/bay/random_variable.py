@@ -128,6 +128,7 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   elif dist == obd.Dirichlet:
     prior = dist(**_kwargs(concentration=[1.] * event_size))
   elif dist == obd.Bernoulli:
+    event_shape = tf.nest.flatten(event_shape)
     prior = obd.Independent(
         obd.Bernoulli(**_kwargs(logits=np.zeros(event_shape)),
                       dtype=tf.float32),

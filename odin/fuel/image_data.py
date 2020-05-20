@@ -433,25 +433,27 @@ class dSprites(ImageDataset):
     value_y_position:  32 values in [0, 1]
   """
 
-  def __init__(self):
+  def __init__(self, continuous=False):
     super().__init__()
     import tensorflow_datasets as tfds
     self.train, self.valid, self.test = tfds.load(
         "dsprites",
         split=["train[:85%]", "train[85%:90%]", "train[90%:]"],
         shuffle_files=True)
-    self._discrete_factors = np.array([
-        'label_orientation', 'label_scale', 'label_shape', 'label_x_position',
-        'label_y_position'
-    ])
-    self._continuous_factors = np.array([
-        'value_orientation', 'value_scale', 'value_shape', 'value_x_position',
-        'value_y_position'
-    ])
+    if continuous:
+      self._factors = np.array([
+          'value_orientation', 'value_scale', 'value_shape', 'value_x_position',
+          'value_y_position'
+      ])
+    else:
+      self._factors = np.array([
+          'label_orientation', 'label_scale', 'label_shape', 'label_x_position',
+          'label_y_position'
+      ])
 
   @property
   def labels(self):
-    return self._discrete_factors
+    return self._factors
 
   @property
   def is_binary(self):
@@ -470,7 +472,6 @@ class dSprites(ImageDataset):
                      parallel=None,
                      partition='train',
                      inc_labels=False,
-                     continuous_factors=False,
                      seed=1) -> tf.data.Dataset:
     r"""
     Arguments:
@@ -491,8 +492,7 @@ class dSprites(ImageDataset):
                     train=self.train,
                     valid=self.valid,
                     test=self.test)
-    factors = self._continuous_factors if continuous_factors else \
-      self._discrete_factors
+    factors = self._factors
     inc_labels = float(inc_labels)
     gen = tf.random.experimental.Generator.from_seed(seed=seed)
 
@@ -517,6 +517,14 @@ class dSprites(ImageDataset):
     if prefetch is not None:
       ds = ds.prefetch(prefetch)
     return ds
+
+
+class dSpritesC(dSprites):
+  r""" Same as dSprites but the factors labels are non-negative continuous
+  values """
+
+  def __init__(self):
+    super().__init__(continuous=True)
 
 
 class MultidSprites(object):

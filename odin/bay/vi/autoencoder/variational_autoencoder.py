@@ -129,9 +129,9 @@ def _parse_network_alias(encoder):
                 input_shape=None)
       encoder = ImageNet(**kw)
       decoder = partial(ImageNet, decoding=True, **kw)
-    elif encoder in ('shapes3d', 'dsprites', 'celeba', 'stl10', 'legofaces',
-                     'cifar10', 'cifar20', 'cifar100'):
-      n_channels = 1 if encoder == 'dsprites' else 3
+    elif encoder in ('shapes3d', 'dsprites', 'dspritesc', 'celeba', 'stl10',
+                     'legofaces', 'cifar10', 'cifar20', 'cifar100'):
+      n_channels = 1 if encoder in ('dsprites', 'dspritesc') else 3
       if encoder in ('cifar10', 'cifar100', 'cifar20'):
         image_shape = (32, 32, 3)
       else:
@@ -149,8 +149,7 @@ def _parse_network_alias(encoder):
       decoder = partial(ImageNet, decoding=True, **kw)
     else:
       raise NotImplementedError(
-          "No support for predefined network for dataset with name: '%s'" %
-          encoder)
+          f"No predefined network for dataset with name: {encoder}")
   return encoder, decoder
 
 
@@ -504,7 +503,7 @@ class VariationalAutoencoder(keras.Model):
 
   @property
   def is_weak_supervised(self):
-    return False
+    return self.is_semi_supervised
 
   @property
   def is_fitted(self):

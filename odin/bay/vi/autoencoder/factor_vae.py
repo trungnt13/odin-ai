@@ -4,6 +4,7 @@ from typing import Optional
 import numpy as np
 import tensorflow as tf
 from tensorflow.python import keras
+from tensorflow_probability.python.distributions import Distribution
 
 from odin.bay.random_variable import RandomVariable as RV
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
@@ -32,17 +33,17 @@ class FactorDiscriminatorStep(TrainStep):
                                  apply_lamda=True)
     metrics = dict(dtc_loss=dtc_loss)
     ## applying the classifier loss
-    classifier_loss = 0.
+    supervised_loss = 0.
     if (len(tf.nest.flatten(inputs)) > len(self.vae.output_layers) and
-        hasattr(self.vae, 'classifier_loss')):
+        hasattr(self.vae, 'supervised_loss')):
       labels = inputs[len(self.vae.output_layers):]
-      classifier_loss = self.vae.classifier_loss(labels,
+      supervised_loss = self.vae.supervised_loss(labels,
                                                  qZ_X,
                                                  mask=mask,
                                                  training=training,
                                                  apply_alpha=True)
-      metrics['classifier_loss'] = classifier_loss
-    return dtc_loss + classifier_loss, metrics
+      metrics['supervised_loss'] = supervised_loss
+    return dtc_loss + supervised_loss, metrics
 
   def __call__(self):
     inputs, qZ_X = self.inputs
@@ -342,20 +343,16 @@ class SemiFactorVAE(FactorVAE):
                ss_strategy='logsumexp',
                **kwargs):
     if isinstance(discriminator, dict):
-      discriminator['n_outputs'] = labels
+      discriminator['outputs'] = labels
       discriminator['ss_strategy'] = ss_strategy
     super().__init__(discriminator=discriminator, **kwargs)
-    n_labels = int(np.prod(labels.event_shape)) if hasattr(
-        labels, 'event_shape') else int(labels)
-    assert self.discriminator.output_shape[-1] == n_labels, \
-      "The discriminator has output shape %s, but need (n_labels + 1)=%d outputs" \
-        % (self.discriminator.output_shape, n_labels)
-    self.n_labels = n_labels
+    self.n_labels = self.discriminator.n_outputs
+    self.n_unsupervised = len(self.output_layers)
     self.labels = labels
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
 
   def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
-    inputs = tf.nest.flatten(inputs)[:len(self.output_layers)]
+    inputs = tf.nest.flatten(inputs)[:self.n_unsupervised]
     if len(inputs) == 1:
       inputs = inputs[0]
     return super().encode(inputs,
@@ -364,18 +361,19 @@ class SemiFactorVAE(FactorVAE):
                           sample_shape=sample_shape,
                           **kwargs)
 
-  def classify(self, inputs, proba=False, training=None):
+  def classify(self, inputs, training=None):
     qZ_X = self.encode(inputs, training=training)
     if hasattr(self.discriminator, '_to_samples'):
       z = self.discriminator._to_samples(qZ_X)
     else:
       z = qZ_X
-    logits = self.discriminator(z, training=training)
-    if proba:
-      return tf.nn.softmax(logits, axis=-1)
-    return logits
+    y = self.discriminator(z, training=training)
+    assert isinstance(
+        y, Distribution
+    ), f"Discriminator must return a Distribution, but returned: {y}"
+    return y
 
-  def classifier_loss(self,
+  def supervised_loss(self,
                       labels,
                       qZ_X,
                       mask=None,
@@ -384,7 +382,7 @@ class SemiFactorVAE(FactorVAE):
     r""" The semi-supervised classifier loss, `mask` is given to indicate
     labelled examples (i.e. `mask=1`), and otherwise, unlabelled examples.
     """
-    loss = self.discriminator.classifier_loss(labels=labels,
+    loss = self.discriminator.supervised_loss(labels=labels,
                                               qZ_X=qZ_X,
                                               mask=mask,
                                               training=training)

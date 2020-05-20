@@ -100,7 +100,7 @@ _dist_mapping = multikeysdict({
     'binomial': (obl.BinomialLayer, tfd.Binomial),
     # 'betabinomial': (obl.BetaBinomialLayer, tfd.Binomial),
     'multinomial': (obl.MultinomialLayer, tfd.Multinomial),
-    'dirimultinomial':
+    ('dirimultinomial', 'dirichletmultinomial'):
         (obl.DirichletMultinomialLayer, tfd.DirichletMultinomial),
     # ====== Gumbel ====== #
     ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),

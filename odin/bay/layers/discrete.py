@@ -71,10 +71,8 @@ class BernoulliLayer(tfl.DistributionLambda):
         reinterpreted_batch_ndims=tf.size(input=event_shape),
         name=name,
     )
-    dist._logits = dist.distribution._logits  # pylint: disable=protected-access
-    dist._probs = dist.distribution._probs  # pylint: disable=protected-access
-    dist.logits = bernoulli_lib.Bernoulli.logits
-    dist.probs = bernoulli_lib.Bernoulli.probs
+    dist.logits = dist.distribution._logits  # pylint: disable=protected-access
+    dist.probs = dist.distribution._probs  # pylint: disable=protected-access
     return dist
 
   @staticmethod
