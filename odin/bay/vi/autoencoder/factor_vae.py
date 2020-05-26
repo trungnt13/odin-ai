@@ -215,7 +215,8 @@ class FactorVAE(BetaVAE):
     return loss
 
   def _prepare_steps(self, inputs, mask, call_kw):
-    r""" Split the data into 2 partitions for training the VAE and Discriminator """
+    r""" Split the data into 2 partitions for training the VAE and
+    Discriminator """
     self.step.assign_add(1.)
     # split inputs into 2 mini-batches here
     if tf.is_tensor(inputs):

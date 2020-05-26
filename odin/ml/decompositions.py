@@ -19,11 +19,6 @@ from odin.ml.base import BaseEstimator, TransformerMixin
 from odin.utils import Progbar, batching, ctext, flatten_list
 from odin.utils.mpi import MPI
 
-try:
-  from cuml.decomposition import PCA as cuPCA
-except ImportError:
-  cuPCA = None
-
 __all__ = [
     "fast_pca",
     "MiniBatchPCA",
@@ -62,6 +57,11 @@ def fast_pca(*x,
     return_model : bool (default: False)
       if True, return the trained PCA model as the FIRST return
   """
+  try:
+    from cuml.decomposition import PCA as cuPCA
+  except ImportError:
+    cuPCA = None
+
   batch_size = int(batch_size)
   algo = str(algo).lower()
   if algo not in ('pca', 'ipca', 'ppca', 'sppca', 'plda', 'rpca'):

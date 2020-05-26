@@ -510,11 +510,3 @@ class FactorDiscriminator(SequentialNetwork):
     loss = tf.cond(
         tf.abs(loss) < 1e-8, lambda: tf.stop_gradient(loss), lambda: loss)
     return loss
-
-
-# ===========================================================================
-# Factor divergence
-# ===========================================================================
-class FactorDivergence():
-  r""" TODO """
-  pass
