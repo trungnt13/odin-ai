@@ -15,6 +15,17 @@ import scipy as sp
 from six import string_types
 
 
+class MD5object:
+
+  def _md5_objects(self):
+    r""" Return the objects for calculating the MD5 checksum"""
+    raise NotImplementedError
+
+  @property
+  def md5_checksum(self):
+    return md5_checksum(self._md5_objects())
+
+
 # ===========================================================================
 # Helper
 # ===========================================================================

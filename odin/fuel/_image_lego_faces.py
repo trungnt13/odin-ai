@@ -454,7 +454,7 @@ class LegoFaces(ImageDataset):
     if cache is not None:
       ds = ds.cache(str(cache))
     # shuffle must be called after cache
-    if shuffle is not None:
+    if shuffle is not None and shuffle > 0:
       ds = ds.shuffle(int(shuffle))
     ds = ds.batch(batch_size, drop_remainder)
     if prefetch is not None:

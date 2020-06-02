@@ -36,14 +36,16 @@ class Visualizer(object):
 
   def save_figures(self,
                    path='/tmp/tmp.pdf',
-                   dpi=None,
+                   dpi=100,
                    separate_files=True,
                    clear_figures=True,
                    verbose=False):
     r""" Saving all stored figures to path
 
     Arguments:
-      path : path to a pdf or image file
+      path : a String.
+        path to a pdf or image file, or a directory in case saving the figures
+        to separated image files.
       dpi : dot-per-inch
       separate_files : save each figure in separated file
       clear_figures : remove and close all stored figures
@@ -62,9 +64,7 @@ class Visualizer(object):
       return self
     # ====== saving PDF file ====== #
     if verbose:
-      print("Saving %s figures to path: " % ctext(n_figures, 'lightcyan'),
-            ctext(path, 'lightyellow'))
-
+      print(f"Saving {n_figures} figures to: {path}")
     if not separate_files:
       if dpi is None:
         dpi = 48

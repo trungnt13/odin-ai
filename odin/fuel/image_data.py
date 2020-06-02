@@ -217,7 +217,7 @@ class CelebA(ImageDataset):
     if cache is not None:
       images = images.cache(str(cache))
     # shuffle must be called after cache
-    if shuffle is not None:
+    if shuffle is not None and shuffle > 0:
       images = images.shuffle(int(shuffle))
     images = images.batch(batch_size, drop_remainder)
     if prefetch is not None:
@@ -396,7 +396,7 @@ class Shapes3D(ImageDataset):
     ds = ds.batch(batch_size, drop_remainder).map(process, parallel)
     if cache is not None:
       ds = ds.cache(str(cache))
-    if shuffle is not None:
+    if shuffle is not None and shuffle > 0:
       ds = ds.shuffle(shuffle)
     if prefetch is not None:
       ds = ds.prefetch(prefetch)
@@ -511,7 +511,7 @@ class dSprites(ImageDataset):
     if cache is not None:
       ds = ds.cache(str(cache))
     # shuffle must be called after cache
-    if shuffle is not None:
+    if shuffle is not None and shuffle > 0:
       ds = ds.shuffle(int(shuffle))
     ds = ds.batch(batch_size, drop_remainder)
     if prefetch is not None:
@@ -686,7 +686,7 @@ class STL10(ImageDataset):
     if cache is not None:
       datasets = datasets.cache(str(cache))
     # shuffle must be called after cache
-    if shuffle is not None:
+    if shuffle is not None and shuffle > 0:
       datasets = datasets.shuffle(int(shuffle) * len(X))
     datasets = datasets.batch(batch_size, drop_remainder)
     if prefetch is not None:

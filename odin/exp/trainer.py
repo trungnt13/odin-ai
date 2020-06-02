@@ -659,6 +659,8 @@ class Trainer(object):
       fig.tight_layout(rect=[0, 0.03, 1, 0.97])
     else:
       fig.tight_layout()
+    if path is None:
+      return fig
     fig.savefig(path, dpi=dpi)
     plt.close(fig)
     return self

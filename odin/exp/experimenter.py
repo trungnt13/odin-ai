@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import glob
 import inspect
 import itertools
 import logging
@@ -17,6 +18,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from io import StringIO
 from numbers import Number
+from typing import List
 
 import numpy as np
 import tensorflow as tf
@@ -24,9 +26,9 @@ from pandas import DataFrame
 from six import string_types
 
 from odin.exp.scores import ScoreBoard
-from odin.utils import (as_tuple, clean_folder, get_all_files,
+from odin.utils import (MD5object, as_tuple, clean_folder, get_all_files,
                         get_formatted_datetime, struct)
-from odin.utils.crypto import md5_checksum, md5_folder
+from odin.utils.crypto import MD5object, md5_checksum, md5_folder
 from odin.utils.mpi import MPI
 
 try:
@@ -131,7 +133,20 @@ def flatten_config(cfg: dict, base='', max_depth=-1) -> dict:
   return c
 
 
-def pretty_config(cfg: dict, ncol=4) -> str:
+def _deflatten_config(cfg: dict) -> DictConfig:
+  out = {}
+  for k, v in cfg.items():
+    cur = out
+    all_keys = k.split('.')
+    for i in all_keys[:-1]:
+      if i not in cur:
+        cur[i] = {}
+      cur = cur[i]
+    cur[all_keys[-1]] = v
+  return DictConfig(out)
+
+
+def pretty_config(cfg: dict, ncol=3) -> str:
   ncol = int(ncol)
   text = ''
   if hasattr(cfg, 'pretty'):
@@ -264,6 +279,11 @@ class Experimenter():
   on_compare() # --compare
   ```
 
+  Extra options:
+
+    --override : override exists experiment
+    --reset : delete all exists experiments
+
   Arguments:
     save_path : path to a folder for saving the experiments
     config_path : String. Two option for providing the configuration file
@@ -285,7 +305,7 @@ class Experimenter():
       call when training start
     on_eval(cfg, output_dir)
       call with `--eval` option for evaluation
-    on_plot(cfg, output_dir)
+    on_plot(cfg, figure_dir)
       call with `--plot` option for visualization the results
     on_compare(models, save_path)
       call with `--compare` to generate analysis of comparing multiple models
@@ -360,26 +380,26 @@ class Experimenter():
   def is_training(self):
     return self._running_mode == 'train'
 
-  def train(self):
+  def train_mode(self):
     self._running_mode = 'train'
     return self
 
-  def eval(self):
+  def eval_mode(self):
     self._running_mode = 'eval'
     return self
 
-  def plot(self):
+  def plot_mode(self):
     self._running_mode = 'plot'
     return self
 
-  def hash_config(self, cfg: DictConfig, exclude_keys=[]) -> str:
+  def hash_config(self, cfg: DictConfig) -> str:
     r"""
     cfg : dictionary of configuration to generate an unique identity
     exclude_keys : list of string, given keys will be ignored from the
       configuration
     """
     assert isinstance(cfg, (DictConfig, dict))
-    cfg = Experimenter.remove_keys(cfg, copy=True, keys=exclude_keys)
+    cfg = Experimenter.remove_keys(cfg, copy=True, keys=self.exclude_keys)
     cfg = flatten_config(cfg, base='', max_depth=-1)
     return md5_checksum(cfg)[:self.hash_length]
 
@@ -462,7 +482,7 @@ class Experimenter():
   def get_output_dir(self, cfg: DictConfig = None):
     if cfg is None:
       cfg = self.configs
-    key = self.hash_config(cfg, self.exclude_keys)
+    key = self.hash_config(cfg)
     path = os.path.join(self._save_path, 'exp_%s' % key)
     if not os.path.exists(path):
       os.mkdir(path)
@@ -471,6 +491,12 @@ class Experimenter():
   def get_model_dir(self, cfg: DictConfig = None):
     path = self.get_output_dir(cfg)
     path = os.path.join(path, 'model')
+    if not os.path.exists(path):
+      os.mkdir(path)
+    return path
+
+  def get_figure_dir(self):
+    path = os.path.join(self.save_path, 'figures')
     if not os.path.exists(path):
       os.mkdir(path)
     return path
@@ -520,8 +546,8 @@ class Experimenter():
     overrides = _overrides(overrides) + _overrides(configs)
     cfg = self.load_configuration(overrides)
     if isinstance(cfg, DictConfig):
-      return self.hash_config(cfg, self.exclude_keys)
-    return [self.hash_config(cfg, self.exclude_keys) for c in cfg]
+      return self.hash_config(cfg)
+    return [self.hash_config(cfg) for c in cfg]
 
   def clear_all_experiments(self, verbose=True):
     input("<Enter> to continue remove all experiments ...")
@@ -579,7 +605,7 @@ class Experimenter():
       cfg = self._running_configs
       if cfg is None:
         cfg = self._configs
-      hash_key = self.hash_config(cfg, self.exclude_keys)
+      hash_key = self.hash_config(cfg)
     self.db.write(table=table,
                   unique='hash',
                   replace=replace,
@@ -596,11 +622,25 @@ class Experimenter():
     r""" Run a select query on the database """
     return self.db.select(query)
 
-  def get_models(self, conditions="", load_models=False):
+  def get_models(self,
+                 conditions="",
+                 load_models=False,
+                 checksum=False,
+                 verbose=True):
     r""" Select all model in the database `exp.db` given the conditions
 
+    Arguments:
+      conditions : a String or list of String (e.g. `sys.argv`)
+        for examples:
+        - `"model.name=vae dataset.name=mnist"`
+        - or `["model.name=vae", "dataset.name=mnist"]`
+
     Return:
-      list of Dictionary
+      configs : list of `DictConfig`
+        list of all configurations that match the conditions
+      models : list of `dict`.
+        list of all attributes created during calling `on_load_data` and
+        `on_create_model`, this list is empty if `load_models=False`
     """
     regex = re.compile(r'\w+[=].+')
     if isinstance(conditions, string_types):
@@ -639,7 +679,7 @@ class Experimenter():
     colname = [row[1] for row in self.select("PRAGMA table_info(config);")]
     ## select only available model
     _path = lambda row: os.path.join(self.save_path, 'exp_%s' % row[0], 'model')
-    configs = [
+    all_configs = [
         # all values must be primitive
         [i.tolist() if isinstance(i, np.ndarray) else i
          for i in row]
@@ -647,28 +687,40 @@ class Experimenter():
         if os.path.exists(_path(row)) and os.listdir(_path(row))
     ]
     # create the model
+    configs = ModelList()
     models = ModelList()
     attrs = set([i[0] for i in inspect.getmembers(self)])
     # iterate and get all the relevant config
-    for cfg in configs:
-      cfg = DictConfig(dict(zip(colname, cfg)))
+    for cfg in all_configs:
+      cfg = _deflatten_config(dict(zip(colname, cfg)))
+      # don't forget remove hash or the hash_config return different checksum
+      hash_key = cfg.pop('hash')
+      assert hash_key == self.hash_config(cfg), \
+        f"Hash mismatch {hash_key}!={self.hash_config(cfg)} for config: {cfg}"
       if load_models:
-        print("Loading model:")
-        print(pretty_config(cfg))
-        # load data
-        for k in self.exclude_keys:  # set the default excluded key
+        # set the default excluded key
+        for k in self.exclude_keys:
           if k not in cfg:
             cfg[k] = self.configs[k]
-        self.on_load_data(cfg)
-        # load model
-        self.on_create_model(cfg, self.get_model_dir(cfg), md5=None)
+        # load data and model
+        if verbose:
+          print("Loading model:", hash_key)
+        with self._tracking_md5(cfg, verbose=verbose) as (md5_tracking, _):
+          self.on_load_data(cfg)
+          self.on_create_model(cfg, self.get_model_dir(cfg), md5=md5_tracking)
         # just get the newly added attributes
-        cfg = struct(**cfg)
+        loaded = struct()
         for k, v in [i for i in inspect.getmembers(self) if i[0] not in attrs]:
-          cfg[k] = v
-      # add the model
-      models.append(cfg)
-    return models
+          loaded[k] = v
+        # add the model
+        models.append(loaded)
+      configs.append(cfg)
+    # return
+    if len(configs) == 1:
+      configs = configs[0]
+      if load_models:
+        models = models[0]
+    return configs, models
 
   ####################### Base methods
   def on_load_data(self, cfg: DictConfig):
@@ -683,26 +735,56 @@ class Experimenter():
   def on_eval(self, cfg: DictConfig, output_dir: str):
     print("EVALUATING:", cfg, output_dir)
 
-  def on_plot(self, cfg: DictConfig, output_dir: str):
-    print("PLOTTING:", cfg, output_dir)
+  def on_plot(self, cfg: DictConfig, figure_dir: str):
+    print("PLOTTING:", cfg, figure_dir)
 
-  def on_compare(self, models: ModelList, save_path: str):
+  def on_compare(self, configs: List[DictConfig], models: ModelList,
+                 save_path: str):
     print("COMPARING:", save_path)
 
   ####################### Compare multiple model
   def _run_comparison(self, argv, load_models):
-    models = self.get_models(conditions=argv[1:], load_models=load_models)
+    configs, models = self.get_models(conditions=argv[1:],
+                                      load_models=load_models)
     ## finally call the compare function
-    self.on_compare(models, self.save_path)
+    self.on_compare(configs, models, self.save_path)
 
   ####################### Basic logics
+  @contextmanager
+  def _tracking_md5(self, cfg: DictConfig, logger=None, verbose=True):
+    md5_tracking = {}
+    output_dir = self.get_output_dir(cfg)
+    md5_path = os.path.join(output_dir, 'md5')
+    md5_saved = None
+    if os.path.exists(md5_path):
+      with open(md5_path, 'r') as f:
+        md5_saved = dict([line.strip().split(',') for line in f])
+        md5_tracking.update(md5_saved)
+    tracking_attrs = {i: type(j) for i, j in inspect.getmembers(self)}
+    yield md5_tracking, md5_path
+    # find changed attributes
+    for i, j in inspect.getmembers(self):
+      if (i not in tracking_attrs or type(j) != tracking_attrs[i]) and \
+        isinstance(j, MD5object):
+        md5_tracking[i] = j.md5_checksum
+    if md5_saved is not None:
+      for key, md5_new in md5_tracking.items():
+        md5_old = md5_saved[key] if key in md5_saved else None
+        if verbose:
+          text = (f"[{'OK' if md5_old == md5_new else 'Fail'}] "
+                  f"MD5 '{key}' old:{md5_old} new:{md5_new}")
+          if logger is None:
+            print(text)
+          else:
+            logger.info(text)
+
   def _call_and_catch(self, method, **kwargs):
     r""" Return True to stop the run, False for continue running """
     method_name = method.__func__.__name__
     try:
       method(**kwargs)
       return False
-    except:
+    except Exception as e:
       text = StringIO()
       traceback.print_exception(*sys.exc_info(),
                                 limit=None,
@@ -710,7 +792,8 @@ class Experimenter():
                                 chain=True)
       text.seek(0)
       text = text.read().strip()
-      LOGGER.error("\n" + text)
+      text += f"\n{e}"
+      LOGGER.error(f"\n{text}\n{pretty_config(self._running_configs)}")
       self.db.write(table='error',
                     hash=self._running_hash,
                     method=method_name,
@@ -722,7 +805,7 @@ class Experimenter():
   def _run(self, cfg: DictConfig):
     cfg = deepcopy(cfg)
     # store config in database
-    hash_key = self.hash_config(cfg, self.exclude_keys)
+    hash_key = self.hash_config(cfg)
     self.db.write(table='config',
                   unique='hash',
                   hash=hash_key,
@@ -739,27 +822,25 @@ class Experimenter():
         logger.info("Override experiment at path: %s" % output_dir)
         shutil.rmtree(output_dir)
       model_dir = self.get_model_dir(cfg)
-      md5_path = model_dir + '.md5'
-      ## check the configs
-      config_path = self.get_config_path(cfg, datetime=True)
-      with open(config_path, 'w') as f:
-        OmegaConf.save(cfg, f)
-      logger.info("Save config: %s" % config_path)
-      ## load data
-      if self._call_and_catch(self.on_load_data, cfg=cfg):
-        return
-      logger.info("Loaded data")
-      ## create or load model
-      md5_saved = None
-      if os.path.exists(md5_path):
-        with open(md5_path, 'r') as f:
-          md5_saved = f.read().strip()
-      if self._call_and_catch(self.on_create_model,
-                              cfg=cfg,
-                              model_dir=model_dir,
-                              md5=md5_saved):
-        return
-      logger.info("Create model: %s (md5:%s)" % (model_dir, str(md5_saved)))
+      figure_dir = self.get_figure_dir()
+      # check saved md5
+      with self._tracking_md5(cfg) as (md5_tracking, md5_path):
+        ## check the configs
+        config_path = self.get_config_path(cfg, datetime=True)
+        with open(config_path, 'w') as f:
+          OmegaConf.save(cfg, f)
+        logger.info("Save config: %s" % config_path)
+        ## load data
+        if self._call_and_catch(self.on_load_data, cfg=cfg):
+          return
+        logger.info("Loaded data")
+        ## create or load model
+        if self._call_and_catch(self.on_create_model,
+                                cfg=cfg,
+                                model_dir=model_dir,
+                                md5=md5_tracking):
+          return
+        logger.info(f"Create model: {model_dir} (md5:{md5_tracking})")
       ## training
       logger.info("Start experiment in mode '%s'" % self._running_mode)
       if self._running_mode == 'train':
@@ -774,15 +855,13 @@ class Experimenter():
           return
         logger.info("Finish evaluating")
       elif self._running_mode == 'plot':
-        if self._call_and_catch(self.on_plot, cfg=cfg, output_dir=output_dir):
+        if self._call_and_catch(self.on_plot, cfg=cfg, figure_dir=figure_dir):
           return
         logger.info("Finish plotting")
       ## saving the model hash
-      if os.path.exists(model_dir) and len(os.listdir(model_dir)) > 0:
-        md5 = md5_folder(model_dir)
-        with open(md5_path, 'w') as f:
-          f.write(md5)
-        logger.info("The model stored at path:%s  (MD5: %s)" % (model_dir, md5))
+      with open(md5_path, 'w') as f:
+        f.writelines([f"{i},{j}\n" for i, j in md5_tracking.items()])
+      logger.info(f"MD5: {md5_tracking} stored at: {md5_path}")
 
   ####################### main
   def run(self, overrides=[], ncpu=None, **configs):
@@ -842,13 +921,13 @@ class Experimenter():
         self._override_mode = True
         remove_items.append(arg)
       elif arg in ('--train', '-train'):
-        self.train()
+        self.train_mode()
         remove_items.append(arg)
       elif arg in ('--plot', '-plot'):
-        self.plot()
+        self.plot_mode()
         remove_items.append(arg)
       elif arg in ('--eval', '-eval'):
-        self.eval()
+        self.eval_mode()
         remove_items.append(arg)
       elif arg in ('--reset', '--clear', '--clean'):
         configs_filter = lambda f: 'configs' != f.split('/')[-1]
@@ -879,8 +958,12 @@ class Experimenter():
     if run_comparison:
       self._run_comparison(sys.argv, load_model_comparison)
       return self
+    # run in evaluation or plotting mode
     elif self._running_mode in ('eval', 'plot'):
-      configs = self.get_models(sys.argv[1:], load_models=False)
+      configs, _ = self.get_models(sys.argv[1:], load_models=False)
+      if not isinstance(configs, (tuple, list)):
+        configs = [configs]
+      configs = [flatten_config(c) for c in configs]
       if len(configs) == 0:
         raise RuntimeError("Cannot find trained models with configuration: %s" %
                            str(sys.argv[1:]))

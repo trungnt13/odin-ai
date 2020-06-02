@@ -26,7 +26,7 @@ import numpy
 
 from odin.utils import crypto, decorators, mpi
 from odin.utils.cache_utils import *
-from odin.utils.crypto import md5_checksum, md5_folder
+from odin.utils.crypto import md5_checksum, md5_folder, MD5object
 from odin.utils.mpi import (MPI, SharedCounter, async_mpi, async_thread,
                             segment_list)
 from odin.utils.net_utils import *

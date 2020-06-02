@@ -16,6 +16,7 @@ import tensorflow as tf
 from six import string_types
 from tensorflow.python import keras, trackable
 from tensorflow.python.keras.layers import Layer
+from tensorflow.python.platform import tf_logging as logging
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
 
@@ -24,6 +25,7 @@ from odin.backend.keras_helpers import layer2text
 from odin.bay.layers.dense import DenseDistribution
 from odin.bay.random_variable import RandomVariable as RV
 from odin.networks import NetworkConfig, SequentialNetwork
+from odin.utils import MD5object
 from odin.utils.python_utils import classproperty
 
 
@@ -265,7 +267,7 @@ class TrainStep:
 # ===========================================================================
 # Model
 # ===========================================================================
-class VariationalAutoencoder(keras.Model):
+class VariationalAutoencoder(keras.Model, MD5object):
   r""" Base class for all variational autoencoder
 
   Arguments:
@@ -453,7 +455,7 @@ class VariationalAutoencoder(keras.Model):
       self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
     else:
       self.optimizer = None
-    self.load_weights(path, raise_notfound=False)
+    self.load_weights(path, raise_notfound=False, verbose=True)
     ### store encode and decode method keywords
     self._encode_kw = inspect.getfullargspec(self.encode).args[1:]
     self._decode_kw = inspect.getfullargspec(self.decode).args[1:]
@@ -490,9 +492,9 @@ class VariationalAutoencoder(keras.Model):
   def load_weights(self, filepath, raise_notfound=False, verbose=False):
     r""" Load all the saved weights in tensorflow format at given path """
     if isinstance(filepath, string_types):
-      files = glob.glob(filepath + '*')
+      files = glob.glob(filepath + '.*')
       # load weights
-      if len(files) > 0 and all(os.path.isfile(f) for f in files):
+      if len(files) > 0 and (filepath + '.index') in files:
         if verbose:
           print(f"Loading weights at path: {filepath}")
         super().load_weights(filepath, by_name=False, skip_mismatch=False)
@@ -503,7 +505,7 @@ class VariationalAutoencoder(keras.Model):
       trainer_path = filepath + '.trainer'
       if os.path.exists(trainer_path):
         if verbose:
-          print(f"Loading Trainer at path: {trainer_path}")
+          print(f"Loading trainer at path: {trainer_path}")
         with open(trainer_path, 'rb') as f:
           self.trainer = pickle.load(f)
     self._save_path = filepath
@@ -516,9 +518,11 @@ class VariationalAutoencoder(keras.Model):
     """
     with open(filepath + '.trainer', 'wb') as f:
       pickle.dump(self.trainer, f)
-    return super().save_weights(filepath=filepath,
-                                overwrite=overwrite,
-                                save_format='tf')
+    logging.get_logger().disabled = True
+    super().save_weights(filepath=filepath,
+                         overwrite=overwrite,
+                         save_format='tf')
+    logging.get_logger().disabled = False
 
   @property
   def is_semi_supervised(self):
@@ -1018,7 +1022,12 @@ class VariationalAutoencoder(keras.Model):
         function in Eager mode (better for debugging).
 
     """
-    # TODO, support checkpoint, allow_rollback, fit history
+    if isinstance(train, np.ndarray) or tf.is_tensor(train):
+      train = tf.data.Dataset.from_tensor_slices(train).batch(64)
+    if valid is not None and (isinstance(valid, np.ndarray) or
+                              tf.is_tensor(valid)):
+      valid = tf.data.Dataset.from_tensor_slices(valid).batch(64)
+    # TODO, support allow_rollback, fit history
     # skip training if model is fitted or reached a number of iteration
     if self.is_fitted and skip_fitted:
       if isinstance(skip_fitted, bool):
@@ -1037,9 +1046,11 @@ class VariationalAutoencoder(keras.Model):
       trainer = self.trainer
     if log_tag is None or len(log_tag) == 0:
       log_tag = self.__class__.__name__
-    # create the optimizer
+    # create the optimizer, turn off tracking so
+    # the optimizer won't be saved in save_weights
     if optimizer is not None and self.optimizer is None:
-      self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
+      with trackable.no_automatic_dependency_tracking_scope(self):
+        self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
     if self.optimizer is None:
       raise RuntimeError("No optimizer found!")
     # prepare the callback
@@ -1136,18 +1147,16 @@ class VariationalAutoencoder(keras.Model):
     r""" Plot the learning curves on train and validation sets. """
     assert self.trainer is not None, \
       "fit method must be called before plotting learning curves"
-    self.trainer.plot_learning_curves(path=path,
-                                      summary_steps=summary_steps,
-                                      show_validation=show_validation,
-                                      dpi=dpi,
-                                      title=title)
+    fig =  self.trainer.plot_learning_curves(path=path,
+                                             summary_steps=summary_steps,
+                                             show_validation=show_validation,
+                                             dpi=dpi,
+                                             title=title)
+    if path is None:
+      return fig
     return self
 
-  @property
-  def md5_checksum(self):
-    r""" Return an unique checksum based on variables shape and values of this
-    model """
-    from odin.utils.crypto import md5_checksum
+  def _md5_objects(self):
     varray = []
     for n, v in enumerate(self.variables):
       v = v.numpy()
@@ -1155,15 +1164,15 @@ class VariationalAutoencoder(keras.Model):
       varray.append(v.ravel())
     varray.append([n])
     varray = np.concatenate(varray, axis=0)
-    return md5_checksum(varray)
+    return varray
 
   def __str__(self):
     cls = [
         i for i in type.mro(type(self)) if issubclass(i, VariationalAutoencoder)
     ]
-    text = "%s supervising(semi:%s self:%s weak:%s)" % (
-        "->".join([i.__name__ for i in cls[::-1]]), self.is_semi_supervised,
-        self.is_self_supervised, self.is_weak_supervised)
+    text = (f"{'->'.join([i.__name__ for i in cls[::-1]])} "
+            f"(semi:{self.is_semi_supervised} self:{self.is_self_supervised} "
+            f"weak:{self.is_weak_supervised})")
     text += f'\n MD5 checksum: {self.md5_checksum}'
     ## encoder
     for i, encoder in enumerate(tf.nest.flatten(self.encoder)):

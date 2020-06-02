@@ -181,11 +181,11 @@ def log_norm(x, axis=1, scale_factor=10000, eps=1e-8):
                        scale_factor)
 
 
-def delog_norm(x, x_sum=1, scale_factor=10000):
+def delog_norm(x, x_sum=1, scale_factor=10000, eps=1e-8):
   """ This perform de-log normalization of `log_norm` values
   if `x_sum` is not given (i.e. default value 1), then all the
   """
-  return (tf.exp(x) - 1) / scale_factor * (x_sum + EPS)
+  return (tf.exp(x) - 1) / scale_factor * (x_sum + eps)
 
 
 # ===========================================================================

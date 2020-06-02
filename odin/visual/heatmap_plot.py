@@ -48,7 +48,7 @@ def plot_heatmap(data,
                  origin='upper')
   # Create colorbar
   if cbar:
-    cb = plt.colorbar(im, fraction=0.03, pad=0.02)
+    cb = plt.colorbar(im, fraction=0.02, pad=0.02)
     if cbar_title is not None:
       cb.ax.set_ylabel(cbar_title, rotation=-90, va="bottom", fontsize=fontsize)
   ## major ticks

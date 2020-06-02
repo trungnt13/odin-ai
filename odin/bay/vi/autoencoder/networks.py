@@ -357,6 +357,7 @@ class FactorDiscriminator(SequentialNetwork):
                ss_strategy='logsumexp',
                name="FactorDiscriminator"):
     outputs = tf.nest.flatten(outputs)
+    assert len(outputs) > 0, "No output is given for FactorDiscriminator"
     assert all(isinstance(o, RV) for o in outputs), \
       (f"outputs must be instance of RandomVariable, but given:{outputs}")
     n_outputs = 0
@@ -381,6 +382,7 @@ class FactorDiscriminator(SequentialNetwork):
 
   def call(self, inputs, **kwargs):
     outputs = super().call(inputs, **kwargs)
+    # project into different output distributions
     distributions = [d(outputs, **kwargs) for d in self.distributions]
     return distributions[0] if len(distributions) == 1 else tuple(distributions)
 
@@ -410,14 +412,21 @@ class FactorDiscriminator(SequentialNetwork):
         else:
           raise RuntimeError(
               f"Distribution {x} doesn't has 'logits' or 'concentration' "
-              "attributes, cannot not be used for estimating total correlation.")
+              "attributes, cannot not be used for estimating total correlation."
+          )
       Xs.append(x)
-    if len(Xs) == 1:
+    # concatenate the outputs
+    if len(Xs) == 0:
+      raise RuntimeError(
+          f"No logits values found for total correlation: {logits}")
+    elif len(Xs) == 1:
       Xs = Xs[0]
     else:
       Xs = tf.concat(Xs, axis=-1)
+    # only 1 unit, only estimate TC
     if self.n_outputs == 1:
       return Xs[..., 0]
+    # multiple units, reduce
     return getattr(tf, 'reduce_%s' % self.ss_strategy)(Xs, axis=-1)
 
   def total_correlation(self, qZ_X, training=None):
