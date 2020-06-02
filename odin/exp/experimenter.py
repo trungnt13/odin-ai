@@ -375,6 +375,19 @@ class Experimenter():
     self._running_hash = None
     self._running_mode = 'train'
     self._override_mode = False
+    # tracking attributes
+    self._original_attrs = {i: type(j) for i, j in inspect.getmembers(self)}
+    self._original_attrs['_original_attrs'] = dict
+
+  def _updated_attributes(self) -> dict:
+    r""" Compare all the current attributes to the original attributes created
+    at initialization to check which one created by user. """
+    attrs = self._original_attrs
+    return dict([
+        (k, v)
+        for k, v in inspect.getmembers(self)
+        if k not in attrs or (type(v) != attrs[k] and attrs[k] != type(None))
+    ])
 
   @property
   def is_training(self):
@@ -573,6 +586,7 @@ class Experimenter():
 
     Return:
       a Dictionary, mapping from `hash key` to `columns`
+
     Example
     ```
     self.get_scores('score', [i.hash for i in configs], ['mllk'])
@@ -689,7 +703,6 @@ class Experimenter():
     # create the model
     configs = ModelList()
     models = ModelList()
-    attrs = set([i[0] for i in inspect.getmembers(self)])
     # iterate and get all the relevant config
     for cfg in all_configs:
       cfg = _deflatten_config(dict(zip(colname, cfg)))
@@ -703,15 +716,17 @@ class Experimenter():
           if k not in cfg:
             cfg[k] = self.configs[k]
         # load data and model
+        model_dir = self.get_model_dir(cfg)
         if verbose:
-          print("Loading model:", hash_key)
+          print("Loading model:", model_dir)
         with self._tracking_md5(cfg, verbose=verbose) as (md5_tracking, _):
           self.on_load_data(cfg)
-          self.on_create_model(cfg, self.get_model_dir(cfg), md5=md5_tracking)
+          self.on_create_model(cfg, model_dir, md5=md5_tracking)
         # just get the newly added attributes
-        loaded = struct()
-        for k, v in [i for i in inspect.getmembers(self) if i[0] not in attrs]:
-          loaded[k] = v
+        loaded = struct(self._updated_attributes())
+        if verbose:
+          for k, v in loaded.items():
+            print(f" - Loaded '{k}' of type {type(v)}")
         # add the model
         models.append(loaded)
       configs.append(cfg)
@@ -760,18 +775,17 @@ class Experimenter():
       with open(md5_path, 'r') as f:
         md5_saved = dict([line.strip().split(',') for line in f])
         md5_tracking.update(md5_saved)
-    tracking_attrs = {i: type(j) for i, j in inspect.getmembers(self)}
     yield md5_tracking, md5_path
     # find changed attributes
-    for i, j in inspect.getmembers(self):
-      if (i not in tracking_attrs or type(j) != tracking_attrs[i]) and \
-        isinstance(j, MD5object):
-        md5_tracking[i] = j.md5_checksum
+    for k, v in self._updated_attributes().items():
+      if isinstance(v, MD5object):
+        md5_tracking[k] = v.md5_checksum
+    # compare to saved MD5
     if md5_saved is not None:
       for key, md5_new in md5_tracking.items():
         md5_old = md5_saved[key] if key in md5_saved else None
         if verbose:
-          text = (f"[{'OK' if md5_old == md5_new else 'Fail'}] "
+          text = (f" - [{'OK' if md5_old == md5_new else 'Fail'}] "
                   f"MD5 '{key}' old:{md5_old} new:{md5_new}")
           if logger is None:
             print(text)
@@ -859,9 +873,13 @@ class Experimenter():
           return
         logger.info("Finish plotting")
       ## saving the model hash
-      with open(md5_path, 'w') as f:
-        f.writelines([f"{i},{j}\n" for i, j in md5_tracking.items()])
-      logger.info(f"MD5: {md5_tracking} stored at: {md5_path}")
+      if self.is_training:
+        md5_tracking = {
+            i: getattr(self, i).md5_checksum for i in md5_tracking.keys()
+        }
+        with open(md5_path, 'w') as f:
+          f.writelines([f"{i},{j}\n" for i, j in md5_tracking.items()])
+        logger.info(f"MD5: {md5_tracking} stored at: {md5_path}")
 
   ####################### main
   def run(self, overrides=[], ncpu=None, **configs):
