@@ -31,7 +31,15 @@ class Visualizer(object):
   def add_figure(self, name, fig):
     from matplotlib import pyplot as plt
     self.assert_figure(fig)
-    _FIGURE_LIST[id(self)][name] = fig
+    figures = _FIGURE_LIST[id(self)]
+    if name in figures:
+      i = name.split('_')[-1]
+      try:
+        i = min(9, int(i) + 1)
+      except:
+        i = ''
+      name = f"{name}_{i}"
+    figures[name] = fig
     return self
 
   def save_figures(self,

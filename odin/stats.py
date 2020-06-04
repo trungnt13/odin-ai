@@ -9,11 +9,13 @@ from numbers import Number
 
 import numpy as np
 
-from odin.utils import as_tuple, batching, ctext, flatten_list
+from odin.utils import as_tuple, batching, flatten_list
 
 
-def prior2weights(prior, exponential=False,
-                  min_value=0.1, max_value=None,
+def prior2weights(prior,
+                  exponential=False,
+                  min_value=0.1,
+                  max_value=None,
                   norm=False):
   """
   Parameters
@@ -39,7 +41,8 @@ def prior2weights(prior, exponential=False,
   prior = 1. / nonzero_prior * np.max(nonzero_prior)
   if exponential:
     prior = sorted([(i, p) for i, p in enumerate(prior)],
-                   key=lambda x: x[-1], reverse=False)
+                   key=lambda x: x[-1],
+                   reverse=False)
     # TODO: new interpolation module here
     alpha = interp.expIn(n=len(prior), power=10)
     prior = {i: a * p for a, (i, p) in zip(alpha, prior)}
@@ -58,6 +61,7 @@ def prior2weights(prior, exponential=False,
   for i in zero_ids:
     prior.insert(i, 0)
   return np.array(prior)
+
 
 # ===========================================================================
 # Diagnose
@@ -83,7 +87,8 @@ def _split_list(x, rng, train=0.6, idfunc=None, inc_test=True):
   valid = (N - train) // (2 if inc_test else 1)
   # ====== return splitted ====== #
   rets = (flatten_list((x_id[i] for i in id_list[:train]), level=1),
-          flatten_list((x_id[i] for i in id_list[train: train + valid]), level=1))
+          flatten_list((x_id[i] for i in id_list[train:train + valid]),
+                       level=1))
   if inc_test:
     rets += (flatten_list((x_id[i] for i in id_list[train + valid:]), level=1),)
   else:
@@ -93,8 +98,13 @@ def _split_list(x, rng, train=0.6, idfunc=None, inc_test=True):
       (sum(len(r) for r in rets), len(x))
   return rets
 
-def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
-                           inc_test=True, seed=None):
+
+def train_valid_test_split(x,
+                           train=0.6,
+                           cluster_func=None,
+                           idfunc=None,
+                           inc_test=True,
+                           seed=None):
   """ Split given list into 3 dataset: for training, validating,
   and testing.
 
@@ -127,7 +137,7 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
     idfunc = None
   # ====== clustering ====== #
   if cluster_func is None:
-    cluster_func = lambda x: 8 # lucky number
+    cluster_func = lambda x: 8  # lucky number
   if not hasattr(cluster_func, '__call__'):
     raise ValueError("'cluster_func' must be call-able or None.")
   clusters = defaultdict(list)
@@ -136,7 +146,10 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
   # ====== applying data split for each cluster separately ====== #
   train_list, valid_list, test_list = [], [], []
   for name, clus in clusters.items():
-    _1, _2, _3 = _split_list(clus, rng, train=train, idfunc=idfunc,
+    _1, _2, _3 = _split_list(clus,
+                             rng,
+                             train=train,
+                             idfunc=idfunc,
                              inc_test=inc_test)
     train_list += _1
     valid_list += _2
@@ -146,28 +159,41 @@ def train_valid_test_split(x, train=0.6, cluster_func=None, idfunc=None,
     return train_list, valid_list, test_list
   return train_list, valid_list
 
-def freqcount(x, key=None, count=1, normalize=False, sort=False,
+
+def is_discrete(x: np.ndarray):
+  x = np.asarray(x)
+  if not isinstance(x.dtype, np.integer):
+    for s, e in batching(batch_size=1024, n=len(x)):
+      y = x[s:e]
+      if np.any(y.astype(np.int32) != y.astype(np.float32)):
+        return False
+  return True
+
+
+def freqcount(x,
+              key=None,
+              count=1,
+              normalize=False,
+              sort=False,
               pretty_return=False):
-  """ x: list, iterable
+  r""" x: list, iterable
 
-  Parameters
-  ----------
-  key: call-able
-      extract the key from each item in the list
-  count: call-able, int
-      extract the count from each item in the list
-  normalize: bool
-      if normalize, all the values are normalized from 0. to 1. (
-      which sum up to 1. in total).
-  sort: boolean
-      if True, the list will be sorted in ascent order.
-  pretty_return: boolean
-      if True, return pretty formatted text.
+  Arguments:
+    key: call-able
+        extract the key from each item in the list
+    count: call-able, int
+        extract the count from each item in the list
+    normalize: bool
+        if normalize, all the values are normalized from 0. to 1. (
+        which sum up to 1. in total).
+    sort: boolean
+        if True, the list will be sorted in ascent order.
+    pretty_return: boolean
+        if True, return pretty formatted text.
 
-  Return
-  ------
-  dict: x(obj) -> freq(int)
-  if `pretty_return` is `True`, return pretty formatted string.
+  Return:
+    dict: x(obj) -> freq(int)
+      if `pretty_return` is `True`, return pretty formatted string.
   """
   freq = defaultdict(int)
   if key is None:
@@ -183,8 +209,9 @@ def freqcount(x, key=None, count=1, normalize=False, sort=False,
     freq[i] += c
   # always return the same order
   s = float(sum(v for v in freq.values()))
-  freq = OrderedDict([(k, freq[k] / s if normalize else freq[k])
-                      for k in sorted(freq.keys())])
+  freq = OrderedDict([
+      (k, freq[k] / s if normalize else freq[k]) for k in sorted(freq.keys())
+  ])
   # check sort
   if sort:
     freq = OrderedDict(sorted(freq.items(), key=lambda x: x[1]))
@@ -195,6 +222,7 @@ def freqcount(x, key=None, count=1, normalize=False, sort=False,
       s += ' %s: %d\n' % (ctext(name, 'yellow'), value)
     return s
   return freq
+
 
 # ===========================================================================
 # Bayesian
@@ -218,10 +246,15 @@ def KL_divergence(P, Q):
     D += pi * np.log(pi / qi)
   return D
 
+
 # ===========================================================================
 # Sampler
 # ===========================================================================
-def sampling_iter(it, k, p=None, return_iter=True, seed=1234,
+def sampling_iter(it,
+                  k,
+                  p=None,
+                  return_iter=True,
+                  seed=1234,
                   progress_bar=None):
   """ Reservoir sampling, randomly choosing a sample of k items from a
   list S containing n items, where n is either a very large or unknown number.
@@ -244,9 +277,11 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=1234,
     random seed for reproducibility
   progress_bar : {None, odin.utils.Progbar.ProgBar}
   """
-  k = int(k); assert k > 0
+  k = int(k)
+  assert k > 0
   if p is not None:
-    p = float(p); assert 0. < p < 1.
+    p = float(p)
+    assert 0. < p < 1.
   assert hasattr(it, '__iter__')
   # ====== check progress bar ====== #
   if progress_bar is not None:
@@ -305,7 +340,9 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=1234,
     # return the rest of the samples to have enough k sample
     for i in range(k - n):
       yield ret[i]
+
   return _sampling() if return_iter else list(_sampling)
+
 
 # ===========================================================================
 # Statistics
@@ -313,8 +350,7 @@ def sampling_iter(it, k, p=None, return_iter=True, seed=1234,
 def sparsity_percentage(x, batch_size=1234):
   n_zeros = 0
   n_total = np.prod(x.shape)
-  for start, end in batching(batch_size=batch_size, n=x.shape[0],
-                             seed=None):
+  for start, end in batching(batch_size=batch_size, n=x.shape[0], seed=None):
     y = x[start:end]
     if hasattr(y, 'count_nonzero'):
       n_nonzeros = y.count_nonzero()
@@ -322,6 +358,7 @@ def sparsity_percentage(x, batch_size=1234):
       n_nonzeros = np.count_nonzero(y)
     n_zeros += np.prod(y.shape) - n_nonzeros
   return n_zeros / n_total
+
 
 def logVMR(x, axis=None, logged_values=False):
   """ Calculate the variance to mean ratio (VMR) in non-logspace
@@ -343,11 +380,16 @@ def logVMR(x, axis=None, logged_values=False):
     x = np.expm1(x)
   return np.log1p(np.var(x, axis=axis) / np.mean(x, axis=axis))
 
+
 # ===========================================================================
 # Diagnosis
 # ===========================================================================
-def classification_diagnose(X, y_true, y_pred,
-                            num_samples=8, return_list=False, top_n=None,
+def classification_diagnose(X,
+                            y_true,
+                            y_pred,
+                            num_samples=8,
+                            return_list=False,
+                            top_n=None,
                             seed=1234):
   """
   Return
@@ -381,15 +423,15 @@ def classification_diagnose(X, y_true, y_pred,
                                       key=lambda x: len(x[-1]),
                                       reverse=True):
     rand.shuffle(samples)
-    outputs[(true, pred)] = (X[samples[:num_samples]]
-                             if isinstance(X, np.ndarray) else
-                             [X[i] for i in samples])
+    outputs[(true, pred)] = (X[samples[:num_samples]] if isinstance(
+        X, np.ndarray) else [X[i] for i in samples])
   # select top frequence
   if top_n is not None and isinstance(top_n, Number):
     top_n = int(top_n)
     assert top_n >= 1
     outputs = OrderedDict(list(outputs.items())[:top_n])
   return list(outputs.items()) if return_list else outputs
+
 
 def classification_report(y_pred, y_true, labels):
   """
@@ -412,9 +454,14 @@ def classification_report(y_pred, y_true, labels):
   s += "Confusion matrix:\n"
   s += str(confusion_matrix(y_true, y_pred, labels=labels)) + '\n'
   s += "Report:\n"
-  s += str(classification_report(y_true, y_pred, labels=labels, digits=3,
-                                 target_names=target_names))
+  s += str(
+      classification_report(y_true,
+                            y_pred,
+                            labels=labels,
+                            digits=3,
+                            target_names=target_names))
   return s
+
 
 def summary(x, axis=None, shorten=False, float_precision=2):
   """ Return string of statistical summary given series `x`
@@ -432,8 +479,10 @@ def summary(x, axis=None, shorten=False, float_precision=2):
   fmt = '%.' + str(int(float_precision)) + 'f'
   if not shorten:
     x = x.ravel()
-    samples = ', '.join([str(i)
-           for i in np.random.choice(x, size=min(8, len(x)), replace=False).tolist()])
+    samples = ', '.join([
+        str(i) for i in np.random.choice(x, size=min(8, len(x)),
+                                         replace=False).tolist()
+    ])
     s += "***** Summary *****\n"
     s += "    Min : %s\n" % (fmt % min_)
     s += "1st Qu. : %s\n" % (fmt % qu1)
@@ -457,5 +506,6 @@ def summary(x, axis=None, shorten=False, float_precision=2):
      ctext(fmt % max_, 'cyan'),
      ctext(fmt % std, 'cyan'))
   return s
+
 
 describe = summary

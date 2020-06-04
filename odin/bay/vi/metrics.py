@@ -146,11 +146,11 @@ def unsupervised_clustering_scores(representations,
         y = y.astype(np.int32)
       return _clustering_scores(representations, y, algorithm, seed)
 
+    ncpu = min(max(1, get_cpu_count() - 1), 10)
     for s in MPI(jobs=list(range(factors.shape[1])),
                  func=_get_scores,
                  batch=1,
-                 ncpu=min(max(1,
-                              get_cpu_count() - 1), 10)):
+                 ncpu=ncpu):
       prog.update(1)
       for k, v in s.items():
         scores[k].append(v)
@@ -319,10 +319,14 @@ def representative_importance_matrix(repr_train,
                                      factor_test,
                                      random_state=1234,
                                      algo=GradientBoostingClassifier):
-  r""" Using Gradient Boosting to estimate the importance of each
+  r""" Using Tree Classifier to estimate the importance of each
   representation for each factor.
 
   Arguments:
+    repr_train, repr_test : a Matrix `(n_samples, n_features)`
+      input features for training the classifier
+    factor_train, factor_test : a Matrix `(n_samples, n_factors)`
+      discrete labels for the classifier
     algo : `sklearn.Estimator`, a classifier with `feature_importances_`
       attribute, for example:
         averaging methods:
@@ -332,6 +336,11 @@ def representative_importance_matrix(repr_train,
         and boosting methods:
         - `sklearn.ensemble.GradientBoostingClassifier`
         - `sklearn.ensemble.AdaBoostClassifier`
+
+  Return:
+    importance_matrix : a Matrix of shape `(n_features, n_factors)`
+    train accuracy : a Scalar
+    test accuracy : a Scalar
   """
   num_latents = repr_train.shape[1]
   num_factors = factor_train.shape[1]

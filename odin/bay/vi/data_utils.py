@@ -92,9 +92,9 @@ class Factor(object):
     self.random_state = random_state
 
   def __str__(self):
-    text = 'Factor:'
+    text = f'Factor: {self.factors.shape}\n'
     for name, labels in zip(self.factors_name, self.factor_labels):
-      text += ' [%d]%s: %s\n' % (len(labels), name, ', '.join(
+      text += " [%d]'%s': %s\n" % (len(labels), name, ', '.join(
           [str(i) for i in labels]))
     return text
 

@@ -14,7 +14,64 @@ from odin.bay.vi import utils
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
 from odin.bay.vi.data_utils import Factor
+from odin.stats import is_discrete
 from odin.utils import as_tuple
+
+
+def prepare_inputs_factors(inputs, latents, factors, verbose):
+  if inputs is None:
+    if latents is None:
+      raise ValueError("Either inputs or latents must be provided")
+    assert factors is not None, \
+      "If latents is provided directly, factors must not be None."
+    latents = tf.nest.flatten(latents)
+    assert all(isinstance(z, tfd.Distribution) for z in latents), \
+      ("All latents must be instance of Distribution but given: "
+       f"{[type(z).__name__ for z in latents]}")
+  ### inputs is a tensorflow Dataset, convert everything to numpy
+  elif isinstance(inputs, tf.data.Dataset):
+    struct = tf.data.experimental.get_structure(inputs)
+    if isinstance(struct, dict):
+      struct = struct['inputs']
+    struct = tf.nest.flatten(struct)
+    n_inputs = len(struct)
+    if verbose:
+      inputs = tqdm(inputs, desc="Reading data")
+    if factors is None:  # include factors
+      assert n_inputs >= 2, \
+        "factors are not included in the dataset: %s" % str(inputs)
+      x, y = [list() for _ in range((n_inputs - 1))], []
+      for data in inputs:
+        if isinstance(data, dict):  # this is an ad-hoc hack
+          data = data['inputs']
+        for i, j in enumerate(data[:-1]):
+          x[i].append(j)
+        y.append(data[-1])
+      inputs = [tf.concat(i, axis=0).numpy() for i in x]
+      if n_inputs == 2:
+        inputs = inputs[0]
+      factors = tf.concat(y, axis=0).numpy()
+    else:  # factors separated
+      x = [list() for _ in range(n_inputs)]
+      for data in inputs:
+        for i, j in enumerate(tf.nest.flatten(data)):
+          x[i].append(j)
+      inputs = [tf.concat(i, axis=0).numpy() for i in x]
+      if n_inputs == 1:
+        inputs = inputs[0]
+      if isinstance(factors, tf.data.Dataset):
+        if verbose:
+          factors = tqdm(factors, desc="Reading factors")
+        factors = tf.concat([i for i in factors], axis=0)
+    # end the progress
+    if isinstance(inputs, tqdm):
+      inputs.clear()
+      inputs.close()
+  # post-processing
+  else:
+    inputs = tf.nest.flatten(inputs)
+  assert len(factors.shape) == 2, "factors must be a matrix"
+  return inputs, latents, factors
 
 
 class CriticizerBase(object):
@@ -358,9 +415,9 @@ class CriticizerBase(object):
     return crt
 
   def sample_batch(self,
-                   inputs,
+                   inputs=None,
+                   latents=None,
                    factors=None,
-                   discretizing=False,
                    n_bins=5,
                    strategy='quantile',
                    factors_name=None,
@@ -373,9 +430,10 @@ class CriticizerBase(object):
     Arguments:
       inputs : list of `ndarray` or `tensorflow.data.Dataset`.
         Inputs to the model, note all data will be loaded in-memory
+      latents : list of `Distribution`
+        distribution of learned representation
       factors : a `ndarray` or `tensorflow.data.Dataset`.
         a matrix of groundtruth factors, note all data will be loaded in-memory
-      discretizing : if True, turn continuous factors into discrete
       n_bins : int or array-like, shape (n_features,) (default=5)
         The number of bins to produce. Raises ValueError if ``n_bins < 2``.
       strategy : {'uniform', 'quantile', 'kmeans', 'gmm'}, (default='quantile')
@@ -394,55 +452,38 @@ class CriticizerBase(object):
     Returns:
       `Criticizer` with sampled data
     """
-    ### inputs is a tensorflow Dataset, convert everything to numpy
-    if isinstance(inputs, tf.data.Dataset):
-      struct = tf.nest.flatten(tf.data.experimental.get_structure(inputs))
-      n_inputs = len(struct)
-      if verbose:
-        inputs = tqdm(inputs, desc="Reading data")
-      if factors is None:  # include factors
-        assert n_inputs >= 2, \
-          "factors are not included in the dataset: %s" % str(inputs)
-        x, y = [list() for _ in range((n_inputs - 1))], []
-        for data in inputs:
-          for i, j in enumerate(data[:-1]):
-            x[i].append(j)
-          y.append(data[-1])
-        inputs = [tf.concat(i, axis=0).numpy() for i in x]
-        if n_inputs == 2:
-          inputs = inputs[0]
-        factors = tf.concat(y, axis=0).numpy()
-      else:  # factors separated
-        x = [list() for _ in range(n_inputs)]
-        for data in inputs:
-          for i, j in enumerate(tf.nest.flatten(data)):
-            x[i].append(j)
-        inputs = [tf.concat(i, axis=0).numpy() for i in x]
-        if n_inputs == 1:
-          inputs = inputs[0]
-        if isinstance(factors, tf.data.Dataset):
-          if verbose:
-            factors = tqdm(factors, desc="Reading factors")
-          factors = tf.concat([i for i in factors], axis=0)
-      # end the progress
-      if isinstance(inputs, tqdm):
-        inputs.clear()
-        inputs.close()
-    # post-processing
-    inputs = tf.nest.flatten(inputs)
-    assert len(factors.shape) == 2, "factors must be a matrix"
-    # ====== split train test ====== #
-    ids = self.random_state.permutation(factors.shape[0])
-    split = int(train_percent * factors.shape[0])
-    train_ids, test_ids = ids[:split], ids[split:]
-    train_inputs = [i[train_ids] for i in inputs]
-    test_inputs = [i[test_ids] for i in inputs]
+    inputs, latents, factors = prepare_inputs_factors(inputs,
+                                                      latents,
+                                                      factors,
+                                                      verbose=verbose)
     n_samples = as_tuple(n_samples, t=int, N=2)
+    n_inputs = factors.shape[0]
+    # ====== split train test ====== #
+    if inputs is None:
+      latents = latents[self._latent_indices]
+      split = int(n_inputs * train_percent)
+      train_ids = slice(None, split)
+      test_ids = slice(split, None)
+      train_latents = [z[train_ids] for z in latents]
+      test_latents = [z[test_ids] for z in latents]
+      if len(latents) == 1:
+        train_latents = train_latents[0]
+        test_latents = test_latents[0]
+      else:
+        self._is_multi_latents = len(latents)
+        train_latents = CombinedDistribution(train_latents, name="Latents")
+        test_latents = CombinedDistribution(test_latents, name="Latents")
+    else:
+      ids = self.random_state.permutation(n_inputs)
+      split = int(train_percent * n_inputs)
+      train_ids, test_ids = ids[:split], ids[split:]
+      train_inputs = [i[train_ids] for i in inputs]
+      test_inputs = [i[test_ids] for i in inputs]
     # ====== create discretized factors ====== #
     f_original = (factors[train_ids], factors[test_ids])
-    if discretizing:
+    if not is_discrete(factors):
       if verbose:
-        print("Discretizing factors:", int(n_bins), '-', strategy)
+        print(f"Discretizing factors: {n_bins} - {strategy}")
       factors = utils.discretizing(factors,
                                    n_bins=int(n_bins),
                                    strategy=strategy)
@@ -481,7 +522,7 @@ class CriticizerBase(object):
         z = self.encode(inps, sample_shape=())
         o = tf.nest.flatten(self.decode(z))
         if isinstance(z, (tuple, list)):
-          z = tf.nest.flatten(z[self._latent_indices])
+          z = z[self._latent_indices]
           if len(z) == 1:
             z = z[0]
           else:
@@ -518,21 +559,29 @@ class CriticizerBase(object):
       return Xs, Ys, Zs, Os, np.concatenate(indices, axis=0)
 
     # perform sampling
-    train = sampling(inputs_=train_inputs,
-                     factors_=train_factors,
-                     nsamples=n_samples[0],
-                     title="Train")
-    test = sampling(inputs_=test_inputs,
-                    factors_=test_factors,
-                    nsamples=n_samples[1],
-                    title="Test ")
-    ids_train = train[4]
-    ids_test = test[4]
-    # assign the variables
-    self._inputs = (train[0], test[0])
-    self._factors = (train[1], test[1])
+    if inputs is not None:
+      train = sampling(inputs_=train_inputs,
+                       factors_=train_factors,
+                       nsamples=n_samples[0],
+                       title="Train")
+      test = sampling(inputs_=test_inputs,
+                      factors_=test_factors,
+                      nsamples=n_samples[1],
+                      title="Test ")
+      ids_train = train[4]
+      ids_test = test[4]
+      # assign the variables
+      self._inputs = (train[0], test[0])
+      self._factors = (train[1], test[1])
+      self._representations = (train[2], test[2])
+      self._reconstructions = (train[3], test[3])
+      self._original_factors = (f_original[0][ids_train],
+                                f_original[1][ids_test])
+    else:
+      self._inputs = (None, None)
+      self._factors = (train_factors.factors, test_factors.factors)
+      self._representations = (train_latents, test_latents)
+      self._reconstructions = (None, None)
+      self._original_factors = (f_original[0], f_original[1])
     self._factors_name = train_factors.factors_name
-    self._representations = (train[2], test[2])
-    self._reconstructions = (train[3], test[3])
-    self._original_factors = (f_original[0][ids_train], f_original[1][ids_test])
     return self

@@ -1,1 +1,1 @@
-from odin.bay.vi.criticizer.evaluation import *
+from odin.bay.vi.criticizer.criticizer import *
