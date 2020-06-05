@@ -103,13 +103,16 @@ class CriticizerBase(object):
   def is_multi_latents(self):
     return self._is_multi_latents
 
+  @property
+  def is_sampled(self):
+    if self._factors is None or self._representations is None:
+      return False
+    return True
+
   def assert_sampled(self):
-    if self._inputs is None or \
-      self._factors is None or \
-        self._representations is None:
-      raise RuntimeError("Call the `sample_batch` method to sample "
-                         "mini-batch of ground-truth data and learned "
-                         "representations.")
+    if not self.is_sampled:
+      raise RuntimeError("Call the `sample_batch` method to sample mini-batch "
+                         "of ground-truth data and learned representations.")
 
   @property
   def inputs(self):

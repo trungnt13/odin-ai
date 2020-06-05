@@ -161,12 +161,21 @@ def train_valid_test_split(x,
 
 
 def is_discrete(x: np.ndarray):
-  x = np.asarray(x)
+  r""" A discrete array contain only integer values """
   if not isinstance(x.dtype, np.integer):
     for s, e in batching(batch_size=1024, n=len(x)):
       y = x[s:e]
       if np.any(y.astype(np.int32) != y.astype(np.float32)):
         return False
+  return True
+
+
+def is_binary(x: np.ndarray):
+  r""" A binary array only contain 0 or 1 """
+  for s, e in batching(batch_size=1024, n=len(x)):
+    y = x[s:e]
+    if np.all(np.unique(y) != (0., 1.)):
+      return False
   return True
 
 

@@ -114,18 +114,22 @@ class Criticizer(CriticizerMetrics, CriticizerPlot):
     return scores
 
   def __str__(self):
-    text = [str(self._vae) + ' Multilatents:%s' % self._is_multi_latents]
+    text = [str(self._vae) + ' Multi-latents:%s' % self._is_multi_latents]
     text.append(" Factor name: %s" % ', '.join(self.factors_name))
-    for name, data in [("Inputs", self.inputs), ("Factors", self.factors),
-                       ("Original Factors", self.original_factors),
-                       ("Representations", self.representations),
-                       ("Reconstructions", self.reconstructions)]:
+    for name, data in [
+        ("Inputs", self.inputs),
+        ("Factors", self.factors),
+        ("Original Factors", self.original_factors),
+        ("Representations", self.representations),
+        ("Reconstructions", self.reconstructions),
+    ]:
       text.append(" " + name)
       for d, x in zip(('train', 'test'), data):
         x = d + ' : ' + ', '.join([
             re.sub(r", dtype=[a-z]+\d*\)",
                    ")", str(i).replace("tfp.distributions.", "")) \
-              if isinstance(i, tfd.Distribution) else str(i.shape)
+              if isinstance(i, tfd.Distribution) else
+              ('None' if i is None else str(i.shape))
             for i in tf.nest.flatten(x)
         ])
         text.append("  " + x)

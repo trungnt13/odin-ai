@@ -146,7 +146,7 @@ def unsupervised_clustering_scores(representations,
         y = y.astype(np.int32)
       return _clustering_scores(representations, y, algorithm, seed)
 
-    ncpu = min(max(1, get_cpu_count() - 1), 10)
+    ncpu = min(max(1, get_cpu_count() // 2 + 1), 10)
     for s in MPI(jobs=list(range(factors.shape[1])),
                  func=_get_scores,
                  batch=1,
@@ -386,7 +386,7 @@ def dci_scores(repr_train,
     tuple of 3 scores (disentanglement, completeness, informativeness), all
       scores are higher is better.
       - disentanglement score: The degree to which a representation factorises
-        or disentangles the underlying factors of variatio
+        or disentangles the underlying factors of variation
       - completeness score: The degree to which each underlying factor is
         captured by a single code variable.
       - informativeness score: test accuracy of a factor recognizer trained
@@ -397,7 +397,7 @@ def dci_scores(repr_train,
     Representations" (https://openreview.net/forum?id=By-7dz-AZ).
 
   Note:
-    This impelentation only return accuracy on test data as informativeness
+    This implementation only return accuracy on test data as informativeness
       score
   """
   importance, train_acc, test_acc = representative_importance_matrix(

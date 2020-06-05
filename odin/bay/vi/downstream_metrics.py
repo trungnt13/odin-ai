@@ -11,6 +11,10 @@ from sklearn.metrics import f1_score
 from sklearn.svm import LinearSVC
 from tensorflow_probability import distributions as tfd
 
+from odin.bay.distributions import CombinedDistribution
+from odin.bay.vi.utils import discretizing
+from odin.stats import is_discrete
+
 
 def separated_attr_predictability(repr_train,
                                   factor_train,
@@ -70,6 +74,22 @@ def separated_attr_predictability(repr_train,
 
 
 # ===========================================================================
+# SISUA method
+# ===========================================================================
+def predictive_strength(representations: tfd.Distribution,
+                        factors: np.ndarray,
+                        batch_size=8,
+                        n_samples=1000):
+  representations = tf.nest.flatten(representations)
+  if len(representations) > 1:
+    representations = CombinedDistribution(representations)
+  else:
+    representations = representations[0]
+  ### sampling
+  exit()
+
+
+# ===========================================================================
 # BetaVAE and FactorVAE scoring methods
 # ===========================================================================
 def _sampling_helper(representations,
@@ -83,8 +103,7 @@ def _sampling_helper(representations,
                      desc="Scoring",
                      **kwargs):
   assert isinstance(representations, tfd.Distribution),\
-    "representations must be instance of Distribution, but given: %s" % \
-      str(type(representations))
+    f"representations must be instance of Distribution, but given: {type(representations)}"
   ## arguments
   from odin.bay.distributions import slice_distribution
   size = representations.batch_shape[0]
@@ -105,7 +124,7 @@ def _sampling_helper(representations,
     # should > 0. here, otherwise, collapsed to prior
     active_dims = np.sqrt(global_var) > 0.
   else:
-    raise NotImplementedError("No support for sampling strategy: %s" % strategy)
+    raise NotImplementedError(f"No support for sampling strategy: {strategy}")
   labels = np.empty(shape=(n_samples,), dtype=np.int32)
   repr_fn = (lambda d: d.mean()) if use_mean else (lambda d: d.sample())
   count = 0

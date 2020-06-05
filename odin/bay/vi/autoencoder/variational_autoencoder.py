@@ -455,7 +455,8 @@ class VariationalAutoencoder(keras.Model, MD5object):
       self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
     else:
       self.optimizer = None
-    self.load_weights(path, raise_notfound=False, verbose=True)
+    if path is not None:
+      self.load_weights(path, raise_notfound=False, verbose=True)
     ### store encode and decode method keywords
     self._encode_kw = inspect.getfullargspec(self.encode).args[1:]
     self._decode_kw = inspect.getfullargspec(self.decode).args[1:]

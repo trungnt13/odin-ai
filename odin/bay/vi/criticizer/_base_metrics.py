@@ -246,7 +246,7 @@ class CriticizerMetrics(CriticizerBase):
     mig = []
     for z, f in zip(self._latent_codes(mean), self.factors):
       mig.append(metrics.mutual_info_gap(z, f))
-    return tuple(mig)
+    return dict(mig=np.mean(mig))
 
   def cal_dci_scores(self, mean=True):
     r""" Disentanglement, Completeness, Informativeness
@@ -266,11 +266,12 @@ class CriticizerMetrics(CriticizerBase):
     """
     z_train, z_test = self._latent_codes(mean)
     f_train, f_test = self.factors
-    return metrics.dci_scores(z_train,
-                              f_train,
-                              z_test,
-                              f_test,
-                              random_state=self.randint)
+    d, c, i = metrics.dci_scores(z_train,
+                                 f_train,
+                                 z_test,
+                                 f_test,
+                                 random_state=self.randint)
+    return dict(disentanglement=d, completeness=c, informative=i)
 
   def cal_total_correlation(self):
     r""" Estimation of total correlation based on fitted Gaussian
@@ -280,10 +281,10 @@ class CriticizerMetrics(CriticizerBase):
     """
     # memory complexity O(n*n*d), better do it on CPU
     with tf.device('/CPU:0'):
-      return [
+      return dict(tc=np.mean([
           losses.total_correlation(qz.sample(seed=self.randint), qz).numpy()
           for qz in self.representations
-      ]
+      ]))
 
   def cal_dcd_scores(self, n_samples=1000, lognorm=True, n_components=2):
     r""" Same as D.C.I but use density matrix instead of importance matrix
@@ -321,7 +322,7 @@ class CriticizerMetrics(CriticizerBase):
   def cal_relative_disentanglement_strength(self, method='spearman', mean=True):
     r""" Relative strength for both axes of correlation matrix.
     Basically, is the mean of normalized maximum correlation per code, and
-    per factor
+    per factor.
 
     Arguments:
       method : {'spearman', 'pearson', 'lasso', 'avg'}
@@ -333,7 +334,18 @@ class CriticizerMetrics(CriticizerBase):
       a scalar - higher is better
     """
     corr_matrix = self.create_correlation_matrix(mean=mean, method=method)
-    return metrics.relative_strength(corr_matrix)
+    return dict(rds=metrics.relative_strength(corr_matrix))
+
+  def cal_relative_mutual_strength(self, n_neighbors=3, mean=True):
+    r""" Relative strength for both axes of mutual information matrix.
+    Basically, is the mean of normalized maximum mutual information per code,
+    and per factor.
+
+    Return:
+      a scalar - higher is better
+    """
+    matrix = self.create_mutualinfo_matrix(n_neighbors=n_neighbors)
+    return dict(rms=metrics.relative_strength(matrix))
 
   ############## Downstream scores
   def cal_separated_attr_predictability(self, mean=True):
@@ -354,7 +366,7 @@ class CriticizerMetrics(CriticizerBase):
                                                 f_test,
                                                 continuous_factors=False,
                                                 random_state=self.randint)
-    return sap
+    return dict(sap=sap)
 
   def cal_betavae_score(self, n_samples=10000, verbose=True):
     r""" The Beta-VAE score train a logistic regression to detect the invariant
@@ -363,12 +375,13 @@ class CriticizerMetrics(CriticizerBase):
     Returns:
       tuple of 2 scalars: accuracy for train and test data
     """
-    return metrics.beta_vae_score(concat_distribution(self.representations),
-                                  np.concatenate(self.factors, axis=0),
-                                  n_samples=n_samples,
-                                  use_mean=True,
-                                  random_state=self.randint,
-                                  verbose=verbose)
+    return dict(betavae=metrics.beta_vae_score(
+        concat_distribution(self.representations),
+        np.concatenate(self.factors, axis=0),
+        n_samples=n_samples,
+        use_mean=True,
+        random_state=self.randint,
+        verbose=verbose))
 
   def cal_factorvae_score(self, n_samples=10000, verbose=True):
     r""" FactorVAE based score
@@ -376,12 +389,13 @@ class CriticizerMetrics(CriticizerBase):
     Returns:
       tuple of 2 scalars: accuracy for train and test data
     """
-    return metrics.factor_vae_score(concat_distribution(self.representations),
-                                    np.concatenate(self.factors, axis=0),
-                                    n_samples=n_samples,
-                                    use_mean=True,
-                                    random_state=self.randint,
-                                    verbose=verbose)
+    return dict(factorvae=metrics.factor_vae_score(
+        concat_distribution(self.representations),
+        np.concatenate(self.factors, axis=0),
+        n_samples=n_samples,
+        use_mean=True,
+        random_state=self.randint,
+        verbose=verbose))
 
   def cal_clustering_scores(self, algorithm='both'):
     r""" Calculating the unsupervised clustering Scores:
@@ -417,4 +431,4 @@ class CriticizerMetrics(CriticizerBase):
       Clivio, O., Boyeau, P., Lopez, R., et al. (2019.) "Should we zero-inflate
         scVI?" https://yoseflab.github.io/2019/06/25/ZeroInflation/
     """
-    pass
+    # TODO

@@ -11,10 +11,9 @@ __all__ = ['CombinedDistribution']
 
 class CombinedDistribution(tfd.Distribution):
   r""" Convert a list of homogeneous distributions into a single distribution
+  by concatenating their output along event shape
 
-  By concatenating their output along event shape
-
-  If the event_shape mismatch, it is flattened
+  If the `event_shape` mismatch, it is flattened.
   """
 
   def __init__(self, distributions, validate_args=False, name=None):
