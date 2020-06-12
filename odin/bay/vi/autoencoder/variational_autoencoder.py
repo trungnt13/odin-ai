@@ -1148,11 +1148,11 @@ class VariationalAutoencoder(keras.Model, MD5object):
     r""" Plot the learning curves on train and validation sets. """
     assert self.trainer is not None, \
       "fit method must be called before plotting learning curves"
-    fig =  self.trainer.plot_learning_curves(path=path,
-                                             summary_steps=summary_steps,
-                                             show_validation=show_validation,
-                                             dpi=dpi,
-                                             title=title)
+    fig = self.trainer.plot_learning_curves(path=path,
+                                            summary_steps=summary_steps,
+                                            show_validation=show_validation,
+                                            dpi=dpi,
+                                            title=title)
     if path is None:
       return fig
     return self
@@ -1174,6 +1174,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
     text = (f"{'->'.join([i.__name__ for i in cls[::-1]])} "
             f"(semi:{self.is_semi_supervised} self:{self.is_self_supervised} "
             f"weak:{self.is_weak_supervised})")
+    text += f'\n Fitted: {int(self.step.numpy())}(iters)'
     text += f'\n MD5 checksum: {self.md5_checksum}'
     ## encoder
     for i, encoder in enumerate(tf.nest.flatten(self.encoder)):

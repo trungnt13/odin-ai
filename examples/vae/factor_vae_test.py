@@ -226,7 +226,7 @@ class Factor(Experimenter):
     crt = Criticizer(vae=self.model)
     crt.sample_batch(inputs=self.test,
                      n_samples=[10000, 5000],
-                     factors_name=self.ds.labels,
+                     factor_names=self.ds.labels,
                      verbose=True)
     n_codes = crt.n_codes
     n_factors = crt.n_factors
@@ -241,8 +241,8 @@ class Factor(Experimenter):
 
     ids = decode(mi)
     vs.plot_heatmap(mi[ids],
-                    xticklabels=crt.factors_name,
-                    yticklabels=crt.codes_name[ids],
+                    xticklabels=crt.factor_names,
+                    yticklabels=crt.code_names[ids],
                     cmap="Blues",
                     ax=(1, 3, 1),
                     title="[MutualInformation]" + stats(mi),
@@ -250,8 +250,8 @@ class Factor(Experimenter):
 
     ids = decode(spearman)
     vs.plot_heatmap(spearman[ids],
-                    xticklabels=crt.factors_name,
-                    yticklabels=crt.codes_name[ids],
+                    xticklabels=crt.factor_names,
+                    yticklabels=crt.code_names[ids],
                     cmap="bwr",
                     ax=(1, 3, 2),
                     title="[Spearman]" + stats(spearman),
@@ -259,8 +259,8 @@ class Factor(Experimenter):
 
     ids = decode(pearson)
     vs.plot_heatmap(pearson[ids],
-                    xticklabels=crt.factors_name,
-                    yticklabels=crt.codes_name[ids],
+                    xticklabels=crt.factor_names,
+                    yticklabels=crt.code_names[ids],
                     cmap="bwr",
                     ax=(1, 3, 3),
                     title="[Pearson]" + stats(pearson),

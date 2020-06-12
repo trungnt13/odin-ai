@@ -7,13 +7,12 @@ from numbers import Number
 import tensorflow as tf
 
 from odin.bay import distributions as tfd
-from odin.bay.vi.criticizer._base_metrics import CriticizerMetrics
-from odin.bay.vi.criticizer._base_plot import CriticizerPlot
+from odin.bay.vi.criticizer._criticizer_plot import CriticizerPlot
 
 __all__ = ['Criticizer']
 
 
-class Criticizer(CriticizerMetrics, CriticizerPlot):
+class Criticizer(CriticizerPlot):
   r""" Probabilistic criticizer for variational model
 
   Basic progress of evaluating probabilistic model given groundtruth factors:
@@ -114,8 +113,11 @@ class Criticizer(CriticizerMetrics, CriticizerPlot):
     return scores
 
   def __str__(self):
-    text = [str(self._vae) + ' Multi-latents:%s' % self._is_multi_latents]
-    text.append(" Factor name: %s" % ', '.join(self.factors_name))
+    # str(self._vae) +
+    text = [
+        f' Multi-latents:{False if self._is_multi_latents == 0 else self._is_multi_latents}'
+    ]
+    text.append(" Factor name: %s" % ', '.join(self.factor_names))
     for name, data in [
         ("Inputs", self.inputs),
         ("Factors", self.factors),

@@ -126,19 +126,26 @@ def plot_heatmap(data,
   return ax
 
 
-def plot_confusion_matrix(cm,
+def plot_confusion_matrix(cm=None,
                           labels=None,
                           cmap="Blues",
                           ax=None,
                           fontsize=12,
                           cbar=False,
                           title=None,
+                          y_true=None,
+                          y_pred=None,
                           **kwargs):
   r"""
   cm : a square matrix of raw count
   kwargs : arguments for `odin.visual.plot_heatmap`
   """
   # TODO: new style for confusion matrix (using small and big dot)
+  if cm is None:
+    assert y_true is not None and y_pred is not None, \
+      "Provide either cm explicitly or y_true and y_pred together"
+    from sklearn.metrics import confusion_matrix
+    cm = confusion_matrix(y_true=y_true, y_pred=y_pred)
   assert cm.shape[0] == cm.shape[1], \
     "Plot confusion matrix only applied for squared matrix"
   if labels is None:
