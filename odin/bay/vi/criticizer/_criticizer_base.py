@@ -227,7 +227,7 @@ class CriticizerBase(object):
 
   @property
   def code_names(self):
-    return np.array(["Code#%d" % i for i in range(self.n_representations)])
+    return np.array([f"Z{i}" for i in range(self.n_representations)])
 
   @property
   def random_state(self):

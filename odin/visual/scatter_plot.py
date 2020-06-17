@@ -44,7 +44,7 @@ def _parse_scatterXYZ(x, y, z):
   return x, y, z
 
 
-def _validate_color_marker_size_legend(n_samples,
+def _validate_color_marker_size_legend(max_n_points,
                                        color,
                                        marker,
                                        size,
@@ -76,9 +76,9 @@ def _validate_color_marker_size_legend(n_samples,
     default_marker = marker
     marker = None
   legend = [
-      [None] * n_samples,  # color
-      [None] * n_samples,  # marker
-      [None] * n_samples,  # size
+      [None] * max_n_points,  # color
+      [None] * max_n_points,  # marker
+      [None] * max_n_points,  # size
   ]
   #
   create_label_map = lambda labs, default_val, fn_gen: \
@@ -87,27 +87,27 @@ def _validate_color_marker_size_legend(n_samples,
        {i: j for i, j in zip(labs, fn_gen(len(labs), seed=random_seed))})
   # ====== check arguments ====== #
   if color is None:
-    color = [0] * n_samples
+    color = [0] * max_n_points
   else:
     legend[0] = color
   #
   if marker is None:
-    marker = [0] * n_samples
+    marker = [0] * max_n_points
   else:
     legend[1] = marker
   #
   if isinstance(size, Number):
-    size = [0] * n_samples
+    size = [0] * max_n_points
   elif size is None:
-    size = [0] * n_samples
+    size = [0] * max_n_points
   else:  # given a list of labels
     legend[2] = size
   size_range.norm = np.max(size)
   # ====== validate the length ====== #
   for name, arr in [("color", color), ("marker", marker), ("size", size)]:
-    assert len(arr) == n_samples, \
+    assert len(arr) == max_n_points, \
     "Given %d samples for `%s`, but require %d samples" % \
-      (len(arr), name, n_samples)
+      (len(arr), name, max_n_points)
   # ====== labels set ====== #
   color_labels = np.unique(color)
   color_map = create_label_map(
@@ -161,13 +161,13 @@ def _validate_color_marker_size_legend(n_samples,
           [size_map[i] for i in size], legend)
 
 
-def _downsample_scatter_points(x, y, z, n_samples, *args):
+def _downsample_scatter_points(x, y, z, max_n_points, *args):
   args = list(args)
   # downsample all data
-  if n_samples is not None and n_samples < len(x):
-    n_samples = int(n_samples)
-    rand = np.random.RandomState(seed=1234)
-    ids = rand.permutation(len(x))[:n_samples]
+  if max_n_points is not None and max_n_points < len(x):
+    max_n_points = int(max_n_points)
+    rand = np.random.RandomState(seed=1)
+    ids = rand.permutation(len(x))[:max_n_points]
     x = np.array(x)[ids]
     y = np.array(y)[ids]
     if z is not None:
@@ -180,8 +180,9 @@ def _downsample_scatter_points(x, y, z, n_samples, *args):
 
 
 def _prepare_scatter_points(x, y, z, val, color, marker, size, size_range,
-                            alpha, n_samples, cbar, cbar_horizontal, cbar_ticks,
-                            cbar_title, legend_enable, legend_loc, legend_ncol,
+                            alpha, max_n_points, cbar, cbar_horizontal,
+                            cbar_ticks, cbar_labrotation, cbar_title,
+                            legend_enable, legend_loc, legend_ncol,
                             legend_colspace, elev, azim, ticks_off, grid,
                             fontsize, centroids, title, ax, **kwargs):
   from matplotlib import pyplot as plt
@@ -211,10 +212,10 @@ def _prepare_scatter_points(x, y, z, val, color, marker, size, size_range,
   if not is_colormap and isinstance(color, string_types) and color == 'bwr':
     color = 'b'
   ### perform downsample and select the styles
-  n_samples, x, y, z, color, marker, size = _downsample_scatter_points(
-      x, y, z, n_samples, color, marker, size)
+  max_n_points, x, y, z, color, marker, size = _downsample_scatter_points(
+      x, y, z, max_n_points, color, marker, size)
   color, marker, size, legend = _validate_color_marker_size_legend(
-      n_samples,
+      max_n_points,
       color,
       marker,
       size,
@@ -315,7 +316,7 @@ def _prepare_scatter_points(x, y, z, val, color, marker, size, size_range,
         # vertical colorbar
         else:
           cba.ax.set_ylabel(str(cbar_title), fontsize=fontsize + 1)
-      cba.ax.tick_params(labelsize=fontsize, labelrotation=-30)
+      cba.ax.tick_params(labelsize=fontsize, labelrotation=cbar_labrotation)
     ## plot the legend
     if len(legend_name) > 0 and bool(legend_enable):
       markerscale = 1.5
@@ -379,13 +380,14 @@ def plot_scatter(x,
                  cbar=False,
                  cbar_horizontal=False,
                  cbar_ticks=10,
+                 cbar_labrotation=-30,
                  cbar_title=None,
                  legend_enable=True,
                  legend_loc='upper center',
                  legend_ncol=3,
                  legend_colspace=0.4,
                  centroids=False,
-                 n_samples=None,
+                 max_n_points=None,
                  fontsize=10,
                  title=None):
   r"""
@@ -475,13 +477,14 @@ def plot_scatter_text(x,
                       cbar=False,
                       cbar_horizontal=False,
                       cbar_ticks=10,
+                      cbar_labrotation=-30,
                       cbar_title=None,
                       legend_enable=True,
                       legend_loc='upper center',
                       legend_ncol=3,
                       legend_colspace=0.4,
                       centroids=False,
-                      n_samples=None,
+                      max_n_points=None,
                       fontsize=10,
                       title=None):
   r"""

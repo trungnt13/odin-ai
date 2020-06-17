@@ -3,6 +3,7 @@ from numbers import Number
 
 import numpy as np
 import tensorflow as tf
+from six import string_types
 
 from odin import visual as vs
 from odin.bay.vi import metrics, utils
@@ -30,7 +31,10 @@ class CriticizerPlot(CriticizerMetrics, vs.Visualizer):
   def plot(self, n_bins):
     pass
 
-  def plot_histogram(self, histogram_bins=120, original_factors=True):
+  def plot_histogram(self,
+                     histogram_bins=120,
+                     original_factors=True,
+                     return_figure=False):
     r"""
     original_factors : optional original factors before discretized by
       `Criticizer`
@@ -55,27 +59,37 @@ class CriticizerPlot(CriticizerMetrics, vs.Visualizer):
                         alpha=0.8,
                         color='blue',
                         fontsize=16)
-    plt.tight_layout()
-    self.add_figure(
-        "histogram_%s" % ("original" if original_factors else "discretized"),
-        fig)
-    return self
+    fig.tight_layout()
+    if return_figure:
+      return fig
+    return self.add_figure(
+        f"histogram_{'original' if original_factors else 'discretized'}", fig)
 
-  def plot_histogram_ranked(self,
-                            factor_names=None,
-                            n_bins_factors=15,
-                            n_bins_codes=80,
-                            corr_type='average',
-                            original_factors=True):
-    r""" The histogram bars are colored by the value of factors
+  def plot_disentanglement(self,
+                           factor_names=None,
+                           n_bins_factors=15,
+                           n_bins_codes=80,
+                           corr_type='average',
+                           original_factors=True,
+                           show_all_codes=False,
+                           title='',
+                           return_figure=False):
+    r""" To illustrate the disentanglement of the codes, the codes' histogram
+    bars are colored by the value of factors.
 
     Arguments:
       factor_names : list of String or Integer.
         Name or index of which factors will be used for visualization.
       factor_bins : factor is discretized into bins, then a LogisticRegression
         model will predict the bin (with color) given the code as input.
-      corr_type : {'spearman', 'pearson', 'lasso', 'average', 'mi'}
-        Type of correlation, with special case 'mi' for mutual information
+      corr_type : {'spearman', 'pearson', 'lasso', 'average', 'mi', None, matrix}
+        Type of correlation, with special case 'mi' for mutual information.
+          - If None, no sorting by correlation provided.
+          - If an array, the array must have shape `[n_codes, n_factors]`
+      show_all_codes : a Boolean.
+        if False, only show most correlated codes-factors, otherwise,
+        all codes are shown for each factor.
+        This option only in effect when `corr_type` is not `None`.
       original_factors : optional original factors before discretized by
         `Criticizer`
     """
@@ -85,21 +99,56 @@ class CriticizerPlot(CriticizerMetrics, vs.Visualizer):
     import seaborn as sns
     sns.set()
     styles = dict(fontsize=12,
-                  val_bins=int(n_bins_factors),
-                  color='bwr',
+                  cbar_horizontal=False,
+                  bins_color=int(n_bins_factors),
                   bins=int(n_bins_codes),
+                  color='bwr',
                   alpha=0.8)
-    ### correlation
-    if corr_type == 'mi':
-      train_corr, test_corr = self.create_mutualinfo_matrix(mean=True)
-    else:
-      train_corr, test_corr = self.create_correlation_matrix(mean=True,
-                                                             method=corr_type)
-    # [n_factors, n_codes] matrix
-    corr = ((train_corr + test_corr) / 2).T
+    # get all relevant factors
     factor_ids = self._check_factors(factor_names)
-    corr = corr[factor_ids]
-    code_ids = diagonal_linear_assignment(corr)[:len(factor_ids)]
+    ### correlation
+    if isinstance(corr_type, string_types):
+      if corr_type == 'mi':
+        train_corr, test_corr = self.create_mutualinfo_matrix(mean=True)
+        score_type = 'mutual-info'
+      else:
+        train_corr, test_corr = self.create_correlation_matrix(mean=True,
+                                                               method=corr_type)
+        score_type = corr_type
+      # [n_factors, n_codes]
+      corr = ((train_corr + test_corr) / 2.).T
+      corr = corr[factor_ids]
+      code_ids = diagonal_linear_assignment(np.abs(corr))
+      if not show_all_codes:
+        code_ids = code_ids[:len(factor_ids)]
+    # directly give the correlation matrix
+    elif isinstance(corr_type, np.ndarray):
+      corr = corr_type
+      if self.n_codes != self.n_factors and corr.shape[0] == self.n_codes:
+        corr = corr.T
+      assert corr.shape == (self.n_factors, self.n_codes), \
+        (f"Correlation matrix expect shape (n_factors={self.n_factors}, "
+         f"n_codes={self.n_codes}) but given shape: {corr.shape}")
+      score_type = 'score'
+      corr = corr[factor_ids]
+      code_ids = diagonal_linear_assignment(np.abs(corr))
+      if not show_all_codes:
+        code_ids = code_ids[:len(factor_ids)]
+    # no correlation provided
+    elif corr_type is None:
+      train_corr, test_corr = self.create_correlation_matrix(mean=True,
+                                                             method='spearman')
+      score_type = 'spearman'
+      # [n_factors, n_codes]
+      corr = ((train_corr + test_corr) / 2.).T
+      code_ids = np.arange(self.n_codes, dtype=np.int32)
+    # exception
+    else:
+      raise ValueError(
+          f"corr_type could be string, None or a matrix but given: {type(corr_type)}"
+      )
+    # applying the indexing
+    corr = corr[:, code_ids]
     ### prepare the data
     # factors
     F = np.concatenate(
@@ -110,44 +159,42 @@ class CriticizerPlot(CriticizerMetrics, vs.Visualizer):
     # codes
     Z = np.concatenate(self.representations_mean, axis=0)[:, code_ids]
     code_names = self.code_names[code_ids]
-    # create the figure
+    ### create the figure
     nrow = F.shape[1]
-    ncol = Z.shape[1]
-    fig = vs.plot_figure(nrow=nrow * 3, ncol=ncol * 3, dpi=80)
-    plot_count = 1
+    ncol = Z.shape[1] + 1
+    fig = vs.plot_figure(nrow=nrow * 3, ncol=ncol * 2.8, dpi=80)
+    count = 1
     for fidx, (f, fname) in enumerate(zip(F.T, factor_names)):
-      c = corr[:, fidx]
-      vs.plot_histogram(f,
-                        val=f,
-                        ax=(nrow, ncol, plot_count),
-                        cbar=True,
-                        cbar_horizontal=False,
-                        title=fname,
-                        **styles)
-      plot_count += 1
-      # all codes are visualized
-      if n_codes_per_factor == self.n_codes:
-        all_codes = range(self.n_codes)
-      # lower to higher correlation
-      else:
-        zids = np.argsort(c)
-        bottom = zids[:n_codes_per_factor // 2]
-        top = zids[-(n_codes_per_factor - n_codes_per_factor // 2):]
-        all_codes = (top.tolist()[::-1] + bottom.tolist()[::-1])
-      for i in all_codes:
-        z = Z[:, i]
-        zname = code_names[i]
-        vs.plot_histogram(z,
-                          val=f,
-                          ax=(nrow, ncol, plot_count),
-                          title='[%.2g]%s' % (c[i], zname),
-                          **styles)
-        plot_count += 1
-    fig.tight_layout()
-    self.add_figure(
-        "histogram_%s" % ("original" if original_factors else "discretized"),
+      # the first plot show how the factor clustered
+      ax = vs.plot_histogram(x=f,
+                             color_val=f,
+                             ax=(nrow, ncol, count),
+                             cbar=False,
+                             title=f"{fname}",
+                             **styles)
+      plt.gca().tick_params(axis='y', labelleft=False)
+      count += 1
+      # the rest of the row show how the codes align with the factor
+      for zidx, (score, z, zname) in enumerate(zip(corr[fidx], Z.T,
+                                                   code_names)):
+        text = "*" if fidx == zidx else ""
+        ax = vs.plot_histogram(x=z,
+                               color_val=f,
+                               ax=(nrow, ncol, count),
+                               cbar=False,
+                               title=f"{text}{fname}-{zname} (${score:.2f}$)",
+                               bold_title=True if fidx == zidx else False,
+                               **styles)
+        plt.gca().tick_params(axis='y', labelleft=False)
+        count += 1
+    ### fine tune the plot
+    fig.suptitle(f"[{score_type}]{title}", fontsize=12)
+    fig.tight_layout(rect=[0.0, 0.03, 1.0, 0.97])
+    if return_figure:
+      return fig
+    return self.add_figure(
+        f"disentanglement_{'original' if original_factors else 'discretized'}",
         fig)
-    return self
 
   def plot_code_factor_matrix(self, factors=None, original_factors=True):
     r""" Scatter plot with x-axis is groundtruth factor and y-axis is

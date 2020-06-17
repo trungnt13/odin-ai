@@ -29,8 +29,8 @@ def _fit(x, y, n_bins):
 
 
 def plot_histogram(x,
-                   val=None,
-                   val_bins=10,
+                   color_val=None,
+                   bins_color=10,
                    bins=80,
                    ax=None,
                    normalize=False,
@@ -46,15 +46,18 @@ def plot_histogram(x,
                    centerlize=False,
                    linewidth=1.2,
                    fontsize=12,
+                   bold_title=False,
                    title=None):
   r"""
-  Arguments:
-    x: histogram
+    x: array, data for ploting histogram
+    color_val : array (optional), heatmap color value for each histogram bars
+    bins_color : int, number of bins for the colors
+    bins : int, number of histogram bins
     covariance_factor : None or float, smaller number mean more detail
   """
   from matplotlib import pyplot as plt
   import matplotlib as mpl
-  val_bins = int(val_bins)
+  bins_color = int(bins_color)
   bins = int(bins)
   # ====== prepare ====== #
   # only 1-D
@@ -70,20 +73,21 @@ def plot_histogram(x,
   hist, hist_bins = np.histogram(x, bins=bins, density=normalize)
   width = (hist_bins[1] - hist_bins[0]) / 1.36
   # colormap
-  if val is not None:
-    assert len(x) == len(val)
+  if color_val is not None:
+    assert len(x) == len(color_val), \
+      f"Given {len(x)} data points but {len(color_val)} color values"
     if color == 'blue':  # change the default color
       color = 'Blues'
     # create mapping x -> val_bins
-    lr = _fit(x=x, y=val, n_bins=int(val_bins))
+    lr = _fit(x=x, y=color_val, n_bins=bins_color)
     # all colors
-    vmin, vmax = np.min(val), np.max(val)
+    vmin, vmax = np.min(color_val), np.max(color_val)
     cmap = plt.cm.get_cmap(color)
     normalizer = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
-    all_colors = cmap(normalizer(np.linspace(vmin, vmax, num=val_bins)))
+    all_colors = cmap(normalizer(np.linspace(vmin, vmax, num=bins_color)))
     # map the x bin to val bin then to color
-    feat = np.array(\
-      [(s + e) / 2 for s, e in zip(hist_bins[:-1], hist_bins[1:])])[:, np.newaxis]
+    feat = np.array([(s + e) / 2 for s, e in zip(hist_bins[:-1], hist_bins[1:])
+                    ])[:, np.newaxis]
     color = [all_colors[i] for i in lr.predict(feat).ravel()]
   # histogram bar
   ax.bar((hist_bins[:-1] + hist_bins[1:]) / 2 - width / 2,
@@ -94,7 +98,7 @@ def plot_histogram(x,
          linewidth=0.,
          edgecolor=None)
   # colorbar
-  if val is not None and cbar:
+  if color_val is not None and cbar:
     mappable = plt.cm.ScalarMappable(norm=normalizer, cmap=cmap)
     mappable.set_clim(vmin, vmax)
     cba = plt.colorbar(
@@ -134,7 +138,9 @@ def plot_histogram(x,
   # ====== post processing ====== #
   ax.tick_params(axis='both', labelsize=int(0.8 * fontsize))
   if title is not None:
-    ax.set_title(str(title), fontsize=fontsize)
+    ax.set_title(str(title),
+                 fontsize=fontsize,
+                 fontweight='bold' if bold_title else 'regular')
   return hist, hist_bins
 
 

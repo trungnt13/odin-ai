@@ -22,13 +22,11 @@ class Criticizer(CriticizerPlot):
   Arguments:
     vae : `odin.bay.vi.VariationalAutoencoder`.
       An instance of VariationalAutoencoder for evaluation
-    latent_indices : {`slice`, Integer, Boolean, List of Integer or Boolean}.
+    latent_indices : {slice, Integer, Boolean, list of Integer or Boolean}.
       Indicate which latent will be used for evaluation (in case VAE has
       multiple latent layers).
     random_state : a Scalar. Random seed to ensure reproducibility.
 
-  Attributes:
-    pass
   """
 
   def copy(self, latent_indices=None, random_state=None):

@@ -63,7 +63,7 @@ class CriticizerMetrics(CriticizerBase):
     if method == 'average':
       mat = [
           self.create_correlation_matrix(mean=mean, method=corr, decode=False)
-          for corr in all_corr[:-1]
+          for corr in ['spearman', 'pearson']
       ]
       n = len(all_corr) - 1
       train = sum(i[0] for i in mat) / n
