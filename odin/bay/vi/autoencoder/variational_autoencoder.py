@@ -28,6 +28,7 @@ from odin.networks import NetworkConfig, SequentialNetwork
 from odin.utils import MD5object
 from odin.utils.python_utils import classproperty
 
+__all__ = ['TrainStep', 'VariationalAutoencoder', 'VAE']
 
 # ===========================================================================
 # Helpers
@@ -1200,3 +1201,6 @@ class VariationalAutoencoder(keras.Model, MD5object):
           text += "\n  ".join(
               ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
     return text
+
+
+VAE = VariationalAutoencoder

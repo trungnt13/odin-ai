@@ -3,15 +3,37 @@
 from __future__ import absolute_import, division, print_function
 
 import itertools
+from numbers import Number
 
 import numpy as np
 from numba import njit
 from scipy.optimize import linear_sum_assignment
+from six import string_types
+
+def _nan_policy(mtx, policy):
+  nan_mask = np.isnan(mtx)
+  # no NaN values
+  if not np.any(nan_mask):
+    return mtx
+  # given string value
+  if isinstance(policy, string_types):
+    policy = str(policy).lower().strip()
+    if policy == 'propagate':
+      return np.nan
+    elif policy == 'omit':
+      return mtx
+    elif policy == 'raise':
+      raise RuntimeError(f"Matrix of shape={mtx.shape} contains NaN values.")
+  # given number replacement
+  elif isinstance(policy, Number):
+    return np.where(nan_mask, np.cast[mtx.dtype](policy), mtx)
+  raise ValueError(f"Invalid nan_policy= {policy} - {type(policy)}, "
+                   "support: 'propagate', 'omit', 'raise' or a number.")
 
 
 @njit()
 def diagonal_bruteforce_search(matrix):
-  r""" Find the best permutation of columns to maximize the summization of
+  r""" Find the best permutation of columns to maximize the summarization of
   diagonal entries.
 
   This algorithm use Heap's algorithm to iterate over all possible permutations
@@ -80,15 +102,25 @@ def diagonal_bruteforce_search(matrix):
   return best_perm
 
 
-def diagonal_linear_assignment(matrix):
+def diagonal_linear_assignment(matrix, nan_policy='propagate'):
   r""" Solve the diagonal linear assignment problem using the
   Hungarian algorithm, this version find the best permutation of columns
   (instead of rows).
+
+  Arguments:
+    nan_policy : {'propagate', 'raise', 'omit'}, optional
+      Defines how to handle when input contains nan.
+      The following options are available (default is 'propagate'):
+        - 'propagate': returns nan
+        - 'raise': throws an error
+        - 'omit': performs the calculations ignoring nan values
+        - `Number`: replace all NaN values with given number
 
   Return:
     indices : array
       the columns order that give the maximum diagonal sum
   """
+  matrix = _nan_policy(matrix, nan_policy)
   nrow, ncol = matrix.shape
   if nrow > ncol:
     matrix = matrix[:ncol]

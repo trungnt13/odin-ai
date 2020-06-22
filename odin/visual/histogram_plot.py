@@ -49,11 +49,13 @@ def plot_histogram(x,
                    bold_title=False,
                    title=None):
   r"""
+  Arguments:
     x: array, data for ploting histogram
     color_val : array (optional), heatmap color value for each histogram bars
     bins_color : int, number of bins for the colors
     bins : int, number of histogram bins
-    covariance_factor : None or float, smaller number mean more detail
+    covariance_factor : None or float,
+      smaller value lead to more detail for KDE plot
   """
   from matplotlib import pyplot as plt
   import matplotlib as mpl

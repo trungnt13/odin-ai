@@ -16,19 +16,26 @@ def to_axis2D(ax, fig=None):
   fig : matplotlib.Figure, None - plt.gcf() or tuple of (width, height)
   """
   from matplotlib import pyplot as plt
+  # validate figure type
   if fig is None:
     fig = plt.gcf()
   elif isinstance(fig, (tuple, list)):
     fig = plt.figure(figsize=[float(i) for i in fig])
   elif not isinstance(fig, plt.Figure):
     raise ValueError(
-        "fig could be tuple of figsize, None or instance of Figure.")
+        "fig could be: tuple of figsize, None or instance of Figure, "
+        f"but given {fig} - {type(fig)}")
+  # validate ax type
   if isinstance(ax, Number):
     ax = fig.add_subplot(ax)
   elif isinstance(ax, (tuple, list)):
     ax = fig.add_subplot(*ax)
   elif ax is None:
     ax = fig.gca()
+  elif isinstance(ax, plt.Axes):
+    pass
+  else:
+    raise ValueError(f"Invalid `ax` of type {type(ax)}")
   return ax
 
 

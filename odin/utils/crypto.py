@@ -163,7 +163,10 @@ def md5_checksum(file_or_path,
     # copy data
     f = BytesIO()
     for arr in file_or_path:
-      np.save(file=f, arr=arr, allow_pickle=False)
+      if hasattr(arr, 'tobytes'):
+        f.write(arr.tobytes())
+      else:
+        np.save(file=f, arr=arr, allow_pickle=False)
     f.seek(0)
     # update hash
     for chunk in iter(lambda: f.read(chunksize), b""):

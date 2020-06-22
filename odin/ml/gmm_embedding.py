@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 from odin.stats import describe
 from odin.utils import (ArgController, Progbar, UnitTimer, auto_logging,
-                        batching, catch_warnings_ignore, ctext, get_script_path,
+                        batching, catch_warnings_ignore, get_script_path,
                         is_number, mpi, unique_labels)
 from odin.visual import (Visualizer, generate_random_colors, merge_text_graph,
                          plot_confusion_matrix, plot_figure, plot_histogram,

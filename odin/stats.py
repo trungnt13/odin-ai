@@ -6,6 +6,7 @@ import random
 from collections import Iterator, Mapping, OrderedDict, defaultdict
 from itertools import chain
 from numbers import Number
+from scipy.stats import spearmanr, pearsonr
 
 import numpy as np
 
@@ -17,7 +18,7 @@ def prior2weights(prior,
                   min_value=0.1,
                   max_value=None,
                   norm=False):
-  """
+  r"""
   Parameters
   ----------
   prior: numpy.ndarray [nb_classes,]
@@ -356,7 +357,7 @@ def sampling_iter(it,
 # ===========================================================================
 # Statistics
 # ===========================================================================
-def sparsity_percentage(x, batch_size=1234):
+def sparsity_percentage(x, batch_size=1024):
   n_zeros = 0
   n_total = np.prod(x.shape)
   for start, end in batching(batch_size=batch_size, n=x.shape[0], seed=None):

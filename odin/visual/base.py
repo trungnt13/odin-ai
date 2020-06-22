@@ -5,6 +5,7 @@ from collections import defaultdict
 from typing import Dict, Text
 
 _FIGURE_LIST = defaultdict(dict)
+_FIGURE_COUNT = defaultdict(lambda: defaultdict(int))
 
 
 class Visualizer(object):
@@ -32,13 +33,10 @@ class Visualizer(object):
     from matplotlib import pyplot as plt
     self.assert_figure(fig)
     figures = _FIGURE_LIST[id(self)]
-    if name in figures:
-      i = name.split('_')[-1]
-      try:
-        i = min(9, int(i) + 1)
-      except:
-        i = ''
-      name = f"{name}_{i}"
+    count = _FIGURE_COUNT[id(self)]
+    count[name] += 1
+    if count[name] > 1:
+      name = f"{name}_{count[name] - 1}"
     figures[name] = fig
     return self
 

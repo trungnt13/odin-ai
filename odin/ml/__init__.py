@@ -3,6 +3,7 @@ from odin.ml.cluster import fast_dbscan, fast_kmeans, fast_knn
 from odin.ml.decompositions import *
 from odin.ml.fast_tsne import fast_tsne
 from odin.ml.fast_umap import fast_umap
+from odin.ml.gmm_thresholding import GMMThreshold
 from odin.ml.gmm_classifier import GMMclassifier
 from odin.ml.gmm_embedding import ProbabilisticEmbedding
 from odin.ml.gmm_tmat import GMM, Tmatrix

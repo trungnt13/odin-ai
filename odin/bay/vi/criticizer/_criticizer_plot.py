@@ -118,7 +118,7 @@ class CriticizerPlot(CriticizerMetrics, vs.Visualizer):
       # [n_factors, n_codes]
       corr = ((train_corr + test_corr) / 2.).T
       corr = corr[factor_ids]
-      code_ids = diagonal_linear_assignment(np.abs(corr))
+      code_ids = diagonal_linear_assignment(np.abs(corr), nan_policy=0)
       if not show_all_codes:
         code_ids = code_ids[:len(factor_ids)]
     # directly give the correlation matrix
@@ -131,7 +131,7 @@ class CriticizerPlot(CriticizerMetrics, vs.Visualizer):
          f"n_codes={self.n_codes}) but given shape: {corr.shape}")
       score_type = 'score'
       corr = corr[factor_ids]
-      code_ids = diagonal_linear_assignment(np.abs(corr))
+      code_ids = diagonal_linear_assignment(np.abs(corr), nan_policy=0)
       if not show_all_codes:
         code_ids = code_ids[:len(factor_ids)]
     # no correlation provided
