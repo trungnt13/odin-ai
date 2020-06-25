@@ -9,7 +9,6 @@ from sklearn.linear_model import Lasso
 from odin import search
 from odin.bay import distributions as tfd
 from odin.bay.distributions import CombinedDistribution
-from odin.bay.distributions.utils import concat_distribution
 from odin.bay.vi import losses, metrics
 from odin.bay.vi.criticizer._criticizer_base import CriticizerBase
 
@@ -237,7 +236,7 @@ class CriticizerMetrics(CriticizerBase):
         calculating the mutual information gap
 
     Return:
-      a tuple of 2 scalars: mutual information gap for train and test set
+      a dictionary : {'mig': score}
 
     Reference:
       Chen, R.T.Q., Li, X., Grosse, R., Duvenaud, D., 2019. Isolating Sources of
@@ -252,12 +251,12 @@ class CriticizerMetrics(CriticizerBase):
     r""" Disentanglement, Completeness, Informativeness
 
     Return:
-      tuple of 3 scalars:
-        - disentanglement score: The degree to which a representation factorises
+      a dictionary:
+        - 'disentanglement': The degree to which a representation factorises
           or disentangles the underlying factors of variation
-        - completeness score: The degree to which each underlying factor is
+        - 'completeness': The degree to which each underlying factor is
           captured by a single code variable.
-        - informativeness score: test accuracy of a factor recognizer trained
+        - 'informativeness': test accuracy of a factor recognizer trained
           on train data
 
     References:
@@ -271,7 +270,7 @@ class CriticizerMetrics(CriticizerBase):
                                  z_test,
                                  f_test,
                                  random_state=self.randint)
-    return dict(disentanglement=d, completeness=c, informative=i)
+    return dict(disentanglement=d, completeness=c, informativeness=i)
 
   def cal_total_correlation(self):
     r""" Estimation of total correlation based on fitted Gaussian
@@ -375,13 +374,12 @@ class CriticizerMetrics(CriticizerBase):
     Returns:
       tuple of 2 scalars: accuracy for train and test data
     """
-    return dict(betavae=metrics.beta_vae_score(
-        concat_distribution(self.representations),
-        np.concatenate(self.factors, axis=0),
-        n_samples=n_samples,
-        use_mean=True,
-        random_state=self.randint,
-        verbose=verbose))
+    return dict(betavae=metrics.beta_vae_score(self.representations_full,
+                                               self.factors_full,
+                                               n_samples=n_samples,
+                                               use_mean=True,
+                                               random_state=self.randint,
+                                               verbose=verbose))
 
   def cal_factorvae_score(self, n_samples=10000, verbose=True):
     r""" FactorVAE based score
@@ -389,13 +387,12 @@ class CriticizerMetrics(CriticizerBase):
     Returns:
       tuple of 2 scalars: accuracy for train and test data
     """
-    return dict(factorvae=metrics.factor_vae_score(
-        concat_distribution(self.representations),
-        np.concatenate(self.factors, axis=0),
-        n_samples=n_samples,
-        use_mean=True,
-        random_state=self.randint,
-        verbose=verbose))
+    return dict(factorvae=metrics.factor_vae_score(self.representations_full,
+                                                   self.factors_full,
+                                                   n_samples=n_samples,
+                                                   use_mean=True,
+                                                   random_state=self.randint,
+                                                   verbose=verbose))
 
   def cal_clustering_scores(self, algorithm='both'):
     r""" Calculating the unsupervised clustering Scores:

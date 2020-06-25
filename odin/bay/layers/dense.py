@@ -12,9 +12,13 @@ from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -23,11 +27,10 @@ from tensorflow_probability.python.layers.distribution_layer import (
     _serialize_function)
 
 from odin import backend as bk
-from odin.bay.distribution_alias import parse_distribution
 from odin.bay.helpers import (KLdivergence, is_binary_distribution,
                               is_discrete_distribution, is_mixture_distribution,
                               is_zeroinflated_distribution, kl_divergence)
-from odin.bay.layers.continuous import VectorDeterministicLayer
+from odin.bay.layers.deterministic_layers import VectorDeterministicLayer
 from odin.bay.layers.distribution_util_layers import Moments, Sampling
 
 __all__ = [
@@ -106,10 +109,10 @@ class DenseDistribution(Dense):
     convert_to_tensor_fn = posterior_kwargs.pop('convert_to_tensor_fn',
                                                 Distribution.sample)
     # process the posterior
-    # TODO: support give instance of DistributionLambda directly
     if inspect.isclass(posterior) and issubclass(posterior, DistributionLambda):
       post_layer_cls = posterior
     else:
+      from odin.bay.distribution_alias import parse_distribution
       post_layer_cls, _ = parse_distribution(posterior)
     # create layers
     self._convert_to_tensor_fn = convert_to_tensor_fn

@@ -4,12 +4,14 @@ import inspect
 import os
 import shutil
 from collections import OrderedDict, defaultdict
-from functools import wraps
+from functools import lru_cache, wraps
 
 import numpy as np
 from decorator import FunctionMaker
 from six import string_types
 from six.moves import builtins
+
+__all__ = ['lru_cache', 'cache_disk', 'cache_memory']
 
 # to set the cache dir, set the environment CACHE_DIR
 __cache_dir = os.environ.get(
@@ -94,7 +96,7 @@ __NO_ARGUMENT = '___NO_ARGUMENT___'
 
 
 def __compare_cached_key(key, keylist):
-  """Return index of match key if any key in the keylist match
+  r""" Return index of match key if any key in the keylist match
   the given key"""
   try:
     return keylist.index(key)
@@ -107,39 +109,38 @@ def clear_mem_cache():
 
 
 def cache_memory(func, *attrs):
-  '''Decorator. Caches the returned value and called arguments of
+  r"""" Decorator. Caches the returned value and called arguments of
   a function.
 
   All the input and output are cached in the memory (i.e. RAM), and it
   requires hash-able inputs to compare the footprint of function.
 
-  Parameters
-  ----------
-  attrs : str or list(str)
-      list of object attributes in comparation for selecting cache value
+  Arguments:
+    attrs : str or list(str)
+        list of object attributes in comparison for selecting cache value
 
-  Note
-  ----
-  enable strict mode by specify "__strict__" in the `attrs`, this mode
-  turns off caching by default but activated when "__cache__" appeared in
-  the argument
+  Note:
+    enable strict mode by specify "__strict__" in the `attrs`, this mode
+    turns off caching by default but activated when "__cache__" appeared in
+    the argument.
 
   Example
-  -------
-  >>> class ClassName(object):
-  >>>     def __init__(self, arg):
-  >>>         super(ClassName, self).__init__()
-  >>>         self.arg = arg
-  >>>     @cache_memory('arg')
-  >>>     def abcd(self, a):
-  >>>         return np.random.rand(*a)
-  >>>     def e(self):
-  >>>         pass
-  >>> x = c.abcd((10000, 10000))
-  >>> x = c.abcd((10000, 10000)) # return cached value
-  >>> c.arg = 'test'
-  >>> x = c.abcd((10000, 10000)) # return new value
-  '''
+  ```
+  class ClassName(object):
+      def __init__(self, arg):
+          super(ClassName, self).__init__()
+          self.arg = arg
+      @cache_memory('arg')
+      def abcd(self, a):
+          return np.random.rand(*a)
+      def e(self):
+          pass
+  x = c.abcd((10000, 10000))
+  x = c.abcd((10000, 10000)) # return cached value
+  c.arg = 'test'
+  x = c.abcd((10000, 10000)) # return new value
+  ```
+  """
   strict_mode = False
   if not inspect.ismethod(func) and not inspect.isfunction(func):
     attrs = (func,) + attrs

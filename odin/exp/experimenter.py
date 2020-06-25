@@ -492,9 +492,24 @@ class Experimenter():
         f.write("%s%s\n" % (sep, str(m)))
     return self
 
-  def get_output_dir(self, cfg: DictConfig = None):
-    if cfg is None:
-      cfg = self.configs
+  def get_save_dir(self) -> str:
+    r""" Return the base directory for all experiments """
+    return self.save_path
+
+  def get_result_dir(self, override=False) -> str:
+    r""" Return the base directory for storing all experiments' results """
+    path = os.path.join(self.save_path, 'results')
+    if os.path.exists(path) and override:
+      shutil.rmtree(path)
+    if not os.path.exists(path):
+      os.makedirs(path)
+    return path
+
+  def get_output_dir(self, cfg: DictConfig)->str:
+    r""" Return the output directory for the experiment of a specific
+    configuration. """
+    assert isinstance(cfg, DictConfig) , \
+      "cfg must be given as instance of DictConfig"
     key = self.hash_config(cfg)
     path = os.path.join(self._save_path, 'exp_%s' % key)
     if not os.path.exists(path):
@@ -639,7 +654,7 @@ class Experimenter():
   def get_models(self,
                  conditions="",
                  load_models=False,
-                 checksum=False,
+                 return_hash=False,
                  verbose=True):
     r""" Select all model in the database `exp.db` given the conditions
 
@@ -648,13 +663,17 @@ class Experimenter():
         for examples:
         - `"model.name=vae dataset.name=mnist"`
         - or `["model.name=vae", "dataset.name=mnist"]`
+      return_hash : a Boolean
+        if True, return unique hash code of the configuration used to train
+        the models.
 
     Return:
-      configs : list of `DictConfig`
-        list of all configurations that match the conditions
-      models : list of `dict`.
-        list of all attributes created during calling `on_load_data` and
-        `on_create_model`, this list is empty if `load_models=False`
+      list of tuple: (cfg: DictConfig, models: dict) or if `return_hash=True`
+        (hash: str, cfg: DictConfig, models: dict)
+
+    Note:
+      models : list of all attributes created during calling `on_load_data`
+        and `on_create_model`, this list is empty if `load_models=False`
     """
     regex = re.compile(r'\w+[=].+')
     if isinstance(conditions, string_types):
@@ -703,11 +722,13 @@ class Experimenter():
     # create the model
     configs = ModelList()
     models = ModelList()
+    hash_codes = []
     # iterate and get all the relevant config
     for cfg in all_configs:
       cfg = _deflatten_config(dict(zip(colname, cfg)))
       # don't forget remove hash or the hash_config return different checksum
       hash_key = cfg.pop('hash')
+      hash_codes.append(hash_key)
       assert hash_key == self.hash_config(cfg), \
         f"Hash mismatch {hash_key}!={self.hash_config(cfg)} for config: {cfg}"
       if load_models:
@@ -732,10 +753,14 @@ class Experimenter():
       configs.append(cfg)
     # return
     if len(configs) == 1:
+      hash_codes = hash_codes[0]
       configs = configs[0]
       if load_models:
         models = models[0]
-    return configs, models
+      rets = (hash_codes, configs, models)
+    else:
+      rets = list(zip(hash_codes, configs, models))
+    return [i if return_hash else i[1:] for i in rets]
 
   ####################### Base methods
   def on_load_data(self, cfg: DictConfig):

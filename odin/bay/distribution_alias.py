@@ -113,8 +113,10 @@ _dist_mapping = multikeysdict({
 })
 
 
-def parse_distribution(alias):
-  r"""
+def parse_distribution(alias: str):
+  r""" Parse a string alias to appropriate class of `DistributionLambda`
+  and `Distribution`.
+
   Returns:
     layer : `tensorflow_probability.python.layers.DistributionLambda`
     dist : `tensorflow_probability.python.distributions.Distribution`

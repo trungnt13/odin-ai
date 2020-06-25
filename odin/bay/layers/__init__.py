@@ -1,10 +1,11 @@
 from odin.bay.layers.continuous import *
 from odin.bay.layers.count_layers import *
-from odin.bay.layers.discrete import *
-from odin.bay.layers.mixture_layers import *
 from odin.bay.layers.dense import *
+from odin.bay.layers.deterministic_layers import *
+from odin.bay.layers.discrete import *
 from odin.bay.layers.distribution_util_layers import *
 from odin.bay.layers.latents import *
+from odin.bay.layers.mixture_layers import *
 
 
 def _register_distribution_layers():

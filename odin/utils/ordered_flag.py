@@ -137,3 +137,6 @@ class OrderedFlag(str, Enum):
     s1 = set(self._value_.split(sep))
     s2 = set(other._value_.split(sep))
     return s1 == s2
+
+  def __hash__(self):
+    return id(self)

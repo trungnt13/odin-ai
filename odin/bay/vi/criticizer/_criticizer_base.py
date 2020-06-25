@@ -9,7 +9,6 @@ from tqdm import tqdm
 
 from odin.bay import distributions as tfd
 from odin.bay.distributions import CombinedDistribution
-from odin.bay.distributions.utils import concat_distribution
 from odin.bay.vi import utils
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
@@ -97,6 +96,10 @@ class CriticizerBase(object):
     self._factor_names = None
     self._representations = None
     self._reconstructions = None
+    # concatenated train and test
+    self._representations_full = None
+    self._factors_full = None
+    self._original_factors_full = None
     # others
     self._rand = random_state
     self._is_multi_latents = 0
@@ -122,8 +125,31 @@ class CriticizerBase(object):
     return self._inputs
 
   @property
+  def representations_full(self) -> tfd.Distribution:
+    return self._representations_full
+
+  @property
+  def latents_full(self) -> tfd.Distribution:
+    return self._representations_full
+
+  @property
+  def factors_full(self) -> tf.Tensor:
+    return self._factors_full
+
+  @property
+  def original_factors_full(self) -> tf.Tensor:
+    return self._original_factors_full
+
+  @property
   def representations(self):
-    r""" Return the learned representations `Distribution`
+    r""" Return the learned latent representations `Distribution`
+    (i.e. the latent code) for training and testing """
+    self.assert_sampled()
+    return self._representations
+
+  @property
+  def latents(self):
+    r""" Return the learned latent representations `Distribution`
     (i.e. the latent code) for training and testing """
     self.assert_sampled()
     return self._representations
@@ -457,6 +483,7 @@ class CriticizerBase(object):
     Returns:
       `Criticizer` with sampled data
     """
+    from odin.bay.helpers import concat_distributions
     inputs, latents, factors = prepare_inputs_factors(inputs,
                                                       latents,
                                                       factors,
@@ -546,7 +573,7 @@ class CriticizerBase(object):
       if self.is_multi_latents:
         Zs = CombinedDistribution(
             [
-                concat_distribution(
+                concat_distributions(
                     [z[zi] for z in Zs],
                     name="Latents%d" % zi,
                 ) for zi in range(self.is_multi_latents)
@@ -554,9 +581,9 @@ class CriticizerBase(object):
             name="Latents",
         )
       else:
-        Zs = concat_distribution(Zs, name="Latents")
+        Zs = concat_distributions(Zs, name="Latents")
       Os = [
-          concat_distribution(
+          concat_distributions(
               [j[i] for j in Os],
               name="Output%d" % i,
           ) for i in range(len(Os[0]))
@@ -589,4 +616,8 @@ class CriticizerBase(object):
       self._reconstructions = (None, None)
       self._original_factors = (f_original[0], f_original[1])
     self._factor_names = train_factors.factor_names
+    # concatenated
+    self._representations_full = concat_distributions(self.representations)
+    self._factors_full = np.concatenate(self.factors, axis=0)
+    self._original_factors_full = np.concatenate(self.original_factors, axis=0)
     return self

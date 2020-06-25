@@ -360,11 +360,11 @@ def representative_importance_matrix(repr_train,
                                dtype=np.float64)
   train_acc = list(range(num_factors))
   test_acc = list(range(num_factors))
+  ncpu = min(max(1, get_cpu_count() - 1), 10)
   for i, feat, train, test, in MPI(jobs=list(range(num_factors)),
                                    func=_train,
                                    batch=1,
-                                   ncpu=min(max(1,
-                                                get_cpu_count() - 1), 10)):
+                                   ncpu=ncpu):
     importance_matrix[:, i] = feat
     train_acc[i] = train
     test_acc[i] = test

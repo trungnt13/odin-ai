@@ -12,6 +12,7 @@ from sklearn.svm import LinearSVC
 from tensorflow_probability import distributions as tfd
 
 from odin.bay.distributions import CombinedDistribution
+from odin.bay.helpers import batch_slice
 from odin.bay.vi.utils import discretizing
 from odin.stats import is_discrete
 
@@ -105,7 +106,7 @@ def _sampling_helper(representations,
   assert isinstance(representations, tfd.Distribution),\
     f"representations must be instance of Distribution, but given: {type(representations)}"
   ## arguments
-  from odin.bay.distributions import slice_distribution
+  from tensorflow_probability.python.distributions import VectorDeterministic
   size = representations.batch_shape[0]
   n_codes = representations.event_shape[0]
   n_factors = factors.shape[1]
@@ -122,6 +123,7 @@ def _sampling_helper(representations,
     features = np.empty(shape=(n_samples,), dtype=np.int32)
     global_var = np.mean(representations.variance(), axis=0)
     # should > 0. here, otherwise, collapsed to prior
+    # note: for Deterministic distribution variance = 0, hence, no active dims
     active_dims = np.sqrt(global_var) > 0.
   else:
     raise NotImplementedError(f"No support for sampling strategy: {strategy}")
@@ -148,8 +150,8 @@ def _sampling_helper(representations,
           obs2_ids.append(s2)
       # create the observation:
       if len(obs1_ids) > 0:
-        obs1 = slice_distribution(obs1_ids, representations)
-        obs2 = slice_distribution(obs2_ids, representations)
+        obs1 = batch_slice(representations, obs1_ids)
+        obs2 = batch_slice(representations, obs2_ids)
         feat = np.mean(np.abs(repr_fn(obs1) - repr_fn(obs2)), axis=0)
         features[count, :] = feat
         labels[count] = factor_index
@@ -162,10 +164,13 @@ def _sampling_helper(representations,
       obs_ids = code_map[(factor_index, y)]
       if len(obs_ids) > 1:
         obs_ids = rand.choice(obs_ids, size=batch_size, replace=True)
-        obs = slice_distribution(obs_ids, representations)
+        obs = batch_slice(representations, obs_ids)
         local_var = np.var(repr_fn(obs), axis=0, ddof=1)
-        features[count] = np.argmin(local_var[active_dims] /
-                                    global_var[active_dims])
+        if not np.any(active_dims):  # no active dims
+          features[count] = 0
+        else:
+          features[count] = np.argmin(local_var[active_dims] /
+                                      global_var[active_dims])
         labels[count] = factor_index
         count += 1
         if verbose:

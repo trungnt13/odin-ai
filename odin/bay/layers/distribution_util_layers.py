@@ -55,11 +55,11 @@ class ConcatDistributionLayer(DistributionLambda):
                convert_to_tensor_fn=Distribution.sample,
                sample_shape=(),
                **kwargs):
-    from odin.bay.distributions.utils import concat_distribution
+    from odin.bay.distributions.utils import concat_distributions
     if convert_to_tensor_fn == Distribution.sample and sample_shape != ():
       convert_to_tensor_fn = partial(Distribution.sample,
                                      sample_shape=sample_shape)
-    super().__init__(lambda dists: concat_distribution(dists=dists, axis=axis),
+    super().__init__(lambda dists: concat_distributions(dists=dists, axis=axis),
                      convert_to_tensor_fn, **kwargs)
     self.axis = axis
 
