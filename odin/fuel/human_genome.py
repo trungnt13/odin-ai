@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 import os
 import sys
+from collections import Counter
 from typing import List, Text
 from urllib.request import urlretrieve
 
@@ -100,6 +101,9 @@ class HumanGenome:
                         '18', '19', '2', '20', '21', '22', '3', '4', '5', '6',
                         '7', '8', '9', 'Mitochondria', 'X', 'Y'
 
+  Note:
+    'PTPRC' is marker for 'CD45' with often collected in form of 'CD45RO' and
+      'CD45RA'. More of other cases to be noticed.
 
   Reference:
     HGNC: HUGO Gene Nonmenclature Committee
@@ -131,6 +135,13 @@ class HumanGenome:
   def header(self):
     return self.db.columns.to_numpy()
 
+  def __contains__(self, key):
+    try:
+      self[key]
+      return True
+    except KeyError:
+      return False
+
   def __getitem__(self, key) -> pd.DataFrame:
     if isinstance(key, (tuple, list, np.ndarray)):
       if not isinstance(key[0], (tuple, list, np.ndarray)):
@@ -143,7 +154,7 @@ class HumanGenome:
           col = i
           break
       if col is None:
-        raise ValueError(f"Cannot find gene with info: {key}")
+        raise KeyError(f"Cannot find gene with key info: {key}")
       idx = self.db[col] == key
       return self.db[idx]
     elif isinstance(key, dict):
@@ -152,7 +163,7 @@ class HumanGenome:
         db = db[db[str(i)] == str(j)]
       return db
     else:
-      raise ValueError(f"key can be dict or string, given: {type(key)}")
+      raise KeyError(f"key can be dict or string, given: {type(key)}")
 
   def _get(self, key, column):
     df = self[key]
@@ -180,3 +191,26 @@ class HumanGenome:
 
   def get_gene_name(self, key) -> Text:
     return self._get(key, 'name')
+
+  def is_cd_gene(self, key) -> bool:
+    if key not in self:
+      return False
+    cd = self.get_protein_cd(key)
+    return len(cd) > 0
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    n = 3
+    text = f"Header: {', '.join(self.header)}\n"
+    text = f"Shape : {self.db.shape}\n"
+    for key, values in self.unique_index.items():
+      values = list(values)
+      values = np.random.choice(list(values), size=n)
+      freq = Counter(i for i in self.db[key] if len(i) > 0)
+      text += f" - '{key}' \n"
+      text += f"    Unique  : {len(freq)}\n"
+      text += f"    Common  : {freq.most_common(n)}\n"
+      text += f"    Examples: {'; '.join(values)}\n"
+    return text[:-1]

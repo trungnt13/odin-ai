@@ -35,6 +35,7 @@ from odin.utils.ordered_flag import OrderedFlag
 from odin.utils.path_utils import *
 from odin.utils.progbar import Progbar, add_notification
 from odin.utils.python_utils import *
+from odin.utils.pdf_utils import *
 
 try:
   from numba import jit, autojit, vectorize, guvectorize

@@ -1,4 +1,5 @@
 sftp-config*
+.favorites.json
 .vscode
 .DS_Store
 .sync
