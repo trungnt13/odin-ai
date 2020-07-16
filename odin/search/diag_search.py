@@ -10,6 +10,8 @@ from numba import njit
 from scipy.optimize import linear_sum_assignment
 from six import string_types
 
+
+
 def _nan_policy(mtx, policy):
   nan_mask = np.isnan(mtx)
   # no NaN values
@@ -121,6 +123,9 @@ def diagonal_linear_assignment(matrix, nan_policy='propagate'):
       the columns order that give the maximum diagonal sum
   """
   matrix = _nan_policy(matrix, nan_policy)
+  # NaN values
+  if not hasattr(matrix, 'shape'):
+    return matrix
   nrow, ncol = matrix.shape
   if nrow > ncol:
     matrix = matrix[:ncol]

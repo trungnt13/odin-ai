@@ -505,7 +505,7 @@ class Experimenter():
       os.makedirs(path)
     return path
 
-  def get_output_dir(self, cfg: DictConfig)->str:
+  def get_output_dir(self, cfg: DictConfig) -> str:
     r""" Return the output directory for the experiment of a specific
     configuration. """
     assert isinstance(cfg, DictConfig) , \
@@ -625,6 +625,31 @@ class Experimenter():
     rows = self.select(query)
     return {r[0]: r[1] if len(r) == 2 else r[1:] for r in rows}
 
+  def write_error(self,
+                  traceback: str,
+                  hash_code: str = "",
+                  method_name: str = "",
+                  config: str = ""):
+    r""" Store error log in the database
+
+    Arguments:
+      traceback : the stack trace.
+      hash_code : unique hash code of the experiment.
+      method_name : call method identity.
+      config : dictionary configuration or text description of the it.
+    """
+    if isinstance(config, DictConfig):
+      config = config.pretty()
+    elif isinstance(config, dict):
+      config = pretty_config(config)
+    self.db.write(table='error',
+                  hash_code=str(hash_code),
+                  method_name=str(method_name),
+                  traceback=str(traceback),
+                  config=str(config),
+                  datetime=get_formatted_datetime(only_number=False))
+    return self
+
   def write_scores(self, table, replace=False, **scores):
     r""" Save scores to the SQLite database, the hash key (primary key) is
     determined by the running configuration. """
@@ -640,6 +665,18 @@ class Experimenter():
                   replace=replace,
                   hash=hash_key,
                   **scores)
+    return self
+
+  def write(self, table, unique=False, replace=False, **row):
+    r""" Write custom entry to a SQL table
+
+    Arguments:
+      table : String, SQL table name.
+      unique : list of String, name of unique keys.
+      replace : a Boolean. In case unique, replace existing row and column.
+      **row : mapping key, value for the row.
+    """
+    self.db.write(table=table, unique=unique, replace=replace, **row)
     return self
 
   def get_all_configs(self) -> DataFrame:
@@ -833,12 +870,11 @@ class Experimenter():
       text = text.read().strip()
       text += f"\n{e}"
       LOGGER.error(f"\n{text}\n{pretty_config(self._running_configs)}")
-      self.db.write(table='error',
-                    hash=self._running_hash,
-                    method=method_name,
-                    traceback=text,
-                    config=self._running_configs.pretty(),
-                    datetime=get_formatted_datetime(only_number=False))
+      self.write_error(hash_code=self._running_hash,
+                       method=method_name,
+                       traceback=text,
+                       config=self._running_configs.pretty(),
+                       datetime=get_formatted_datetime(only_number=False))
       return True
 
   def _run(self, cfg: DictConfig):
