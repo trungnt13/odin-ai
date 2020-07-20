@@ -1,5 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
+from warnings import warn
+
 import numpy as np
 import tensorflow as tf
 from tensorflow.python.keras import Model, Sequential
@@ -8,9 +10,15 @@ from tensorflow_probability.python.distributions import Dirichlet
 from tensorflow_probability.python.math import softplus_inverse
 
 from odin.bay.helpers import kl_divergence
-from odin.bay.layers.continuous import DirichletLayer
-from odin.bay.layers.discrete import OneHotCategoricalLayer
+from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder import VariationalAutoencoder
+
+
+class LDAdecoder(Layer):
+
+  def __init__(self, n_components, **kwargs):
+    super().__init__()
+
 
 class LDAVAE(VariationalAutoencoder):
   r""" Variational Latent Dirichlet Allocation
@@ -32,13 +40,38 @@ class LDAVAE(VariationalAutoencoder):
       Gradients, 2018.  https://arxiv.org/abs/1805.08498
     Akash Srivastava, Charles Sutton. Autoencoding Variational Inference For
       Topic Models. In ICLR, 2017.
+    Matthew D. Hoffman, David M. Blei, and Francis Bach. 2010. Online learning
+      for Latent Dirichlet Allocation. In NIPS, 2010
+
   """
 
-  pass
-  # def __init__(self, n_components=10, components_prior=0.7, **kwargs):
-  #   super().__init__(**kwargs)
-  #   self.n_components = int(n_components)
-  #   self.components_prior = np.array(softplus_inverse(components_prior))
+  def __init__(self,
+               n_features,
+               n_components=10,
+               alpha_activation='softplus',
+               alpha_clip=True,
+               **kwargs):
+    # create the topic latents distribution
+    latents = kwargs.pop("latents", None)
+    if latents is not None:
+      warn(message=f"Ignore predefined latents variable {latents}",
+           category=UserWarning)
+    n_components = int(n_components)
+    latents = RandomVariable(event_shape=(n_components,),
+                             posterior="dirichlet",
+                             projection=True,
+                             kwargs=dict(alpha_activation=alpha_activation,
+                                         alpha_clip=alpha_clip),
+                             name="Topics")
+    # input shape
+    n_features = int(n_features)
+    input_shape = kwargs.pop('input_shape', None)
+    if input_shape is not None:
+      warn(message=f"Ignore provided input_shape={input_shape}",
+           category=UserWarning)
+    input_shape = (n_features,)
+    # LDA decoder
+    super().__init__(latents=latents, input_shape=input_shape, **kwargs)
 
   #   self.n_mcmc_samples = n_mcmc_samples
   #   self.analytic = analytic

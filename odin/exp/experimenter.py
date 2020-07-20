@@ -231,25 +231,6 @@ def _to_sqltype(obj):
   return "BLOB"
 
 
-class ModelList(list):
-
-  def to_dataframe(self) -> DataFrame:
-    return self.to_df()
-
-  def to_df(self) -> DataFrame:
-    cols = list(self[0].keys())
-    df = DataFrame([[i[k] for k in cols] for i in self], columns=cols)
-    return df
-
-  def __getitem__(self, key):
-    if isinstance(key, string_types):
-      for i in self:
-        if i.hash == key:
-          return i
-      raise KeyError("Cannot find model with hash key: %s" % key)
-    return super().__getitem__(key)
-
-
 # ===========================================================================
 # Main class
 # ===========================================================================
@@ -692,6 +673,7 @@ class Experimenter():
                  conditions="",
                  load_models=False,
                  return_hash=False,
+                 raise_duplicate=False,
                  verbose=True):
     r""" Select all model in the database `exp.db` given the conditions
 
@@ -700,13 +682,21 @@ class Experimenter():
         for examples:
         - `"model.name=vae dataset.name=mnist"`
         - or `["model.name=vae", "dataset.name=mnist"]`
+      load_models : a Boolean
+        if True, run the method `on_create_model` and store all the loaded
+        attributes in a dictionary.
+      raise_duplicate : a Boolean
+        if True, raise RuntimeError if found more than 1 configurations
+        satisfied the conditions
       return_hash : a Boolean
         if True, return unique hash code of the configuration used to train
         the models.
 
     Return:
-      list of tuple: (cfg: DictConfig, models: dict) or if `return_hash=True`
-        (hash: str, cfg: DictConfig, models: dict)
+      list of tuple: (hash: str, cfg: DictConfig, attrs: dict)
+        where `attrs` are the created attributes during `on_create_model`
+        - if `return_hash=False`, no hash returned.
+        - if `load_models=False`, no attributes returned.
 
     Note:
       models : list of all attributes created during calling `on_load_data`
@@ -757,9 +747,9 @@ class Experimenter():
         if os.path.exists(_path(row)) and os.listdir(_path(row))
     ]
     # create the model
-    configs = ModelList()
-    models = ModelList()
-    hash_codes = []
+    configs = list()
+    attributes = list()
+    hash_codes = list()
     # iterate and get all the relevant config
     for cfg in all_configs:
       cfg = _deflatten_config(dict(zip(colname, cfg)))
@@ -786,18 +776,19 @@ class Experimenter():
           for k, v in loaded.items():
             print(f" - Loaded '{k}' of type {type(v)}")
         # add the model
-        models.append(loaded)
+        attributes.append(loaded)
       configs.append(cfg)
-    # return
-    if len(configs) == 1:
-      hash_codes = hash_codes[0]
-      configs = configs[0]
-      if load_models:
-        models = models[0]
-      rets = (hash_codes, configs, models)
-    else:
-      rets = list(zip(hash_codes, configs, models))
-    return [i if return_hash else i[1:] for i in rets]
+    # return a list of models
+    if raise_duplicate and len(configs) > 1:
+      for cfg in configs:
+        print(pretty_config(cfg))
+      raise RuntimeError(f"Found multiple models for conditions='{conditions}'")
+    rets = list(itertools.zip_longest(hash_codes, configs, attributes))
+    if not return_hash:
+      rets = [i[1:] for i in rets]
+    if not load_models:
+      rets = [i[:1] for i in rets]
+    return [i[0] if len(i) == 1 else i for i in rets]
 
   ####################### Base methods
   def on_load_data(self, cfg: DictConfig):
@@ -815,8 +806,7 @@ class Experimenter():
   def on_plot(self, cfg: DictConfig, figure_dir: str):
     print("PLOTTING:", cfg, figure_dir)
 
-  def on_compare(self, configs: List[DictConfig], models: ModelList,
-                 save_path: str):
+  def on_compare(self, configs: List[DictConfig], models: list, save_path: str):
     print("COMPARING:", save_path)
 
   ####################### Compare multiple model

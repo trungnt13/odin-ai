@@ -348,8 +348,8 @@ def representative_importance_matrix(repr_train,
     "The class must contain 'feature_importances_' attribute"
 
   def _train(factor_idx):
-    model = algo(random_state=random_state)
-    model.fit(repr_train, factor_train[:, factor_idx])
+    model = algo(random_state=random_state, n_iter_no_change=100)
+    model.fit(np.asarray(repr_train), np.asarray(factor_train[:, factor_idx]))
     feat = np.abs(model.feature_importances_)
     train = np.mean(model.predict(repr_train) == factor_train[:, factor_idx])
     test = np.mean(model.predict(repr_test) == factor_test[:, factor_idx])

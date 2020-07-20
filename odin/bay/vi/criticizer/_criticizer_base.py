@@ -1,6 +1,6 @@
 import re
 import warnings
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from numbers import Number
 
 import numpy as np
@@ -450,7 +450,7 @@ class CriticizerBase(object):
                    latents=None,
                    factors=None,
                    n_bins=5,
-                   strategy='quantile',
+                   strategy=None,
                    factor_names=None,
                    train_percent=0.8,
                    n_samples=[2000, 1000],
@@ -469,6 +469,7 @@ class CriticizerBase(object):
         The number of bins to produce. Raises ValueError if ``n_bins < 2``.
       strategy : {'uniform', 'quantile', 'kmeans', 'gmm'}, (default='quantile')
         Strategy used to define the widths of the bins.
+        `None` - No discretization performed
         uniform - All bins in each feature have identical widths.
         quantile - All bins in each feature have the same number of points.
         kmeans - Values in each bin have the same nearest center of a 1D
@@ -513,12 +514,26 @@ class CriticizerBase(object):
       test_inputs = [i[test_ids] for i in inputs]
     # ====== create discretized factors ====== #
     f_original = (factors[train_ids], factors[test_ids])
-    if not is_discrete(factors):
+    # discretizing the factors
+    if strategy is not None:
       if verbose:
         print(f"Discretizing factors: {n_bins} - {strategy}")
       factors = utils.discretizing(factors,
                                    n_bins=int(n_bins),
                                    strategy=strategy)
+    # check for singular factor and ignore it
+    ids = []
+    for i, (name, f) in enumerate(zip(factor_names, factors.T)):
+      c = Counter(f)
+      if len(c) < 2:
+        warnings.warn(f"Ignore factor with name '{name}', singular data: {f}")
+      else:
+        ids.append(i)
+    if len(ids) != len(factor_names):
+      f_original = (f_original[0][:, ids], f_original[1][:, ids])
+      factor_names = factor_names[ids]
+      factors = factors[:, ids]
+    # create the factor class for sampling
     train_factors = Factor(factors[train_ids],
                            factor_names=factor_names,
                            random_state=self.randint)

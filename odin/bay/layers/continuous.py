@@ -154,20 +154,19 @@ class DirichletLayer(DistributionLambda):
   def __init__(self,
                event_shape=(),
                alpha_activation='softplus1',
-               clip_for_stable=True,
+               alpha_clip=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(DirichletLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, alpha_activation,
-                                 clip_for_stable, validate_args),
-        convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, event_shape, alpha_activation, alpha_clip,
+                                 validate_args), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape=(),
           alpha_activation=softplus1,
-          clip_for_stable=True,
+          alpha_clip=True,
           validate_args=False,
           name="DirichletLayer"):
     r"""Create the distribution instance from a `params` vector."""
@@ -175,7 +174,7 @@ class DirichletLayer(DistributionLambda):
     # Clips the Dirichlet parameters to the numerically stable KL region
     alpha_activation = parse_activation(alpha_activation, 'tf')
     params = alpha_activation(params)
-    if clip_for_stable:
+    if alpha_clip:
       params = tf.clip_by_value(params, 1e-3, 1e3)
     return tfd.Dirichlet(concentration=params,
                          validate_args=validate_args,
