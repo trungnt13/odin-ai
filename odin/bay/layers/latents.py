@@ -9,7 +9,8 @@ from tensorflow_probability.python.distributions import (Independent, LogNormal,
 
 from odin.bay.layers.continuous import (LogNormalLayer, MultivariateNormalLayer,
                                         NormalLayer)
-from odin.bay.layers.dense import DenseDistribution, MixtureDensityNetwork
+from odin.bay.layers.dense_distribution import (DenseDistribution,
+                                                MixtureDensityNetwork)
 
 __all__ = [
     'DiagonalGaussianLatent',

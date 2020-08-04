@@ -4,7 +4,7 @@ import collections
 import inspect
 from enum import Flag, auto
 from numbers import Number
-from typing import List, Optional, Text
+from typing import Callable, List, Optional, Text, Union
 
 import numpy as np
 import tensorflow as tf
@@ -12,6 +12,7 @@ from six import string_types
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
 from tensorflow_probability import distributions as tfd
+from tensorflow_probability.python.distributions import Distribution
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     _get_convert_to_tensor_fn, _serialize)
@@ -179,20 +180,20 @@ def coercible_tensor(d,
 # ===========================================================================
 # Objectives
 # ===========================================================================
-def kl_divergence(q,
-                  p,
+def kl_divergence(q: Union[Distribution, Callable],
+                  p: Union[Distribution, Callable],
                   analytic=False,
                   q_sample=lambda q: q.sample(),
                   reduce_axis=(),
-                  reverse=True,
-                  auto_remove_independent=True):
+                  reverse=True):
   r""" Calculating `KL(q(x)||p(x))` (if reverse=True) or
   `KL(p(x)||q(x))` (if reverse=False)
 
   Arguments:
-    q : `tensorflow_probability.Distribution`, the approximated posterior
-      distribution
-    p : `tensorflow_probability.Distribution`, the prior distribution
+    q : `tensorflow_probability.Distribution` or `Callable`,
+      the approximated posterior distribution
+    p : `tensorflow_probability.Distribution` or `Callable`,
+      the prior distribution
     analytic : bool (default: False)
       if True, use the close-form solution  for
     q_sample : {callable, Tensor, Number}
@@ -205,9 +206,6 @@ def kl_divergence(q,
       other word, placing low probability to where data does not occur).
       Otherwise, `KL(p||q)` a.k.a maximum likelihood, place high probability
       at anywhere data occur (i.e. averagely fitting the data).
-    auto_remove_independent : `bool`. If `q` or `p` is
-      `tfd.Independent` wrapper, get the original distribution for calculating
-      the analytic KL (default: `True`).
 
   Returns:
     A Tensor with the batchwise KL-divergence between `distribution_a`
@@ -236,18 +234,27 @@ def kl_divergence(q,
   print(q.sample())
   ```
   """
-  ## removing Independent
-  if auto_remove_independent:
-    # only remove Independent if one is Indepedent and another is not.
-    if isinstance(q, tfd.Independent) and not isinstance(p, tfd.Independent):
-      q = q.distribution
-    if not isinstance(q, tfd.Independent) and isinstance(p, tfd.Independent):
-      p = p.distribution
+  if callable(p) and not isinstance(p, Distribution):
+    p = p()
+    assert isinstance(p, Distribution), \
+      f"callable must return a Distribution, but returned: {p}"
+  if callable(q) and not isinstance(q, Distribution):
+    q = q()
+    assert isinstance(q, Distribution), \
+      f"callable must return a Distribution, but returned: {q}"
+  ### add independent if necessary
+  if isinstance(q, tfd.Independent) and not isinstance(p, tfd.Independent):
+    p = tfd.Independent(
+        p,
+        reinterpreted_batch_ndims=len(q.event_shape) - len(p.event_shape),
+    )
+  ### removing Independent
   if not bool(reverse):
     q, p = [q, p][::-1]
+  ### analytic KL
   if bool(analytic):
     return tfd.kl_divergence(q, p)
-  ## non-analytic KL
+  ### non-analytic KL
   # using MCMC sampling for estimating the KL
   if callable(q_sample):
     z = q_sample(q)
@@ -328,8 +335,7 @@ class KLdivergence:
                         p=prior,
                         analytic=analytic,
                         reverse=reverse,
-                        q_sample=sample_shape,
-                        auto_remove_independent=True)
+                        q_sample=sample_shape)
     if analytic and keepdims:
       div = tf.expand_dims(div, axis=0)
     return div

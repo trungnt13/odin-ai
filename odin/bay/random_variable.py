@@ -6,7 +6,7 @@ import types
 from collections import MutableSequence, Sequence
 from copy import deepcopy
 from numbers import Number
-from typing import List
+from typing import Callable, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
@@ -14,6 +14,8 @@ import tensorflow_probability as tfp
 from six import string_types
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
+from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.layers import DistributionLambda
 
 from odin.bay import distributions as obd
 from odin.bay import layers as obl
@@ -42,11 +44,14 @@ def _args_and_defaults(func):
 
 def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   if not isinstance(event_shape, (Sequence, MutableSequence, tf.TensorShape)):
-    raise ValueError(
-        "event_shape must be list of integer but given: "
-        f"{event_shape} type: {type(event_shape)}")
-  if isinstance(prior, obd.Distribution):
+    raise ValueError("event_shape must be list of integer but given: "
+                     f"{event_shape} type: {type(event_shape)}")
+  if isinstance(prior, (Distribution, DistributionLambda, Callable)):
     return prior
+  elif not isinstance(prior, (string_types, type(None))):
+    raise ValueError("prior must be string or instance of "
+                     f"Distribution or DistributionLambda, but given: {prior}")
+  # no prior given
   layer, dist = parse_distribution(posterior)
   if isinstance(prior, dict):
     kw = dict(prior)
@@ -196,7 +201,7 @@ class RandomVariable:
   posterior: str = 'gaus'
   projection: bool = False
   name: str = None
-  prior: str = None
+  prior: Optional[Union[Distribution, DistributionLambda, Callable]] = None
   kwargs: dict = dataclasses.field(default_factory=dict)
 
   def __post_init__(self):

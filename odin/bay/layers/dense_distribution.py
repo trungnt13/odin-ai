@@ -3,7 +3,7 @@ from __future__ import absolute_import, division, print_function
 import inspect
 from functools import partial
 from numbers import Number
-from typing import Callable, Optional, Text, Type, Union
+from typing import Callable, List, Optional, Text, Type, Union
 
 import numpy as np
 import tensorflow as tf
@@ -80,25 +80,25 @@ class DenseDistribution(Dense):
   """
 
   def __init__(self,
-               event_shape=(),
-               posterior='normal',
+               event_shape: List[int] = (),
+               posterior: Union[str, DistributionLambda] = 'normal',
                posterior_kwargs={},
-               prior=None,
-               convert_to_tensor_fn=Distribution.sample,
-               dropout=0.0,
-               activation='linear',
-               use_bias=True,
-               kernel_initializer='glorot_uniform',
+               prior: Union[Distribution, DistributionLambda, Callable] = None,
+               convert_to_tensor_fn: Callable = Distribution.sample,
+               dropout: float = 0.0,
+               activation: Union[str, Callable] = 'linear',
+               use_bias: bool = True,
+               kernel_initializer: Union[str, Callable] = 'glorot_uniform',
                bias_initializer='zeros',
                kernel_regularizer=None,
                bias_regularizer=None,
                activity_regularizer=None,
                kernel_constraint=None,
                bias_constraint=None,
-               projection=True,
+               projection: bool = True,
                **kwargs):
-    assert prior is None or isinstance(prior, Distribution), \
-      ("prior can only be None or instance of tensorflow_probability.Distribution"
+    assert isinstance(prior, (Distribution, DistributionLambda, Callable, type(None))), \
+      ("prior can only be None or instance of Distribution, DistributionLambda"
        f",  but given: {prior}-{type(prior)}")
     # duplicated event_shape or event_size in posterior_kwargs
     posterior_kwargs = dict(posterior_kwargs)
@@ -194,12 +194,13 @@ class DenseDistribution(Dense):
     return tf.cast(tf.reduce_prod(self._event_shape), tf.int32)
 
   @property
-  def prior(self) -> Distribution:
+  def prior(self) -> Union[Distribution, Callable]:
     return self._prior
 
   @prior.setter
   def prior(self, p):
-    assert isinstance(p, (Distribution, type(None)))
+    assert isinstance(p,
+                      (Distribution, type(None), DistributionLambda, Callable))
     self._prior = p
 
   def _sample_fn(self, dist):
@@ -261,7 +262,7 @@ class DenseDistribution(Dense):
     prior = self.prior if prior is None else prior
     posterior.KL_divergence = KLdivergence(
         posterior, prior=prior,
-        sample_shape=None)  # None mean reuse samples here
+        sample_shape=None)  # None mean reuse sampled data here
     assert not hasattr(posterior, 'prior'), "Cannot assign prior to the output"
     posterior.prior = prior
     return posterior
@@ -298,8 +299,7 @@ class DenseDistribution(Dense):
                                  p=prior,
                                  analytic=bool(analytic),
                                  reverse=reverse,
-                                 q_sample=sample_shape,
-                                 auto_remove_independent=True)
+                                 q_sample=sample_shape)
     if analytic:
       kullback_div = tf.expand_dims(kullback_div, axis=0)
       if isinstance(sample_shape, Number) and sample_shape > 1:
@@ -316,17 +316,20 @@ class DenseDistribution(Dense):
     return self.__str__()
 
   def __str__(self):
-    prior = (None if self.prior is None else "<%s batch:%s event:%s>" %
-             (self.prior.__class__.__name__, self.prior.batch_shape,
-              self.prior.event_shape))
+    if self.prior is None:
+      prior = 'None'
+    elif isinstance(self.prior, Distribution):
+      prior = (
+          f"<{self.prior.__class__.__name__} "
+          f"batch:{self.prior.batch_shape} event:{self.prior.event_shape}>")
+    else:
+      prior = str(self.prior)
     posterior = self._posterior_class.__name__
-    text = "<'%s' proj:%s built:%s event:%s #params:%d post:%s prior:%s dropout:%.2f kw:%s>" % \
-      (self.name, self.projection,
-       self.built if not hasattr(self, 'input_shape') else self.input_shape,
-       self.event_shape, self.units,
-       posterior, prior,
-       self._dropout, str(self._posterior_kwargs))
-    return text
+    built = self.built if not hasattr(self, 'input_shape') else self.input_shape
+    return (f"<'{self.name}' proj:{self.projection} built:{built} "
+            f"event:{self.event_shape} #params:{self.units} "
+            f"post:{posterior} prior:{prior} "
+            f"dropout:{self._dropout:.2f} kw:{self._posterior_kwargs}>")
 
   def get_config(self):
     config = super().get_config()

@@ -9,6 +9,7 @@ from tensorflow.python.keras import (Input, Model, Sequential, constraints,
                                      initializers, regularizers)
 from tensorflow.python.keras.layers import Dense, Layer
 from tensorflow_probability.python.distributions import Dirichlet
+from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.math import softplus_inverse
 
 from odin.bay.distributions import Dirichlet, Distribution, OneHotCategorical
@@ -132,8 +133,11 @@ class LDAVAE(VariationalAutoencoder):
                      decoder=decoder,
                      outputs=outputs,
                      **kwargs)
+    ### store attributes
+    self.n_topics = int(n_topics)
+    self.n_words = int(n_words)
+    self.alpha_clip = bool(alpha_clip)
     ### create the prior
-    self._alpha_clip = bool(alpha_clip)
     self._topics_prior_logits = self.add_weight(
         initializer=initializers.constant(
             value=softplus_inverse(prior_init).numpy()),
@@ -142,7 +146,7 @@ class LDAVAE(VariationalAutoencoder):
         trainable=True,
         name="topics_prior_logits",
     )
-    self.latent_layers[0].prior = self.topics_prior
+    self.latent_layers[0].prior = self.topics_prior_distribution
     self.prior_warmup = int(prior_warmup)
 
   @property
@@ -163,12 +167,11 @@ class LDAVAE(VariationalAutoencoder):
     r""" Logits of the Dirichlet topics distribution, shape `(1, n_topics)` """
     return self._topics_prior_logits
 
-  @property
-  def topics_prior(self) -> Distribution:
+  def topics_prior_distribution(self) -> Dirichlet:
     r""" Prior of the Dirichlet topics distribution,
     the `batch_shape=(1,)` and `event_shape=(n_topics,)` """
     concentration = tf.nn.softplus(self.topics_prior_logits)
-    if self._alpha_clip:
+    if self.alpha_clip:
       concentration = tf.clip_by_value(concentration, 1e-3, 1e3)
     return Dirichlet(concentration=concentration, name="topics_prior")
 

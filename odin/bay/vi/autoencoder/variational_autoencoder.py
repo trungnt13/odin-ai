@@ -24,7 +24,7 @@ from tensorflow_probability.python import layers as tfl
 
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
-from odin.bay.layers.dense import DenseDistribution
+from odin.bay.layers.dense_distribution import DenseDistribution
 from odin.bay.random_variable import RandomVariable as RV
 from odin.networks import NetworkConfig, SequentialNetwork
 from odin.utils import MD5object

@@ -123,8 +123,7 @@ class LatentDirichletAllocation(Model):
     kl = kl_divergence(q=docs_topics_posterior,
                        p=topics_prior,
                        analytic=self.analytic,
-                       q_sample=self.n_mcmc_samples,
-                       auto_remove_independent=True)
+                       q_sample=self.n_mcmc_samples)
     if self.analytic:
       kl = tf.expand_dims(kl, axis=0)
     llk = output_dist.log_prob(inputs)
