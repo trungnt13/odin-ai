@@ -64,7 +64,7 @@ class VAETest(unittest.TestCase):
             with tf.GradientTape(watch_accessed_variables=False) as tape:
               tape.watch(params)
               px, qz = vae(x, sample_shape=sample_shape)
-              elbo, llk, div = vae.elbo(x, px, qz)
+              elbo = vae.elbo(x, px, qz, return_components=False)
             grads = tape.gradient(elbo, params)
             for p, g in zip(params, grads):
               assert g is not None, \

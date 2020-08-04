@@ -17,7 +17,7 @@ from six import string_types
 from urllib3 import PoolManager
 from urllib3.exceptions import InsecureRequestWarning
 
-from odin.fuel._image_base import ImageDataset, _partition
+from odin.fuel._image_base import ImageDataset, get_partition
 from odin.utils.crypto import md5_folder
 from odin.utils.mpi import MPI
 
@@ -429,10 +429,10 @@ class LegoFaces(ImageDataset):
         mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
       where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
-    X, y = _partition(partition,
-                      train=self.train,
-                      valid=self.valid,
-                      test=self.test)
+    X, y = get_partition(partition,
+                         train=self.train,
+                         valid=self.valid,
+                         test=self.test)
     inc_labels = float(inc_labels)
     gen = tf.random.experimental.Generator.from_seed(seed=seed)
 

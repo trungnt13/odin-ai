@@ -9,7 +9,8 @@ from typing import List, Optional, Text
 import numpy as np
 import tensorflow as tf
 from six import string_types
-from tensorflow.python import array_ops, keras
+from tensorflow.python import keras
+from tensorflow.python.ops import array_ops
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (

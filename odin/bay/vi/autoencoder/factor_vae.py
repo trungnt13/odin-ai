@@ -168,6 +168,7 @@ class FactorVAE(BetaVAE):
     return self._is_pretraining
 
   def pretrain(self):
+    r""" Pretraining only train the VAE without the factor discriminator """
     self._is_pretraining = True
     return self
 

@@ -18,10 +18,6 @@ class CombinedDistribution(tfd.Distribution):
 
   def __init__(self, distributions, validate_args=False, name=None):
     parameters = dict(locals())
-    assert len(set(type(d) for d in distributions)) == 1 and \
-      all(isinstance(d, tfd.Distribution) for d in distributions), \
-      ("All distributions must be the same type but given: %s" %
-       str(distributions))
     batch_shape = [d.batch_shape for d in distributions]
     for shape in batch_shape:
       tf.assert_equal(

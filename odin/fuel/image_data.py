@@ -11,11 +11,11 @@ from numbers import Number
 
 import numpy as np
 import tensorflow as tf
+from bigarray import MmapArray, MmapArrayWriter
 from tqdm import tqdm
 
-from bigarray import MmapArray, MmapArrayWriter
 from odin.fuel._image_base import (MNIST, BinarizedAlphaDigits, BinarizedMNIST,
-                                   ImageDataset, _partition)
+                                   ImageDataset, get_partition)
 from odin.fuel._image_cifar import CIFAR10, CIFAR20, CIFAR100
 from odin.fuel._image_lego_faces import LegoFaces
 from odin.fuel._image_synthesize import YDisentanglement
@@ -199,7 +199,7 @@ class CelebA(ImageDataset):
       return dict(inputs=(image, label), mask=mask)
 
     ### select partition
-    images, attrs = _partition(
+    images, attrs = get_partition(
         partition,
         train=(self.train_files, self.train_attr),
         valid=(self.valid_files, self.valid_attr),
@@ -384,7 +384,7 @@ class Shapes3D(ImageDataset):
       return ims[0]
 
     ### get the right partition
-    indices = _partition(
+    indices = get_partition(
         partition,
         train=self.train_indices,
         valid=self.valid_indices,
@@ -488,10 +488,10 @@ class dSprites(ImageDataset):
         mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
       where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
-    ds = _partition(partition,
-                    train=self.train,
-                    valid=self.valid,
-                    test=self.test)
+    ds = get_partition(partition,
+                       train=self.train,
+                       valid=self.valid,
+                       test=self.test)
     factors = self._factors
     inc_labels = float(inc_labels)
     gen = tf.random.experimental.Generator.from_seed(seed=seed)
@@ -625,7 +625,7 @@ class STL10(ImageDataset):
     if isinstance(image_size, Number) and image_size == 96:
       image_size = None
     ### select partition
-    images_path, labels_path = _partition(
+    images_path, labels_path = get_partition(
         partition,
         train=((self.bin_files['train_X'], self.bin_files['unlabeled_X']),
                self.bin_files['train_y']),

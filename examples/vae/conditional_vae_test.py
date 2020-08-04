@@ -50,10 +50,10 @@ print(vae.classify(x))
 
 # with label
 pX_Z, qZ_X, y = vae([x, y], sample_shape=(2, 3), return_labels=True)
-elbo, _, _ = vae.elbo(x, pX_Z, qZ_X, return_components=False)
+elbo = vae.elbo(x, pX_Z, qZ_X, return_components=False)
 print(elbo.shape)
 
 # no label
 pX_Z, qZ_X, y = vae(x, sample_shape=(2, 3), return_labels=True)
-elbo, _, _ = vae.elbo(x, pX_Z, qZ_X, return_components=False)
+elbo = vae.elbo(x, pX_Z, qZ_X, return_components=False)
 print(elbo.shape)

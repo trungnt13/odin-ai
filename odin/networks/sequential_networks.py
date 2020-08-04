@@ -6,7 +6,7 @@ import inspect
 import types
 from copy import deepcopy
 from numbers import Number
-from typing import MutableSequence
+from typing import List, MutableSequence, Optional, Union
 
 import numpy as np
 import tensorflow as tf
@@ -338,29 +338,29 @@ class NetworkConfig(dict):
 
   """
 
-  units: int = 64
-  kernel: int = 3
-  strides: int = 1
-  padding: str = 'same'
-  dilation: int = 1
-  activation: str = 'relu'
-  use_bias: bool = True
-  kernel_initializer: str = 'glorot_uniform'
-  bias_initializer: str = 'zeros'
-  kernel_regularizer: str = None
-  bias_regularizer: str = None
-  activity_regularizer: str = None
-  kernel_constraint: str = None
-  bias_constraint: str = None
-  batchnorm: bool = False
+  units: Union[int, List[int]] = 64
+  kernel: Union[int, List[int]] = 3
+  strides: Union[int, List[int]] = 1
+  dilation: Union[int, List[int]] = 1
+  padding: Union[str, List[str]] = 'same'
+  activation: Union[str, List[str]] = 'relu'
+  use_bias: Union[bool, List[bool]] = True
+  kernel_initializer: Union[str, List[str]] = 'glorot_uniform'
+  bias_initializer: Union[str, List[str]] = 'zeros'
+  kernel_regularizer: Union[str, List[str]] = None
+  bias_regularizer: Union[str, List[str]] = None
+  activity_regularizer: Union[str, List[str]] = None
+  kernel_constraint: Union[str, List[str]] = None
+  bias_constraint: Union[str, List[str]] = None
+  batchnorm: Union[bool, List[bool]] = False
   input_dropout: float = 0.
-  dropout: float = 0.
+  dropout: Union[float, List[float]] = 0.
   linear_decoder: bool = False
   network: str = 'dense'
   flatten_inputs: bool = True
   projection: int = None
-  input_shape: tuple = None
-  name: str = None
+  input_shape: List[int] = None
+  name: Optional[str] = None
 
   def __post_init__(self):
     if not isinstance(self.units, collections.Iterable):

@@ -5,6 +5,7 @@ from urllib.request import urlretrieve
 import numpy as np
 import tensorflow as tf
 
+from odin.fuel.dataset_base import IterableDataset, get_partition
 from odin.utils import md5_checksum, one_hot
 from odin.utils.net_utils import download_and_extract
 
@@ -12,37 +13,7 @@ from odin.utils.net_utils import download_and_extract
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _partition(part,
-               train=None,
-               valid=None,
-               test=None,
-               unlabeled=None,
-               unlabelled=None, **kwargs):
-  r""" A function for automatically select the right data partition """
-  part = str(part).lower().strip()
-  ret = None
-  if 'train' in part:
-    ret = train
-  elif 'valid' in part:
-    ret = valid
-  elif 'test' in part:
-    ret = test
-  elif 'unlabeled' in part or 'unlabelled' in part:
-    ret = unlabeled if unlabelled is None else unlabelled
-  for k, v in kwargs.items():
-    if part == str(k).strip().lower():
-      ret = v
-      break
-  if ret is None:
-    raise ValueError("No data for partition with name: '%s'" % part)
-  return ret
-
-
-class ImageDataset:
-
-  @property
-  def name(self):
-    return self.__class__.__name__.lower()
+class ImageDataset(IterableDataset):
 
   def sample_images(self,
                     save_path=None,
@@ -117,34 +88,6 @@ class ImageDataset:
   def normalize_255(self, image):
     return tf.clip_by_value(image / 255., 1e-6, 1. - 1e-6)
 
-  @property
-  def n_labels(self):
-    return len(self.labels)
-
-  @property
-  def labels(self):
-    return np.array([])
-
-  @property
-  def shape(self):
-    raise NotImplementedError()
-
-  @property
-  def is_binary(self):
-    raise NotImplementedError()
-
-  def create_dataset(self,
-                     batch_size=64,
-                     drop_remainder=False,
-                     shuffle=1000,
-                     prefetch=tf.data.experimental.AUTOTUNE,
-                     cache='',
-                     parallel=None,
-                     partition='train',
-                     inc_labels=False,
-                     seed=1) -> tf.data.Dataset:
-    raise NotImplementedError()
-
 
 # ===========================================================================
 # Dataset
@@ -192,10 +135,10 @@ class BinarizedMNIST(ImageDataset):
         mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
       where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
-    ds = _partition(partition,
-                    train=self.train,
-                    valid=self.valid,
-                    test=self.test)
+    ds = get_partition(partition,
+                       train=self.train,
+                       valid=self.valid,
+                       test=self.test)
     struct = tf.data.experimental.get_structure(ds)
     if len(struct) == 1:
       inc_labels = False

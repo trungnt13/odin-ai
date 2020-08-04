@@ -9,7 +9,7 @@ from urllib.request import urlretrieve
 import numpy as np
 import tensorflow as tf
 
-from odin.fuel._image_base import ImageDataset, _partition
+from odin.fuel._image_base import ImageDataset, get_partition
 from odin.utils import get_file, md5_checksum, md5_folder, one_hot
 
 
@@ -143,10 +143,10 @@ class CIFAR(ImageDataset):
         mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
       where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
-    X, y = _partition(partition,
-                      train=(self.X_train, self.y_train),
-                      valid=(self.X_valid, self.y_valid),
-                      test=(self.X_test, self.y_test))
+    X, y = get_partition(partition,
+                         train=(self.X_train, self.y_train),
+                         valid=(self.X_valid, self.y_valid),
+                         test=(self.X_test, self.y_test))
     inc_labels = float(inc_labels)
     gen = tf.random.experimental.Generator.from_seed(seed=seed)
     assert X.shape[0] == y.shape[0]

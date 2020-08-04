@@ -3,7 +3,7 @@ import os
 import numpy as np
 import tensorflow as tf
 
-from odin.fuel._image_base import ImageDataset, _partition
+from odin.fuel._image_base import ImageDataset, get_partition
 from odin.utils.crypto import md5_checksum
 
 
@@ -83,11 +83,11 @@ class YDisentanglement(ImageDataset):
         mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
       where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
-    images, attributes = _partition(partition,
-                                    train=(self.images_train,
-                                           self.attributes_train),
-                                    test=(self.images_test,
-                                          self.attributes_test))
+    images, attributes = get_partition(partition,
+                                       train=(self.images_train,
+                                              self.attributes_train),
+                                       test=(self.images_test,
+                                             self.attributes_test))
     images = tf.data.Dataset.from_tensor_slices(images)
     attributes = tf.data.Dataset.from_tensor_slices(attributes)
     ds = tf.data.Dataset.zip((images, attributes)) if inc_labels else images

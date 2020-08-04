@@ -1,6 +1,7 @@
 import numpy as np
 import tensorflow as tf
-from tensorflow.python import array_ops, keras
+from tensorflow.python import keras
+from tensorflow.python.ops import array_ops
 
 from odin.bay.random_variable import RandomVariable as RV
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE

@@ -12,7 +12,8 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 from six import string_types
-from tensorflow.python import array_ops, keras
+from tensorflow.python import keras
+from tensorflow.python.ops import array_ops
 
 from odin.bay import distributions as obd
 from odin.bay import layers as obl

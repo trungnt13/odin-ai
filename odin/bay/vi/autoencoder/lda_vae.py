@@ -1,23 +1,50 @@
 from __future__ import absolute_import, division, print_function
 
+from typing import Optional
 from warnings import warn
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.keras import Model, Sequential
+from tensorflow.python.keras import (Input, Model, Sequential, constraints,
+                                     initializers, regularizers)
 from tensorflow.python.keras.layers import Dense, Layer
 from tensorflow_probability.python.distributions import Dirichlet
 from tensorflow_probability.python.math import softplus_inverse
 
-from odin.bay.helpers import kl_divergence
+from odin.bay.distributions import Dirichlet, Distribution, OneHotCategorical
+from odin.bay.helpers import coercible_tensor, kl_divergence
 from odin.bay.random_variable import RandomVariable
-from odin.bay.vi.autoencoder import VariationalAutoencoder
+from odin.bay.vi.autoencoder import TrainStep, VariationalAutoencoder
+from odin.networks.sequential_networks import NetworkConfig
 
 
 class LDAdecoder(Layer):
 
-  def __init__(self, n_components, **kwargs):
-    super().__init__()
+  def __init__(self,
+               n_topics: int,
+               n_words: int,
+               topics_words_logits: Optional[tf.Variable] = None):
+    super().__init__(name="LDA_decoder")
+    self.n_topics = n_topics
+    self.n_words = n_words
+    if isinstance(topics_words_logits, tf.Variable):
+      raise NotImplementedError
+    else:
+      self.topics_words_logits = self.add_weight(
+          'topics_words_logits',
+          shape=[n_topics, n_words],
+          initializer=initializers.get('glorot_normal'),
+          regularizer=regularizers.get(None),
+          constraint=constraints.get(None),
+          dtype=self.dtype,
+          trainable=True)
+    # initialize
+    self(Input(shape=(n_topics,)))
+
+  def call(self, topics, *args, **kwargs):
+    topics_words = tf.nn.softmax(self.topics_words_logits, axis=-1)
+    word_probs = tf.matmul(topics, topics_words)
+    return word_probs
 
 
 class LDAVAE(VariationalAutoencoder):
@@ -28,10 +55,12 @@ class LDAVAE(VariationalAutoencoder):
   processing.
 
   Arguments:
-    n_components : int, optional (default=10)
+    n_topics : int, optional (default=10)
       Number of topics in LDA.
     components_prior : float (default=0.7)
       the topic prior concentration for Dirichlet distribution
+    prior_warmup : int (default: 10000)
+      The number of training steps with fixed prior.
 
   References
     David M. Blei, Andrew Y. Ng, Michael I. Jordan. Latent Dirichlet
@@ -46,105 +75,147 @@ class LDAVAE(VariationalAutoencoder):
   """
 
   def __init__(self,
-               n_features,
-               n_components=10,
+               n_words,
+               n_topics=10,
                alpha_activation='softplus',
                alpha_clip=True,
+               temperature=0,
+               prior_init=0.7,
+               prior_warmup=10000,
+               encoder=NetworkConfig(name="TopicsEncoder"),
                **kwargs):
-    # create the topic latents distribution
+    ### topic latents distribution
     latents = kwargs.pop("latents", None)
     if latents is not None:
-      warn(message=f"Ignore predefined latents variable {latents}",
+      warn(message=f"Ignore provided latents variable {latents}",
            category=UserWarning)
-    n_components = int(n_components)
-    latents = RandomVariable(event_shape=(n_components,),
+    n_topics = int(n_topics)
+    latents = RandomVariable(event_shape=(n_topics,),
                              posterior="dirichlet",
                              projection=True,
                              kwargs=dict(alpha_activation=alpha_activation,
                                          alpha_clip=alpha_clip),
                              name="Topics")
-    # input shape
-    n_features = int(n_features)
+    ### input shape
+    n_words = int(n_words)
     input_shape = kwargs.pop('input_shape', None)
     if input_shape is not None:
       warn(message=f"Ignore provided input_shape={input_shape}",
            category=UserWarning)
-    input_shape = (n_features,)
-    # LDA decoder
-    super().__init__(latents=latents, input_shape=input_shape, **kwargs)
+    input_shape = (n_words,)
+    ### LDA decoder
+    decoder = kwargs.pop('decoder', None)
+    if decoder is not None:
+      warn(message=f"Ignore provided decoder={decoder}")
+    decoder = LDAdecoder(n_topics=n_topics, n_words=n_words)
+    ### output layer
+    outputs = kwargs.pop('outputs', None)
+    if outputs is not None:
+      warn(message=f"Ignore provided outputs={outputs}")
+    kw = dict(probs_input=True)
+    if temperature > 0:
+      posterior = 'relaxedonehot'
+      kw['temperature'] = temperature
+    else:
+      posterior = 'onehot'
+    outputs = RandomVariable(event_shape=(n_words,),
+                             posterior=posterior,
+                             projection=False,
+                             kwargs=kw,
+                             name="Words")
+    ### analytic
+    if 'analytic' not in kwargs:
+      kwargs['analytic'] = True
+    super().__init__(latents=latents,
+                     input_shape=input_shape,
+                     encoder=encoder,
+                     decoder=decoder,
+                     outputs=outputs,
+                     **kwargs)
+    ### create the prior
+    self._alpha_clip = bool(alpha_clip)
+    self._topics_prior_logits = self.add_weight(
+        initializer=initializers.constant(
+            value=softplus_inverse(prior_init).numpy()),
+        shape=[1, n_topics],
+        dtype=self.dtype,
+        trainable=True,
+        name="topics_prior_logits",
+    )
+    self.latent_layers[0].prior = self.topics_prior
+    self.prior_warmup = int(prior_warmup)
 
-  #   self.n_mcmc_samples = n_mcmc_samples
-  #   self.analytic = analytic
-  #   # ====== encoder ====== #
-  #   encoder = Sequential(name="Encoder")
-  #   for num_hidden_units in encoder_layers:
-  #     encoder.add(
-  #         Dense(num_hidden_units,
-  #               activation=activation,
-  #               kernel_initializer=self._initializer))
-  #   encoder.add(
-  #       Dense(n_components,
-  #             activation=tf.nn.softplus,
-  #             kernel_initializer=self._initializer,
-  #             name="DenseConcentration"))
-  #   encoder.add(
-  #       DirichletLayer(clip_for_stable=True,
-  #                      pre_softplus=False,
-  #                      name="topics_posterior"))
-  #   self.encoder = encoder
-  #   # ====== decoder ====== #
-  #   # The observations are bag of words and therefore not one-hot. However,
-  #   # log_prob of OneHotCategorical computes the probability correctly in
-  #   # this case.
-  #   self.decoder = OneHotCategoricalLayer(probs_input=True, name="bag_of_words")
+  @property
+  def topics_words_logits(self) -> tf.Variable:
+    r""" Logits of the topics-words distribution, the return matrix shape
+    `(n_topics, n_words)` """
+    return self.decoder.topics_words_logits
 
-  # def build(self, input_shape):
-  #   n_features = input_shape[1]
-  #   # decoder
-  #   self.topics_words_logits = self.add_weight(
-  #       name="topics_words_logits",
-  #       shape=[self.n_components, n_features],
-  #       initializer=self._initializer)
-  #   # prior
-  #   self.prior_logit = self.add_weight(name="prior_logit",
-  #                                      shape=[1, self.n_components],
-  #                                      trainable=False,
-  #                                      initializer=tf.initializers.Constant(
-  #                                          self.components_prior))
-  #   # call this to set built flag to True
-  #   super(LatentDirichletAllocation, self).build(input_shape)
+  @property
+  def topics_words_probs(self) -> tf.Tensor:
+    r""" Probabilities of the topics-words distribution, the return matrix
+    shape `(n_topics, n_words)`
+    """
+    return tf.nn.softmax(self.decoder.topics_words_logits, axis=-1)
 
-  # def call(self, inputs):
-  #   docs_topics_posterior = self.encoder(inputs)
-  #   docs_topics_samples = docs_topics_posterior.sample(self.n_mcmc_samples)
+  @property
+  def topics_prior_logits(self) -> tf.Variable:
+    r""" Logits of the Dirichlet topics distribution, shape `(1, n_topics)` """
+    return self._topics_prior_logits
 
-  #   # [n_topics, n_words]
-  #   topics_words_probs = tf.nn.softmax(self.topics_words_logits, axis=1)
-  #   # [n_docs, n_words]
-  #   docs_words_probs = tf.matmul(docs_topics_samples, topics_words_probs)
-  #   output_dist = self.decoder(
-  #       tf.clip_by_value(docs_words_probs, 1e-4, 1 - 1e-4))
+  @property
+  def topics_prior(self) -> Distribution:
+    r""" Prior of the Dirichlet topics distribution,
+    the `batch_shape=(1,)` and `event_shape=(n_topics,)` """
+    concentration = tf.nn.softplus(self.topics_prior_logits)
+    if self._alpha_clip:
+      concentration = tf.clip_by_value(concentration, 1e-3, 1e3)
+    return Dirichlet(concentration=concentration, name="topics_prior")
 
-  #   # initiate prior, concentration is clipped to stable range
-  #   # for Dirichlet
-  #   concentration = tf.clip_by_value(tf.nn.softplus(self.prior_logit), 1e-3,
-  #                                    1e3)
-  #   topics_prior = Dirichlet(concentration=concentration, name="topics_prior")
+  def train_steps(self,
+                  inputs,
+                  training=True,
+                  mask=None,
+                  sample_shape=(),
+                  iw=False,
+                  elbo_kw={},
+                  call_kw={}) -> TrainStep:
+    r""" Facilitate multiple steps training for each iteration (smilar to GAN)
 
-  #   # ELBO
-  #   kl = kl_divergence(q=docs_topics_posterior,
-  #                      p=topics_prior,
-  #                      analytic=self.analytic,
-  #                      q_sample=self.n_mcmc_samples,
-  #                      auto_remove_independent=True)
-  #   if self.analytic:
-  #     kl = tf.expand_dims(kl, axis=0)
-  #   llk = output_dist.log_prob(inputs)
-  #   ELBO = llk - kl
+    Example:
+    ```
+    vae = FactorVAE()
+    x = vae.sample_data()
+    vae_step, discriminator_step = list(vae.train_steps(x))
 
-  #   # maximizing ELBO, hence, minizing following loss
-  #   self.add_loss(tf.reduce_mean(-ELBO))
-  #   self.add_metric(tf.reduce_mean(kl), aggregation='mean', name="MeanKL")
-  #   self.add_metric(tf.reduce_mean(-llk), aggregation='mean', name="MeanNLLK")
+    # optimizer VAE with total correlation loss
+    with tf.GradientTape(watch_accessed_variables=False) as tape:
+      tape.watch(vae_step.parameters)
+      loss, metrics = vae_step()
+      tape.gradient(loss, vae_step.parameters)
 
-  #   return output_dist
+    # optimizer the discriminator
+    with tf.GradientTape(watch_accessed_variables=False) as tape:
+      tape.watch(discriminator_step.parameters)
+      loss, metrics = discriminator_step()
+      tape.gradient(loss, discriminator_step.parameters)
+    ```
+    """
+    self.step.assign_add(1)
+    # params = [
+    #     p for p in self.trainable_variables if p is not self.topics_prior_logits
+    # ]
+    # p = tf.cond(self.step < self.prior_warmup,
+    #             true_fn=lambda: self.topics_prior_logits,
+    #             false_fn=lambda: self.topics_prior_logits)
+    # params.append(p)
+    params = self.trainable_variables
+    yield TrainStep(vae=self,
+                    inputs=inputs,
+                    training=training,
+                    mask=mask,
+                    parameters=params,
+                    sample_shape=sample_shape,
+                    iw=iw,
+                    elbo_kw=elbo_kw,
+                    call_kw=call_kw)

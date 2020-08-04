@@ -2,23 +2,25 @@ from os import path
 
 from setuptools import find_packages, setup
 
-ODIN_VERSION = '1.2.5'
-TENSORFLOW_VERSION = '2.2.0'
-TENSORFLOW_PROBABILITY_VERSION = '0.10.0'
+ODIN_VERSION = '1.3.0'
+TENSORFLOW_VERSION = '2.3.0'
+TFP_VERSION = '0.11.0'
 TENSORFLOW_ADDONS_VERSION = '0.5.2'
-PYTORCH_VERSION = '1.4.0'
-TORCHVISION_VERSION = '1.4.0'
+PYTORCH_VERSION = '1.6.0'
+TORCHVISION_VERSION = '1.6.0'
+PYRO_VERSION = '1.4.0'
 
 # ===========================================================================
 # Dependencies
 # ===========================================================================
 dependencies = [
     'numpy>=1.0.0',
-    "tensorflow==%s" % TENSORFLOW_VERSION,
-    'tensorflow-probability==%s' % TENSORFLOW_PROBABILITY_VERSION,
+    f"tensorflow=={TENSORFLOW_VERSION}",
+    f'tensorflow-probability=={TFP_VERSION}',
     # 'tensorflow-addons==%s' % _TENSORFLOW_ADDONS_VERSION,
     'tensorflow-datasets',
-    'torch==%s' % PYTORCH_VERSION,
+    f'torch=={PYTORCH_VERSION}',
+    f'pyro-ppl=={PYRO_VERSION}',
     'hydra-core',  # for easy configuration
     'bigarray>=0.2.1',
     'six>=1.9.0',

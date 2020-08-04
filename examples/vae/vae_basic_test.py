@@ -249,13 +249,10 @@ def train_model(model, name):
     else:
       # This is important normalization
       pX_Z, qZ_X = model(inputs, sample_shape=n_samples)
-      elbo, llk, div = model.elbo(inputs,
-                                  pX_Z,
-                                  qZ_X,
-                                  return_components=False,
-                                  iw=False)
+      elbo = model.elbo(inputs, pX_Z, qZ_X, return_components=False, iw=False)
       loss = -tf.reduce_mean(elbo)
-    return loss, dict(llk=tf.reduce_mean(llk), kl=tf.reduce_mean(div))
+    # TODO: calculate llk and kl here
+    return loss, dict(llk=0, kl=0)
 
   def optimize(inputs, training):
     with tf.GradientTape() as tape:
@@ -273,6 +270,8 @@ def train_model(model, name):
               callback=callback,
               log_tag=name)
   trainer.plot_learning_curves(f'/tmp/learning_curves_{name}.png')
+
+
 ## train the model
 train_model(odin_vae, "betavae")
 train_model(tfp_vae, "tfpvae")

@@ -27,7 +27,6 @@ import numpy as np
 import tensorflow as tf
 from six import string_types
 from tensorflow.python.keras import Model, activations
-from tensorflow.python.keras.engine.network import Network
 from tensorflow.python.keras.layers import Conv1D, Dense, Layer, LeakyReLU
 from tensorflow.python.keras.utils import generic_utils
 
@@ -145,7 +144,7 @@ class TimeDelay(Model):
     return cls(**config)
 
   def get_config(self):
-    configs = super(Network, self).get_config()
+    configs = super().get_config()
 
     fn = self.fn_layer_creator
     if isinstance(fn, python_types.LambdaType):
@@ -206,7 +205,7 @@ class TimeDelayDense(TimeDelay):
 
 
 class TimeDelayConv(TimeDelay):
-  """ This implementaiton create multiple convolutional neural network for
+  r""" This implementaiton create multiple convolutional neural network for
   each time delay.
 
   Parameters
@@ -261,7 +260,7 @@ class TimeDelayConv(TimeDelay):
 
 
 class TimeDelayConvTied(TimeDelay):
-  """ Time-delayed dense implementation but using a 1D-convolutional
+  r""" Time-delayed dense implementation but using a 1D-convolutional
   neural network, only support continuos delay context (given a number
   of `delay_strides`).
 

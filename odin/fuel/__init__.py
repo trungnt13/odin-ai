@@ -5,6 +5,8 @@ from odin.fuel.image_data import *
 from odin.fuel.loaders import *
 from odin.fuel.pbmc import *
 from odin.fuel.human_genome import *
+from odin.fuel.dataset_base import *
+from odin.fuel.nlp_data import *
 
 def get_dataset(name):
   import inspect

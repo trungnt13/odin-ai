@@ -6,11 +6,11 @@ import numpy as np
 import tensorflow as tf
 from scipy import sparse
 
-from odin.fuel._image_base import _partition
+from odin.fuel.dataset_base import IterableDataset, get_partition
 from odin.utils.crypto import md5_checksum
 
 
-class PBMC(object):
+class PBMC(IterableDataset):
   _URL = {
       '5k':
           b'aHR0cHM6Ly9haS1kYXRhc2V0cy5zMy5hbWF6b25hd3MuY29tL3BibWM1ay5ucHo=\n',
@@ -83,10 +83,10 @@ class PBMC(object):
                      partition='train',
                      inc_labels=False,
                      seed=1) -> tf.data.Dataset:
-    ids = _partition(partition,
-                     train=self.train_ids,
-                     valid=self.valid_ids,
-                     test=self.test_ids)
+    ids = get_partition(partition,
+                        train=self.train_ids,
+                        valid=self.valid_ids,
+                        test=self.test_ids)
     x = self.x[ids]
     y = self.y[ids]
     gen = tf.random.experimental.Generator.from_seed(seed=seed)

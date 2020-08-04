@@ -13,22 +13,23 @@ dependencies:
   - seaborn
   - tqdm
   - dill
+  - jax==0.1.75
 
   - pip:
-    - tensorflow==2.2.0
-    - tensorflow-probability==0.10.0
-    - torch==1.4.0
-    - numba>=0.48.0
-    - pycrypto==2.6.1
-    - tensorflow-datasets>=2.1.0
-    - tensorflow-addons>=0.8.3
-    - torchvision>=0.5.0
-    - pytorch-lightning
-    - bigarray==0.2.1
-    - pandas>=1.0.3
-    - hydra-core
-
-
+      - tensorflow==2.3.0
+      - tensorflow-probability==0.11.0
+      - tensorflow-datasets>=3.2.1
+      - tensorflow-addons>=0.8.3
+      - torch==1.6.0
+      - torchvision==1.6.0
+      - pyro-ppl==1.4.0
+      - transformers>=3.0.2
+      - numba>=0.48.0
+      - pycrypto==2.6.1
+      - pytorch-lightning
+      - bigarray==0.2.1
+      - pandas>=1.0.3
+      - hydra-core
 # Other helpful library:
 # pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git
 # conda install -c rapidsai -c nvidia -c conda-forge -c defaults rapids=0.12 python=3.7 cudatoolkit=10.1

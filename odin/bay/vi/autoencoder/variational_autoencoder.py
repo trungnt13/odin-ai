@@ -12,11 +12,13 @@ from numbers import Number
 from typing import Callable, List, Optional, Union
 
 import numpy as np
+import scipy as sp
 import tensorflow as tf
 from six import string_types
-from tensorflow.python import keras, trackable
+from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
 from tensorflow.python.platform import tf_logging as logging
+from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
 
@@ -29,6 +31,7 @@ from odin.utils import MD5object
 from odin.utils.python_utils import classproperty
 
 __all__ = ['TrainStep', 'VariationalAutoencoder', 'VAE']
+
 
 # ===========================================================================
 # Helpers
@@ -206,8 +209,8 @@ class TrainStep:
     sample_shape : MCMC sample shape
     iw : a Boolean. If True, enable importance weight sampling
     elbo_kw : a Dictionary. Keyword arguments for elbo function
-    parameters : optimizing parameters, if None, all parameters of VAE are
-      optimized
+    parameters : list of variables for optimizing.
+      If None, all parameters of VAE are optimized
   """
 
   def __init__(self,
@@ -327,6 +330,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
       reduce_latent='concat',
       input_shape=None,
       step=0.,
+      analytic=False,
       **kwargs,
   ):
     name = kwargs.pop('name', None)
@@ -443,6 +447,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
         # call this dummy input to build the layer
         layer(keras.Input(shape=shape[1:], batch_size=shape[0]))
     ### the training step
+    self.analytic = analytic
     self.step = tf.Variable(step,
                             dtype=self.dtype,
                             trainable=False,
@@ -782,7 +787,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
            inputs,
            pX_Z,
            qZ_X,
-           analytic=False,
+           analytic=None,
            reverse=True,
            sample_shape=None,
            mask=None,
@@ -820,6 +825,8 @@ class VariationalAutoencoder(keras.Model, MD5object):
         divergence : dictionary of `Tensor` shape [sample_shape, batch_size].
           The reversed KL-divergence or rate
     """
+    if analytic is None:
+      analytic = self.analytic
     # organize all inputs to list
     inputs = [
         tf.convert_to_tensor(x, dtype=self.dtype)
@@ -860,7 +867,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
     elbo = llk_sum - div_sum
     if iw and tf.rank(elbo) > 1:
       elbo = self.importance_weighted(elbo, axis=0)
-    return elbo, llk_sum, div_sum
+    return elbo
 
   def importance_weighted(self, elbo, axis=0):
     r""" VAE objective can lead to overly simplified representations which
@@ -989,7 +996,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
       epochs=-1,
       max_iter=1000,
       sample_shape=(),  # for ELBO
-      analytic=False,  # for ELBO
+      analytic=None,  # for ELBO
       iw=False,  # for ELBO
       callback=None,
       compile_graph=True,
@@ -1024,7 +1031,13 @@ class VariationalAutoencoder(keras.Model, MD5object):
         function in Eager mode (better for debugging).
 
     """
-    if isinstance(train, np.ndarray) or tf.is_tensor(train):
+    if isinstance(train, sp.sparse.spmatrix):
+      train = tf.SparseTensor(indices=sorted(zip(*train.nonzero())),
+                              values=train.data,
+                              dense_shape=train.shape)
+      train = tf.data.Dataset.from_tensor_slices(train).batch(64).map(
+          lambda x: tf.cast(tf.sparse.to_dense(x), self.dtype))
+    elif isinstance(train, np.ndarray) or tf.is_tensor(train):
       train = tf.data.Dataset.from_tensor_slices(train).batch(64)
     if valid is not None and (isinstance(valid, np.ndarray) or
                               tf.is_tensor(valid)):
@@ -1175,6 +1188,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
     text = (f"{'->'.join([i.__name__ for i in cls[::-1]])} "
             f"(semi:{self.is_semi_supervised} self:{self.is_self_supervised} "
             f"weak:{self.is_weak_supervised})")
+    text += f'\n Analytic: {self.analytic}'
     text += f'\n Fitted: {int(self.step.numpy())}(iters)'
     text += f'\n MD5 checksum: {self.md5_checksum}'
     ## encoder
