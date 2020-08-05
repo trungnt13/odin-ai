@@ -10,7 +10,10 @@ import tensorflow as tf
 from six import string_types
 from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
+from tensorflow.python.keras.constraints import Constraint
+from tensorflow.python.keras.initializers.initializers_v2 import Initializer
 from tensorflow.python.keras.layers import Dense, Lambda
+from tensorflow.python.keras.regularizers import Regularizer
 from tensorflow_probability.python.bijectors import FillScaleTriL
 from tensorflow_probability.python.distributions import (Categorical,
                                                          Distribution,
@@ -79,24 +82,26 @@ class DenseDistribution(Dense):
     `tensorflow_probability.Distribution`
   """
 
-  def __init__(self,
-               event_shape: List[int] = (),
-               posterior: Union[str, DistributionLambda] = 'normal',
-               posterior_kwargs={},
-               prior: Union[Distribution, DistributionLambda, Callable] = None,
-               convert_to_tensor_fn: Callable = Distribution.sample,
-               dropout: float = 0.0,
-               activation: Union[str, Callable] = 'linear',
-               use_bias: bool = True,
-               kernel_initializer: Union[str, Callable] = 'glorot_uniform',
-               bias_initializer='zeros',
-               kernel_regularizer=None,
-               bias_regularizer=None,
-               activity_regularizer=None,
-               kernel_constraint=None,
-               bias_constraint=None,
-               projection: bool = True,
-               **kwargs):
+  def __init__(
+      self,
+      event_shape: List[int] = (),
+      posterior: Union[str, DistributionLambda] = 'normal',
+      posterior_kwargs: dict = {},
+      prior: Union[Distribution, DistributionLambda, Callable] = None,
+      convert_to_tensor_fn: Callable = Distribution.sample,
+      dropout: float = 0.0,
+      activation: Union[str, Callable] = 'linear',
+      use_bias: bool = True,
+      kernel_initializer: Union[str, Initializer, Callable] = 'glorot_uniform',
+      bias_initializer: Union[str, Initializer, Callable] = 'zeros',
+      kernel_regularizer: Union[str, Regularizer, Callable] = None,
+      bias_regularizer: Union[str, Regularizer, Callable] = None,
+      activity_regularizer: Union[str, Regularizer, Callable] = None,
+      kernel_constraint: Union[str, Constraint, Callable] = None,
+      bias_constraint: Union[str, Constraint, Callable] = None,
+      projection: bool = True,
+      **kwargs,
+  ):
     assert isinstance(prior, (Distribution, DistributionLambda, Callable, type(None))), \
       ("prior can only be None or instance of Distribution, DistributionLambda"
        f",  but given: {prior}-{type(prior)}")
@@ -354,26 +359,28 @@ class MixtureDensityNetwork(DenseDistribution):
   For arguments information: `odin.bay.layers.mixture_layers.MixtureGaussianLayer`
   """
 
-  def __init__(self,
-               units,
-               n_components=2,
-               covariance='none',
-               tie_mixtures=False,
-               tie_loc=False,
-               tie_scale=False,
-               loc_activation='linear',
-               scale_activation='softplus1',
-               convert_to_tensor_fn=Distribution.sample,
-               use_bias=True,
-               dropout=0.0,
-               kernel_initializer='glorot_uniform',
-               bias_initializer='zeros',
-               kernel_regularizer=None,
-               bias_regularizer=None,
-               activity_regularizer=None,
-               kernel_constraint=None,
-               bias_constraint=None,
-               **kwargs):
+  def __init__(
+      self,
+      units: int,
+      n_components: int = 2,
+      covariance: str = 'none',
+      tie_mixtures: bool = False,
+      tie_loc: bool = False,
+      tie_scale: bool = False,
+      loc_activation: Union[str, Callable] = 'linear',
+      scale_activation: Union[str, Callable] = 'softplus1',
+      convert_to_tensor_fn: Callable = Distribution.sample,
+      use_bias: bool = True,
+      dropout: float = 0.0,
+      kernel_initializer: Union[str, Initializer, Callable] = 'glorot_uniform',
+      bias_initializer: Union[str, Initializer, Callable] = 'zeros',
+      kernel_regularizer: Union[str, Regularizer, Callable] = None,
+      bias_regularizer: Union[str, Regularizer, Callable] = None,
+      activity_regularizer: Union[str, Regularizer, Callable] = None,
+      kernel_constraint: Union[str, Constraint, Callable] = None,
+      bias_constraint: Union[str, Constraint, Callable] = None,
+      **kwargs,
+  ):
     self.covariance = covariance
     self.n_components = n_components
     super().__init__(event_shape=units,
@@ -451,28 +458,30 @@ class MixtureMassNetwork(DenseDistribution):
   Mixture of NegativeBinomial parameterized by neural network
   """
 
-  def __init__(self,
-               event_shape=(),
-               n_components=2,
-               dispersion='full',
-               inflation='full',
-               tie_mixtures=False,
-               tie_mean=False,
-               mean_activation='softplus1',
-               disp_activation=None,
-               alternative=False,
-               zero_inflated=False,
-               convert_to_tensor_fn=Distribution.sample,
-               use_bias=True,
-               dropout=0.0,
-               kernel_initializer='glorot_uniform',
-               bias_initializer='zeros',
-               kernel_regularizer=None,
-               bias_regularizer=None,
-               activity_regularizer=None,
-               kernel_constraint=None,
-               bias_constraint=None,
-               **kwargs):
+  def __init__(
+      self,
+      event_shape: List[int] = (),
+      n_components: int = 2,
+      dispersion: str = 'full',
+      inflation: str = 'full',
+      tie_mixtures: bool = False,
+      tie_mean: bool = False,
+      mean_activation: Union[str, Callable] = 'softplus1',
+      disp_activation: Union[str, Callable] = None,
+      alternative: bool = False,
+      zero_inflated: bool = False,
+      convert_to_tensor_fn: Callable = Distribution.sample,
+      dropout: float = 0.0,
+      use_bias: bool = True,
+      kernel_initializer: Union[str, Initializer, Callable] = 'glorot_uniform',
+      bias_initializer: Union[str, Initializer, Callable] = 'zeros',
+      kernel_regularizer: Union[str, Regularizer, Callable] = None,
+      bias_regularizer: Union[str, Regularizer, Callable] = None,
+      activity_regularizer: Union[str, Regularizer, Callable] = None,
+      kernel_constraint: Union[str, Constraint, Callable] = None,
+      bias_constraint: Union[str, Constraint, Callable] = None,
+      **kwargs,
+  ):
     self.n_components = n_components
     self.dispersion = dispersion
     self.zero_inflated = zero_inflated
@@ -509,19 +518,21 @@ class DenseDeterministic(DenseDistribution):
   the output, hence, making it compatible to the probabilistic framework.
   """
 
-  def __init__(self,
-               units,
-               dropout=0.0,
-               activation='linear',
-               use_bias=True,
-               kernel_initializer='glorot_uniform',
-               bias_initializer='zeros',
-               kernel_regularizer=None,
-               bias_regularizer=None,
-               activity_regularizer=None,
-               kernel_constraint=None,
-               bias_constraint=None,
-               **kwargs):
+  def __init__(
+      self,
+      units: int,
+      dropout: float = 0.0,
+      activation: Union[str, Callable] = 'linear',
+      use_bias: bool = True,
+      kernel_initializer: Union[str, Initializer, Callable] = 'glorot_uniform',
+      bias_initializer: Union[str, Initializer, Callable] = 'zeros',
+      kernel_regularizer: Union[str, Regularizer, Callable] = None,
+      bias_regularizer: Union[str, Regularizer, Callable] = None,
+      activity_regularizer: Union[str, Regularizer, Callable] = None,
+      kernel_constraint: Union[str, Constraint, Callable] = None,
+      bias_constraint: Union[str, Constraint, Callable] = None,
+      **kwargs,
+  ):
     super().__init__(event_shape=int(units),
                      posterior='vdeterministic',
                      posterior_kwargs={},

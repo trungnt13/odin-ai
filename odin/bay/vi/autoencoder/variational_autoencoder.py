@@ -193,6 +193,20 @@ def _validate_implementation(cls):
        f"**kwargs, but given: {spec}")
 
 
+def _to_dataset(x, batch_size, dtype):
+  # sparse matrix
+  if isinstance(x, sp.sparse.spmatrix):
+    x = tf.SparseTensor(indices=sorted(zip(*x.nonzero())),
+                        values=x.data,
+                        dense_shape=x.shape)
+    x = tf.data.Dataset.from_tensor_slices(x).batch(batch_size).map(
+        lambda y: tf.cast(tf.sparse.to_dense(y), dtype))
+  # numpy ndarray
+  elif isinstance(x, np.ndarray) or tf.is_tensor(x):
+    x = tf.data.Dataset.from_tensor_slices(x).batch(batch_size)
+  return x
+
+
 # ===========================================================================
 # Training step
 # ===========================================================================
@@ -995,6 +1009,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
       clipnorm=None,
       epochs=-1,
       max_iter=1000,
+      batch_size=32,
       sample_shape=(),  # for ELBO
       analytic=None,  # for ELBO
       iw=False,  # for ELBO
@@ -1031,17 +1046,10 @@ class VariationalAutoencoder(keras.Model, MD5object):
         function in Eager mode (better for debugging).
 
     """
-    if isinstance(train, sp.sparse.spmatrix):
-      train = tf.SparseTensor(indices=sorted(zip(*train.nonzero())),
-                              values=train.data,
-                              dense_shape=train.shape)
-      train = tf.data.Dataset.from_tensor_slices(train).batch(64).map(
-          lambda x: tf.cast(tf.sparse.to_dense(x), self.dtype))
-    elif isinstance(train, np.ndarray) or tf.is_tensor(train):
-      train = tf.data.Dataset.from_tensor_slices(train).batch(64)
-    if valid is not None and (isinstance(valid, np.ndarray) or
-                              tf.is_tensor(valid)):
-      valid = tf.data.Dataset.from_tensor_slices(valid).batch(64)
+    batch_size = int(batch_size)
+    train = _to_dataset(train, batch_size, self.dtype)
+    if valid is not None:
+      valid = _to_dataset(valid, batch_size, self.dtype)
     # TODO, support allow_rollback, fit history
     # skip training if model is fitted or reached a number of iteration
     if self.is_fitted and skip_fitted:

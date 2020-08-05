@@ -168,57 +168,13 @@ class LDAVAE(VariationalAutoencoder):
     return self._topics_prior_logits
 
   def topics_prior_distribution(self) -> Dirichlet:
-    r""" Prior of the Dirichlet topics distribution,
-    the `batch_shape=(1,)` and `event_shape=(n_topics,)` """
+    r""" Create the prior distribution (i.e. the Dirichlet topics distribution),
+    `batch_shape=(1,)` and `event_shape=(n_topics,)` """
     concentration = tf.nn.softplus(self.topics_prior_logits)
     if self.alpha_clip:
       concentration = tf.clip_by_value(concentration, 1e-3, 1e3)
+    # prior warm-up: stop gradients update for prior parameters
+    concentration = tf.cond(self.step <= self.prior_warmup,
+                            true_fn=lambda: tf.stop_gradient(concentration),
+                            false_fn=lambda: concentration)
     return Dirichlet(concentration=concentration, name="topics_prior")
-
-  def train_steps(self,
-                  inputs,
-                  training=True,
-                  mask=None,
-                  sample_shape=(),
-                  iw=False,
-                  elbo_kw={},
-                  call_kw={}) -> TrainStep:
-    r""" Facilitate multiple steps training for each iteration (smilar to GAN)
-
-    Example:
-    ```
-    vae = FactorVAE()
-    x = vae.sample_data()
-    vae_step, discriminator_step = list(vae.train_steps(x))
-
-    # optimizer VAE with total correlation loss
-    with tf.GradientTape(watch_accessed_variables=False) as tape:
-      tape.watch(vae_step.parameters)
-      loss, metrics = vae_step()
-      tape.gradient(loss, vae_step.parameters)
-
-    # optimizer the discriminator
-    with tf.GradientTape(watch_accessed_variables=False) as tape:
-      tape.watch(discriminator_step.parameters)
-      loss, metrics = discriminator_step()
-      tape.gradient(loss, discriminator_step.parameters)
-    ```
-    """
-    self.step.assign_add(1)
-    # params = [
-    #     p for p in self.trainable_variables if p is not self.topics_prior_logits
-    # ]
-    # p = tf.cond(self.step < self.prior_warmup,
-    #             true_fn=lambda: self.topics_prior_logits,
-    #             false_fn=lambda: self.topics_prior_logits)
-    # params.append(p)
-    params = self.trainable_variables
-    yield TrainStep(vae=self,
-                    inputs=inputs,
-                    training=training,
-                    mask=mask,
-                    parameters=params,
-                    sample_shape=sample_shape,
-                    iw=iw,
-                    elbo_kw=elbo_kw,
-                    call_kw=call_kw)
