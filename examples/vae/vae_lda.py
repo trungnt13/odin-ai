@@ -81,9 +81,16 @@ for name, url in filename:
 
 vocabulary = {idx: word for word, idx in words_to_idx.items()}
 
+
 # ===========================================================================
 # Create LDA VAE
 # ===========================================================================
+def callback(vae: LDAVAE, top_topics=10):
+  print(f"*** {vae.lda_posterior} ***")
+  vae.print_topics(vocabulary, top_topics=top_topics)
+  print(f"[#{int(vae.step.numpy())}]Perplexity:", vae.perplexity(data['test']))
+
+
 n_topics = 50
 warmup = 120000
 max_iter = 180000
@@ -110,24 +117,16 @@ train_kw = dict(train=train,
                 compile_graph=True,
                 skip_fitted=True)
 
-gvae = LDAVAE(lda_posterior="gaussian", path=GVAE_PATH, **kwargs)
 dvae = LDAVAE(lda_posterior="dirichlet", path=DVAE_PATH, **kwargs)
-
-
-def callback(vae: LDAVAE, top_topics=10):
-  print(f"*** {vae.lda_posterior} ***")
-  vae.print_topics(vocabulary, top_topics=top_topics)
-  print(f"[#{int(vae.step.numpy())}]Perplexity:", vae.perplexity(data['test']))
-
-
-gvae.fit(callback=partial(callback, vae=gvae), checkpoint=GVAE_PATH, **train_kw)
+gvae = LDAVAE(lda_posterior="gaussian", path=GVAE_PATH, **kwargs)
 dvae.fit(callback=partial(callback, vae=dvae), checkpoint=DVAE_PATH, **train_kw)
+gvae.fit(callback=partial(callback, vae=gvae), checkpoint=GVAE_PATH, **train_kw)
 # final evaluation
-callback(gvae, top_topics=20)
 callback(dvae, top_topics=20)
-gvae.plot_learning_curves(os.path.join(CACHE_DIR, "gvae.png"),
-                          summary_steps=1000)
+callback(gvae, top_topics=20)
 dvae.plot_learning_curves(os.path.join(CACHE_DIR, "dvae.png"),
+                          summary_steps=1000)
+gvae.plot_learning_curves(os.path.join(CACHE_DIR, "gvae.png"),
                           summary_steps=1000)
 
 

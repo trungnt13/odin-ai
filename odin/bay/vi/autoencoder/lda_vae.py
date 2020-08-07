@@ -29,8 +29,8 @@ class LDAdecoder(Layer):
                n_topics: int,
                n_words: int,
                lda_posterior: str,
-               dropout_topics: float = 0.3,
-               dropout_words: float = 0.3,
+               dropout_topics: float = 0.5,
+               dropout_words: float = 0.1,
                batch_norm: bool = True,
                topics_words_logits: Optional[tf.Variable] = None):
     super().__init__(name="LDA_decoder")
@@ -58,12 +58,14 @@ class LDAdecoder(Layer):
       self._batch_norm = None
     self(Input(shape=(n_topics,)))
 
-  def call(self, topics, training=None, *args, **kwargs):
+  def call(self, docs_topics, training=None, *args, **kwargs):
     # [n_docs, n_topics] distribution
     if self.lda_posterior == "gaussian":
-      topics = tf.nn.softmax(topics, axis=-1)
+      docs_topics = tf.nn.softmax(docs_topics, axis=-1)
     if self.dropout_topics > 0:
-      topics = dropout(topics, p_drop=self.dropout_topics, training=training)
+      docs_topics = dropout(docs_topics,
+                            p_drop=self.dropout_topics,
+                            training=training)
     # topics-words logits [n_topics, n_words]
     topics_words = self.topics_words_logits
     if self.dropout_words > 0:
@@ -74,7 +76,7 @@ class LDAdecoder(Layer):
     # topics-words distribution, because the multiplication of two softwax
     # results a saturated distribution.
     # [n_docs, n_topics] * [n_topics, n_words] -> [n_docs, n_words]
-    docs_words_logits = tf.matmul(topics, topics_words)
+    docs_words_logits = tf.matmul(docs_topics, topics_words)
     if self._batch_norm is not None:
       docs_words_logits = self._batch_norm(docs_words_logits, training=training)
     docs_words_probs = tf.nn.softmax(docs_words_logits, axis=-1)
@@ -109,10 +111,10 @@ class LDAVAE(BetaVAE):
     clipping: bool.
       If True, clipping the concentration to range `[1e-3, 1e3]` for numerical
       stability.
-    dropout_topics: float (default: 0.3).
+    dropout_topics: float (default: 0.5).
       Dropout value for the topics samples from Dirichlet latents posterior.
       This is recommended to batter the topics collapse.
-    dropout_words: float (default: 0.3).
+    dropout_words: float (default: 0.1).
       Dropout value for the topics-words probabilities matrix.
     prior_init : float (default=0.7)
       the initial topic prior concentration for Dirichlet distribution
@@ -120,6 +122,10 @@ class LDAVAE(BetaVAE):
       The number of training steps with fixed prior, only applied for Dirichlet
       LDA's posterior
 
+
+  Note:
+    The algorithm is trained for 180000 iteration on Newsgroup20 dataset,
+      of which 120000 iteration for "warmup".
 
   References:
     David M. Blei, Andrew Y. Ng, Michael I. Jordan. Latent Dirichlet
@@ -143,8 +149,8 @@ class LDAVAE(BetaVAE):
       lda_posterior="dirichlet",
       activation: Union[str, Callable] = 'softplus',
       clipping: bool = True,
-      dropout_topics: float = 0.3,
-      dropout_words: float = 0.3,
+      dropout_topics: float = 0.5,
+      dropout_words: float = 0.1,
       batch_norm: bool = True,
       temperature: float = 0,
       prior_init: float = 0.7,
