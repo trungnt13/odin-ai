@@ -17,6 +17,7 @@ import tensorflow as tf
 from six import string_types
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
+from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python import distributions as tfd
@@ -336,19 +337,19 @@ class VariationalAutoencoder(keras.Model, MD5object):
 
   def __init__(
       self,
-      encoder: Union[Layer, NetworkConfig] = NetworkConfig(),
+      encoder: Union[str, Layer, NetworkConfig] = NetworkConfig(),
       decoder: Union[Layer, NetworkConfig] = NetworkConfig(),
       outputs: Union[Layer, RV] = RV(64, 'gaus', projection=True, name="Input"),
       latents: Union[Layer, RV] = RV(10, 'diag', projection=True,
                                      name="Latent"),
-      reduce_latent='concat',
-      input_shape=None,
-      step=0.,
-      analytic=False,
+      reduce_latent: str = 'concat',
+      input_shape: Optional[List[int]] = None,
+      step: int = 0.,
+      analytic: bool = False,
+      path: Optional[str] = None,
       **kwargs,
   ):
     name = kwargs.pop('name', None)
-    path = kwargs.pop('path', None)
     optimizer = kwargs.pop('optimizer', None)
     learning_rate = kwargs.pop('learning_rate', 1e-4)
     clipnorm = kwargs.pop('clipnorm', None)
@@ -874,9 +875,14 @@ class VariationalAutoencoder(keras.Model, MD5object):
     # sum all the components log-likelihood and divergence
     llk_sum = tf.constant(0., dtype=self.dtype)
     div_sum = tf.constant(0., dtype=self.dtype)
-    for x in llk.values():
+    for x in llk.values():  # log-likelihood
       llk_sum += x
-    for x in div.values():
+    for x in div.values():  # kl-divergence
+      tf.debugging.assert_greater(
+          x,
+          -1e-3,
+          message=("Negative KL-divergence values, "
+                   "probably because of numerical instability."))
       div_sum += x
     elbo = llk_sum - div_sum
     if iw and tf.rank(elbo) > 1:
@@ -1002,33 +1008,33 @@ class VariationalAutoencoder(keras.Model, MD5object):
       self,
       train: tf.data.Dataset,
       valid: Optional[tf.data.Dataset] = None,
-      valid_freq=500,
-      valid_interval=0,
-      optimizer='adam',
-      learning_rate=1e-3,
-      clipnorm=None,
-      epochs=-1,
-      max_iter=1000,
-      batch_size=32,
-      sample_shape=(),  # for ELBO
-      analytic=None,  # for ELBO
-      iw=False,  # for ELBO
-      callback=None,
-      compile_graph=True,
-      autograph=False,
-      logging_interval=2,
-      skip_fitted=False,
-      log_tag='',
-      log_path=None,
-      earlystop_threshold=0.001,
-      earlystop_progress_length=0,
-      earlystop_patience=-1,
-      earlystop_min_epoch=-1,
-      terminate_on_nan=True,
-      checkpoint=None,
-      allow_rollback=False,
-      allow_none_gradients=False,
-      track_gradient_norms=False):
+      valid_freq: int = 500,
+      valid_interval: float = 0,
+      optimizer: Union[str, OptimizerV2] = 'adam',
+      learning_rate: float = 1e-3,
+      clipnorm: Optional[float] = None,
+      epochs: int = -1,
+      max_iter: int = 1000,
+      batch_size: int = 32,
+      sample_shape: List[int] = (),  # for ELBO
+      analytic: Optional[bool] = None,  # for ELBO
+      iw: bool = False,  # for ELBO
+      callback: Optional[Callable] = None,
+      compile_graph: bool = True,
+      autograph: bool = False,
+      logging_interval: float = 2,
+      skip_fitted: bool = False,
+      log_tag: str = '',
+      log_path: str = None,
+      earlystop_threshold: float = 0.001,
+      earlystop_progress_length: float = 0,
+      earlystop_patience: float = -1,
+      earlystop_min_epoch: float = -1,
+      terminate_on_nan: bool = True,
+      checkpoint: Optional[str] = None,
+      allow_rollback: bool = False,
+      allow_none_gradients: bool = False,
+      track_gradient_norms: bool = False):
     r""" Override the original fit method of keras to provide simplified
     procedure with `VariationalAutoencoder.optimize` and
     `VariationalAutoencoder.train_steps`

@@ -1,21 +1,25 @@
 from __future__ import absolute_import, division, print_function
 
-from typing import Optional
+from typing import Callable, Dict, Optional, Union
 from warnings import warn
 
 import numpy as np
+import scipy as sp
 import tensorflow as tf
 from tensorflow.python.keras import (Input, Model, Sequential, constraints,
                                      initializers, regularizers)
-from tensorflow.python.keras.layers import Dense, Layer
-from tensorflow_probability.python.distributions import Dirichlet
+from tensorflow.python.keras.layers import BatchNormalization, Dense, Layer
+from tensorflow_probability.python.distributions import (Dirichlet,
+                                                         MultivariateNormalDiag)
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.math import softplus_inverse
 
+from odin.backend.tensor import dropout
 from odin.bay.distributions import Dirichlet, Distribution, OneHotCategorical
 from odin.bay.helpers import coercible_tensor, kl_divergence
 from odin.bay.random_variable import RandomVariable
-from odin.bay.vi.autoencoder import TrainStep, VariationalAutoencoder
+from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 from odin.networks.sequential_networks import NetworkConfig
 
 
@@ -24,10 +28,20 @@ class LDAdecoder(Layer):
   def __init__(self,
                n_topics: int,
                n_words: int,
+               lda_posterior: str,
+               dropout_topics: float = 0.3,
+               dropout_words: float = 0.3,
+               batch_norm: bool = True,
                topics_words_logits: Optional[tf.Variable] = None):
     super().__init__(name="LDA_decoder")
+    assert lda_posterior in ("dirichlet", "gaussian"), \
+      ("Only support 'dirichlet'-Dirichlet or 'gaussian'-Logistic "
+       f"Gaussian distribution, but given: {lda_posterior}")
     self.n_topics = n_topics
     self.n_words = n_words
+    self.dropout_topics = float(dropout_topics)
+    self.dropout_words = float(dropout_words)
+    self.lda_posterior = lda_posterior
     if isinstance(topics_words_logits, tf.Variable):
       raise NotImplementedError
     else:
@@ -35,68 +49,133 @@ class LDAdecoder(Layer):
           'topics_words_logits',
           shape=[n_topics, n_words],
           initializer=initializers.get('glorot_normal'),
-          regularizer=regularizers.get(None),
-          constraint=constraints.get(None),
           dtype=self.dtype,
           trainable=True)
     # initialize
+    if batch_norm:
+      self._batch_norm = BatchNormalization(trainable=True)
+    else:
+      self._batch_norm = None
     self(Input(shape=(n_topics,)))
 
-  def call(self, topics, *args, **kwargs):
-    topics_words = tf.nn.softmax(self.topics_words_logits, axis=-1)
-    word_probs = tf.matmul(topics, topics_words)
-    return word_probs
+  def call(self, topics, training=None, *args, **kwargs):
+    # [n_docs, n_topics] distribution
+    if self.lda_posterior == "gaussian":
+      topics = tf.nn.softmax(topics, axis=-1)
+    if self.dropout_topics > 0:
+      topics = dropout(topics, p_drop=self.dropout_topics, training=training)
+    # topics-words logits [n_topics, n_words]
+    topics_words = self.topics_words_logits
+    if self.dropout_words > 0:
+      topics_words = dropout(topics_words,
+                             p_drop=self.dropout_words,
+                             training=training)
+    # applying softmax after matmul results much better diversity in the
+    # topics-words distribution, because the multiplication of two softwax
+    # results a saturated distribution.
+    # [n_docs, n_topics] * [n_topics, n_words] -> [n_docs, n_words]
+    docs_words_logits = tf.matmul(topics, topics_words)
+    if self._batch_norm is not None:
+      docs_words_logits = self._batch_norm(docs_words_logits, training=training)
+    docs_words_probs = tf.nn.softmax(docs_words_logits, axis=-1)
+    return docs_words_probs
 
 
-class LDAVAE(VariationalAutoencoder):
+class LDAVAE(BetaVAE):
   r""" Variational Latent Dirichlet Allocation
 
-  To maintain good intuition behind the algorithm, we name the
-  attributes as for topics discovery task in natural language
-  processing.
+  Two models are implemented:
+    - Prod LDA: Latent Dirichlet Allocation with Products of Experts
+      (Srivastava et al. 2017). ProdLDA replaces this word-level mixture with
+      a weighted product of experts, resulting in a drastic improvement in
+      topic coherence (explicit reparameterization using logistic-normal
+      distribution).
+    - Implicit LDA (Figurnov et al. 2018) : amortized variational inference in
+      LDA using implicit reparameterization.
+
+  To maintain good intuition behind the algorithm, we name the attributes
+  as for topics discovery task in natural language processing.
 
   Arguments:
+    n_words : int
+      Dictionary size
     n_topics : int, optional (default=10)
       Number of topics in LDA.
-    components_prior : float (default=0.7)
-      the topic prior concentration for Dirichlet distribution
+    lda_posterior : {"gaussian", "dirichlet"},
+      "gaussian" - logistic gaussian (explicit) reparameterization
+      "dirichlet" - latent Dirichlet (implicit) reparameterization
+    activation : str or Callable.
+      Activation for the concentration of Dirichlet distribution
+    clipping: bool.
+      If True, clipping the concentration to range `[1e-3, 1e3]` for numerical
+      stability.
+    dropout_topics: float (default: 0.3).
+      Dropout value for the topics samples from Dirichlet latents posterior.
+      This is recommended to batter the topics collapse.
+    dropout_words: float (default: 0.3).
+      Dropout value for the topics-words probabilities matrix.
+    prior_init : float (default=0.7)
+      the initial topic prior concentration for Dirichlet distribution
     prior_warmup : int (default: 10000)
-      The number of training steps with fixed prior.
+      The number of training steps with fixed prior, only applied for Dirichlet
+      LDA's posterior
 
-  References
+
+  References:
     David M. Blei, Andrew Y. Ng, Michael I. Jordan. Latent Dirichlet
       Allocation. In JMLR, 2003.
-    Michael Figurnov, Shakir Mohamed, Andriy Mnih. Implicit Reparameterization
-      Gradients, 2018.  https://arxiv.org/abs/1805.08498
+    Salakhutdinov, R., Hinton, G. Replicated Softmax: an Undirected Topic Model.
+      In NIPS, 2009.
+    Matthew D. Hoffman, David M. Blei, and Francis Bach. Online learning
+      for Latent Dirichlet Allocation. In NIPS, 2010
+    Miao, Y., Yu, L. and Blunsom, P. Neural Variational Inference for Text
+      Processing. arXiv:1511.06038 [cs, stat], 2016.
     Akash Srivastava, Charles Sutton. Autoencoding Variational Inference For
       Topic Models. In ICLR, 2017.
-    Matthew D. Hoffman, David M. Blei, and Francis Bach. 2010. Online learning
-      for Latent Dirichlet Allocation. In NIPS, 2010
-
+    Michael Figurnov, Shakir Mohamed, Andriy Mnih. Implicit Reparameterization
+      Gradients, 2018.  https://arxiv.org/abs/1805.08498
   """
 
-  def __init__(self,
-               n_words,
-               n_topics=10,
-               alpha_activation='softplus',
-               alpha_clip=True,
-               temperature=0,
-               prior_init=0.7,
-               prior_warmup=10000,
-               encoder=NetworkConfig(name="TopicsEncoder"),
-               **kwargs):
+  def __init__(
+      self,
+      n_words: int,
+      n_topics: int = 20,
+      lda_posterior="dirichlet",
+      activation: Union[str, Callable] = 'softplus',
+      clipping: bool = True,
+      dropout_topics: float = 0.3,
+      dropout_words: float = 0.3,
+      batch_norm: bool = True,
+      temperature: float = 0,
+      prior_init: float = 0.7,
+      prior_warmup: int = 10000,
+      encoder: Union[Layer, NetworkConfig] = NetworkConfig(name="Encoder"),
+      beta: float = 1.0,
+      **kwargs,
+  ):
     ### topic latents distribution
+    lda_posterior = str(lda_posterior).lower().strip()
     latents = kwargs.pop("latents", None)
     if latents is not None:
       warn(message=f"Ignore provided latents variable {latents}",
            category=UserWarning)
     n_topics = int(n_topics)
+    if lda_posterior == 'dirichlet':
+      posterior = "dirichlet"
+      post_kwargs = dict(alpha_activation=activation, alpha_clip=clipping)
+    elif lda_posterior == "gaussian":
+      posterior = "gaussiandiag"
+      post_kwargs = dict(loc_activation='identity', scale_activation=activation)
+    else:
+      raise NotImplementedError(
+          "Support one of the following latent distribution: "
+          "'gaussian', 'logistic', 'dirichlet'")
     latents = RandomVariable(event_shape=(n_topics,),
-                             posterior="dirichlet",
+                             posterior=posterior,
                              projection=True,
-                             kwargs=dict(alpha_activation=alpha_activation,
-                                         alpha_clip=alpha_clip),
+                             kwargs=post_kwargs,
                              name="Topics")
+    self.lda_posterior = lda_posterior
     ### input shape
     n_words = int(n_words)
     input_shape = kwargs.pop('input_shape', None)
@@ -108,8 +187,16 @@ class LDAVAE(VariationalAutoencoder):
     decoder = kwargs.pop('decoder', None)
     if decoder is not None:
       warn(message=f"Ignore provided decoder={decoder}")
-    decoder = LDAdecoder(n_topics=n_topics, n_words=n_words)
+    decoder = LDAdecoder(n_topics=n_topics,
+                         n_words=n_words,
+                         lda_posterior=lda_posterior,
+                         dropout_topics=dropout_topics,
+                         dropout_words=dropout_words,
+                         batch_norm=batch_norm)
     ### output layer
+    # The observations are bag of words and therefore not one-hot. However,
+    # log_prob of OneHotCategorical computes the probability correctly in
+    # this case.
     outputs = kwargs.pop('outputs', None)
     if outputs is not None:
       warn(message=f"Ignore provided outputs={outputs}")
@@ -132,22 +219,29 @@ class LDAVAE(VariationalAutoencoder):
                      encoder=encoder,
                      decoder=decoder,
                      outputs=outputs,
+                     beta=beta,
                      **kwargs)
     ### store attributes
     self.n_topics = int(n_topics)
     self.n_words = int(n_words)
-    self.alpha_clip = bool(alpha_clip)
+    self.clipping = bool(clipping)
     ### create the prior
-    self._topics_prior_logits = self.add_weight(
-        initializer=initializers.constant(
-            value=softplus_inverse(prior_init).numpy()),
-        shape=[1, n_topics],
-        dtype=self.dtype,
-        trainable=True,
-        name="topics_prior_logits",
-    )
-    self.latent_layers[0].prior = self.topics_prior_distribution
     self.prior_warmup = int(prior_warmup)
+    if lda_posterior == "dirichlet":
+      self._topics_prior_logits = self.add_weight(
+          initializer=initializers.constant(
+              value=softplus_inverse(prior_init).numpy()),
+          shape=[1, n_topics],
+          dtype=self.dtype,
+          trainable=True,
+          name="topics_prior_logits",
+      )
+      self.latent_layers[0].prior = self.topics_prior_distribution
+    else:
+      self.latent_layers[0].prior = MultivariateNormalDiag(
+          loc=tf.zeros(shape=[1, n_topics], dtype=self.dtype),
+          scale_identity_multiplier=1.,
+          name="TopicsPrior")
 
   @property
   def topics_words_logits(self) -> tf.Variable:
@@ -157,24 +251,70 @@ class LDAVAE(VariationalAutoencoder):
 
   @property
   def topics_words_probs(self) -> tf.Tensor:
-    r""" Probabilities of the topics-words distribution, the return matrix
-    shape `(n_topics, n_words)`
-    """
+    r""" Probabilities values of the topics-words distribution, the return
+    matrix shape `(n_topics, n_words)` """
     return tf.nn.softmax(self.decoder.topics_words_logits, axis=-1)
 
   @property
-  def topics_prior_logits(self) -> tf.Variable:
+  def topics_prior_logits(self) -> Optional[tf.Variable]:
     r""" Logits of the Dirichlet topics distribution, shape `(1, n_topics)` """
-    return self._topics_prior_logits
+    if self.lda_posterior == "dirichlet":
+      return self._topics_prior_logits
+    return None
+
+  @property
+  def topics_prior_alpha(self) -> tf.Tensor:
+    r""" Dirichlet concentrations for the topics, a `[1, n_topics]` tensor """
+    if self.lda_posterior == "dirichlet":
+      return tf.nn.softplus(self.topics_prior_logits)
+    # logistic-normal
+    alpha = tf.transpose(
+        tf.reduce_sum(self.topics_words_logits, axis=1, keepdims=True))
+    return alpha / tf.reduce_sum(alpha)
 
   def topics_prior_distribution(self) -> Dirichlet:
     r""" Create the prior distribution (i.e. the Dirichlet topics distribution),
     `batch_shape=(1,)` and `event_shape=(n_topics,)` """
-    concentration = tf.nn.softplus(self.topics_prior_logits)
-    if self.alpha_clip:
-      concentration = tf.clip_by_value(concentration, 1e-3, 1e3)
-    # prior warm-up: stop gradients update for prior parameters
-    concentration = tf.cond(self.step <= self.prior_warmup,
-                            true_fn=lambda: tf.stop_gradient(concentration),
-                            false_fn=lambda: concentration)
-    return Dirichlet(concentration=concentration, name="topics_prior")
+    if self.lda_posterior == "dirichlet":
+      concentration = tf.nn.softplus(self.topics_prior_logits)
+      if self.clipping:
+        concentration = tf.clip_by_value(concentration, 1e-3, 1e3)
+      # prior warm-up: stop gradients update for prior parameters
+      concentration = tf.cond(self.step <= self.prior_warmup,
+                              true_fn=lambda: tf.stop_gradient(concentration),
+                              false_fn=lambda: concentration)
+      return Dirichlet(concentration=concentration, name="TopicsPrior")
+    # logistic-normal
+    return self.latent_layers[0].prior
+
+  ######## Utilities methods
+  def print_topics(self,
+                   vocabulary: Dict[int, str],
+                   top_words: int = 10,
+                   top_topics: int = 10,
+                   show_word_prob: bool = False):
+    r""" Print most relevant topics and its most representative words
+    distribution """
+    topics = self.topics_words_probs
+    alpha = np.squeeze(self.topics_prior_alpha, axis=0)
+    # Use a stable sorting algorithm so that when alpha is fixed
+    # we always get the same topics.
+    for topic_idx in np.argsort(-alpha, kind="mergesort")[:int(top_topics)]:
+      words = topics[topic_idx]
+      desc = " ".join(f"{vocabulary[i]}_{words[i]:.2f}"
+                      if show_word_prob else f"{vocabulary[i]}"
+                      for i in np.argsort(-words)[:int(top_words)])
+      print(f"Topic#{topic_idx:3d} alpha={alpha[topic_idx]:.2f} {desc}")
+    return self
+
+  def perplexity(self, inputs, elbo=None) -> float:
+    r""" The perplexity is an exponent of the average negative ELBO per word. """
+    if isinstance(inputs, sp.sparse.spmatrix):
+      inputs = inputs.toarray()
+    if elbo is None:
+      pX, qZ = self(inputs, training=False, sample_shape=())
+      elbo = self.elbo(inputs, pX_Z=pX, qZ_X=qZ, sample_shape=(), analytic=True)
+    words_per_doc = tf.reduce_sum(inputs, axis=1)
+    log_perplexity = -elbo / words_per_doc
+    perplexity = tf.exp(tf.reduce_mean(log_perplexity))
+    return perplexity

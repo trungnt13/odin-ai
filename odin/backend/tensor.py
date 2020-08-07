@@ -22,6 +22,7 @@ import numpy as np
 import scipy as sp
 import tensorflow as tf
 import torch
+from scipy.sparse import spmatrix
 from six import string_types
 from six.moves import builtins
 from tensorflow import nest
@@ -188,7 +189,7 @@ def cast(x, dtype):
 
 
 def array(x, framework=None, dtype=None, ignore_none=False):
-  """ This function equal to `numpy.array` for numpy;
+  r""" This function equal to `numpy.array` for numpy;
   `tensorflow.convert_to_tensor` for tensorflow;
   and `torch.tensor` for pytorch
   """
@@ -196,9 +197,7 @@ def array(x, framework=None, dtype=None, ignore_none=False):
     if ignore_none:
       return x
     raise ValueError("x is None, cannot convert to ndarray or Tensor")
-
   out_framework = parse_framework(framework)
-
   # any conversion must go through numpy
   if out_framework == np:
     x = x.numpy() if hasattr(x, 'numpy') else np.asarray(x)
@@ -210,6 +209,28 @@ def array(x, framework=None, dtype=None, ignore_none=False):
     if torch.is_tensor(x):
       return x
     return torch.from_numpy(x)
+  return x
+
+
+def sparse(x: spmatrix, framework=None, dtype=None, ignore_none=False):
+  assert isinstance(x, spmatrix), \
+    f"x must be instance of scipy.sparse.spmatrix, but given: {type(x)}"
+  if x is None:
+    if ignore_none:
+      return x
+    raise ValueError("x is None, cannot convert to sparse Tensor")
+  out_framework = parse_framework(framework)
+  # any conversion must go through numpy
+  if out_framework == np:
+    pass
+  elif out_framework == tf:
+    x = tf.SparseTensor(indices=sorted(zip(*x.nonzero())),
+                        values=x.data,
+                        dense_shape=x.shape)
+    if dtype is not None:
+      x = cast(x, dtype=dtype)
+  elif out_framework == torch:
+    raise NotImplementedError("No support for sparse tensor in pytorch.")
   return x
 
 
