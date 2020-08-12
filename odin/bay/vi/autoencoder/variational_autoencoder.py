@@ -38,13 +38,26 @@ __all__ = ['TrainStep', 'VariationalAutoencoder', 'VAE']
 # Helpers
 # ===========================================================================
 def _check_rv(rv, input_shape):
-  assert isinstance(rv, (RV, Layer)), \
+  r""" Return the layer and its output_shape """
+  assert isinstance(rv, (RV, Layer)) or isinstance(rv, type), \
     "Variable must be instance of odin.bay.RandomVariable or keras.layers.Layer, " + \
       "but given: %s" % str(type(rv))
+
   if isinstance(rv, RV):
     rv = rv.create_posterior(input_shape=input_shape)
+  elif isinstance(rv, type) and \
+    "input_shape" in inspect.getfullargspec(rv).args:
+    rv = rv(input_shape=input_shape)
+  elif isinstance(rv, Layer):
+    if not rv.built and input_shape is not None:
+      rv(keras.Input(shape=input_shape))
+  else:
+    raise ValueError("Only support type RandomVariable, Layer, or classes")
   ### get the event_shape
-  shape = rv.event_shape if hasattr(rv, 'event_shape') else rv.output_shape
+  if hasattr(rv, 'event_shape'):
+    shape = rv.event_shape
+  else:
+    shape = rv.output_shape[1:]
   return rv, shape
 
 
@@ -230,7 +243,7 @@ class TrainStep:
 
   def __init__(self,
                vae,
-               inputs,
+               inputs=None,
                training=None,
                mask=None,
                sample_shape=(),
@@ -326,7 +339,8 @@ class VariationalAutoencoder(keras.Model, MD5object):
     kw.update(kwargs)
     # deep copy is necessary here otherwise the init function will modify
     # the arguments
-    kw = copy.deepcopy(kw)
+    # TODO: check if deepcopy possible here
+    kw = copy.copy(kw)
     # create the instance
     instance = super().__new__(cls, *args, **kwargs)
     # must make _init_args NonDependency (i.e. nontrackable and won't be
@@ -384,8 +398,8 @@ class VariationalAutoencoder(keras.Model, MD5object):
         encoder = encoder.create_network(input_shape, name="Encoder")
       elif hasattr(encoder, 'input_shape') and \
         list(encoder.input_shape[1:]) != input_shape:
-        warnings.warn("encoder has input_shape=%s but VAE output_shape=%s" %
-                      (str(encoder.input_shape[1:]), str(input_shape)))
+        warnings.warn(f"encoder has input_shape={encoder.input_shape[1:]} "
+                      f"but VAE output_shape={input_shape}")
       # assign the parse encoder
       all_encoder[i] = encoder
       if decoder is not None:
@@ -393,7 +407,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
           all_decoder[i] = decoder
         else:
           all_decoder.append(decoder)
-    ### check latent and input distribution
+    ### create the latents and input distribution
     latents = tf.nest.flatten(latents)
     all_latents = [
         _check_rv(z, input_shape=e.output_shape[1:] if e is not None else None)
@@ -404,8 +418,8 @@ class VariationalAutoencoder(keras.Model, MD5object):
     # validate method for latent reduction
     assert isinstance(reduce_latent, string_types) or \
       callable(reduce_latent) or reduce_latent is None,\
-      "reduce_latent must be None, string or callable, but given: %s" % \
-        str(type(reduce_latent))
+      ("reduce_latent must be None, string or callable, "
+       f"but given:{type(reduce_latent)}")
     latent_shape = [shape for _, shape in all_latents]
     if reduce_latent is None:
       pass
@@ -416,7 +430,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
       elif reduce_latent in ('mean', 'min', 'max', 'sum'):
         latent_shape = latent_shape[0]
       else:
-        raise ValueError("No support for reduce_latent='%s'" % reduce_latent)
+        raise ValueError(f"No support for reduce_latent='{reduce_latent}'")
     else:
       zs = [
           tf.zeros(shape=(1,) + tuple(s), dtype=self.dtype)
@@ -431,10 +445,11 @@ class VariationalAutoencoder(keras.Model, MD5object):
       elif isinstance(decoder, NetworkConfig):
         decoder = decoder.create_network(latent_shape, name="Decoder")
       elif isinstance(decoder, keras.layers.Layer):
-        if (hasattr(decoder, 'input_shape') and
-            list(decoder.input_shape[-1:]) != latent_shape):
-          warnings.warn("decoder has input_shape=%s but latent_shape=%s" %
-                        (str(decoder.input_shape[-1:]), str(latent_shape)))
+        if hasattr(decoder, 'input_shape'):
+          decoder_inshape = list(decoder.input_shape[1:])
+          if decoder_inshape != latent_shape:
+            warnings.warn(f"decoder has input_shape={decoder_inshape} "
+                          f"but latent_shape={latent_shape}")
       else:
         raise ValueError("No support for decoder type: %s" % str(type(decoder)))
       all_decoder[i] = decoder
@@ -918,7 +933,8 @@ class VariationalAutoencoder(keras.Model, MD5object):
                   iw=False,
                   elbo_kw={},
                   call_kw={}) -> TrainStep:
-    r""" Facilitate multiple steps training for each iteration (smilar to GAN)
+    r""" Facilitate multiple steps training for each iteration
+    (similar to GAN)
 
     Example:
     ```

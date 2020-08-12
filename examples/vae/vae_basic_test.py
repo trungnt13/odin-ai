@@ -1,277 +1,258 @@
 from __future__ import absolute_import, division, print_function
 
 import os
-from functools import partial
+import shutil
 
+import matplotlib.pyplot as plt
 import numpy as np
-import seaborn as sns
 import tensorflow as tf
+import tensorflow_datasets as tfds
 import tensorflow_probability as tfp
-from matplotlib import pyplot as plt
-from tensorflow.python import keras
-from tensorflow_probability.python import distributions as tfd
 
-from odin import visual as vs
-from odin.bay import RandomVariable, coercible_tensor
-from odin.bay.vi.autoencoder import (BetaVAE, VariationalAutoencoder,
-                                     create_mnist_autoencoder)
-from odin.exp import Trainer
-from odin.fuel import BinarizedMNIST
+from odin.bay.vi import RandomVariable, VariationalAutoencoder
+from odin.utils import ArgController
 
-sns.set()
-
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-
+tfk = tf.keras
+tfkl = tf.keras.layers
+tfpl = tfp.layers
+tfd = tfp.distributions
 tf.random.set_seed(1)
+tf.config.experimental.set_memory_growth(
+    tf.config.list_physical_devices('GPU')[0], True)
+tf.debugging.set_log_device_placement(False)
+tf.autograph.set_verbosity(0)
 np.random.seed(1)
 
-# ===========================================================================
-# Load dataset
-# ===========================================================================
-ds = BinarizedMNIST()
-train = ds.create_dataset(batch_size=64)
-test = ds.create_dataset(batch_size=64)
-image_shape = ds.shape
+args = ArgController().add("-epochs", "Number of training epochs", 200).parse()
 
-######## other configuration
-save_path = "/tmp/vae_test"
+# ===========================================================================
+# configs
+# ===========================================================================
+learning_rate = 1e-3
+epochs = int(args.epochs)
+SAVE_PATH = "/tmp/vae_basic"
+if os.path.exists(SAVE_PATH):
+  shutil.rmtree(SAVE_PATH)
+os.makedirs(SAVE_PATH)
+
+# ===========================================================================
+# load data
+# ===========================================================================
+datasets, datasets_info = tfds.load(name='mnist',
+                                    with_info=True,
+                                    as_supervised=False)
+
+
+def _preprocess(sample):
+  image = tf.cast(sample['image'], tf.float32) / 255.  # Scale to unit interval.
+  image = image < tf.random.uniform(tf.shape(image))  # Randomly binarize.
+  image = tf.cast(image, tf.float32)
+  return image, image
+
+
+train_dataset = (datasets['train'].map(_preprocess).batch(256).prefetch(
+    tf.data.experimental.AUTOTUNE).shuffle(int(10e3)))
+eval_dataset = (datasets['test'].map(_preprocess).batch(256).prefetch(
+    tf.data.experimental.AUTOTUNE))
+
+input_shape = datasets_info.features['image'].shape
+encoded_size = 16
 base_depth = 32
-latent_size = 16
-activation = 'relu'
-n_samples = 2
-mixture_components = 1
-epochs = 20
-max_iter = 8000
-z_prior = tfd.MultivariateNormalDiag(loc=[0.] * latent_size,
-                                     scale_identity_multiplier=1.).sample(16)
-# delete existed files
-if not os.path.exists(save_path):
-  os.makedirs(save_path)
-for i in os.listdir(save_path):
-  os.remove(os.path.join(save_path, i))
+
+prior = tfd.Independent(tfd.Normal(loc=tf.zeros(encoded_size), scale=1),
+                        reinterpreted_batch_ndims=1)
 
 
-######## helper function
-def save_figures(name, model, trainer):
-  fig = plt.figure(figsize=(8, 8), dpi=60)
-  for i, img in enumerate(model.decode(z_prior).mean().numpy()):
-    img = np.squeeze(img, axis=-1)
-    ax = plt.subplot(4, 4, i + 1)
-    ax.imshow(img, cmap="gray")
+def create_encoder():
+  return [
+      tfkl.InputLayer(input_shape=input_shape),
+      tfkl.Lambda(lambda x: tf.cast(x, tf.float32) - 0.5),
+      tfkl.Conv2D(base_depth,
+                  5,
+                  strides=1,
+                  padding='same',
+                  activation=tf.nn.leaky_relu),
+      tfkl.Conv2D(base_depth,
+                  5,
+                  strides=2,
+                  padding='same',
+                  activation=tf.nn.leaky_relu),
+      tfkl.Conv2D(2 * base_depth,
+                  5,
+                  strides=1,
+                  padding='same',
+                  activation=tf.nn.leaky_relu),
+      tfkl.Conv2D(2 * base_depth,
+                  5,
+                  strides=2,
+                  padding='same',
+                  activation=tf.nn.leaky_relu),
+      tfkl.Conv2D(4 * encoded_size,
+                  7,
+                  strides=1,
+                  padding='valid',
+                  activation=tf.nn.leaky_relu),
+      tfkl.Flatten(),
+      tfkl.Dense(tfpl.MultivariateNormalTriL.params_size(encoded_size),
+                 activation=None),
+      tfpl.MultivariateNormalTriL(
+          encoded_size,
+          activity_regularizer=tfpl.KLDivergenceRegularizer(prior)),
+  ]
+
+
+def create_decoder():
+  return [
+      tfkl.InputLayer(input_shape=[encoded_size]),
+      tfkl.Reshape([1, 1, encoded_size]),
+      tfkl.Conv2DTranspose(2 * base_depth,
+                           7,
+                           strides=1,
+                           padding='valid',
+                           activation=tf.nn.leaky_relu),
+      tfkl.Conv2DTranspose(2 * base_depth,
+                           5,
+                           strides=1,
+                           padding='same',
+                           activation=tf.nn.leaky_relu),
+      tfkl.Conv2DTranspose(2 * base_depth,
+                           5,
+                           strides=2,
+                           padding='same',
+                           activation=tf.nn.leaky_relu),
+      tfkl.Conv2DTranspose(base_depth,
+                           5,
+                           strides=1,
+                           padding='same',
+                           activation=tf.nn.leaky_relu),
+      tfkl.Conv2DTranspose(base_depth,
+                           5,
+                           strides=2,
+                           padding='same',
+                           activation=tf.nn.leaky_relu),
+      tfkl.Conv2DTranspose(base_depth,
+                           5,
+                           strides=1,
+                           padding='same',
+                           activation=tf.nn.leaky_relu),
+      tfkl.Conv2D(filters=1,
+                  kernel_size=5,
+                  strides=1,
+                  padding='same',
+                  activation=None),
+      tfkl.Flatten(),
+      tfpl.IndependentBernoulli(input_shape, tfd.Bernoulli.logits),
+  ]
+
+
+# ===========================================================================
+# Tensorflow model
+# ===========================================================================
+encoder = tfk.Sequential(create_encoder(), name="Encoder")
+decoder = tfk.Sequential(create_decoder(), name="Decoder")
+vae_tfp = tfk.Model(inputs=encoder.inputs, outputs=decoder(encoder.outputs[0]))
+negloglik = lambda x, rv_x: -rv_x.log_prob(x)
+vae_tfp.compile(optimizer=tf.optimizers.Adam(learning_rate=learning_rate),
+                loss=negloglik)
+_ = vae_tfp.fit(train_dataset, epochs=epochs, validation_data=eval_dataset)
+history = vae_tfp.history.history
+# learning curves
+fig = plt.figure(figsize=(6, 4), dpi=200)
+plt.plot(history['loss'], linestyle='-', label="Training Loss")
+plt.plot(history['val_loss'], linestyle='--', label="Validation Loss")
+plt.legend()
+plt.title("VAE TFP")
+plt.grid(True)
+plt.ylabel("Loss value")
+plt.xlabel("Epochs")
+fig.savefig(os.path.join(SAVE_PATH, "tfp.png"), dpi=200)
+plt.close(fig)
+
+# ===========================================================================
+# Odin model
+# ===========================================================================
+vae_odin = VariationalAutoencoder(
+    encoder=tfk.Sequential(create_encoder()[:-2], name="Encoder"),
+    decoder=tfk.Sequential(create_decoder()[:-1], name="Decoder"),
+    latents=RandomVariable(event_shape=(encoded_size,),
+                           posterior='gaussiandiag',
+                           projection=True,
+                           prior=prior,
+                           name="Latent"),
+    outputs=RandomVariable(event_shape=input_shape,
+                           posterior="bernoulli",
+                           projection=False,
+                           name="Image"),
+)
+vae_odin.fit(train_dataset,
+             valid=eval_dataset,
+             valid_freq=235,
+             optimizer='adam',
+             learning_rate=learning_rate,
+             epochs=epochs,
+             max_iter=-1)
+vae_odin.plot_learning_curves(os.path.join(SAVE_PATH, "odin.png"),
+                              summary_steps=[100, 10],
+                              dpi=200,
+                              title="VAE_ODIN")
+# ===========================================================================
+# evaluation
+# ===========================================================================
+# calculate the log-likelihood on test set
+llk_tfp = []
+llk_odin = []
+for x, x in eval_dataset.repeat(1):
+  llk_tfp.append(vae_tfp(x, training=False).log_prob(x))
+  llk_odin.append(vae_odin(x, training=False)[0].log_prob(x))
+llk_tfp = tf.reduce_mean(tf.concat(llk_tfp, axis=0))
+llk_odin = tf.reduce_mean(tf.concat(llk_odin, axis=0))
+
+n_images = 10
+# We'll just examine ten random digits.
+x = next(iter(eval_dataset))[0][:n_images]
+xhat_tfp = vae_tfp(x, training=False)
+xhat_odin, _ = vae_odin(x, training=False)
+# Now, let's generate ten never-before-seen digits.
+z = prior.sample(n_images)
+xtilde_tfp = decoder(z, training=False)
+xtilde_odin = vae_odin.decode(z, training=False)
+
+# storing the images
+images = [
+    (x, "original"),
+    #
+    (xhat_tfp.sample(), "tfp_xsample"),
+    (xhat_tfp.mode(), "tfp_xmode"),
+    (xhat_tfp.mean(), "tfp_xmean"),
+    (xhat_odin.sample(), "odin_xsample"),
+    (xhat_odin.mode(), "odin_xmode"),
+    (xhat_odin.mean(), "odin_xmean"),
+    #
+    (xtilde_tfp.sample(), "tfp_zsample"),
+    (xtilde_tfp.mode(), "tfp_zmode"),
+    (xtilde_tfp.mean(), "tfp_zmean"),
+    (xtilde_odin.sample(), "odin_zsample"),
+    (xtilde_odin.mode(), "odin_zmode"),
+    (xtilde_odin.mean(), "odin_zmean"),
+]
+
+# plotting the images
+ncol = n_images
+nrow = len(images)
+fig = plt.figure(figsize=(ncol * 4, nrow * 4), dpi=200)
+count = 0
+for img, name in images:
+  img = np.asarray(img)
+  for i in range(n_images):
+    count += 1
+    ax = plt.subplot(nrow, ncol, count)
+    ax.imshow(img[i].squeeze(), interpolation='none', cmap='gray')
     ax.axis('off')
-  fig.tight_layout()
-  fig.savefig(os.path.join(save_path,
-                           "%s_%d.png" % (name, trainer.n_iter.numpy())),
-              dpi=60)
-  plt.close(fig)
-  trainer.plot_learning_curves(path=os.path.join(save_path, name + ".pdf"),
-                               summary_steps=[100, 10])
-
-
-# ===========================================================================
-# Helper
-# ===========================================================================
-def make_encoder_net():
-  conv = partial(keras.layers.Conv2D, padding="SAME", activation=activation)
-
-  encoder_net = keras.Sequential([
-      conv(base_depth, 5, 1, input_shape=image_shape),
-      conv(base_depth, 5, 2),
-      conv(2 * base_depth, 5, 1),
-      conv(2 * base_depth, 5, 2),
-      conv(4 * latent_size, 7, padding="VALID"),
-      keras.layers.Flatten(),
-      keras.layers.Dense(2 * latent_size, activation=None),
-  ],
-                                 name="EncoderNet")
-  return encoder_net
-
-
-def make_decoder_net():
-  deconv = partial(keras.layers.Conv2DTranspose,
-                   padding="SAME",
-                   activation=activation)
-  conv = partial(keras.layers.Conv2D, padding="SAME", activation=activation)
-  # Collapse the sample and batch dimension and convert to rank-4 tensor for
-  # use with a convolutional decoder network.
-  decoder_net = keras.Sequential([
-      keras.layers.Lambda(lambda codes: tf.reshape(codes,
-                                                   (-1, 1, 1, latent_size)),
-                          batch_input_shape=((n_samples, None, latent_size))),
-      deconv(2 * base_depth, 7, padding="VALID"),
-      deconv(2 * base_depth, 5),
-      deconv(2 * base_depth, 5, 2),
-      deconv(base_depth, 5),
-      deconv(base_depth, 5, 2),
-      deconv(base_depth, 5),
-      conv(image_shape[-1], 5, activation=None),
-  ],
-                                 name="DecoderNet")
-  return decoder_net
-
-
-def make_output_dist(decoder, codes):
-  logits = decoder(codes)
-  logits = tf.reshape(logits, tf.concat([(n_samples, -1), image_shape], axis=0))
-  return tfd.Independent(tfd.Bernoulli(logits=logits),
-                         reinterpreted_batch_ndims=len(image_shape),
-                         name="image")
-
-
-def make_latent_dist(encoder, images):
-  images = 2 * tf.cast(images, dtype=tf.float32) - 1
-  net = encoder(images)
-  return tfd.MultivariateNormalDiag(
-      loc=net[..., :latent_size],
-      scale_diag=tf.nn.softplus(net[..., latent_size:] +
-                                tfp.math.softplus_inverse(1.0)),
-      name="code")
-
-
-def make_mixture_prior():
-  if mixture_components == 1:
-    # See the module docstring for why we don't learn the parameters here.
-    return tfd.MultivariateNormalDiag(loc=tf.zeros([latent_size]),
-                                      scale_identity_multiplier=1.0)
-  raise NotImplementedError()
-  loc = tf.compat.v1.get_variable(name="loc",
-                                  shape=[mixture_components, latent_size])
-  raw_scale_diag = tf.compat.v1.get_variable(
-      name="raw_scale_diag", shape=[mixture_components, latent_size])
-  mixture_logits = tf.compat.v1.get_variable(name="mixture_logits",
-                                             shape=[mixture_components])
-
-  return tfd.MixtureSameFamily(
-      components_distribution=tfd.MultivariateNormalDiag(
-          loc=loc, scale_diag=tf.nn.softplus(raw_scale_diag)),
-      mixture_distribution=tfd.Categorical(logits=mixture_logits),
-      name="prior")
-
-
-# ===========================================================================
-# TFP vae
-# ===========================================================================
-class TFPVAE(keras.Model):
-
-  def __init__(self):
-    super().__init__()
-    self.encoder = make_encoder_net()
-    self.decoder = make_decoder_net()
-    self.latent_prior = make_mixture_prior()
-
-  def call(self, features):
-    encoder, decoder, latent_prior = self.encoder, self.decoder, self.latent_prior
-
-    approx_posterior = make_latent_dist(encoder, features)
-    approx_posterior_sample = approx_posterior.sample(n_samples)
-    decoder_likelihood = make_output_dist(decoder, approx_posterior_sample)
-
-    # `distortion` is just the negative log likelihood.
-    distortion = -decoder_likelihood.log_prob(features)
-    avg_distortion = tf.reduce_mean(input_tensor=distortion)
-    # non-analytic KL
-    rate = (approx_posterior.log_prob(approx_posterior_sample) -
-            latent_prior.log_prob(approx_posterior_sample))
-    avg_rate = tf.reduce_mean(input_tensor=rate)
-    # elbo
-    elbo_local = -(rate + distortion)
-    elbo = tf.reduce_mean(input_tensor=elbo_local)
-    loss = -elbo
-    # iw
-    # importance_weighted_elbo = tf.reduce_mean(
-    #     input_tensor=tf.reduce_logsumexp(input_tensor=elbo_local, axis=0) -
-    #     tf.math.log(tf.cast(n_samples, dtype=tf.float32)))
-    return (loss, avg_distortion, avg_rate, approx_posterior,
-            decoder_likelihood)
-
-  def decode(self, z):
-    logits = self.decoder(z)
-    return tfd.Independent(tfd.Bernoulli(logits=logits),
-                           reinterpreted_batch_ndims=len(image_shape),
-                           name="image")
-
-
-tfp_vae = TFPVAE()
-# ===========================================================================
-# ODIN vae
-# ===========================================================================
-encoder, decoder = create_mnist_autoencoder(latent_size=latent_size,
-                                            base_depth=base_depth,
-                                            center0=True,
-                                            activation=activation)
-outputs = RandomVariable(event_shape=image_shape,
-                         posterior='bernoulli',
-                         projection=False,
-                         name='Image')
-latents = RandomVariable(event_shape=latent_size,
-                         posterior='diag',
-                         projection=False,
-                         name="Latent")
-
-odin_vae = BetaVAE(beta=1,
-                   encoder=encoder,
-                   decoder=decoder,
-                   outputs=outputs,
-                   latents=latents)
-for v1, v2 in zip(tfp_vae.trainable_variables, odin_vae.trainable_variables):
-  assert v1.name.split('/')[-1] == v2.name.split('/')[-1]
-  assert v1.shape == v2.shape
-
-# odin_vae.fit(train,
-#              test,
-#              epochs=100,
-#              max_iter=8000,
-#              valid_interval=45,
-#              optimizer='adam',
-#              learning_rate=0.001,
-#              sample_shape=n_samples)
-
-
-# ===========================================================================
-# Training
-# ===========================================================================
-def train_model(model, name):
-  trainer = Trainer()
-  optimizer = tf.optimizers.Adam(learning_rate=0.001,
-                                 beta_1=0.9,
-                                 beta_2=0.999,
-                                 epsilon=1e-07,
-                                 amsgrad=False)
-
-  def callback():
-    save_figures(name, model, trainer)
-
-  def get_loss(inputs):
-    if isinstance(model, TFPVAE):
-      loss, llk, div = model(inputs)[:3]
-      llk = -llk
-    else:
-      # This is important normalization
-      pX_Z, qZ_X = model(inputs, sample_shape=n_samples)
-      elbo = model.elbo(inputs, pX_Z, qZ_X, return_components=False, iw=False)
-      loss = -tf.reduce_mean(elbo)
-    # TODO: calculate llk and kl here
-    return loss, dict(llk=0, kl=0)
-
-  def optimize(inputs, training):
-    with tf.GradientTape() as tape:
-      loss, metrics = get_loss(inputs)
-      if training:
-        Trainer.apply_gradients(tape, optimizer, loss, model)
-    return loss, metrics
-
-  trainer.fit(train.repeat(epochs),
-              valid_ds=test,
-              valid_interval=int(30 * max(1, np.log(n_samples))),
-              optimize=optimize,
-              compile_graph=True,
-              max_iter=max_iter,
-              callback=callback,
-              log_tag=name)
-  trainer.plot_learning_curves(f'/tmp/learning_curves_{name}.png')
-
-
-## train the model
-train_model(odin_vae, "betavae")
-train_model(tfp_vae, "tfpvae")
+    if i == 0:
+      ax.set_title(name, fontsize=32)
+plt.tight_layout(rect=[0.0, 0.02, 1.0, 0.98])
+plt.suptitle(f"Test-LLK tfp:{llk_tfp:.2f} odin:{llk_odin:.2f}", fontsize=48)
+path = os.path.join(SAVE_PATH, "vae_mnist_test.png")
+print("Save figure:", path)
+fig.savefig(path)
+plt.close(fig=fig)

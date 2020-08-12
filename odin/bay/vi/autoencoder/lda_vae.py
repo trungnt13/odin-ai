@@ -29,7 +29,7 @@ class LDAdecoder(Layer):
                n_topics: int,
                n_words: int,
                lda_posterior: str,
-               dropout_topics: float = 0.5,
+               dropout_topics: float = 0.1,
                dropout_words: float = 0.1,
                batch_norm: bool = True,
                topics_words_logits: Optional[tf.Variable] = None):
@@ -111,7 +111,7 @@ class LDAVAE(BetaVAE):
     clipping: bool.
       If True, clipping the concentration to range `[1e-3, 1e3]` for numerical
       stability.
-    dropout_topics: float (default: 0.5).
+    dropout_topics: float (default: 0.1).
       Dropout value for the topics samples from Dirichlet latents posterior.
       This is recommended to batter the topics collapse.
     dropout_words: float (default: 0.1).
@@ -149,7 +149,7 @@ class LDAVAE(BetaVAE):
       lda_posterior="dirichlet",
       activation: Union[str, Callable] = 'softplus',
       clipping: bool = True,
-      dropout_topics: float = 0.5,
+      dropout_topics: float = 0.1,
       dropout_words: float = 0.1,
       batch_norm: bool = True,
       temperature: float = 0,
@@ -262,11 +262,12 @@ class LDAVAE(BetaVAE):
     return tf.nn.softmax(self.decoder.topics_words_logits, axis=-1)
 
   @property
-  def topics_prior_logits(self) -> Optional[tf.Variable]:
+  def topics_prior_logits(self) -> Union[tf.Variable, tf.Tensor]:
     r""" Logits of the Dirichlet topics distribution, shape `(1, n_topics)` """
     if self.lda_posterior == "dirichlet":
       return self._topics_prior_logits
-    return None
+    return tf.transpose(
+        tf.reduce_sum(self.topics_words_logits, axis=1, keepdims=True))
 
   @property
   def topics_prior_alpha(self) -> tf.Tensor:
@@ -274,9 +275,8 @@ class LDAVAE(BetaVAE):
     if self.lda_posterior == "dirichlet":
       return tf.nn.softplus(self.topics_prior_logits)
     # logistic-normal
-    alpha = tf.transpose(
-        tf.reduce_sum(self.topics_words_logits, axis=1, keepdims=True))
-    return alpha / tf.reduce_sum(alpha)
+    alpha_logits = self.topics_prior_logits
+    return alpha_logits / tf.reduce_sum(alpha_logits)
 
   def topics_prior_distribution(self) -> Dirichlet:
     r""" Create the prior distribution (i.e. the Dirichlet topics distribution),

@@ -117,16 +117,18 @@ train_kw = dict(train=train,
                 compile_graph=True,
                 skip_fitted=True)
 
-dvae = LDAVAE(lda_posterior="dirichlet", path=DVAE_PATH, **kwargs)
+# VAE with Logistic-Normal latent posterior
 gvae = LDAVAE(lda_posterior="gaussian", path=GVAE_PATH, **kwargs)
-dvae.fit(callback=partial(callback, vae=dvae), checkpoint=DVAE_PATH, **train_kw)
 gvae.fit(callback=partial(callback, vae=gvae), checkpoint=GVAE_PATH, **train_kw)
-# final evaluation
-callback(dvae, top_topics=20)
 callback(gvae, top_topics=20)
-dvae.plot_learning_curves(os.path.join(CACHE_DIR, "dvae.png"),
-                          summary_steps=1000)
 gvae.plot_learning_curves(os.path.join(CACHE_DIR, "gvae.png"),
+                          summary_steps=1000)
+
+# VAE with Dirichlet latent posterior
+dvae = LDAVAE(lda_posterior="dirichlet", path=DVAE_PATH, **kwargs)
+dvae.fit(callback=partial(callback, vae=dvae), checkpoint=DVAE_PATH, **train_kw)
+callback(dvae, top_topics=20)
+dvae.plot_learning_curves(os.path.join(CACHE_DIR, "dvae.png"),
                           summary_steps=1000)
 
 

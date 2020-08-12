@@ -21,17 +21,20 @@ class DeterministicLayer(tfl.DistributionLambda):
   def __init__(self,
                event_shape=(),
                log_prob=None,
+               reinterpreted_batch_ndims=None,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(DeterministicLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, log_prob, validate_args),
+        lambda t: type(self).new(t, event_shape, log_prob,
+                                 reinterpreted_batch_ndims, validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape=(),
           log_prob=None,
+          reinterpreted_batch_ndims=None,
           validate_args=False,
           name='DeterministicLayer'):
     """Create the distribution instance from a `params` vector."""
@@ -52,6 +55,10 @@ class DeterministicLayer(tfl.DistributionLambda):
     # override the log-prob function
     if log_prob is not None and callable(log_prob):
       dist.log_prob = types.MethodType(log_prob, dist)
+    # independent
+    if reinterpreted_batch_ndims is not None and reinterpreted_batch_ndims > 0:
+      dist = tfd.Independent(
+          dist, reinterpreted_batch_ndims=int(reinterpreted_batch_ndims))
     return dist
 
   @staticmethod

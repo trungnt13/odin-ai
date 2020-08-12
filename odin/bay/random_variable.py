@@ -189,6 +189,8 @@ class RandomVariable:
     projection : a Boolean (default: False)
       If True, use a fully connected feedforward network to project the input
       to a desire number of parameters for the distribution.
+    dropout : a Float (default: 0)
+      Dropout probability of input parameters before the reparameterization.
     name : a String. Identity of the random variable.
     kwargs : a Dictionary. Keyword arguments for initializing the
       `DistributionLambda` of the posterior.
@@ -200,6 +202,7 @@ class RandomVariable:
   event_shape: List[int] = ()
   posterior: str = 'gaus'
   projection: bool = False
+  dropout: float = 0.0
   name: str = None
   prior: Optional[Union[Distribution, DistributionLambda, Callable]] = None
   kwargs: dict = dataclasses.field(default_factory=dict)
@@ -282,27 +285,27 @@ class RandomVariable:
     return dist, size
 
   @property
-  def is_mixture(self):
+  def is_mixture(self) -> bool:
     dist, _ = self._dummy_dist()
     return is_mixture_distribution(dist)
 
   @property
-  def is_binary(self):
+  def is_binary(self) -> bool:
     dist, _ = self._dummy_dist()
     return is_binary_distribution(dist)
 
   @property
-  def is_discrete(self):
+  def is_discrete(self) -> bool:
     dist, _ = self._dummy_dist()
     return is_discrete_distribution(dist)
 
   @property
-  def is_zero_inflated(self):
+  def is_zero_inflated(self) -> bool:
     dist, _ = self._dummy_dist()
     return is_zeroinflated_distribution(dist)
 
   @property
-  def is_deterministic(self):
+  def is_deterministic(self) -> bool:
     if 'deterministic' in self.posterior:
       return True
     if self.posterior in dir(tf.losses) or \
@@ -311,7 +314,7 @@ class RandomVariable:
     return False
 
   @property
-  def n_parameterization(self):
+  def n_parameterization(self) -> int:
     return self._dummy_dist()[-1]
 
   ######## create posterior distribution
@@ -328,8 +331,8 @@ class RandomVariable:
                           self.kwargs)
 
   def create_posterior(self,
-                       input_shape=None,
-                       name=None) -> obl.DenseDistribution:
+                       input_shape: Optional[List[int]] = None,
+                       name: Optional[str] = None) -> obl.DenseDistribution:
     r""" Initiate a Distribution for the random variable """
     if self.is_deterministic:
       prior = None
@@ -376,6 +379,7 @@ class RandomVariable:
                                             mixtril='tril')[posterior],
                                         name=name,
                                         prior=prior,
+                                        dropout=self.dropout,
                                         **posterior_kwargs)
     ## non-mixture distribution
     else:
@@ -384,6 +388,7 @@ class RandomVariable:
                                     prior=prior,
                                     activation=activation,
                                     posterior_kwargs=posterior_kwargs,
+                                    dropout=self.dropout,
                                     name=name,
                                     **kw)
     ### set attributes

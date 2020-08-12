@@ -137,9 +137,12 @@ class DenseDistribution(Dense):
                            posterior.__class__.__name__)
     kwargs['name'] = name
     # params_size could be static function or method
-    self._params_size = int(
-        _params_size(self.posterior_layer, event_shape,
-                     **self._posterior_kwargs))
+    if not projection:
+      self._params_size = 0
+    else:
+      self._params_size = int(
+          _params_size(self.posterior_layer, event_shape,
+                       **self._posterior_kwargs))
     self._projection = bool(projection)
     super(DenseDistribution,
           self).__init__(units=self._params_size,
@@ -155,8 +158,8 @@ class DenseDistribution(Dense):
                          **kwargs)
     # store the distribution from last call
     self._most_recent_distribution = None
-    # if 'input_shape' in kwargs and not self.built:
-    #   self.build(kwargs['input_shape'])
+    if 'input_shape' in kwargs and not self.built:
+      pass
 
   def build(self, input_shape):
     if self.projection and not self.built:

@@ -311,9 +311,20 @@ class KLdivergence:
     self.keepdims = bool(keepdims)
 
   def __str__(self):
-    return '<KL post:%s prior:%s analytic:%s reverse:%s sample:%s>' % \
-      (self.posterior.__class__.__name__, self.prior.__class__.__name__,
-       self.analytic, self.reverse, str(self.sample_shape))
+    if hasattr(self.posterior, 'shape'):
+      post_shape = self.posterior.shape
+    else:
+      post_shape = f"{self.posterior.batch_shape + self.posterior.event_shape}"
+    if hasattr(self.prior, 'shape'):
+      prior_shape = self.prior.shape
+    else:
+      prior_shape = f"{self.prior.batch_shape + self.prior.event_shape}"
+    return (
+        f"<{self.__class__.__name__} "
+        f"post:({self.posterior.__class__.__name__}, {post_shape})"
+        f" prior:({self.prior.__class__.__name__}, {prior_shape})"
+        f" analytic:{self.analytic} reverse:{self.reverse}"
+        f" sample:{self.sample_shape}>")
 
   def __repr__(self):
     return self.__str__()
