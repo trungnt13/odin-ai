@@ -29,14 +29,7 @@ class VQVAEStep(TrainStep):
                      mask=self.mask,
                      sample_shape=self.sample_shape,
                      **self.call_kw)
-    ## update the codebook
-    qZ_X: VectorQuantized
-    qZ_X.update_codebook(codebook=vae.codebook,
-                         counts=vae.ema_counts,
-                         means=vae.ema_means,
-                         decay=vae.decay,
-                         perturb=vae.ema_perturb)
-    # store so it could be reused
+    ## Calculate the ELBO
     llk, div = self.vae.elbo(self.inputs,
                              pX_Z,
                              qZ_X,
@@ -58,6 +51,13 @@ class VQVAEStep(TrainStep):
     # metrics
     metrics = llk
     metrics.update(div)
+    ## update the codebook
+    qZ_X: VectorQuantized
+    qZ_X.update_codebook(codebook=vae.codebook,
+                         counts=vae.ema_counts,
+                         means=vae.ema_means,
+                         decay=vae.decay,
+                         perturb=vae.ema_perturb)
     return loss, metrics
 
 
@@ -148,6 +148,10 @@ class VectorQuantizer(Layer):
     dist.KL_divergence = KLdivergence(posterior=dist,
                                       prior=self.prior,
                                       analytic=True)
+    # tf.debugging.assert_near(dist,
+    #                          nearest_codebook_entries,
+    #                          rtol=1e-5,
+    #                          atol=1e-5)
     return dist
 
   def sample_index(self, codes, one_hot=True) -> tf.Tensor:
@@ -241,7 +245,7 @@ class VQVAE(BetaVAE):
   """
 
   def __init__(self,
-               n_codes=64,
+               n_codes: int = 64,
                commitment_weight: float = 0.25,
                distance_metric: str = 'euclidean',
                trainable_prior: bool = False,
@@ -261,7 +265,7 @@ class VQVAE(BetaVAE):
     if not analytic:
       raise ValueError("VQVAE only support analytic KL-divergence.")
     super().__init__(beta=beta, latents=latents, analytic=analytic, **kwargs)
-    self.vq_latents = latents
+    self.quantizer = latents
     self.ema_perturb = tf.convert_to_tensor(ema_perturb, dtype=self.dtype)
     self.decay = tf.convert_to_tensor(decay, dtype=self.dtype)
     self.commitment_weight = tf.convert_to_tensor(commitment_weight,
@@ -269,15 +273,15 @@ class VQVAE(BetaVAE):
 
   @property
   def codebook(self) -> tf.Variable:
-    return self.vq_latents.codebook
+    return self.quantizer.codebook
 
   @property
   def ema_counts(self) -> tf.Variable:
-    return self.vq_latents.ema_counts
+    return self.quantizer.ema_counts
 
   @property
   def ema_means(self) -> tf.Variable:
-    return self.vq_latents.ema_means
+    return self.quantizer.ema_means
 
   def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
             training, **kwargs):
@@ -313,3 +317,10 @@ class VQVAE(BetaVAE):
                     iw=iw,
                     elbo_kw=elbo_kw,
                     call_kw=call_kw)
+
+  def __str__(self):
+    text = super().__str__()
+    text += f'\n Commitment: {self.commitment_weight}'
+    text += f'\n Decay     : {self.decay}'
+    text += f'\n Perturb   : {self.ema_perturb}'
+    return text

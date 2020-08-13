@@ -90,6 +90,7 @@ class VectorQuantized(Distribution):
                       decay: float = 0.99,
                       perturb: float = 1e-5):
     r"""Add control dependencies to the commitment loss to update the codebook.
+    These updates should be performed after calculating the commitment loss.
 
     Args:
       codebook: A `float`-like `Tensor`,
@@ -102,22 +103,23 @@ class VectorQuantized(Distribution):
         shape `[n_codes, code_size]`.
 
     Returns:
-      updated_codebook: the updated codebook
-      updated_counts: the moving average updated counts
-      updated_means: the moving average updated means
+      updated_codebook: the updated codebook, shape  `[n_codes, code_size]`
+      updated_counts: the moving average updated counts, shape  `[code_size]`
+      updated_means: the moving average updated means, shape  `[n_codes, code_size]`
     """
     input_ndim = len(self.codes.shape) - 2
+    axes = range(input_ndim + 1)  # the batch axes
     # Use an exponential moving average to update the codebook.
     updated_ema_count = moving_averages.assign_moving_average(
         variable=counts,
-        value=tf.reduce_sum(self.assignments, axis=range(input_ndim + 1)),
+        value=tf.reduce_sum(self.assignments, axis=axes),
         decay=decay,
         zero_debias=False)
     updated_ema_means = moving_averages.assign_moving_average(
         variable=means,
         value=tf.reduce_sum(tf.expand_dims(self.codes, axis=-2) *
                             tf.expand_dims(self.assignments, axis=-1),
-                            axis=range(input_ndim + 1)),
+                            axis=axes),
         decay=decay,
         zero_debias=False)
     # Add small value to avoid dividing by zero.
