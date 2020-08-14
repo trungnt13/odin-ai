@@ -24,13 +24,14 @@ np.random.seed(1)
 
 args = ArgController(
 ).add("--override", "Override trained model", False \
+).add("--ema", "enable exponential moving average", False \
 ).add("-niter", "Number of training iteration", 10000 \
 ).parse()
 
 # ===========================================================================
 # Config
 # ===========================================================================
-SAVE_PATH = "/tmp/vq_vae"
+SAVE_PATH = f"/tmp/vq_vae{'_ema' if args.ema else ''}"
 if not os.path.exists(SAVE_PATH):
   os.makedirs(SAVE_PATH)
 MODEL_PATH = os.path.join(SAVE_PATH, "model")
@@ -106,16 +107,16 @@ vae = VQVAE(encoder=encoder,
             decoder=decoder,
             n_codes=n_codes,
             commitment_weight=commitment,
-            decay=0.99,
-            ema_perturb=1e-5,
             outputs=RandomVariable((28, 28, 1),
                                    posterior="bernoulli",
                                    projection=False,
                                    name="Image"),
+            ema_update=bool(args.ema),
             path=MODEL_PATH)
-print(vae)
 x = next(iter(test))[:n_images]
 z = vae.sample_prior(n_images)
+
+######## helpers for visualization
 
 
 def show_image(img, ax):
@@ -166,7 +167,6 @@ vae.fit(train,
         skip_fitted=True)
 ######## final evaluation
 callback(name="final")
-print("Counts:", [int(i) for i in vae.ema_counts.numpy()])
 scores = defaultdict(list)
 for x in tqdm(test.repeat(1)):
   pxz, qzx = vae(x, training=False)

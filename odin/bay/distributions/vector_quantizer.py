@@ -5,7 +5,8 @@ from tensorflow.python.training import moving_averages
 from tensorflow_probability.python.distributions import (Distribution,
                                                          Multinomial,
                                                          kullback_leibler)
-from tensorflow_probability.python.internal import reparameterization
+from tensorflow_probability.python.internal import (dtype_util,
+                                                    reparameterization)
 
 
 class VectorQuantized(Distribution):
@@ -15,18 +16,22 @@ class VectorQuantized(Distribution):
                codes: tf.Tensor,
                assignments: tf.Tensor,
                nearest_codes: tf.Tensor,
+               commitment: float = 0.25,
                validate_args: bool = False,
                allow_nan_stats: bool = True,
                name: str = "VectorQuantized"):
     parameters = dict(locals())
     with tf.name_scope(name) as name:
+      dtype = dtype_util.common_dtype([codes, assignments, nearest_codes],
+                                      dtype_hint=tf.float32)
       self._codes = codes
       self._assignments = assignments
       self._nearest_codes = nearest_codes
+      self._commitment = tf.convert_to_tensor(commitment, dtype=dtype)
       tf.assert_equal(tf.shape(codes)[:-1], tf.shape(assignments)[:-1])
       tf.assert_equal(tf.shape(codes), tf.shape(nearest_codes))
     super().__init__(
-        dtype=self.codes.dtype,
+        dtype=dtype,
         reparameterization_type=reparameterization.FULLY_REPARAMETERIZED,
         validate_args=validate_args,
         allow_nan_stats=allow_nan_stats,
@@ -36,9 +41,23 @@ class VectorQuantized(Distribution):
   @property
   def commitment_loss(self):
     r""" Calculate the commitment loss, i.e. the distance from the input code
-    to its nearest neighbor """
-    return tf.reduce_mean(
+    to its nearest neighbor
+
+    The third term, Eq.(3): `||z_e(x) - sg(e)||_2^2`
+
+    where: `z_e(x)` is the output of the encoder network.
+    """
+    return self._commitment * tf.reduce_mean(
         tf.square(self.codes - tf.stop_gradient(self.nearest_codes)))
+
+  @property
+  def latents_loss(self):
+    r""" The second term, Eq.(3): `||sg(z_e(x)) - e||_2^2`
+
+    where: `z_e(x)` is the output of the encoder network.
+    """
+    return tf.reduce_mean(
+        tf.square(tf.stop_gradient(self.codes) - self.nearest_codes))
 
   @property
   def codes(self):
@@ -89,8 +108,7 @@ class VectorQuantized(Distribution):
                       means: tf.Variable,
                       decay: float = 0.99,
                       perturb: float = 1e-5):
-    r"""Add control dependencies to the commitment loss to update the codebook.
-    These updates should be performed after calculating the commitment loss.
+    r""" Update the codebook using exponential moving average. (Appendix A.1)
 
     Args:
       codebook: A `float`-like `Tensor`,
@@ -153,4 +171,4 @@ def _kl_vectorquantized_multinomial(a: VectorQuantized,
     llk = b.log_prob(one_hot_assignments)
     llk = tf.reshape(llk, (batch_size, -1))
     llk = tf.reduce_mean(tf.reduce_sum(llk, axis=1))
-    return -llk
+    return tf.stop_gradient(-llk)
