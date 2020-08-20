@@ -60,7 +60,10 @@ if args.override:
   print("Override model and remove:")
   for f in glob.glob(f"{GVAE_PATH}*") + glob.glob(f"{DVAE_PATH}*"):
     print("", f)
-    os.remove(f)
+    if os.path.isfile(f):
+      os.remove(f)
+    else:
+      shutil.rmtree(f)
   if os.path.exists(TFP_LOGDIR):
     shutil.rmtree(TFP_LOGDIR)
     print("", TFP_LOGDIR)
@@ -283,7 +286,6 @@ def train_tfp_model(model, optimizer):
 
 model = LDAModel()
 optimizer = tf.optimizers.Adam(learning_rate=learning_rate)
-
 # train_tfp_model(model, optimizer)
 
 
@@ -318,18 +320,6 @@ train_kw = dict(train=train_ds,
 # VAE with Dirichlet latent posterior
 dvae = LDAVAE(lda_posterior="dirichlet", path=DVAE_PATH, **init_kw)
 print(dvae)
-# @tf.function
-# def train_step(x):
-#   loss, metrics = dvae.optimize(x, training=True, optimizer=optimizer)
-#   return metrics
-
-# for it, x in tqdm(enumerate(train_ds.repeat(-1))):
-#   metrics = train_step(x)
-#   if it % 5000 == 0:
-#     print(metrics)
-#     text = dvae.get_topics_string(vocabulary, n_topics=20)
-#     print("\n".join(text))
-
 dvae.fit(callback=partial(callback, vae=dvae), checkpoint=DVAE_PATH, **train_kw)
 callback(dvae, n_topics=20)
 exit()

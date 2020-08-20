@@ -438,10 +438,7 @@ class Trainer(object):
     logdir = os.path.abspath(os.path.expanduser(logdir))
     self.logdir = logdir
     self.trace_on = bool(trace_on)
-    self.n_iter = tf.Variable(0,
-                              dtype=tf.float32,
-                              trainable=False,
-                              name='n_iter')
+    self.n_iter = 0
     # default attributes
     self._writer = None
     self._current_valid_loss = []
@@ -501,14 +498,10 @@ class Trainer(object):
     return self._writer
 
   def __getstate__(self):
-    return (self.logdir, self.trace_on, self.n_iter.numpy())
+    return (self.logdir, self.trace_on, self.n_iter)
 
   def __setstate__(self, states):
     (self.logdir, self.trace_on, self.n_iter) = states
-    self.n_iter = tf.Variable(self.n_iter,
-                              dtype=tf.float32,
-                              trainable=False,
-                              name='n_iter')
     # default attributes
     self._writer = None
     self._current_valid_loss = []
@@ -612,7 +605,6 @@ class Trainer(object):
           desc=f"Validating {valid_freq}(it) or {valid_interval:.1f}(s)")
       for it, inputs in valid_progress:
         _loss, _metrics = fn_step(it, inputs, training=False)
-        _save_summary(_loss, _metrics, self.n_iter, prefix="valid_")
         # store for calculating average
         epoch_loss.append(_loss)
         for k, v in _metrics.items():
@@ -624,14 +616,13 @@ class Trainer(object):
       return epoch_loss, epoch_metrics
 
     def train():
-      last_iter = tf.identity(self.n_iter)
       progress = tqdm(train_ds, desc=f"Traning {max_iter}(its)")
       self._current_train_progress = progress
       start_time = progress.start_t
       last_print_time = 0
       last_valid_time = start_time
       for cur_iter, inputs in enumerate(progress):
-        self.n_iter.assign_add(1.)
+        self.n_iter += 1
         # the tensorboard will change after each iteration
         self._cached_tensorboard = None
         # ====== validation ====== #
@@ -641,6 +632,7 @@ class Trainer(object):
             # finish the validation
             val_loss, val_metrics = valid()
             self._current_valid_loss.append(val_loss)
+            _save_summary(val_loss, val_metrics, self.n_iter, prefix="valid_")
             _print_summary(progress,
                            log_tag,
                            val_loss,
@@ -655,14 +647,17 @@ class Trainer(object):
           last_valid_time = progress._time()
         # ====== train ====== #
         loss, metrics = fn_step(self.n_iter, inputs, training=True)
+        # do not record the loss and metrics at every iteration, the
+        # performance will drop about 40%
         if terminate_on_nan and np.isnan(loss) or np.isinf(loss):
           progress.write(
               f" *Terminated on NaN at iteration #{int(self.n_iter)}")
           break
-        _save_summary(loss, metrics, self.n_iter, prefix="train_")
         # ====== logging ====== #
         interval = progress._time() - last_print_time
         if interval >= logging_interval:
+          # summarize the batch loss and metrics
+          _save_summary(loss, metrics, self.n_iter, prefix="train_")
           _print_summary(progress,
                          log_tag,
                          loss,
