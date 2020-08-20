@@ -52,7 +52,8 @@ class VQVAEStep(TrainStep):
     metrics = llk
     metrics.update(div)
     ## update the codebook
-    vae.quantizer.update_codebook(qZ_X)
+    if self.training:
+      vae.quantizer.update_codebook(qZ_X)
     return loss, metrics
 
 
@@ -72,7 +73,8 @@ class VectorQuantizer(Layer):
                distance_metric: str = 'euclidean',
                trainable_prior=False,
                ema_decay: float = 0.99,
-               ema_update=False,
+               ema_update: bool = False,
+               epsilon: float = 1e-5,
                name: str = "VectorQuantizer"):
     super().__init__(name=name)
     self.n_codes = int(n_codes)
@@ -82,6 +84,7 @@ class VectorQuantizer(Layer):
                                                   dtype=self.dtype)
     self.ema_decay = tf.convert_to_tensor(ema_decay, dtype=self.dtype)
     self.ema_update = bool(ema_update)
+    self.epsilon = tf.convert_to_tensor(epsilon, dtype=self.dtype)
 
   def build(self, input_shape):
     self.input_ndim = len(input_shape) - 2
@@ -224,7 +227,8 @@ class VectorQuantizer(Layer):
     vq_dist.update_codebook(codebook=self.codebook,
                             counts=self.ema_counts,
                             means=self.ema_means,
-                            decay=self.ema_decay)
+                            decay=self.ema_decay,
+                            epsilon=self.epsilon)
     return self
 
   def __str__(self):

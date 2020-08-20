@@ -315,6 +315,8 @@ class RandomVariable:
 
   @property
   def n_parameterization(self) -> int:
+    r""" Number of parameters needed to parameterize a distribution with
+    event_shape=(1,) """
     return self._dummy_dist()[-1]
 
   ######## create posterior distribution

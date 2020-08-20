@@ -2,12 +2,13 @@ from __future__ import absolute_import, division, print_function
 
 import os
 import tarfile
+from urllib.request import urlretrieve
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import numpy as np
 import tensorflow as tf
 
-from odin.utils import as_tuple, get_all_files, get_datasetpath, get_file
+from odin.utils import as_tuple, get_all_files, get_datasetpath
 from odin.utils.crypto import md5_checksum
 
 
@@ -261,6 +262,9 @@ class AudioFeatureLoader():
       s_db = tf.maximum(s_db, tf.reduce_max(s_db) - self.top_DB)
     return s_db
 
+  # ===========================================================================
+  # Load dataset
+  # ===========================================================================
   def load_fsdd(self):
     r""" Free Spoken Digit Dataset
       A simple audio/speech dataset consisting of recordings of spoken digits
@@ -279,10 +283,8 @@ class AudioFeatureLoader():
       os.mkdir(save_path)
     # ====== download zip dataset ====== #
     if md5_checksum(''.join(sorted(os.listdir(save_path)))) != MD5:
-      zip_path = get_file(fname='FSDD.zip',
-                          origin=LINK,
-                          outdir=save_path,
-                          verbose=True)
+      zip_path = os.path.join(save_path, 'FSDD.zip')
+      urlretrieve(url=LINK, filename=zip_path)
       try:
         with ZipFile(zip_path, mode='r', compression=ZIP_DEFLATED) as zf:
           wav_files = [name for name in zf.namelist() if '.wav' == name[-4:]]

@@ -1,16 +1,26 @@
+import glob
 import inspect
 import os
 import pickle
 import sys
+import tempfile
 import warnings
 from collections import defaultdict
+from functools import partial
 from numbers import Number
+from typing import Callable, Dict, List, Optional, Text, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
+from six import string_types
 from tensorflow.python import keras
 from tensorflow.python.data.ops.iterator_ops import OwnedIterator
 from tensorflow.python.eager.def_function import Function
+from tensorflow.python.keras import Model, Sequential
+from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
+from tensorflow.python.ops import summary_ops_v2
+from tensorflow.python.summary.summary_iterator import summary_iterator
+from tqdm import tqdm
 
 from odin.utils import as_tuple
 
@@ -35,6 +45,66 @@ def _validate_optimize(func):
   #   "optimize function must has the following arguments: %s; but given: %s"\
   #     % (template, args)
   return args
+
+
+def _save_summary(loss, metrics, n_iter, prefix=""):
+  n_iter = tf.cast(n_iter, tf.int64)
+  tf.summary.scalar(f"{prefix}loss", loss, step=n_iter)
+  for k, v in metrics.items():
+    if isinstance(v, string_types) or \
+      (isinstance(v, np.ndarray) and isinstance(v[0], string_types)):
+      tf.summary.text(f"{prefix}{k}", v, step=n_iter)
+    else:
+      tf.summary.scalar(f"{prefix}{k}", v, step=n_iter)
+
+
+def _print_summary(progress: tqdm,
+                   log_tag: str,
+                   loss: float,
+                   metrics: dict,
+                   n_iter: int,
+                   is_valid: bool = False):
+  msg = " ".join([
+      f"{k}:" + (v if isinstance(v, string_types) else f"{v:.4f}")
+      for k, v in metrics.items()
+  ])
+  log_tag = ("" if len(log_tag) == 0 else f"{log_tag} ")
+  if is_valid:
+    log_tag = f" * [VALID]{log_tag}"
+  progress.write(f"{log_tag} #{int(n_iter)} loss:{loss:.4f} {msg} ")
+
+
+def read_tensorboard(logdir: str) -> Dict[Text, Tuple[float, int, float]]:
+  r""" Read Tensorboard event files from a `logdir`
+
+  Return:
+    a dictionary mapping from `tag` (string) to list of tuple
+    `(wall_time, step, value)`
+  """
+  all_log = defaultdict(list)
+  for f in sorted(glob.glob(f"{logdir}/event*"),
+                  key=lambda x: int(os.path.basename(x).split('.')[3])):
+    for event in summary_iterator(f):
+      t = event.wall_time
+      step = event.step
+      summary = event.summary
+      for value in event.summary.value:
+        tag = value.tag
+        meta = value.metadata
+        dtype = meta.plugin_data.plugin_name
+        data = tf.make_ndarray(value.tensor)
+        if dtype == "scalars":
+          pass
+        elif dtype == "text":
+          if len(value.tensor.tensor_shape.dim) == 0:
+            data = str(data.tolist(), 'utf-8')
+          else:
+            data = np.array([str(i, 'utf-8') for i in data])
+        else:
+          raise NotImplementedError(f"Unknown data type: {summary}")
+        all_log[tag].append((t, step, data))
+  all_log = {i: sorted(j, key=lambda x: x[1]) for i, j in all_log.items()}
+  return all_log
 
 
 # ===========================================================================
@@ -361,51 +431,106 @@ class Trainer(object):
     return ds
 
   #######################################################
-  def __init__(self):
+  def __init__(self, logdir: Optional[str] = None, trace_on=False):
     super().__init__()
+    if logdir is None:
+      logdir = tempfile.mkdtemp()
+    logdir = os.path.abspath(os.path.expanduser(logdir))
+    self.logdir = logdir
+    self.trace_on = bool(trace_on)
     self.n_iter = tf.Variable(0,
                               dtype=tf.float32,
                               trainable=False,
                               name='n_iter')
-    self.train_loss = []
-    self.train_metrics = defaultdict(list)
-    # store the average value
-    self.valid_loss = []
-    self.valid_metrics = defaultdict(list)
-    # store all iterations results per epoch
-    self.valid_loss_epoch = []
-    self.valid_metrics_epoch = []
+    # default attributes
+    self._writer = None
+    self._current_valid_loss = []
+    self._current_train_progress = None
+    self._cached_tensorboard = None
+
+  @property
+  def tensorboard(self) -> Dict[Text, Tuple[float, int, float]]:
+    r""" Return stored data from tensorboard """
+    if self._cached_tensorboard is None:
+      if not os.path.exists(self.logdir):
+        self._cached_tensorboard = dict()
+      else:
+        self._cached_tensorboard = read_tensorboard(self.logdir)
+    return self._cached_tensorboard
+
+  @property
+  def train_loss(self) -> List[float]:
+    losses = self.tensorboard.get('train_loss', [])
+    losses = [i[-1] for i in losses]
+    return losses
+
+  @property
+  def valid_loss(self) -> List[float]:
+    losses = self.tensorboard.get('valid_loss', [])
+    losses = [i[-1] for i in losses]
+    return losses
+
+  @property
+  def train_metrics(self) -> Dict[str, List[float]]:
+    metrics = dict()
+    for key, val in self.tensorboard.items():
+      if "train_" == key[:6] and key != "train_loss":
+        key = key[6:]
+        val = [i[-1] for i in val]
+        metrics[key] = val
+    return metrics
+
+  @property
+  def valid_metrics(self) -> Dict[str, List[float]]:
+    metrics = dict()
+    for key, val in self.tensorboard.items():
+      if "valid_" == key[:6] and key != "valid_loss":
+        key = key[6:]
+        val = [i[-1] for i in val]
+        metrics[key] = val
+    return metrics
+
+  @property
+  def current_valid_loss(self) -> List[float]:
+    return self._current_valid_loss
+
+  @property
+  def summary_writer(self) -> tf.summary.SummaryWriter:
+    if self._writer is None:
+      self._writer = tf.summary.create_file_writer(self.logdir)
+    return self._writer
 
   def __getstate__(self):
-    return (self.n_iter.numpy(), self.train_loss, self.train_metrics,
-            self.valid_loss, self.valid_metrics, self.valid_loss_epoch,
-            self.valid_metrics_epoch)
+    return (self.logdir, self.trace_on, self.n_iter.numpy())
 
   def __setstate__(self, states):
-    (self.n_iter, self.train_loss, self.train_metrics, self.valid_loss,
-     self.valid_metrics, self.valid_loss_epoch,
-     self.valid_metrics_epoch) = states
+    (self.logdir, self.trace_on, self.n_iter) = states
     self.n_iter = tf.Variable(self.n_iter,
                               dtype=tf.float32,
                               trainable=False,
                               name='n_iter')
+    # default attributes
+    self._writer = None
+    self._current_valid_loss = []
+    self._current_train_progress = None
+    self._cached_tensorboard = None
 
   def fit(self,
-          train_ds,
-          optimize,
-          valid_ds=None,
-          valid_freq=1000,
-          valid_interval=0,
-          compile_graph=True,
-          autograph=True,
-          logging_interval=2,
-          log_tag='',
-          log_path=None,
-          max_iter=-1,
-          callback=lambda: None):
+          train_ds: tf.data.Dataset,
+          optimize: Callable,
+          valid_ds: Optional[tf.data.Dataset] = None,
+          valid_freq: int = 1000,
+          valid_interval: float = 0,
+          compile_graph: bool = True,
+          autograph: bool = True,
+          logging_interval: float = 2,
+          log_tag: str = '',
+          max_iter: int = -1,
+          terminate_on_nan: bool = True,
+          callback: Optional[Callable] = lambda: None):
     r""" A simplified fitting API
 
-    Arugments:
+    Arguments:
       train_ds : tf.data.Dataset. Training dataset.
       optimize : Callable. Optimization function, return loss and a list of
         metrics. The input arguments must be:
@@ -429,12 +554,23 @@ class Trainer(object):
       def optimize(inputs, tape, n_iter, training):
         return loss, dict(llk=0, div=0, elbo=0)
     """
-    autograph = int(autograph)
-    output_stream = sys.stdout
-    if log_path is not None:
-      output_stream = 'file://%s' % log_path
+    if isinstance(optimize, partial):
+      func_name = optimize.func
+    elif isinstance(optimize, Function):
+      func_name = optimize._python_function
+    else:
+      func_name = optimize
+    if inspect.ismethod(func_name):
+      func_obj = func_name.__self__
+    else:
+      func_obj = None
+    func_name = func_name.__name__
+    # reset last stored valid losses
+    self._current_valid_loss = []
     if len(log_tag) > 0:
       log_tag += " "
+    if hasattr(train_ds, '__len__') and max_iter <= 0:
+      max_iter = len(train_ds)
     ### Prepare the data
     assert isinstance(train_ds, (tf.data.Dataset, OwnedIterator)), \
       'train_ds must be instance of tf.data.Datasets'
@@ -445,15 +581,15 @@ class Trainer(object):
     valid_interval = float(valid_interval)
     if valid_interval > 0:  # prefer the interval
       valid_freq = 1
-    ### optimizing function
-    optimize_args = _validate_optimize(optimize)
-
     ### create autograph version of optimize
+    optimize_args = _validate_optimize(optimize)
     if compile_graph and not isinstance(optimize, Function):
-      optimize = tf.function(optimize, autograph=bool(autograph))
+      optimize = tf.function(optimize,
+                             autograph=bool(autograph),
+                             experimental_compile=None)
 
     ### helper function for training iteration
-    def step(n_iter, inputs, training):
+    def fn_step(n_iter, inputs, training):
       kw = dict()
       if 'n_iter' in optimize_args:
         kw['n_iter'] = n_iter
@@ -471,117 +607,121 @@ class Trainer(object):
     def valid():
       epoch_loss = []
       epoch_metrics = defaultdict(list)
-      start_time = tf.timestamp()
-      last_it = 0.
-      for it, inputs in enumerate(valid_ds.repeat(1)):
-        it = tf.cast(it, tf.float32)
-        _loss, _metrics = step(it, inputs, training=False)
-        assert isinstance(_metrics, dict), \
-          "Metrics must be instance of dictionary"
+      valid_progress = tqdm(
+          enumerate(valid_ds.repeat(1)),
+          desc=f"Validating {valid_freq}(it) or {valid_interval:.1f}(s)")
+      for it, inputs in valid_progress:
+        _loss, _metrics = fn_step(it, inputs, training=False)
+        _save_summary(_loss, _metrics, self.n_iter, prefix="valid_")
         # store for calculating average
         epoch_loss.append(_loss)
         for k, v in _metrics.items():
           epoch_metrics[k].append(v)
-        # print log
-        end_time = tf.timestamp()
-        if end_time - start_time >= logging_interval:
-          it_per_sec = tf.cast(
-              (it - last_it) / tf.cast(end_time - start_time, tf.float32),
-              tf.int32)
-          tf.print(" ",
-                   log_tag,
-                   "[Valid] #",
-                   it + 1,
-                   " ",
-                   it_per_sec,
-                   "(it/s)",
-                   sep="",
-                   output_stream=output_stream)
-          start_time = tf.timestamp()
-          last_it = it
-      self.valid_loss_epoch.append(epoch_loss)
-      self.valid_metrics_epoch.append(epoch_metrics)
-      return tf.reduce_mean(epoch_loss, axis=0), \
-        {k: tf.reduce_mean(v, axis=0) for k, v in epoch_metrics.items()}
+      epoch_loss = tf.reduce_mean(epoch_loss, axis=0)
+      epoch_metrics = {
+          k: tf.reduce_mean(v, axis=0) for k, v in epoch_metrics.items()
+      }
+      return epoch_loss, epoch_metrics
 
     def train():
-      total_time = 0.
-      start_time = tf.timestamp()
-      start_time_valid = start_time
       last_iter = tf.identity(self.n_iter)
-      total_iter = 0
-      for inputs in train_ds:
+      progress = tqdm(train_ds, desc=f"Traning {max_iter}(its)")
+      self._current_train_progress = progress
+      start_time = progress.start_t
+      last_print_time = 0
+      last_valid_time = start_time
+      for cur_iter, inputs in enumerate(progress):
         self.n_iter.assign_add(1.)
+        # the tensorboard will change after each iteration
+        self._cached_tensorboard = None
         # ====== validation ====== #
-        interval = tf.timestamp() - start_time_valid
+        interval = progress._time() - last_valid_time
         if self.n_iter % valid_freq == 0 and interval >= valid_interval:
           if valid_ds is not None:
-            total_time += tf.cast(interval, tf.float32)
             # finish the validation
-            valid_loss, valid_metrics = valid()
-            self.valid_loss.append(valid_loss.numpy())
-            for k, v in valid_metrics.items():
-              self.valid_metrics[k].append(v)
-            tf.print(" ",
-                     log_tag,
-                     "[Valid#",
-                     len(self.valid_loss),
-                     "]",
-                     " loss:%.4f" % valid_loss,
-                     " metr:",
-                     valid_metrics,
-                     sep="",
-                     output_stream=output_stream)
-            # reset start_time
-            start_time = tf.timestamp()
-          # reset the start time here, otherwise, we are end of time,
-          # after validation
-          start_time_valid = tf.timestamp()
+            val_loss, val_metrics = valid()
+            self._current_valid_loss.append(val_loss)
+            _print_summary(progress,
+                           log_tag,
+                           val_loss,
+                           val_metrics,
+                           self.n_iter,
+                           is_valid=True)
           # callback always called
           signal = callback()
-          if signal == Trainer.SIGNAL_TERMINATE:
+          if isinstance(signal, string_types) and \
+            signal == Trainer.SIGNAL_TERMINATE:
             break
+          last_valid_time = progress._time()
         # ====== train ====== #
-        loss, metrics = step(self.n_iter, inputs, training=True)
-        self.train_loss.append(loss.numpy())
-        for k, v in metrics.items():
-          self.train_metrics[k].append(v)
-        interval = tf.cast(tf.timestamp() - start_time, tf.float32)
-        # ====== logging ====== #
-        if interval >= logging_interval:
-          total_time += interval
-          tf.print(log_tag,
-                   "#",
-                   self.n_iter,
-                   " loss:%.4f" % loss,
-                   " metr:",
-                   metrics,
-                   "  ",
-                   tf.cast(total_time, tf.int32),
-                   "(s) ",
-                   tf.cast((self.n_iter - last_iter) / interval, tf.int32),
-                   "(it/s)",
-                   sep="",
-                   output_stream=output_stream)
-          start_time = tf.timestamp()
-          last_iter = tf.identity(self.n_iter)
-        # ====== check maximum iteration ====== #
-        total_iter += 1
-        if max_iter > 0 and total_iter >= max_iter:
+        loss, metrics = fn_step(self.n_iter, inputs, training=True)
+        if terminate_on_nan and np.isnan(loss) or np.isinf(loss):
+          progress.write(
+              f" *Terminated on NaN at iteration #{int(self.n_iter)}")
           break
+        _save_summary(loss, metrics, self.n_iter, prefix="train_")
+        # ====== logging ====== #
+        interval = progress._time() - last_print_time
+        if interval >= logging_interval:
+          _print_summary(progress,
+                         log_tag,
+                         loss,
+                         metrics,
+                         self.n_iter,
+                         is_valid=False)
+          last_print_time = progress._time()
+        # ====== check maximum iteration ====== #
+        if max_iter > 0 and cur_iter >= max_iter:
+          break
+      progress.clear()
+      progress.close()
 
     ### train and return
-    # train = tf.function(train)
-    train()
+    with self.summary_writer.as_default():
+      if self.trace_on:
+        tf.summary.trace_on(graph=True, profiler=False)
+      else:
+        tf.summary.trace_off()
+      train()
+      if self.trace_on:
+        tf.summary.trace_export(name=func_name,
+                                step=int(self.n_iter),
+                                profiler_outdir=self.logdir)
+        tf.summary.trace_off()
+    if isinstance(func_obj, (Model, Sequential)):
+      self.write_keras_graph(func_obj, name=func_obj.__class__.__name__)
+    self.summary_writer.flush()
+    self._current_train_progress = None
+    self._current_valid_loss = []
+    return self
+
+  def print(self, msg: str):
+    r""" Print log message without interfering the current `tqdm` progress bar """
+    if self._current_train_progress is None:
+      print(msg)
+    else:
+      self._current_train_progress.write(msg)
+    return self
+
+  def write_keras_graph(self, model: Union[Model, Sequential], name="keras"):
+    r""" Writes Keras graph networks to TensorBoard. """
+    with self.summary_writer.as_default():
+      with summary_ops_v2.always_record_summaries():
+        if not model.run_eagerly:
+          summary_ops_v2.graph(keras.backend.get_graph(), step=0)
+        summary_writable = (model._is_graph_network or
+                            model.__class__.__name__ == 'Sequential')
+        if summary_writable:
+          summary_ops_v2.keras_model(name=str(name), data=model, step=0)
     return self
 
   def plot_learning_curves(self,
-                           path="/tmp/tmp.png",
-                           summary_steps=[100, 10],
-                           show_validation=True,
-                           dpi=100,
-                           title=None):
-    r""" Learning curves
+                           path: str = "/tmp/tmp.png",
+                           summary_steps: Tuple[int, int] = [100, 10],
+                           show_validation: bool = True,
+                           dpi: int = 150,
+                           title: Optional[str] = None):
+    r""" Plot learning curves
 
     Arguments:
       path: save path for the figure
@@ -607,9 +747,8 @@ class Trainer(object):
       [self.train_metrics[i] for i in metrics_name[1:]]
     train_name = metrics_name
     if is_validated:
-      valid = [tf.nest.flatten(self.valid_loss_epoch)] + \
-        [tf.nest.flatten([epoch[i] for epoch in self.valid_metrics_epoch])
-         for i in metrics_name[1:]]
+      valid = [self.valid_loss] + \
+        [self.valid_metrics[i] for i in metrics_name[1:]]
       valid_name = ['val_' + i for i in metrics_name]
       all_data = zip([i for pair in zip(train_name, valid_name) for i in pair],
                      [i for pair in zip(train, valid) for i in pair])

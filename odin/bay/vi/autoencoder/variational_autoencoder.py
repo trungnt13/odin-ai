@@ -26,7 +26,9 @@ from tensorflow_probability.python import layers as tfl
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
 from odin.bay.layers.dense_distribution import DenseDistribution
-from odin.bay.random_variable import RandomVariable as RV
+from odin.bay.random_variable import RandomVariable
+from odin.bay.vi.autoencoder.networks import ImageNet
+from odin.exp.trainer import Trainer
 from odin.networks import NetworkConfig, SequentialNetwork
 from odin.utils import MD5object
 from odin.utils.python_utils import classproperty
@@ -39,11 +41,10 @@ __all__ = ['TrainStep', 'VariationalAutoencoder', 'VAE']
 # ===========================================================================
 def _check_rv(rv, input_shape):
   r""" Return the layer and its output_shape """
-  assert isinstance(rv, (RV, Layer)) or isinstance(rv, type), \
+  assert isinstance(rv, (RandomVariable, Layer)) or isinstance(rv, type), \
     "Variable must be instance of odin.bay.RandomVariable or keras.layers.Layer, " + \
       "but given: %s" % str(type(rv))
-
-  if isinstance(rv, RV):
+  if isinstance(rv, RandomVariable):
     rv = rv.create_posterior(input_shape=input_shape)
   elif isinstance(rv, type) and \
     "input_shape" in inspect.getfullargspec(rv).args:
@@ -133,46 +134,93 @@ def _to_optimizer(optimizer, learning_rate, clipnorm):
     all_optimizers.append(opt)
   return all_optimizers
 
+  # for i, decoder in enumerate(list(all_decoder)):
+  #   if isinstance(decoder, partial):
+  #     decoder = decoder(latent_shape=latent_shape)
+  #   elif isinstance(decoder, NetworkConfig):
+  #     decoder = decoder.create_network(latent_shape, name="Decoder")
+  #   elif isinstance(decoder, keras.layers.Layer):
+  #     if hasattr(decoder, 'input_shape'):
+  #       decoder_inshape = list(decoder.input_shape[1:])
+  #       if decoder_inshape != latent_shape:
+  #         warnings.warn(f"decoder has input_shape={decoder_inshape} "
+  #                       f"but latent_shape={latent_shape}")
+  #   else:
+  #     raise ValueError("No support for decoder type: %s" % str(type(decoder)))
+  #   all_decoder[i] = decoder
 
-def _parse_network_alias(encoder):
-  decoder = None
-  if isinstance(encoder, string_types):
-    encoder = str(encoder).lower().strip()
-    from odin.bay.vi.autoencoder.networks import ImageNet
-    if encoder in ('mnist', 'fashion_mnist'):
-      kw = dict(image_shape=(28, 28, 1),
-                projection_dim=128,
-                activation='relu',
-                center0=True,
-                distribution='bernoulli',
-                distribution_kw=dict(),
-                skip_connect=False,
-                convolution=True,
-                input_shape=None)
-      encoder = ImageNet(**kw)
-      decoder = partial(ImageNet, decoding=True, **kw)
-    elif encoder in ('shapes3d', 'dsprites', 'dspritesc', 'celeba', 'stl10',
-                     'legofaces', 'cifar10', 'cifar20', 'cifar100'):
-      n_channels = 1 if encoder in ('dsprites', 'dspritesc') else 3
-      if encoder in ('cifar10', 'cifar100', 'cifar20'):
-        image_shape = (32, 32, 3)
+
+def parse_network(network, is_encoder, input_shape) -> List[Layer]:
+  if inspect.isfunction(network) or isinstance(network, partial):
+    args = inspect.getfullargspec(network).args
+    kw = dict()
+    for k in ('shape', 'input_shape', 'latent_shape'):
+      if k in args:
+        kw[k] = input_shape
+        break
+    network = network(**kw)
+  # make sure encoder is a list
+  if isinstance(network, (tuple, list)):
+    network = list(network)
+  else:
+    network = [network]
+  network = [i for i in network if i is not None]
+  ## check different options
+  layers = []
+  for cfg in network:
+    # string type (for dataset name or network alias)
+    if isinstance(cfg, string_types):
+      cfg = cfg.lower().strip()
+      if cfg in ('mnist', 'fashion_mnist'):
+        kw = dict(image_shape=(28, 28, 1),
+                  projection_dim=128,
+                  activation='relu',
+                  center0=True,
+                  distribution='bernoulli',
+                  distribution_kw=dict(),
+                  skip_connect=False,
+                  convolution=True,
+                  input_shape=None,
+                  decoding=not is_encoder)
+      elif cfg in ('shapes3d', 'dsprites', 'dspritesc', 'celeba', 'stl10',
+                   'legofaces', 'cifar10', 'cifar20', 'cifar100'):
+        n_channels = 1 if cfg in ('dsprites', 'dspritesc') else 3
+        if cfg in ('cifar10', 'cifar100', 'cifar20'):
+          image_shape = (32, 32, 3)
+        else:
+          image_shape = (64, 64, n_channels)
+        kw = dict(image_shape=image_shape,
+                  projection_dim=256,
+                  activation='relu',
+                  center0=True,
+                  distribution='bernoulli',
+                  distribution_kw=dict(),
+                  skip_connect=False,
+                  convolution=True,
+                  input_shape=None,
+                  decoding=not is_encoder)
       else:
-        image_shape = (64, 64, n_channels)
-      kw = dict(image_shape=image_shape,
-                projection_dim=256,
-                activation='relu',
-                center0=True,
-                distribution='bernoulli',
-                distribution_kw=dict(),
-                skip_connect=False,
-                convolution=True,
-                input_shape=None)
-      encoder = ImageNet(**kw)
-      decoder = partial(ImageNet, decoding=True, **kw)
+        raise NotImplementedError(
+            f"No predefined network for dataset with name: {encoder}")
+      layers.append(ImageNet(**kw))
+    # the NetworkConfig
+    elif isinstance(cfg, NetworkConfig):
+      layers.append(
+          cfg.create_network(input_shape=input_shape,
+                             name="Encoder" if is_encoder else "Decoder"))
+    # Layer
+    elif isinstance(cfg, Layer):
+      try:
+        cfg.input_shape
+      except AttributeError:
+        if input_shape is not None:
+          cfg(tf.keras.Input(shape=input_shape))
+      layers.append(cfg)
+    # no support
     else:
-      raise NotImplementedError(
-          f"No predefined network for dataset with name: {encoder}")
-  return encoder, decoder
+      raise ValueError(
+          f"No support for network configuration of type: {type(cfg)}")
+  return layers
 
 
 def _iter_lists(X, Y):
@@ -351,11 +399,18 @@ class VariationalAutoencoder(keras.Model, MD5object):
 
   def __init__(
       self,
-      encoder: Union[str, Layer, NetworkConfig] = NetworkConfig(),
-      decoder: Union[Layer, NetworkConfig] = NetworkConfig(),
-      outputs: Union[Layer, RV] = RV(64, 'gaus', projection=True, name="Input"),
-      latents: Union[Layer, RV] = RV(10, 'diag', projection=True,
-                                     name="Latent"),
+      encoder: Union[str, Layer, NetworkConfig, Callable] = NetworkConfig(),
+      decoder: Union[str, Layer, NetworkConfig, Callable] = NetworkConfig(),
+      outputs: Union[Layer, RandomVariable,
+                     Callable] = RandomVariable(64,
+                                                'gaus',
+                                                projection=True,
+                                                name="Input"),
+      latents: Union[Layer, RandomVariable,
+                     Callable] = RandomVariable(10,
+                                                'diag',
+                                                projection=True,
+                                                name="Latent"),
       reduce_latent: str = 'concat',
       input_shape: Optional[List[int]] = None,
       step: int = 0.,
@@ -385,28 +440,9 @@ class VariationalAutoencoder(keras.Model, MD5object):
           f"Input shape not provide, infer using output shape {input_shape}"
           f" , the final input shape is: {tf.nest.flatten(input_shape)}")
     ### prepare support multiple encoders decoders
-    all_encoder = list(encoder) if isinstance(encoder, (tuple, list)) else \
-      [encoder]
-    all_decoder = list(decoder) if isinstance(decoder, (tuple, list)) else \
-      [decoder]
-    all_encoder = [i for i in all_encoder if i is not None]
-    all_decoder = [i for i in all_decoder if i is not None]
-    ### Then, create the encoder, so we know the input_shape to latent layers
-    for i, encoder in enumerate(list(all_encoder)):
-      encoder, decoder = _parse_network_alias(encoder)
-      if isinstance(encoder, NetworkConfig):
-        encoder = encoder.create_network(input_shape, name="Encoder")
-      elif hasattr(encoder, 'input_shape') and \
-        list(encoder.input_shape[1:]) != input_shape:
-        warnings.warn(f"encoder has input_shape={encoder.input_shape[1:]} "
-                      f"but VAE output_shape={input_shape}")
-      # assign the parse encoder
-      all_encoder[i] = encoder
-      if decoder is not None:
-        if i < len(all_decoder):
-          all_decoder[i] = decoder
-        else:
-          all_decoder.append(decoder)
+    all_encoder = parse_network(network=encoder,
+                                is_encoder=True,
+                                input_shape=input_shape)
     ### create the latents and input distribution
     latents = tf.nest.flatten(latents)
     all_latents = [
@@ -439,20 +475,9 @@ class VariationalAutoencoder(keras.Model, MD5object):
       latent_shape = list(reduce_latent(zs).shape[1:])
     self.reduce_latent = reduce_latent
     ### Create the decoder
-    for i, decoder in enumerate(list(all_decoder)):
-      if isinstance(decoder, partial):
-        decoder = decoder(latent_shape=latent_shape)
-      elif isinstance(decoder, NetworkConfig):
-        decoder = decoder.create_network(latent_shape, name="Decoder")
-      elif isinstance(decoder, keras.layers.Layer):
-        if hasattr(decoder, 'input_shape'):
-          decoder_inshape = list(decoder.input_shape[1:])
-          if decoder_inshape != latent_shape:
-            warnings.warn(f"decoder has input_shape={decoder_inshape} "
-                          f"but latent_shape={latent_shape}")
-      else:
-        raise ValueError("No support for decoder type: %s" % str(type(decoder)))
-      all_decoder[i] = decoder
+    all_decoder = parse_network(decoder,
+                                is_encoder=False,
+                                input_shape=latent_shape)
     ### Finally the output distributions
     all_outputs = [
         _check_rv(x, d.output_shape[1:] if d is not None else None)
@@ -461,12 +486,6 @@ class VariationalAutoencoder(keras.Model, MD5object):
     self.output_layers = [x[0] for x in all_outputs]
     self.output_args = [_get_args(i) for i in self.output_layers]
     ### check type
-    assert isinstance(encoder, Layer), \
-      "encoder must be instance of keras.Layer, but given: %s" % \
-        str(type(encoder))
-    assert isinstance(decoder, Layer), \
-      "decoder must be instance of keras.Layer, but given: %s" % \
-        str(type(decoder))
     self.encoder = all_encoder[0] if len(all_encoder) == 1 else all_encoder
     self.decoder = all_decoder[0] if len(all_decoder) == 1 else all_decoder
     ### build the latent and output layers
@@ -482,7 +501,6 @@ class VariationalAutoencoder(keras.Model, MD5object):
                             dtype=self.dtype,
                             trainable=False,
                             name="Step")
-    self.trainer = None
     self.latent_names = [i.name for i in self.latent_layers]
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
@@ -491,9 +509,11 @@ class VariationalAutoencoder(keras.Model, MD5object):
       self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
     else:
       self.optimizer = None
+    ### others
+    self.trainer = None
+    self._save_path = None
     if path is not None:
       self.load_weights(path, raise_notfound=False, verbose=True)
-    ### store encode and decode method keywords
     self._encode_kw = inspect.getfullargspec(self.encode).args[1:]
     self._decode_kw = inspect.getfullargspec(self.decode).args[1:]
 
@@ -966,16 +986,34 @@ class VariationalAutoencoder(keras.Model, MD5object):
                     call_kw=call_kw)
 
   def optimize(self,
-               inputs,
-               training=True,
-               mask=None,
-               optimizer=None,
-               sample_shape=(),
-               allow_none_gradients=False,
-               track_gradient_norms=False,
-               iw=False,
-               elbo_kw={},
+               inputs: Union[tf.Tensor, np.ndarray],
+               training: bool = True,
+               mask: Optional[tf.Tensor] = None,
+               optimizer: Optional[OptimizerV2] = None,
+               sample_shape: List[int] = (),
+               allow_none_gradients: bool = False,
+               track_gradient_norms: bool = False,
+               iw: bool = False,
+               elbo_kw: dict = {},
                **call_kw):
+    r""" ELBO-optimization function, could be used for autograph
+
+    Return:
+      loss : a Scalar, the loss (i.e. `-ELBO`) used for optimization
+      metrics : a Dictionary, mapping from name to scalar values
+
+    Example:
+    ```
+    vae = VariationalAutoencoder()
+    optimizer = tf.optimizers.Adam()
+    @tf.function
+    def train_step(x):
+      loss, metrics = vae.optimize(x, training=True, optimizer=optimizer)
+      return metrics
+    for it, x in tqdm(enumerate(train_ds.repeat(-1))):
+      metrics = train_step(x)
+    ```
+    """
     if optimizer is None:
       optimizer = tf.nest.flatten(self.optimizer)
     all_metrics = {}
@@ -1035,20 +1073,14 @@ class VariationalAutoencoder(keras.Model, MD5object):
       sample_shape: List[int] = (),  # for ELBO
       analytic: Optional[bool] = None,  # for ELBO
       iw: bool = False,  # for ELBO
-      callback: Optional[Callable] = None,
+      callback: Optional[List[Callable]] = None,
       compile_graph: bool = True,
       autograph: bool = False,
       logging_interval: float = 2,
       skip_fitted: bool = False,
-      log_tag: str = '',
-      log_path: str = None,
-      earlystop_threshold: float = 0.001,
-      earlystop_progress_length: float = 0,
-      earlystop_patience: float = -1,
-      earlystop_min_epoch: float = -1,
       terminate_on_nan: bool = True,
-      checkpoint: Optional[str] = None,
-      allow_rollback: bool = False,
+      checkpoint: Optional[Union[Callable, str]] = None,
+      logdir: Optional[str] = None,
       allow_none_gradients: bool = False,
       track_gradient_norms: bool = False):
     r""" Override the original fit method of keras to provide simplified
@@ -1072,7 +1104,8 @@ class VariationalAutoencoder(keras.Model, MD5object):
     train = _to_dataset(train, batch_size, self.dtype)
     if valid is not None:
       valid = _to_dataset(valid, batch_size, self.dtype)
-    # TODO, support allow_rollback, fit history
+    if checkpoint is None:
+      checkpoint = self.save_path
     # skip training if model is fitted or reached a number of iteration
     if self.is_fitted and skip_fitted:
       if isinstance(skip_fitted, bool):
@@ -1081,18 +1114,19 @@ class VariationalAutoencoder(keras.Model, MD5object):
       if int(self.step.numpy()) >= skip_fitted:
         return self
     # create the trainer
-    from odin.exp.trainer import Trainer
     if self.trainer is None:
       with trackable.no_automatic_dependency_tracking_scope(self):
-        trainer = Trainer()
-        trainer.early_stop
+        if logdir is None and checkpoint is not None:
+          logdir = f"{checkpoint}_logdir"
+        trainer = Trainer(logdir=logdir)
         self.trainer = trainer
     else:
       trainer = self.trainer
-    if log_tag is None or len(log_tag) == 0:
-      log_tag = self.__class__.__name__
-    # create the optimizer, turn off tracking so
-    # the optimizer won't be saved in save_weights
+    ## if already called repeat, then no need to repeat more
+    if hasattr(train, 'repeat'):
+      train = train.repeat(int(epochs))
+    ## create the optimizer, turn off tracking so the optimizer
+    # won't be saved in save_weights
     if optimizer is not None and self.optimizer is None:
       with trackable.no_automatic_dependency_tracking_scope(self):
         self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
@@ -1100,8 +1134,6 @@ class VariationalAutoencoder(keras.Model, MD5object):
       raise RuntimeError("No optimizer found!")
     # prepare the callback
     callback_functions = [i for i in tf.nest.flatten(callback) if callable(i)]
-    earlystop_patience = int(earlystop_patience)
-    patience = [earlystop_patience]
     best_weights = [int(self.step.numpy()), self.get_weights()]
     if checkpoint is not None:
       assert isinstance(checkpoint, string_types) or callable(checkpoint), \
@@ -1113,47 +1145,16 @@ class VariationalAutoencoder(keras.Model, MD5object):
 
     ## run early stop and callback
     def _callback():
+      signal = None
       for f in callback_functions:
-        f()
-      # terminate on nan
-      if terminate_on_nan:
-        if (np.isnan(trainer.train_loss[-1]) or
-            np.isinf(trainer.train_loss[-1])):
-          tf.print("[EarlyStop] Terminate on NaN")
-          return Trainer.SIGNAL_TERMINATE
-      # early stopping
-      if earlystop_patience > 0:
-        if valid is not None:
-          losses = trainer.valid_loss
-        else:
-          losses = trainer.train_loss
-          ids = list(range(0, len(losses), valid_freq)) + [len(losses)]
-          losses = [np.mean(losses[s:e]) for s, e in zip(ids, ids[1:])]
-        signal = Trainer.early_stop(losses=losses,
-                                    threshold=earlystop_threshold,
-                                    progress_length=earlystop_progress_length,
-                                    min_epoch=earlystop_min_epoch,
-                                    verbose=True)
-        if signal == Trainer.SIGNAL_BEST:
-          patience[0] = min(patience[0] + 1. / earlystop_patience,
-                            earlystop_patience)
-          best_weights[0] = int(self.step.numpy())
-          best_weights[1] = self.get_weights()
-          tf.print(f"[EarlyStop] Saved best weights step #{best_weights[0]}")
-          if checkpoint is not None:
-            checkpoint_fn()
-            tf.print(f"[EarlyStop] Saved checkpoint {str(checkpoint)}")
-        elif signal == Trainer.SIGNAL_TERMINATE:
-          patience[0] -= 1
-          tf.print("[EarlyStop] Patience decreased: "
-                   f"{patience[0]:.2f}/{earlystop_patience}")
-          if patience[0] >= 0:
-            signal = None
-        return signal
+        ret = f()
+        if ret is not None:
+          signal = ret
+      if trainer.current_valid_loss[-1] <= min(trainer.current_valid_loss):
+        best_weights[0] = int(self.step.numpy())
+        best_weights[1] = self.get_weights()
+      return signal
 
-    # if already called repeat, then no need to repeat more
-    if hasattr(train, 'repeat'):
-      train = train.repeat(int(epochs))
     self.trainer.fit(
         train_ds=train,
         optimize=partial(self.optimize,
@@ -1168,19 +1169,18 @@ class VariationalAutoencoder(keras.Model, MD5object):
         compile_graph=compile_graph,
         autograph=autograph,
         logging_interval=logging_interval,
-        log_tag=log_tag,
-        log_path=log_path,
+        log_tag=self.__class__.__name__,
         max_iter=max_iter,
+        terminate_on_nan=terminate_on_nan,
         callback=_callback,
     )
     # restore best weights
     if best_weights[0] > 0:
-      tf.print("[EarlyStop] Restore best weights from step %d" %
-               best_weights[0])
       self.set_weights(best_weights[1])
+      print(f"Restored best weights from step {best_weights[0]}")
     if checkpoint is not None:
       checkpoint_fn()
-      tf.print(f"[EarlyStop] Saved best checkpoint {str(checkpoint)}")
+      print(f"Saved best checkpoint {str(checkpoint)}")
     return self
 
   def plot_learning_curves(self,

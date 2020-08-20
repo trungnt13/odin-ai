@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import os
+import shutil
 from functools import partial
 
 import numpy as np
@@ -9,26 +10,38 @@ from matplotlib import pyplot as plt
 from tensorflow.python import keras
 from tqdm import tqdm
 
-from librosa import magphase, stft
-from librosa.core import amplitude_to_db
-from librosa.display import specshow
 from odin import bay
 from odin import networks as net
 from odin import visual as vs
 from odin.backend import interpolation
+from odin.bay.vi.autoencoder import RandomVariable, VariationalAutoencoder
 from odin.exp import Trainer
 from odin.fuel import AudioFeatureLoader
-from odin.utils import partialclass
+from odin.utils import ArgController, clean_folder, partialclass
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
+tf.config.experimental.set_memory_growth(
+    tf.config.list_physical_devices('GPU')[0], True)
+tf.debugging.set_log_device_placement(False)
+tf.autograph.set_verbosity(0)
 
 tf.random.set_seed(8)
 np.random.seed(8)
 
+args = ArgController(\
+).add("--override", "Override trained model", False
+      ).parse()
+
+SAVE_PATH = "/tmp/vae_audio"
+if os.path.exists(SAVE_PATH) and args.override:
+  clean_folder(SAVE_PATH, verbose=True)
+if not os.path.exists(SAVE_PATH):
+  os.makedirs(SAVE_PATH)
+MODEL_PATH = os.path.join(SAVE_PATH, 'model')
+
 # ===========================================================================
 # Configs
 # ===========================================================================
+ZDIM = 32
 MAX_LENGTH = 48
 BUFFER_SIZE = 100
 PARALLEL = tf.data.experimental.AUTOTUNE
@@ -65,25 +78,22 @@ test = audio.create_dataset(test,
                             parallel=PARALLEL,
                             prefetch=-1)
 
-for _ in test.repeat(1):
-  pass
-x_test = _[:16]
-
+x_test = next(iter(test))[:16]
+input_shape = tf.data.experimental.get_structure(train).shape[1:]
 
 # ===========================================================================
 # Create the model
 # ===========================================================================
-class VAE(keras.Model):
-
-  def __init__(self, input_shape, zdim=16, posterior=bay.layers.NormalLayer):
-    super().__init__()
-    self.zdim = zdim
-    self.encoder = keras.Sequential([
-        keras.layers.Conv1D(32,
-                            3,
-                            strides=1,
-                            padding='same',
-                            input_shape=input_shape),
+outputs = RandomVariable(event_shape=input_shape,
+                         posterior='gaus',
+                         projection=False,
+                         name="Spectrogram")
+latents = bay.layers.MultivariateNormalDiagLatent(ZDIM, name="Latents")
+encoder = keras.Sequential(
+    [
+        keras.Input(shape=input_shape),
+        keras.layers.Conv1D(
+            32, 3, strides=1, padding='same', input_shape=input_shape),
         keras.layers.BatchNormalization(),
         keras.layers.Activation('relu'),
         keras.layers.Conv1D(64, 5, strides=2, padding='same'),
@@ -93,10 +103,13 @@ class VAE(keras.Model):
         keras.layers.BatchNormalization(),
         keras.layers.Activation('relu'),
         keras.layers.Flatten()
-    ])
-    self.latent = bay.layers.DiagonalGaussianLatent(zdim)
-    self.decoder = keras.Sequential([
-        keras.layers.Dense(self.encoder.output_shape[1], input_shape=(zdim,)),
+    ],
+    name="Encoder",
+)
+decoder = keras.Sequential(
+    [
+        keras.Input(shape=(ZDIM,)),
+        keras.layers.Dense(encoder.output_shape[1]),
         keras.layers.Reshape((12, 128)),
         net.Deconv1D(128, 5, strides=2, padding='same'),
         keras.layers.BatchNormalization(),
@@ -107,83 +120,46 @@ class VAE(keras.Model):
         net.Deconv1D(32, 3, strides=1, padding='same'),
         keras.layers.BatchNormalization(),
         keras.layers.Activation('relu'),
-        net.Deconv1D(input_shape[-1] * posterior.params_size(1),
+        net.Deconv1D(input_shape[-1] * outputs.n_parameterization,
                      1,
                      strides=1,
                      padding='same'),
         keras.layers.Flatten()
-    ])
-    self.pX = posterior(event_shape=input_shape)
-
-  def sample(self, n=1, seed=8):
-    return self.latent.sample(sample_shape=n, seed=seed)
-
-  # @tf.function
-  def generate(self, z):
-    assert z.shape[-1] == self.zdim
-    D = self.decoder(z, training=False)
-    X = self.pX(D)
-    return X
-
-  def call(self, x, training=None):
-    e = self.encoder(x, training=training)
-    qZ_X = self.latent(e, training=training)
-    Z = tf.squeeze(qZ_X, axis=0)
-    D = self.decoder(Z)
-    pX = self.pX(D, training=training)
-    return pX, qZ_X
-
-
-# ===========================================================================
-# Create the network and basic optimizer
-# ===========================================================================
-vae = VAE(tf.data.experimental.get_structure(train).shape[1:],
-          posterior=POSTERIOR)
-z = vae.sample(n=16)
-optimizer = tf.optimizers.Adam(learning_rate=0.001,
-                               beta_1=0.9,
-                               beta_2=0.999,
-                               epsilon=1e-07,
-                               amsgrad=False,
-                               clipnorm=100)
-
+    ],
+    name="Decoder",
+)
+vae = VariationalAutoencoder(encoder=encoder,
+                             decoder=decoder,
+                             latents=latents,
+                             outputs=outputs,
+                             path=MODEL_PATH)
+print(vae)
+z = vae.sample_prior(sample_shape=16)
 
 # ===========================================================================
 # Training
 # ===========================================================================
-def optimize(X, training=None, n_iter=None):
-  with tf.GradientTape() as tape:
-    beta = BETA(trainer.n_iter)
-    pX, qZ = vae(X, training=training)
-    KL = qZ.KL_divergence(analytic=True)
-    LLK = pX.log_prob(X)
-    # ELBO = tf.reduce_mean(tf.reduce_logsumexp(LLK - KL, axis=0))
-    ELBO = tf.reduce_mean(LLK - beta * KL, axis=0)
-    loss = -ELBO
-    if training:
-      Trainer.apply_gradients(tape, optimizer, loss, vae)
-  return loss, dict(llk=tf.reduce_mean(LLK), kl=tf.reduce_mean(KL), beta=beta)
-
-
 z_animation = vs.Animation(figsize=(12, 12))
 xmean_animation = vs.Animation(figsize=(12, 12))
 xstd_animation = vs.Animation(figsize=(12, 12))
 
 
 def callback():
-  z_animation.plot_spectrogram(vae.generate(z).mean())
-  pX = vae(x_test, training=False)[0]
+  z_animation.plot_spectrogram(vae.decode(z, training=False).mean())
+  pX, qZ = vae(x_test, training=False)
   xmean_animation.plot_spectrogram(pX.mean())
   xstd_animation.plot_spectrogram(pX.stddev())
 
 
-trainer = Trainer()
-trainer.fit(ds=train.repeat(800),
-            valid_ds=test,
-            valid_freq=500,
-            optimize=optimize,
-            callback=callback)
-trainer.plot_learning_curves('/tmp/tmp.pdf', summary_steps=[100, 5])
-z_animation.save('/tmp/tmp_z_mean.gif')
-xmean_animation.save('/tmp/tmp_x_mean.gif')
-xstd_animation.save('/tmp/tmp_x_std.gif')
+vae.fit(train=train,
+        valid=test,
+        max_iter=10000,
+        valid_freq=500,
+        checkpoint=MODEL_PATH,
+        callback=callback,
+        skip_fitted=True)
+vae.plot_learning_curves(os.path.join(SAVE_PATH, 'learning_curves.pdf'),
+                         summary_steps=[100, 10])
+z_animation.save(os.path.join(SAVE_PATH, 'z_mean.gif'))
+xmean_animation.save(os.path.join(SAVE_PATH, 'x_mean.gif'))
+xstd_animation.save(os.path.join(SAVE_PATH, 'x_std.gif'))

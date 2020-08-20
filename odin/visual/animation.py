@@ -22,6 +22,9 @@ class Animation(object):
     self.artists = []
     self.axes = []
 
+  def __len__(self):
+    return len(self.artists)
+
   def plot_spectrogram(self, spec, cmap='magma'):
     r"""
     Arguments:

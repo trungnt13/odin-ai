@@ -23,7 +23,9 @@ tf.debugging.set_log_device_placement(False)
 tf.autograph.set_verbosity(0)
 np.random.seed(1)
 
-args = ArgController().add("-epochs", "Number of training epochs", 200).parse()
+args = ArgController(\
+  ).add("-epochs", "Number of training epochs", 200\
+  ).parse()
 
 # ===========================================================================
 # configs

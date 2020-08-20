@@ -107,7 +107,7 @@ class VectorQuantized(Distribution):
                       counts: tf.Variable,
                       means: tf.Variable,
                       decay: float = 0.99,
-                      perturb: float = 1e-5):
+                      epsilon: float = 1e-5):
     r""" Update the codebook using exponential moving average. (Appendix A.1)
 
     Args:
@@ -141,7 +141,7 @@ class VectorQuantized(Distribution):
         decay=decay,
         zero_debias=False)
     # Add small value to avoid dividing by zero.
-    perturbed_ema_count = updated_ema_count + perturb
+    perturbed_ema_count = updated_ema_count + epsilon
     codebook.assign(updated_ema_means / perturbed_ema_count[..., tf.newaxis])
     return codebook, updated_ema_count, updated_ema_means
 
