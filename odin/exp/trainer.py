@@ -47,15 +47,17 @@ def _validate_optimize(func):
   return args
 
 
-def _save_summary(loss, metrics, n_iter, prefix=""):
-  n_iter = tf.cast(n_iter, tf.int64)
-  tf.summary.scalar(f"{prefix}loss", loss, step=n_iter)
+def _save_summary(loss, metrics, prefix="", flush=False):
+  tf.summary.scalar(f"{prefix}loss", loss)
   for k, v in metrics.items():
+    k = f"{prefix}{k}"
     if isinstance(v, string_types) or \
       (isinstance(v, np.ndarray) and isinstance(v[0], string_types)):
-      tf.summary.text(f"{prefix}{k}", v, step=n_iter)
+      tf.summary.text(k, v)
     else:
-      tf.summary.scalar(f"{prefix}{k}", v, step=n_iter)
+      tf.summary.scalar(k, v)
+  if flush:
+    tf.summary.flush()
 
 
 def _print_summary(progress: tqdm,
@@ -516,7 +518,7 @@ class Trainer(object):
           valid_interval: float = 0,
           compile_graph: bool = True,
           autograph: bool = True,
-          logging_interval: float = 2,
+          logging_interval: float = 3,
           log_tag: str = '',
           max_iter: int = -1,
           terminate_on_nan: bool = True,
@@ -623,6 +625,7 @@ class Trainer(object):
       last_valid_time = start_time
       for cur_iter, inputs in enumerate(progress):
         self.n_iter += 1
+        tf.summary.experimental.set_step(self.n_iter)
         # the tensorboard will change after each iteration
         self._cached_tensorboard = None
         # ====== validation ====== #
@@ -632,7 +635,7 @@ class Trainer(object):
             # finish the validation
             val_loss, val_metrics = valid()
             self._current_valid_loss.append(val_loss)
-            _save_summary(val_loss, val_metrics, self.n_iter, prefix="valid_")
+            _save_summary(val_loss, val_metrics, prefix="valid_", flush=True)
             _print_summary(progress,
                            log_tag,
                            val_loss,
@@ -657,7 +660,7 @@ class Trainer(object):
         interval = progress._time() - last_print_time
         if interval >= logging_interval:
           # summarize the batch loss and metrics
-          _save_summary(loss, metrics, self.n_iter, prefix="train_")
+          _save_summary(loss, metrics, prefix="train_")
           _print_summary(progress,
                          log_tag,
                          loss,
@@ -680,7 +683,7 @@ class Trainer(object):
       train()
       if self.trace_on:
         tf.summary.trace_export(name=func_name,
-                                step=int(self.n_iter),
+                                step=0,
                                 profiler_outdir=self.logdir)
         tf.summary.trace_off()
     if isinstance(func_obj, (Model, Sequential)):
@@ -698,23 +701,26 @@ class Trainer(object):
       self._current_train_progress.write(msg)
     return self
 
-  def write_keras_graph(self, model: Union[Model, Sequential], name="keras"):
+  def write_keras_graph(self,
+                        model: Union[Model, Sequential],
+                        step: int = 0,
+                        name: str = "keras"):
     r""" Writes Keras graph networks to TensorBoard. """
     with self.summary_writer.as_default():
       with summary_ops_v2.always_record_summaries():
         if not model.run_eagerly:
-          summary_ops_v2.graph(keras.backend.get_graph(), step=0)
+          summary_ops_v2.graph(keras.backend.get_graph(), step=step)
         summary_writable = (model._is_graph_network or
                             model.__class__.__name__ == 'Sequential')
         if summary_writable:
-          summary_ops_v2.keras_model(name=str(name), data=model, step=0)
+          summary_ops_v2.keras_model(name=str(name), data=model, step=step)
     return self
 
   def plot_learning_curves(self,
                            path: str = "/tmp/tmp.png",
-                           summary_steps: Tuple[int, int] = [100, 10],
+                           summary_steps: Tuple[int, int] = [10, 5],
                            show_validation: bool = True,
-                           dpi: int = 150,
+                           dpi: int = 200,
                            title: Optional[str] = None):
     r""" Plot learning curves
 

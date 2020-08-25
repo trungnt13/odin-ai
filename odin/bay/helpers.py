@@ -141,9 +141,9 @@ def print_distribution(dist, return_text=False):
 # ===========================================================================
 # Objectives
 # ===========================================================================
-def coercible_tensor(d,
+def coercible_tensor(d: tfd.Distribution,
                      convert_to_tensor_fn=tfd.Distribution.sample,
-                     return_value=False):
+                     return_value: bool = False) -> tfd.Distribution:
   r""" make a distribution convertible to Tensor using the
   `convert_to_tensor_fn`
 
@@ -153,24 +153,13 @@ def coercible_tensor(d,
     "dist must be instance of tensorflow_probability.Distribution"
   convert_to_tensor_fn = _get_convert_to_tensor_fn(convert_to_tensor_fn)
   # Wraps the distribution to return both dist and concrete value."""
-  value_is_seq = isinstance(d.dtype, collections.Sequence)
-  maybe_composite_convert_to_tensor_fn = (
-      (lambda d: tensor_tuple.TensorTuple(convert_to_tensor_fn(d)))
-      if value_is_seq else convert_to_tensor_fn)
-  distribution = dtc._TensorCoercible(
-      distribution=d, convert_to_tensor_fn=maybe_composite_convert_to_tensor_fn)
+  distribution = dtc._TensorCoercible(distribution=d,
+                                      convert_to_tensor_fn=convert_to_tensor_fn)
   ### prepare the value
   value = distribution._value()
   value._tfp_distribution = distribution
-  if value_is_seq:
-    value.shape = value[-1].shape
-    value.get_shape = value[-1].get_shape
-    value.dtype = value[-1].dtype
-    distribution.shape = value[-1].shape
-    distribution.get_shape = value[-1].get_shape
-  else:
-    distribution.shape = value.shape
-    distribution.get_shape = value.get_shape
+  distribution.shape = value.shape
+  distribution.get_shape = value.get_shape
   ### return
   if return_value:
     return distribution, value
@@ -319,12 +308,11 @@ class KLdivergence:
       prior_shape = self.prior.shape
     else:
       prior_shape = f"{self.prior.batch_shape + self.prior.event_shape}"
-    return (
-        f"<{self.__class__.__name__} "
-        f"post:({self.posterior.__class__.__name__}, {post_shape})"
-        f" prior:({self.prior.__class__.__name__}, {prior_shape})"
-        f" analytic:{self.analytic} reverse:{self.reverse}"
-        f" sample:{self.sample_shape}>")
+    return (f"<{self.__class__.__name__} "
+            f"post:({self.posterior.__class__.__name__}, {post_shape})"
+            f" prior:({self.prior.__class__.__name__}, {prior_shape})"
+            f" analytic:{self.analytic} reverse:{self.reverse}"
+            f" sample:{self.sample_shape}>")
 
   def __repr__(self):
     return self.__str__()

@@ -12,6 +12,7 @@ import scipy as sp
 import tensorflow as tf
 from sklearn.decomposition import LatentDirichletAllocation
 from tensorflow.python import keras
+from tensorflow.python.ops import summary_ops_v2
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.layers import DistributionLambda
 from tqdm import tqdm
@@ -123,7 +124,6 @@ def create_tfds(x):
 
 train_ds, input_shape = create_tfds(data['train'])
 test_ds, _ = create_tfds(data['test'])
-train_ds.repeat(-1)
 
 
 # ===========================================================================
@@ -249,6 +249,7 @@ def train_tfp_model(model, optimizer):
     outputs = train_step(x)
     if it % 5000 == 0:
       with writer.as_default():
+        tf.summary.experimental.set_step(it)
         alpha = outputs.pop('alpha')
         alpha = np.squeeze(alpha, axis=0)
         highest_weight_topics = np.argsort(-alpha, kind="mergesort")
@@ -259,7 +260,7 @@ def train_tfp_model(model, optimizer):
         for k, v in sorted(outputs.items()):
           v = tf.reduce_mean(v)
           print(f" {k:10s}:{v:.4f}")
-          tf.summary.scalar(k, v, step=it)
+          tf.summary.scalar(k, v)
         # test data
         outputs = model(data['test'].toarray())
         outputs.pop('alpha')
@@ -267,7 +268,7 @@ def train_tfp_model(model, optimizer):
           v = tf.reduce_mean(v)
           k = f"val_{k}"
           print(f" {k:10s}:{v:.4f}")
-          tf.summary.scalar(k, v, step=it)
+          tf.summary.scalar(k, v)
         # topics
         topic_text = []
         for idx, topic_idx in enumerate(highest_weight_topics[:20]):
@@ -279,14 +280,22 @@ def train_tfp_model(model, optimizer):
           l = " ".join(l)
           print("", l)
           topic_text.append(l)
-        tf.summary.text("topics", np.array(topic_text), step=it)
+        tf.summary.text("topics", np.array(topic_text))
     if it >= max_iter:
       break
+  with writer.as_default():
+    with summary_ops_v2.always_record_summaries():
+      if not model.run_eagerly:
+        summary_ops_v2.graph(keras.backend.get_graph(), step=0)
+      summary_writable = (model._is_graph_network or
+                          model.__class__.__name__ == 'Sequential')
+      if summary_writable:
+        summary_ops_v2.keras_model(name=str(name), data=model, step=0)
 
 
 model = LDAModel()
 optimizer = tf.optimizers.Adam(learning_rate=learning_rate)
-# train_tfp_model(model, optimizer)
+train_tfp_model(model, optimizer)
 
 
 # ===========================================================================
@@ -295,11 +304,13 @@ optimizer = tf.optimizers.Adam(learning_rate=learning_rate)
 def callback(vae: LDAVAE, n_topics=10):
   print(f"*** {vae.lda_posterior} ***")
   text = vae.get_topics_string(vocabulary, n_topics=n_topics)
+  tf.summary.text("topics", text)
+  perplexity = vae.perplexity(data['test'])
+  tf.summary.scalar("perplexity", perplexity)
   print("\n".join(text))
-  print(f"[#{int(vae.step.numpy())}]Perplexity:",
-        float(vae.perplexity(data['test'])))
+  print(f"[#{int(vae.step.numpy())}]Perplexity:", float(perplexity))
   vae.plot_learning_curves(os.path.join(CACHE_DIR, f"{vae.lda_posterior}.png"),
-                           summary_steps=1000)
+                           summary_steps=[10, 5])
 
 
 init_kw = dict(n_words=n_words,
@@ -319,9 +330,55 @@ train_kw = dict(train=train_ds,
 
 # VAE with Dirichlet latent posterior
 dvae = LDAVAE(lda_posterior="dirichlet", path=DVAE_PATH, **init_kw)
-print(dvae)
-dvae.fit(callback=partial(callback, vae=dvae), checkpoint=DVAE_PATH, **train_kw)
-callback(dvae, n_topics=20)
+optimizer = tf.optimizers.Adam(learning_rate=learning_rate)
+
+
+def train_dvae_model(model, optimizer):
+  writer = tf.summary.create_file_writer(DVAE_PATH + '_logdir')
+
+  @tf.function
+  def train_step(x):
+    model.step.assign_add(1)
+    with tf.GradientTape() as tape:
+      pX, qZ = model(x, training=True)
+      llk = pX.log_prob(x)
+      kl = tfd.kl_divergence(qZ, model.topics_prior_distribution())
+      elbo = llk - kl
+      loss = -tf.reduce_mean(elbo)
+    grads = tape.gradient(loss, model.trainable_variables)
+    optimizer.apply_gradients([
+        (g, v) for g, v in zip(grads, model.trainable_variables)
+    ])
+    return loss, tf.reduce_mean(llk), tf.reduce_mean(kl)
+
+  for it, x in tqdm(enumerate(train_ds.repeat(-1))):
+    loss, llk, kl = train_step(x)
+    if it % 5000 == 0:
+      with writer.as_default():
+        tf.summary.experimental.set_step(it)
+        tf.summary.scalar('loss', loss)
+        tf.summary.scalar('llk', llk)
+        tf.summary.scalar('kl', kl)
+        text = model.get_topics_string(vocabulary, n_topics=10)
+        tf.summary.text("topics", text)
+        perplexity = model.perplexity(data['test'])
+        tf.summary.scalar("perplexity", perplexity)
+        print(f"[#{int(model.step.numpy())}]Perplexity:{perplexity:.2f} "
+              f"loss:{loss:.2f} llk:{llk:.2f} kl:{kl:.2f}")
+        print("\n".join(text))
+    if it >= max_iter:
+      break
+  text = model.get_topics_string(vocabulary, n_topics=20)
+  perplexity = model.perplexity(data['test'])
+  print(f"[#{int(model.step.numpy())}]Perplexity:{perplexity:.2f}")
+  print("\n".join(text))
+
+
+train_dvae_model(dvae, optimizer)
+
+# dvae.fit(callback=partial(callback, vae=dvae), checkpoint=DVAE_PATH, **train_kw)
+# with dvae.summary_writer.as_default():
+#   callback(dvae, n_topics=20)
 exit()
 # VAE with Logistic-Normal latent posterior
 gvae = LDAVAE(lda_posterior="gaussian", path=GVAE_PATH, **init_kw)
@@ -363,7 +420,7 @@ else:
                                   verbose=True,
                                   n_jobs=4,
                                   random_state=1)
-  for n_iter, x in enumerate(tqdm(train, desc="Fitting LDA")):
+  for n_iter, x in enumerate(tqdm(train_ds.repeat(-1), desc="Fitting LDA")):
     lda.partial_fit(x)
     if n_iter > 20000:
       break

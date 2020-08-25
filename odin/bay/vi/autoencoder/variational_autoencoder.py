@@ -9,7 +9,7 @@ import warnings
 from functools import partial
 from itertools import zip_longest
 from numbers import Number
-from typing import Callable, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Text, Tuple, Union
 
 import numpy as np
 import scipy as sp
@@ -18,6 +18,7 @@ from six import string_types
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
 from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
+from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python import distributions as tfd
@@ -514,8 +515,17 @@ class VariationalAutoencoder(keras.Model, MD5object):
     self._save_path = None
     if path is not None:
       self.load_weights(path, raise_notfound=False, verbose=True)
-    self._encode_kw = inspect.getfullargspec(self.encode).args[1:]
-    self._decode_kw = inspect.getfullargspec(self.decode).args[1:]
+    # encode and decode arguments
+    self._encode_func_args = inspect.getfullargspec(self.encode).args[1:]
+    self._encoder_args = [
+        inspect.getfullargspec(i.call).args[1:]
+        for i in tf.nest.flatten(self.encoder)
+    ]
+    self._decode_func_args = inspect.getfullargspec(self.decode).args[1:]
+    self._decoder_args = [
+        inspect.getfullargspec(i.call).args[1:]
+        for i in tf.nest.flatten(self.decoder)
+    ]
 
   @property
   def init_args(self) -> dict:
@@ -669,10 +679,16 @@ class VariationalAutoencoder(keras.Model, MD5object):
 
   def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
     r""" Encoding inputs to latent codes """
-    outputs = [
-        encoder(inputs, training=training, mask=mask, **kwargs)
-        for encoder in tf.nest.flatten(self.encoder)
-    ]
+    outputs = []
+    for encoder, args in zip(tf.nest.flatten(self.encoder), self._encoder_args):
+      copy_kw = dict(kwargs)
+      if 'mask' in args:
+        copy_kw['mask'] = mask
+      if 'training' in args:
+        copy_kw['training'] = training
+      e = encoder(inputs, **copy_kw)
+      outputs.append(e)
+    # create the latents distribution
     qZ_X = [
         latent(code, training=training, sample_shape=sample_shape)
         for latent, code in _iter_lists(self.latent_layers, outputs)
@@ -693,8 +709,13 @@ class VariationalAutoencoder(keras.Model, MD5object):
     latents = self._prepare_decode_latents(latents, sample_shape)
     # apply the decoder and get back the sample shape
     outputs = []
-    for decoder in tf.nest.flatten(self.decoder):
-      out = decoder(latents, training=training, mask=mask, **kwargs)
+    for decoder, args in zip(tf.nest.flatten(self.decoder), self._decoder_args):
+      copy_kw = dict(kwargs)
+      if 'mask' in args:
+        copy_kw['mask'] = mask
+      if 'training' in args:
+        copy_kw['training'] = training
+      out = decoder(latents, **copy_kw)
       if len(sample_shape) > 0:
         list_outputs = False
         if not tf.is_tensor(out):
@@ -721,7 +742,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
         training=training,
         mask=mask,
         sample_shape=sample_shape,
-        **{k: v for k, v in kwargs.items() if k in self._encode_kw},
+        **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
     )
     # transfer the mask from encoder to decoder here
     for q in tf.nest.flatten(qZ_X):
@@ -733,7 +754,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
         training=training,
         mask=mask,
         sample_shape=sample_shape,
-        **{k: v for k, v in kwargs.items() if k in self._decode_kw},
+        **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
     )
     return pX_Z, qZ_X
 
@@ -1076,7 +1097,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
       callback: Optional[List[Callable]] = None,
       compile_graph: bool = True,
       autograph: bool = False,
-      logging_interval: float = 2,
+      logging_interval: float = 3,
       skip_fitted: bool = False,
       terminate_on_nan: bool = True,
       checkpoint: Optional[Union[Callable, str]] = None,
@@ -1183,11 +1204,29 @@ class VariationalAutoencoder(keras.Model, MD5object):
       print(f"Saved best checkpoint {str(checkpoint)}")
     return self
 
+  @property
+  def summary_writer(self) -> SummaryWriter:
+    if self.trainer is not None:
+      return self.trainer.summary_writer
+    return None
+
+  @property
+  def tensorboard(self) -> Dict[Text, Tuple[float, int, float]]:
+    if self.trainer is not None:
+      return self.trainer.tensorboard
+    return None
+
+  @property
+  def tensorboard_logdir(self) -> str:
+    if self.trainer is not None:
+      return self.trainer.logdir
+    return None
+
   def plot_learning_curves(self,
                            path="/tmp/tmp.png",
-                           summary_steps=[100, 10],
+                           summary_steps=[10, 5],
                            show_validation=True,
-                           dpi=100,
+                           dpi=200,
                            title=None):
     r""" Plot the learning curves on train and validation sets. """
     assert self.trainer is not None, \
@@ -1218,8 +1257,9 @@ class VariationalAutoencoder(keras.Model, MD5object):
     text = (f"{'->'.join([i.__name__ for i in cls[::-1]])} "
             f"(semi:{self.is_semi_supervised} self:{self.is_self_supervised} "
             f"weak:{self.is_weak_supervised})")
-    text += f'\n Analytic: {self.analytic}'
-    text += f'\n Fitted: {int(self.step.numpy())}(iters)'
+    text += f'\n Tensorboard : {self.tensorboard_logdir}'
+    text += f'\n Analytic    : {self.analytic}'
+    text += f'\n Fitted      : {int(self.step.numpy())}(iters)'
     text += f'\n MD5 checksum: {self.md5_checksum}'
     ## encoder
     for i, encoder in enumerate(tf.nest.flatten(self.encoder)):

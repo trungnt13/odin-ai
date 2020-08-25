@@ -92,7 +92,7 @@ class DenseDistribution(Dense):
       dropout: float = 0.0,
       activation: Union[str, Callable] = 'linear',
       use_bias: bool = True,
-      kernel_initializer: Union[str, Initializer, Callable] = 'glorot_uniform',
+      kernel_initializer: Union[str, Initializer, Callable] = 'glorot_normal',
       bias_initializer: Union[str, Initializer, Callable] = 'zeros',
       kernel_regularizer: Union[str, Regularizer, Callable] = None,
       bias_regularizer: Union[str, Regularizer, Callable] = None,

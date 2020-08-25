@@ -200,11 +200,6 @@ class OneHotCategoricalLayer(tfl.DistributionLambda):
 
   **kwargs: Additional keyword arguments passed to `tf.keras.Layer`.
 
-  Note
-  ----
-  If input as probability values is given, it will be clipped by value
-  [1e-8, 1 - 1e-8]
-
   """
 
   def __init__(self,
@@ -224,15 +219,21 @@ class OneHotCategoricalLayer(tfl.DistributionLambda):
           dtype=None,
           validate_args=False,
           name='OneHotCategoricalLayer'):
-    """Create the distribution instance from a `params` vector."""
+    r"""Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
-    return tfd.OneHotCategorical(
-        logits=params if not probs_input else None,
-        probs=tf.clip_by_value(params, 1e-8, 1 - 1e-8) \
-          if probs_input else None,
+    if probs_input:
+      logits = None
+      probs = params
+    else:
+      logits = params
+      probs = None
+    dist = tfd.OneHotCategorical(
+        logits=logits,
+        probs=probs,
         dtype=dtype or params.dtype,
         validate_args=validate_args,
         name=name)
+    return dist
 
   @staticmethod
   def params_size(event_shape, name='OneHotCategoricalLayer_params_size'):
