@@ -543,10 +543,11 @@ class MultinomialLayer(tfl.DistributionLambda):
                event_shape=(),
                count_activation='softplus',
                convert_to_tensor_fn=tfd.Distribution.sample,
-               validate_args=False):
+               validate_args=False,
+               name="MultinomialLayer"):
     super().__init__(
         lambda t: MultinomialLayer.new(t, event_shape, count_activation,
-                                       validate_args), convert_to_tensor_fn)
+                                       validate_args, name), convert_to_tensor_fn)
 
   @staticmethod
   def new(params,
@@ -579,29 +580,29 @@ class DirichletMultinomialLayer(tfl.DistributionLambda):
   def __init__(self,
                event_shape=(),
                count_activation='softplus',
-               alpha_activation='softplus1',
+               concentration_activation='softplus1',
                clip_for_stable=True,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False):
     super().__init__(
         lambda t: DirichletMultinomialLayer.
-        new(t, event_shape, count_activation, alpha_activation, clip_for_stable,
+        new(t, event_shape, count_activation, concentration_activation, clip_for_stable,
             validate_args), convert_to_tensor_fn)
 
   @staticmethod
   def new(params,
           event_shape=(),
           count_activation=tf.nn.softplus,
-          alpha_activation=softplus1,
+          concentration_activation=softplus1,
           clip_for_stable=True,
           validate_args=False,
           name='DirichletMultinomialLayer'):
     r"""Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     count_activation = parse_activation(count_activation, 'tf')
-    alpha_activation = parse_activation(alpha_activation, 'tf')
+    concentration_activation = parse_activation(concentration_activation, 'tf')
     total_count = count_activation(params[..., 0])
-    concentration = alpha_activation(params[..., 1:])
+    concentration = concentration_activation(params[..., 1:])
     if clip_for_stable:
       concentration = tf.clip_by_value(concentration, 1e-3, 1e3)
     return tfd.DirichletMultinomial(total_count=total_count,
@@ -623,10 +624,11 @@ class BinomialLayer(tfl.DistributionLambda):
                event_shape=(),
                count_activation='softplus',
                convert_to_tensor_fn=tfd.Distribution.sample,
-               validate_args=False):
+               validate_args=False,
+               name="BinomialLayer"):
     super().__init__(
         lambda t: BinomialLayer.new(t, event_shape, count_activation,
-                                    validate_args), convert_to_tensor_fn)
+                                    validate_args, name), convert_to_tensor_fn)
 
   @staticmethod
   def new(params,

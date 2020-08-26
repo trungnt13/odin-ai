@@ -135,23 +135,12 @@ def _to_optimizer(optimizer, learning_rate, clipnorm):
     all_optimizers.append(opt)
   return all_optimizers
 
-  # for i, decoder in enumerate(list(all_decoder)):
-  #   if isinstance(decoder, partial):
-  #     decoder = decoder(latent_shape=latent_shape)
-  #   elif isinstance(decoder, NetworkConfig):
-  #     decoder = decoder.create_network(latent_shape, name="Decoder")
-  #   elif isinstance(decoder, keras.layers.Layer):
-  #     if hasattr(decoder, 'input_shape'):
-  #       decoder_inshape = list(decoder.input_shape[1:])
-  #       if decoder_inshape != latent_shape:
-  #         warnings.warn(f"decoder has input_shape={decoder_inshape} "
-  #                       f"but latent_shape={latent_shape}")
-  #   else:
-  #     raise ValueError("No support for decoder type: %s" % str(type(decoder)))
-  #   all_decoder[i] = decoder
-
 
 def parse_network(network, is_encoder, input_shape) -> List[Layer]:
+  if network is None or \
+    (isinstance(network, string_types) and network in ('linear', 'identity')):
+    return keras.layers.Activation('linear',
+                                   name="Encoder" if is_encoder else "Decoder")
   if inspect.isfunction(network) or isinstance(network, partial):
     args = inspect.getfullargspec(network).args
     kw = dict()
@@ -553,7 +542,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
     return kw
 
   @property
-  def save_path(self):
+  def save_path(self) -> str:
     return self._save_path
 
   def load_weights(self, filepath, raise_notfound=False, verbose=False):
@@ -1122,11 +1111,17 @@ class VariationalAutoencoder(keras.Model, MD5object):
 
     """
     batch_size = int(batch_size)
+    # validate the dataset
     train = _to_dataset(train, batch_size, self.dtype)
     if valid is not None:
       valid = _to_dataset(valid, batch_size, self.dtype)
+    # validate the paths
     if checkpoint is None:
       checkpoint = self.save_path
+    elif self._save_path is None:
+      self._save_path = checkpoint
+    if logdir is None and checkpoint is not None:
+      logdir = f"{checkpoint}_logdir"
     # skip training if model is fitted or reached a number of iteration
     if self.is_fitted and skip_fitted:
       if isinstance(skip_fitted, bool):
@@ -1137,8 +1132,6 @@ class VariationalAutoencoder(keras.Model, MD5object):
     # create the trainer
     if self.trainer is None:
       with trackable.no_automatic_dependency_tracking_scope(self):
-        if logdir is None and checkpoint is not None:
-          logdir = f"{checkpoint}_logdir"
         trainer = Trainer(logdir=logdir)
         self.trainer = trainer
     else:

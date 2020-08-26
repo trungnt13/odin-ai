@@ -31,8 +31,23 @@ np.random.seed(1)
 args = ArgController(\
   ).add("-warmup", "number of iteration for warmup", 120000 \
   ).add("-niter", "maximum number of iteration", 180000 \
+  ).add("-posterior", "latents distribution", 'dirichlet' \
+  ).add("-distribution", "words distribution", 'onehot' \
   ).add("--override", "override exist model", False \
+  ).add("--em", "Using sklearn and EM algorithm", False \
   ).parse()
+
+# --em --override
+# -posterior gaussian -distribution onehot --override
+# -posterior gaussian -distribution poisson --override
+# -posterior gaussian -distribution binomial --override
+# -posterior gaussian -distribution negativebinomial --override
+# -posterior gaussian -distribution zinb --override
+# -posterior dirichlet -distribution onehot --override
+# -posterior dirichlet -distribution poisson --override
+# -posterior dirichlet -distribution binomial --override
+# -posterior dirichlet -distribution negativebinomial --override
+# -posterior dirichlet -distribution zinb --override
 
 # ===========================================================================
 # Configs
@@ -43,37 +58,33 @@ max_iter = int(args.niter)
 assert max_iter > warmup
 learning_rate = 3e-4
 batch_size = 128
+valid_freq = 5000
 
 # ===========================================================================
 # Path
 # ===========================================================================
 ROOT_PATH = "https://github.com/akashgit/autoencoding_vi_for_topic_models/raw/9db556361409ecb3a732f99b4ef207aeb8516f83/data/20news_clean"
 FILE_TEMPLATE = "{split}.txt.npy"
-CACHE_DIR = "/tmp/lda_vae"
+CACHE_DIR = "/tmp/lda_vae_data"
 if not os.path.exists(CACHE_DIR):
   os.makedirs(CACHE_DIR)
 # model path
-GVAE_PATH = os.path.join(CACHE_DIR, "gvae")
-DVAE_PATH = os.path.join(CACHE_DIR, "dvae")
-# logdir
-TFP_LOGDIR = os.path.join(CACHE_DIR, 'tfplog')
-if args.override:
-  print("Override model and remove:")
-  for f in glob.glob(f"{GVAE_PATH}*") + glob.glob(f"{DVAE_PATH}*"):
-    print("", f)
+if args.em:
+  LOGDIR = f"/tmp/lda_vae_model/em_dirichlet_multinomial"
+else:
+  LOGDIR = f"/tmp/lda_vae_model/vae_{args.posterior}_{args.distribution}"
+if os.path.exists(LOGDIR):
+  if args.override:
+    print("Override path:", LOGDIR)
+    shutil.rmtree(LOGDIR)
+  for f in glob.glob(f"{LOGDIR}*"):
     if os.path.isfile(f):
+      print("Override file:", f)
       os.remove(f)
-    else:
-      shutil.rmtree(f)
-  if os.path.exists(TFP_LOGDIR):
-    shutil.rmtree(TFP_LOGDIR)
-    print("", TFP_LOGDIR)
+else:
+  os.makedirs(LOGDIR)
 
-# LDA path
-LDA_PATH = os.path.join(CACHE_DIR, "lda.pkl")
-if args.override and os.path.exists(LDA_PATH):
-  print("Override model at:", LDA_PATH)
-  os.remove(LDA_PATH)
+print("Save path:", LOGDIR)
 
 # ===========================================================================
 # Download data
@@ -129,307 +140,93 @@ test_ds, _ = create_tfds(data['test'])
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _clip_dirichlet_parameters(x):
-  return tf.clip_by_value(x, 1e-3, 1e3)
-
-
-def _softplus_inverse(x):
-  return np.log(np.expm1(x))
-
-
-def make_encoder(projection=False) -> tf.keras.Sequential:
-  encoder_net = tf.keras.Sequential(name="Encoder")
-  for num_hidden_units in [300, 300, 300]:
-    encoder_net.add(
-        tf.keras.layers.Dense(
-            num_hidden_units,
-            activation="relu",
-            kernel_initializer=tf.initializers.glorot_normal()))
-  if projection:
-    encoder_net.add(
-        tf.keras.layers.Dense(
-            n_topics,
-            activation=tf.nn.softplus,
-            kernel_initializer=tf.initializers.glorot_normal()))
-  return encoder_net
-
-
-class LDADecoder(DistributionLambda):
-
-  def __init__(self):
-    super().__init__(make_distribution_fn=self.create_distribution,
-                     name="Decoder")
-
-  def build(self, input_shape):
-    self.topics_words_logits = self.add_weight(
-        name="topics_words_logits",
-        shape=[n_topics, n_words],
-        initializer=tf.initializers.glorot_normal(),
-        trainable=True)
-
-  def create_distribution(self, topics, *args, **kwargs):
-    topics_words = tf.nn.softmax(self.topics_words_logits, axis=-1)
-    word_probs = tf.matmul(topics, topics_words)
-    return tfd.OneHotCategorical(probs=word_probs, name="bag_of_words")
-
-
-def make_prior(logit_concentration):
-  concentration = _clip_dirichlet_parameters(
-      tf.nn.softplus(logit_concentration))
-  return tfd.Dirichlet(concentration=concentration, name="topics_prior")
-
-
-class LDAModel(keras.Model):
-
-  def __init__(self):
-    super().__init__()
-    self.step = self.add_weight(name="step",
-                                shape=(),
-                                initializer=tf.initializers.constant(0),
-                                trainable=False)
-    self.encoder = make_encoder(projection=True)
-    self.decoder = LDADecoder()
-    self.latents = DistributionLambda(lambda x: tfd.Dirichlet(
-        concentration=_clip_dirichlet_parameters(x), name="topics_posterior"))
-    self.logit_concentration = self.add_weight(
-        name="logit_concentration",
-        initializer=tf.initializers.constant(_softplus_inverse(0.7)),
-        shape=[1, n_topics],
-        trainable=True)
-    self(keras.Input(shape=(n_words,)))
-
-  def call(self, features, *args, **kwargs):
-    logit_concentration = tf.cond(
-        self.step <= warmup,
-        true_fn=lambda: tf.stop_gradient(self.logit_concentration),
-        false_fn=lambda: self.logit_concentration)
-    topics_prior = make_prior(logit_concentration)
-    alpha = topics_prior.concentration
-
-    e = self.encoder(features)
-    topics_posterior = self.latents(e)
-    topics = topics_posterior.sample()
-    random_reconstruction = self.decoder(topics)
-    reconstruction = random_reconstruction.log_prob(features)
-    kl = tfd.kl_divergence(topics_posterior, topics_prior)
-
-    tf.assert_greater(kl, -1e-3, message="kl")
-    elbo = reconstruction - kl
-    avg_elbo = tf.reduce_mean(input_tensor=elbo)
-    loss = -avg_elbo
-
-    tf.keras.callbacks.TensorBoard
-    words_per_document = tf.reduce_sum(input_tensor=features, axis=1)
-    log_perplexity = -elbo / words_per_document
-    log_perplexity_tensor = tf.reduce_mean(log_perplexity)
-    perplexity_tensor = tf.exp(log_perplexity_tensor)
-
-    return dict(loss=loss,
-                alpha=alpha,
-                llk=reconstruction,
-                kl=kl,
-                perplexity=perplexity_tensor)
-
-
-def train_tfp_model(model, optimizer):
-  writer = tf.summary.create_file_writer(TFP_LOGDIR)
-
-  @tf.function
-  def train_step(x):
-    model.step.assign_add(1)
-    with tf.GradientTape() as tape:
-      outputs = model(x)
-    grads = tape.gradient(outputs['loss'], model.trainable_variables)
-    optimizer.apply_gradients([
-        (g, v) for g, v in zip(grads, model.trainable_variables)
-    ])
-    return outputs
-
-  for it, x in tqdm(enumerate(train_ds.repeat(-1))):
-    outputs = train_step(x)
-    if it % 5000 == 0:
-      with writer.as_default():
-        tf.summary.experimental.set_step(it)
-        alpha = outputs.pop('alpha')
-        alpha = np.squeeze(alpha, axis=0)
-        highest_weight_topics = np.argsort(-alpha, kind="mergesort")
-        top_words = np.argsort(
-            -tf.nn.softmax(model.decoder.topics_words_logits, axis=-1), axis=1)
-        print(f"#Iter: {it} {int(model.step)}")
-        # metrics
-        for k, v in sorted(outputs.items()):
-          v = tf.reduce_mean(v)
-          print(f" {k:10s}:{v:.4f}")
-          tf.summary.scalar(k, v)
-        # test data
-        outputs = model(data['test'].toarray())
-        outputs.pop('alpha')
-        for k, v in sorted(outputs.items()):
-          v = tf.reduce_mean(v)
-          k = f"val_{k}"
-          print(f" {k:10s}:{v:.4f}")
-          tf.summary.scalar(k, v)
-        # topics
-        topic_text = []
-        for idx, topic_idx in enumerate(highest_weight_topics[:20]):
-          l = [
-              "[#{}]index={} alpha={:.2f}".format(idx, topic_idx,
-                                                  alpha[topic_idx])
-          ]
-          l += [vocabulary[word] for word in top_words[topic_idx, :10]]
-          l = " ".join(l)
-          print("", l)
-          topic_text.append(l)
-        tf.summary.text("topics", np.array(topic_text))
-    if it >= max_iter:
-      break
-  with writer.as_default():
-    with summary_ops_v2.always_record_summaries():
-      if not model.run_eagerly:
-        summary_ops_v2.graph(keras.backend.get_graph(), step=0)
-      summary_writable = (model._is_graph_network or
-                          model.__class__.__name__ == 'Sequential')
-      if summary_writable:
-        summary_ops_v2.keras_model(name=str(name), data=model, step=0)
-
-
-model = LDAModel()
-optimizer = tf.optimizers.Adam(learning_rate=learning_rate)
-train_tfp_model(model, optimizer)
-
-
-# ===========================================================================
-# Create LDAVAE
-# ===========================================================================
-def callback(vae: LDAVAE, n_topics=10):
-  print(f"*** {vae.lda_posterior} ***")
-  text = vae.get_topics_string(vocabulary, n_topics=n_topics)
-  tf.summary.text("topics", text)
-  perplexity = vae.perplexity(data['test'])
-  tf.summary.scalar("perplexity", perplexity)
-  print("\n".join(text))
-  print(f"[#{int(vae.step.numpy())}]Perplexity:", float(perplexity))
-  vae.plot_learning_curves(os.path.join(CACHE_DIR, f"{vae.lda_posterior}.png"),
-                           summary_steps=[10, 5])
-
-
-init_kw = dict(n_words=n_words,
-               n_topics=n_topics,
-               prior_init=0.7,
-               prior_warmup=warmup,
-               encoder=make_encoder)
-train_kw = dict(train=train_ds,
-                valid=test_ds,
-                max_iter=max_iter,
-                optimizer='adam',
-                learning_rate=learning_rate,
-                batch_size=batch_size,
-                valid_interval=20,
-                compile_graph=True,
-                skip_fitted=True)
-
-# VAE with Dirichlet latent posterior
-dvae = LDAVAE(lda_posterior="dirichlet", path=DVAE_PATH, **init_kw)
-optimizer = tf.optimizers.Adam(learning_rate=learning_rate)
-
-
-def train_dvae_model(model, optimizer):
-  writer = tf.summary.create_file_writer(DVAE_PATH + '_logdir')
-
-  @tf.function
-  def train_step(x):
-    model.step.assign_add(1)
-    with tf.GradientTape() as tape:
-      pX, qZ = model(x, training=True)
-      llk = pX.log_prob(x)
-      kl = tfd.kl_divergence(qZ, model.topics_prior_distribution())
-      elbo = llk - kl
-      loss = -tf.reduce_mean(elbo)
-    grads = tape.gradient(loss, model.trainable_variables)
-    optimizer.apply_gradients([
-        (g, v) for g, v in zip(grads, model.trainable_variables)
-    ])
-    return loss, tf.reduce_mean(llk), tf.reduce_mean(kl)
-
-  for it, x in tqdm(enumerate(train_ds.repeat(-1))):
-    loss, llk, kl = train_step(x)
-    if it % 5000 == 0:
-      with writer.as_default():
-        tf.summary.experimental.set_step(it)
-        tf.summary.scalar('loss', loss)
-        tf.summary.scalar('llk', llk)
-        tf.summary.scalar('kl', kl)
-        text = model.get_topics_string(vocabulary, n_topics=10)
-        tf.summary.text("topics", text)
-        perplexity = model.perplexity(data['test'])
-        tf.summary.scalar("perplexity", perplexity)
-        print(f"[#{int(model.step.numpy())}]Perplexity:{perplexity:.2f} "
-              f"loss:{loss:.2f} llk:{llk:.2f} kl:{kl:.2f}")
-        print("\n".join(text))
-    if it >= max_iter:
-      break
-  text = model.get_topics_string(vocabulary, n_topics=20)
-  perplexity = model.perplexity(data['test'])
-  print(f"[#{int(model.step.numpy())}]Perplexity:{perplexity:.2f}")
-  print("\n".join(text))
-
-
-train_dvae_model(dvae, optimizer)
-
-# dvae.fit(callback=partial(callback, vae=dvae), checkpoint=DVAE_PATH, **train_kw)
-# with dvae.summary_writer.as_default():
-#   callback(dvae, n_topics=20)
-exit()
-# VAE with Logistic-Normal latent posterior
-gvae = LDAVAE(lda_posterior="gaussian", path=GVAE_PATH, **init_kw)
-print(gvae)
-gvae.fit(callback=partial(callback, vae=gvae), checkpoint=GVAE_PATH, **train_kw)
-callback(gvae, n_topics=20)
-
-
-# ===========================================================================
-# LDA
-# ===========================================================================
-def print_topics(lda: LatentDirichletAllocation,
-                 top_topics=10,
-                 top_words=10,
-                 show_word_prob=False):
+def get_topics_text(lda: LatentDirichletAllocation, show_word_prob=False):
   topics = lda.components_
   alpha = np.sum(topics, axis=1)
   alpha = alpha / np.sum(alpha)
   topics = topics / np.sum(topics, axis=1, keepdims=True)
   # Use a stable sorting algorithm so that when alpha is fixed
   # we always get the same topics.
-  for topic_idx in np.argsort(-alpha, kind="mergesort")[:int(top_topics)]:
+  text = []
+  for topic_idx in np.argsort(-alpha, kind="mergesort")[:20]:
     words = topics[topic_idx]
     desc = " ".join(f"{vocabulary[i]}_{words[i]:.2f}"
                     if show_word_prob else f"{vocabulary[i]}"
-                    for i in np.argsort(-words)[:int(top_words)])
-    print(f"Topic#{topic_idx:3d} alpha={alpha[topic_idx]:.2f} {desc}")
+                    for i in np.argsort(-words)[:10])
+    text.append(f"Topic#{topic_idx:3d} alpha={alpha[topic_idx]:.2f} {desc}")
+  return text
 
 
-if os.path.exists(LDA_PATH):
-  with open(LDA_PATH, 'rb') as f:
-    lda = pickle.load(f)
+def callback(vae: LDAVAE):
+  print(f"*** {vae.lda_posterior}-{vae.word_distribution} ***")
+  text = vae.get_topics_string(vocabulary, n_topics=20)
+  tf.summary.text("topics", text)
+  perplexity = vae.perplexity(data['test'])
+  tf.summary.scalar("perplexity", perplexity)
+  print("\n".join(text))
+  print(f"[#{int(vae.step.numpy())}]Perplexity:", float(perplexity))
+
+
+# ===========================================================================
+# Create LDAVAE
+# ===========================================================================
+if not args.em:
+  # VAE with Dirichlet latent posterior
+  vae = LDAVAE(lda_posterior=args.posterior,
+               word_distribution=args.distribution,
+               path=LOGDIR,
+               n_words=n_words,
+               n_topics=n_topics,
+               prior_init=0.7,
+               prior_warmup=warmup,
+               encoder=NetworkConfig(units=[300, 300, 300]))
+  print(vae)
+  vae.fit(train=train_ds,
+          valid=test_ds,
+          max_iter=max_iter,
+          optimizer='adam',
+          learning_rate=learning_rate,
+          batch_size=batch_size,
+          valid_freq=valid_freq,
+          compile_graph=True,
+          logdir=LOGDIR,
+          checkpoint=LOGDIR,
+          callback=partial(callback, vae=vae),
+          skip_fitted=True)
+  with vae.summary_writer.as_default():
+    callback(vae)
+
+# ===========================================================================
+# LDA
+# ===========================================================================
 else:
-  lda = LatentDirichletAllocation(n_components=n_topics,
-                                  doc_topic_prior=0.7,
-                                  max_iter=100,
-                                  batch_size=32,
-                                  learning_method='online',
-                                  verbose=True,
-                                  n_jobs=4,
-                                  random_state=1)
-  for n_iter, x in enumerate(tqdm(train_ds.repeat(-1), desc="Fitting LDA")):
-    lda.partial_fit(x)
-    if n_iter > 20000:
-      break
-    if n_iter % 1000 == 0:
-      print()
-      print_topics(lda, top_topics=10)
-      print(f"[#{n_iter}] Perplexity:", lda.perplexity(data['test']))
-  with open(LDA_PATH, 'wb') as f:
-    pickle.dump(lda, f)
-# final evaluation
-print_topics(lda, top_topics=20)
-print(f"Perplexity:", lda.perplexity(data['test']))
+  if os.path.exists(LOGDIR + ".pkl"):
+    with open(LOGDIR + ".pkl", 'rb') as f:
+      lda = pickle.load(f)
+  else:
+    writer = tf.summary.create_file_writer(LOGDIR)
+    lda = LatentDirichletAllocation(n_components=n_topics,
+                                    doc_topic_prior=0.7,
+                                    learning_method='online',
+                                    verbose=True,
+                                    n_jobs=4,
+                                    random_state=1)
+    with writer.as_default():
+      prog = tqdm(train_ds.repeat(-1), desc="Fitting LDA")
+      for n_iter, x in enumerate(prog):
+        lda.partial_fit(x)
+        if n_iter % 500 == 0:
+          text = get_topics_text(lda)
+          perp = lda.perplexity(data['test'])
+          tf.summary.text("topics", text, n_iter)
+          tf.summary.scalar("perplexity", perp, n_iter)
+          prog.write(f"[#{n_iter}]Perplexity: {perp:.2f}")
+          prog.write("\n".join(text))
+        if n_iter >= 20000:
+          break
+    with open(LOGDIR + ".pkl", 'wb') as f:
+      pickle.dump(lda, f)
+  # final evaluation
+  text = get_topics_text(lda)
+  print(f"Perplexity:", lda.perplexity(data['test']))
+  print("\n".join(text))

@@ -7,7 +7,7 @@ from warnings import warn
 import numpy as np
 import scipy as sp
 import tensorflow as tf
-from tensorflow.python.keras import Input, Model, Sequential
+from tensorflow.python.keras import Input, Model, Sequential, activations
 from tensorflow.python.keras.layers import (Activation, BatchNormalization,
                                             Dense, Layer)
 from tensorflow_probability.python.math import softplus_inverse
@@ -15,9 +15,10 @@ from tensorflow_probability.python.math import softplus_inverse
 from odin.backend.tensor import dropout as apply_dropout
 from odin.bay.distributions import (Dirichlet, Distribution,
                                     MultivariateNormalDiag, OneHotCategorical)
-from odin.bay.layers import (DistributionLambda, NegativeBinomialLayer,
-                             OneHotCategoricalLayer, PoissonLayer,
-                             ZINegativeBinomialLayer)
+from odin.bay.layers import (BinomialLayer, DenseDistribution,
+                             DistributionLambda, MultinomialLayer,
+                             NegativeBinomialLayer, OneHotCategoricalLayer,
+                             PoissonLayer, ZINegativeBinomialLayer)
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
@@ -28,10 +29,16 @@ from odin.networks.sequential_networks import NetworkConfig
 # Helpers
 # ===========================================================================
 class LDAoutput(Layer):
+  r"""
+
+  Arguments:
+
+  """
 
   def __init__(self,
                n_words: int,
                distribution: str = 'negativebinomial',
+               inputs_activation: Union[str, Callable] = 'linear',
                dropout: float = 0.0,
                dropout_strategy: str = 'warmup',
                batch_norm: bool = False,
@@ -48,6 +55,7 @@ class LDAoutput(Layer):
       ("Support dropout strategy: all, warmup, finetune; "
        f"but given:{dropout_strategy}")
     self.dropout_strategy = str(dropout_strategy)
+    self.inputs_activation = activations.get(inputs_activation)
 
   def compute_output_shape(self, input_shape):
     return input_shape[:-1] + (self.n_words,)
@@ -60,6 +68,7 @@ class LDAoutput(Layer):
       self._batch_norm_layer = BatchNormalization(trainable=True)
     # output distribution
     kw = dict(event_shape=(self.n_words,), name="WordsCount")
+    count_activation = 'softplus'
     if self.distribution in ('onehot', 'categorical'):
       self.distribution_layer = OneHotCategoricalLayer(probs_input=True, **kw)
       self.n_parameterization = 1
@@ -67,13 +76,17 @@ class LDAoutput(Layer):
       self.distribution_layer = PoissonLayer(**kw)
       self.n_parameterization = 1
     elif self.distribution in ('negativebinomial', 'nb'):
-      self.distribution_layer = NegativeBinomialLayer(count_activation='exp',
-                                                      **kw)
+      self.distribution_layer = NegativeBinomialLayer(
+          count_activation=count_activation, **kw)
       self.n_parameterization = 2
     elif self.distribution in ('zinb',):
-      self.distribution_layer = ZINegativeBinomialLayer(count_activation='exp',
-                                                        **kw)
+      self.distribution_layer = ZINegativeBinomialLayer(
+          count_activation=count_activation, **kw)
       self.n_parameterization = 3
+    elif self.distribution in ('binomial',):
+      self.distribution_layer = BinomialLayer(count_activation=count_activation,
+                                              **kw)
+      self.n_parameterization = 2
     else:
       raise ValueError(f"No support for word distribution: {self.distribution}")
     # topics words parameterization
@@ -91,7 +104,8 @@ class LDAoutput(Layer):
       pass
     elif isinstance(self.distribution_layer, PoissonLayer):
       pass
-    elif isinstance(self.distribution_layer, NegativeBinomialLayer):
+    elif isinstance(self.distribution_layer,
+                    (NegativeBinomialLayer, MultinomialLayer, BinomialLayer)):
       # total_count, success_logits
       logits = logits[..., -self.n_words:]
     elif isinstance(self.distribution_layer, ZINegativeBinomialLayer):
@@ -102,6 +116,7 @@ class LDAoutput(Layer):
   def call(self, docs_topics, training=None, *args, **kwargs):
     if training:
       self.step.assign_add(1)
+    docs_topics = self.inputs_activation(docs_topics)
     docs_words_logits = tf.matmul(docs_topics, self.topics_words_params)
     # perform dropout
     if self.dropout > 0:
@@ -134,8 +149,10 @@ class LDAoutput(Layer):
 
   def __str__(self):
     return (f"<LDAoutput distribution:{self.distribution} "
+            f"activation:{self.inputs_activation.__name__}"
             f"topics:{self.n_topics} vocab:{self.n_words} "
-            f"dropout:{self.dropout} batchnorm:{self.batch_norm}>")
+            f"dropout:({self.dropout_strategy}{self.dropout}) "
+            f"batchnorm:{self.batch_norm}>")
 
 
 # ===========================================================================
@@ -183,7 +200,6 @@ class LDAVAE(BetaVAE):
     prior_warmup : int (default: 10000)
       The number of training steps with fixed prior, only applied for Dirichlet
       LDA's posterior
-
 
   Note:
     The algorithm is trained for 180000 iteration on Newsgroup20 dataset,
@@ -239,7 +255,8 @@ class LDAVAE(BetaVAE):
     n_topics = int(n_topics)
     if lda_posterior == 'dirichlet':
       posterior = "dirichlet"
-      post_kwargs = dict(alpha_activation=activation, alpha_clip=clipping)
+      post_kwargs = dict(concentration_activation=activation,
+                         concentration_clip=clipping)
     elif lda_posterior == "gaussian":
       posterior = "gaussiandiag"
       post_kwargs = dict(loc_activation='identity', scale_activation=activation)
@@ -293,7 +310,7 @@ class LDAVAE(BetaVAE):
           name="topics_prior_logits",
       )
       self.latent_layers[0].prior = self.topics_prior_distribution
-    else:
+    elif lda_posterior == "gaussian":
       self.latent_layers[0].prior = MultivariateNormalDiag(
           loc=tf.zeros(shape=[1, n_topics], dtype=self.dtype),
           scale_identity_multiplier=1.,
@@ -338,7 +355,7 @@ class LDAVAE(BetaVAE):
     r""" Create the prior distribution (i.e. the Dirichlet topics distribution),
     `batch_shape=(1,)` and `event_shape=(n_topics,)` """
     if self.lda_posterior == "dirichlet":
-      # prior warm-up: stop gradients update for prior parameters
+      # warm-up: stop gradients update for prior parameters
       logits = tf.cond(
           self.step <= self.prior_warmup,
           true_fn=lambda: tf.stop_gradient(self.topics_prior_logits),
@@ -348,7 +365,8 @@ class LDAVAE(BetaVAE):
         concentration = tf.clip_by_value(concentration, 1e-3, 1e3)
       return Dirichlet(concentration=concentration, name="TopicsPrior")
     # logistic-normal
-    return self.latent_layers[0].prior
+    elif self.lda_posterior == "gaussian":
+      return self.latent_layers[0].prior
 
   ######## Utilities methods
   def get_topics_string(self,
