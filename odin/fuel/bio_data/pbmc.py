@@ -19,6 +19,7 @@ class PBMC(BioDataset):
   }
 
   def __init__(self, dataset='5k', path="~/tensorflow_datasets/pbmc"):
+    super().__init__()
     path = os.path.abspath(os.path.expanduser(path))
     self.dsname = dataset
     if not os.path.exists(path):
@@ -41,13 +42,6 @@ class PBMC(BioDataset):
     self.xvar = data['xvar']
     self.yvar = data['yvar']
     self.pairs = data['pairs']
-    ### split train, valid, test data
-    rand = np.random.RandomState(seed=1)
-    n = self.x.shape[0]
-    ids = rand.permutation(n)
-    self.train_ids = ids[:int(0.85 * n)]
-    self.valid_ids = ids[int(0.85 * n):int(0.9 * n)]
-    self.test_ids = ids[int(0.9 * n):]
 
   @property
   def name(self):

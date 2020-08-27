@@ -34,8 +34,12 @@ def _load_single_cell_data(url, path):
   with open(os.path.join(extracted_path, 'labels'), 'rb') as f:
     labels = np.load(f, allow_pickle=True)
   # store data
-  x = X.todense().astype(np.float32)
-  y = y.todense().astype(np.float32)
+  x = X
+  if isinstance(x, (sparse.coo_matrix, sparse.dok_matrix)):
+    x = x.tocsr()
+  y = y
+  if isinstance(y, (sparse.coo_matrix, sparse.dok_matrix)):
+    y = y.tocsr()
   xvar = var_names
   yvar = labels
   return x, y, xvar, yvar
@@ -48,13 +52,6 @@ class Cortex(BioDataset):
     url = b'aHR0cHM6Ly9haS1kYXRhc2V0cy5zMy5hbWF6b25hd3MuY29tL2NvcnRleC56aXA=\n'
     self.x, self.y, self.xvar, self.yvar = _load_single_cell_data(url=url,
                                                                   path=path)
-    # split train, valid, test data
-    rand = np.random.RandomState(seed=1)
-    n = self.x.shape[0]
-    ids = rand.permutation(n)
-    self.train_ids = ids[:int(0.85 * n)]
-    self.valid_ids = ids[int(0.85 * n):int(0.9 * n)]
-    self.test_ids = ids[int(0.9 * n):]
 
   @property
   def name(self):

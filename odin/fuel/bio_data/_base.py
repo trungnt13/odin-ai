@@ -10,7 +10,25 @@ from odin.fuel.dataset_base import IterableDataset, get_partition
 from odin.utils.crypto import md5_checksum
 
 
+def _tensor(x):
+  if isinstance(x, sparse.spmatrix):
+    x = tf.SparseTensor(indices=sorted(zip(*x.nonzero())),
+                        values=x.data,
+                        dense_shape=x.shape)
+  return tf.data.Dataset.from_tensor_slices(x)
+
+
 class BioDataset(IterableDataset):
+
+  def __init__(self):
+    super().__init__()
+    self.x = None
+    self.y = None
+    self.xvar = None
+    self.yvar = None
+    self.train_ids = None
+    self.valid_ids = None
+    self.test_ids = None
 
   @property
   def var_names(self):
@@ -46,27 +64,42 @@ class BioDataset(IterableDataset):
                      partition='train',
                      inc_labels=False,
                      seed=1) -> tf.data.Dataset:
-    for attr in ('x', 'y', 'xvar', 'yvar', 'train_ids', 'valid_ids',
-                 'test_ids'):
+    for attr in ('x', 'y', 'xvar', 'yvar'):
       assert hasattr(self, attr)
+      assert getattr(self, attr) is not None
+    # split train, valid, test data
+    if not hasattr(self, 'train_ids') or self.train_ids is None:
+      rand = np.random.RandomState(seed=1)
+      n = self.x.shape[0]
+      ids = rand.permutation(n)
+      self.train_ids = ids[:int(0.85 * n)]
+      self.valid_ids = ids[int(0.85 * n):int(0.9 * n)]
+      self.test_ids = ids[int(0.9 * n):]
     ids = get_partition(partition,
                         train=self.train_ids,
                         valid=self.valid_ids,
                         test=self.test_ids)
-    x = self.x[ids]
-    y = self.y[ids]
+    is_sparse_x = isinstance(self.x, sparse.spmatrix)
+    is_sparse_y = isinstance(self.y, sparse.spmatrix)
+    x = _tensor(self.x[ids])
+    y = _tensor(self.y[ids])
     gen = tf.random.experimental.Generator.from_seed(seed=seed)
 
     def _process(*data):
+      data = list(data)
+      if is_sparse_x:
+        data[0] = tf.sparse.to_dense(data[0])
+      if is_sparse_y and len(data) > 1:
+        data[1] = tf.sparse.to_dense(data[1])
+      data = tuple([tf.cast(i, tf.float32) for i in data])
       if inc_labels:
         if 0. < inc_labels < 1.:  # semi-supervised mask
           mask = gen.uniform(shape=(1,)) < inc_labels
           return dict(inputs=data, mask=mask)
       return data
 
-    ds = tf.data.Dataset.from_tensor_slices(x)
     if inc_labels > 0.:
-      ds = tf.data.Dataset.zip((ds, tf.data.Dataset.from_tensor_slices(y)))
+      ds = tf.data.Dataset.zip((x, y))
     ds = ds.map(_process, parallel)
     if cache is not None:
       ds = ds.cache(str(cache))
