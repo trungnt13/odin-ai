@@ -11,6 +11,7 @@ from odin.utils.crypto import md5_checksum
 
 
 def _tensor(x):
+  x = x.astype(np.float32)
   if isinstance(x, sparse.spmatrix):
     x = tf.SparseTensor(indices=sorted(zip(*x.nonzero())),
                         values=x.data,
@@ -91,7 +92,7 @@ class BioDataset(IterableDataset):
         data[0] = tf.sparse.to_dense(data[0])
       if is_sparse_y and len(data) > 1:
         data[1] = tf.sparse.to_dense(data[1])
-      data = tuple([tf.cast(i, tf.float32) for i in data])
+      data = tuple(data)
       if inc_labels:
         if 0. < inc_labels < 1.:  # semi-supervised mask
           mask = gen.uniform(shape=(1,)) < inc_labels
