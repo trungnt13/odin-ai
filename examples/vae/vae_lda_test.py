@@ -6,6 +6,7 @@ import pickle
 import shutil
 import urllib
 from functools import partial
+from typing import Dict, Tuple
 
 import numpy as np
 import scipy as sp
@@ -17,7 +18,7 @@ from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.layers import DistributionLambda
 from tqdm import tqdm
 
-from odin.bay.vi import LDAVAE, NetworkConfig
+from odin.bay.vi import AmortizedLDA, NetworkConfig
 from odin.exp import Trainer
 from odin.utils import ArgController
 
@@ -38,17 +39,17 @@ args = ArgController(\
   ).parse()
 
 # --em --override
-# -posterior gaussian -distribution onehot --override
-# -posterior gaussian -distribution poisson --override
-# -posterior gaussian -distribution binomial --override
-# -posterior gaussian -distribution negativebinomial --override
-# -posterior gaussian -distribution zinb --override
-# -posterior dirichlet -distribution onehot --override
-# -posterior dirichlet -distribution poisson --override
-# -posterior dirichlet -distribution binomial --override
-# -posterior dirichlet -distribution negativebinomial --override
-# -posterior dirichlet -distribution zinb --override
+# python vae_lda_test.py -posterior gaussian -distribution onehot --override
+# python vae_lda_test.py -posterior gaussian -distribution poisson --override
+# python vae_lda_test.py -posterior gaussian -distribution negativebinomial --override
+# python vae_lda_test.py -posterior gaussian -distribution zinb --override
+# python vae_lda_test.py -posterior dirichlet -distribution onehot --override
+# python vae_lda_test.py -posterior dirichlet -distribution poisson --override
+# python vae_lda_test.py -posterior dirichlet -distribution negativebinomial --override
+# python vae_lda_test.py -posterior dirichlet -distribution zinb --override
 
+# -posterior gaussian -distribution binomial --override
+# -posterior dirichlet -distribution binomial --override
 # ===========================================================================
 # Configs
 # ===========================================================================
@@ -63,8 +64,6 @@ valid_freq = 5000
 # ===========================================================================
 # Path
 # ===========================================================================
-ROOT_PATH = "https://github.com/akashgit/autoencoding_vi_for_topic_models/raw/9db556361409ecb3a732f99b4ef207aeb8516f83/data/20news_clean"
-FILE_TEMPLATE = "{split}.txt.npy"
 CACHE_DIR = "/tmp/lda_vae_data"
 if not os.path.exists(CACHE_DIR):
   os.makedirs(CACHE_DIR)
@@ -86,41 +85,46 @@ else:
 
 print("Save path:", LOGDIR)
 
+
 # ===========================================================================
 # Download data
 # ===========================================================================
-filename = [
-    ("vocab.pkl", os.path.join(ROOT_PATH, "vocab.pkl")),
-    ("train", os.path.join(ROOT_PATH, FILE_TEMPLATE.format(split="train"))),
-    ("test", os.path.join(ROOT_PATH, FILE_TEMPLATE.format(split="test"))),
-]
-data = {}
-for name, url in filename:
-  filepath = os.path.join(CACHE_DIR, name)
-  # download
-  if not os.path.exists(filepath):
-    print(f"Download file {filepath}")
-    urllib.request.urlretrieve(url, filepath)
-  # load
-  if '.pkl' in name:
-    with open(filepath, 'rb') as f:
-      words_to_idx = pickle.load(f)
-    n_words = len(words_to_idx)
-    data[name.split(".")[0]] = words_to_idx
-  else:
-    x = np.load(filepath, allow_pickle=True, encoding="latin1")[:-1]
-    n_documents = x.shape[0]
-    indices = np.array([(row_idx, column_idx)
-                        for row_idx, row in enumerate(x)
-                        for column_idx in row])
-    sparse_matrix = sp.sparse.coo_matrix(
-        (np.ones(indices.shape[0]), (indices[:, 0], indices[:, 1])),
-        shape=(n_documents, n_words),
-        dtype=np.float32)
-    sparse_matrix = sparse_matrix.tocsr()
-    data[name] = sparse_matrix
-
-vocabulary = {idx: word for word, idx in words_to_idx.items()}
+def download_newsgroup20(
+    data_dir) -> Tuple[Dict[str, np.ndarray], Dict[int, str]]:
+  root_path = "https://github.com/akashgit/autoencoding_vi_for_topic_models/raw/9db556361409ecb3a732f99b4ef207aeb8516f83/data/20news_clean"
+  file_template = "{split}.txt.npy"
+  filename = [
+      ("vocab.pkl", os.path.join(root_path, "vocab.pkl")),
+      ("train", os.path.join(root_path, file_template.format(split="train"))),
+      ("test", os.path.join(root_path, file_template.format(split="test"))),
+  ]
+  data = {}
+  for name, url in filename:
+    filepath = os.path.join(data_dir, name)
+    # download
+    if not os.path.exists(filepath):
+      print(f"Download file {filepath}")
+      urllib.request.urlretrieve(url, filepath)
+    # load
+    if '.pkl' in name:
+      with open(filepath, 'rb') as f:
+        words_to_idx = pickle.load(f)
+      n_words = len(words_to_idx)
+      data[name.split(".")[0]] = words_to_idx
+    else:
+      x = np.load(filepath, allow_pickle=True, encoding="latin1")[:-1]
+      n_documents = x.shape[0]
+      indices = np.array([(row_idx, column_idx)
+                          for row_idx, row in enumerate(x)
+                          for column_idx in row])
+      sparse_matrix = sp.sparse.coo_matrix(
+          (np.ones(indices.shape[0]), (indices[:, 0], indices[:, 1])),
+          shape=(n_documents, n_words),
+          dtype=np.float32)
+      sparse_matrix = sparse_matrix.tocsr()
+      data[name] = sparse_matrix
+  vocabulary = {idx: word for word, idx in words_to_idx.items()}
+  return data, vocabulary
 
 
 def create_tfds(x):
@@ -133,6 +137,8 @@ def create_tfds(x):
   return x, shape
 
 
+data, vocabulary = download_newsgroup20(CACHE_DIR)
+n_words = len(vocabulary)
 train_ds, input_shape = create_tfds(data['train'])
 test_ds, _ = create_tfds(data['test'])
 
@@ -157,7 +163,7 @@ def get_topics_text(lda: LatentDirichletAllocation, show_word_prob=False):
   return text
 
 
-def callback(vae: LDAVAE):
+def callback(vae: AmortizedLDA):
   print(f"*** {vae.lda_posterior}-{vae.word_distribution} ***")
   text = vae.get_topics_string(vocabulary, n_topics=20)
   tf.summary.text("topics", text)
@@ -168,18 +174,18 @@ def callback(vae: LDAVAE):
 
 
 # ===========================================================================
-# Create LDAVAE
+# Create AmortizedLDA
 # ===========================================================================
 if not args.em:
   # VAE with Dirichlet latent posterior
-  vae = LDAVAE(lda_posterior=args.posterior,
-               word_distribution=args.distribution,
-               path=LOGDIR,
-               n_words=n_words,
-               n_topics=n_topics,
-               prior_init=0.7,
-               prior_warmup=warmup,
-               encoder=NetworkConfig(units=[300, 300, 300]))
+  vae = AmortizedLDA(lda_posterior=args.posterior,
+                     word_distribution=args.distribution,
+                     path=LOGDIR,
+                     n_words=n_words,
+                     n_topics=n_topics,
+                     prior_init=0.7,
+                     prior_warmup=warmup,
+                     encoder=NetworkConfig(units=[300, 300, 300]))
   print(vae)
   vae.fit(train=train_ds,
           valid=test_ds,

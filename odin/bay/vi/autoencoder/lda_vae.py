@@ -29,9 +29,27 @@ from odin.networks.sequential_networks import NetworkConfig
 # Helpers
 # ===========================================================================
 class LDAoutput(Layer):
-  r"""
+  r""" Parameterized word distribution layer for latent dirichlet allocation
+  algorithm
 
   Arguments:
+    n_words : int
+      number of input features or size of word dictionary for bag-of-words
+      data
+    distribution : {'categorical', 'negativebinomial', 'binomial', 'poisson',
+      'zinb'}
+      the output word distribution
+    inputs_activation : str or Callable
+      activation applying on the inputs to this layer
+    dropout: float (default: 0.0).
+      Dropout value for the docs-words logits matrix.
+    dropout_strategy: {'all', 'warmup', 'finetune'}
+      decide when applying dropout on docs-words logits matrix:
+        - 'warmup' : only applying dropout during warmup phase.
+        - 'finetune' : only applying dropout during topic priors finetuning.
+        - 'all' : always applying dropout.
+    batch_norm: bool (default: False).
+      Batch normalization for docs-words logits matrix
 
   """
 
@@ -158,7 +176,7 @@ class LDAoutput(Layer):
 # ===========================================================================
 # Main class
 # ===========================================================================
-class LDAVAE(BetaVAE):
+class AmortizedLDA(BetaVAE):
   r""" Variational Latent Dirichlet Allocation
 
   Two models are implemented:
@@ -194,7 +212,7 @@ class LDAVAE(BetaVAE):
         - 'finetune' : only applying dropout during topic priors finetuning.
         - 'all' : always applying dropout.
     batch_norm: bool (default: False).
-      Batch normalization for
+      Batch normalization for docs-words logits matrix
     prior_init : float (default=0.7)
       the initial topic prior concentration for Dirichlet distribution
     prior_warmup : int (default: 10000)

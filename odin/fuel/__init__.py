@@ -3,7 +3,7 @@ from odin.fuel.databases import *
 from odin.fuel.dataset import *
 from odin.fuel.image_data import *
 from odin.fuel.loaders import *
-from odin.fuel.pbmc import *
+from odin.fuel.bio_data import *
 from odin.fuel.human_genome import *
 from odin.fuel.dataset_base import *
 from odin.fuel.nlp_data import *
