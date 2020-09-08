@@ -2,7 +2,9 @@
 # conda activate odin
 name: odin
 channels:
-  - https://conda.anaconda.org/conda-forge
+  - conda-forge
+  - rapidsai
+  - nvidia
   - defaults
 
 dependencies:
@@ -14,6 +16,7 @@ dependencies:
   - tqdm
   - dill
   - jax==0.1.75
+  - rapids==0.15
 
   - pip:
       - tensorflow==2.3.0
@@ -30,7 +33,10 @@ dependencies:
       - bigarray==0.2.1
       - pandas>=1.0.3
       - hydra-core
+      - spacy
+      - umap-learn
+
 # Other helpful library:
 # pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git
-# conda install -c rapidsai -c nvidia -c conda-forge -c defaults rapids=0.12 python=3.7 cudatoolkit=10.1
+# conda install -c rapidsai -c nvidia -c conda-forge -c defaults rapids=0.15 python=3.7
 # pip install umap-learn

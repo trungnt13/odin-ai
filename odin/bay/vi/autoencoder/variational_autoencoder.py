@@ -567,11 +567,14 @@ class VariationalAutoencoder(keras.Model, MD5object):
     self._save_path = filepath
     return self
 
-  def save_weights(self, filepath, overwrite=True):
+  def save_weights(self, filepath: Union[str] = None, overwrite: bool = True):
     r""" Just copy this function here to fix the `save_format` to 'tf'
 
     Since saving 'h5' will drop certain variables.
     """
+    if filepath is None:
+      filepath = self.save_path
+    assert filepath is not None
     with open(filepath + '.trainer', 'wb') as f:
       pickle.dump(self.trainer, f)
     logging.get_logger().disabled = True
@@ -1148,7 +1151,6 @@ class VariationalAutoencoder(keras.Model, MD5object):
       raise RuntimeError("No optimizer found!")
     # prepare the callback
     callback_functions = [i for i in tf.nest.flatten(callback) if callable(i)]
-    best_weights = [int(self.step.numpy()), self.get_weights()]
     if checkpoint is not None:
       assert isinstance(checkpoint, string_types) or callable(checkpoint), \
         ("checkpoint can be path for saving weights or callable, "
@@ -1164,9 +1166,6 @@ class VariationalAutoencoder(keras.Model, MD5object):
         ret = f()
         if ret is not None:
           signal = ret
-      if trainer.current_valid_loss[-1] <= min(trainer.current_valid_loss):
-        best_weights[0] = int(self.step.numpy())
-        best_weights[1] = self.get_weights()
       return signal
 
     self.trainer.fit(
@@ -1189,9 +1188,6 @@ class VariationalAutoencoder(keras.Model, MD5object):
         callback=_callback,
     )
     # restore best weights
-    if best_weights[0] > 0:
-      self.set_weights(best_weights[1])
-      print(f"Restored best weights from step {best_weights[0]}")
     if checkpoint is not None:
       checkpoint_fn()
       print(f"Saved best checkpoint {str(checkpoint)}")

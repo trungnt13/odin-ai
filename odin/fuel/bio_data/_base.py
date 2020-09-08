@@ -1,5 +1,6 @@
 import base64
 import os
+from typing import Dict, List, Optional, Union
 from urllib.request import urlretrieve
 
 import numpy as np
@@ -32,39 +33,55 @@ class BioDataset(IterableDataset):
     self.test_ids = None
 
   @property
-  def var_names(self):
+  def genes_dictionary(self) -> Dict[int, str]:
+    attr_name = '_gene_dictionary'
+    if not hasattr(self, attr_name):
+      setattr(self, attr_name,
+              {idx: name for idx, name in enumerate(self.var_names)})
+    return getattr(self, attr_name)
+
+  @property
+  def vocabulary(self) -> Dict[int, str]:
+    return self.genes_dictionary
+
+  @property
+  def vocabulary_size(self) -> int:
+    return len(self.vocabulary)
+
+  @property
+  def var_names(self) -> List[str]:
     return self.xvar
 
   @property
-  def name(self):
+  def name(self) -> str:
     raise NotImplementedError
 
   @property
-  def n_labels(self):
+  def n_labels(self) -> int:
     return self.y.shape[1]
 
   @property
-  def labels(self):
+  def labels(self) -> List[str]:
     return self.yvar
 
   @property
-  def shape(self):
+  def shape(self) -> List[int]:
     return tuple(self.x.shape[1:])
 
   @property
-  def is_binary(self):
+  def is_binary(self) -> bool:
     return False
 
   def create_dataset(self,
-                     batch_size=64,
-                     drop_remainder=False,
-                     shuffle=1000,
-                     prefetch=tf.data.experimental.AUTOTUNE,
-                     cache='',
-                     parallel=None,
-                     partition='train',
-                     inc_labels=False,
-                     seed=1) -> tf.data.Dataset:
+                     batch_size: int = 64,
+                     drop_remainder: bool = False,
+                     shuffle: Optional[int] = 1000,
+                     prefetch: int = tf.data.experimental.AUTOTUNE,
+                     cache: str = '',
+                     parallel: Optional[int] = None,
+                     partition: str = 'train',
+                     inc_labels: bool = False,
+                     seed: int = 1) -> tf.data.Dataset:
     for attr in ('x', 'y', 'xvar', 'yvar'):
       assert hasattr(self, attr)
       assert getattr(self, attr) is not None
@@ -97,8 +114,9 @@ class BioDataset(IterableDataset):
         if 0. < inc_labels < 1.:  # semi-supervised mask
           mask = gen.uniform(shape=(1,)) < inc_labels
           return dict(inputs=data, mask=mask)
-      return data
+      return data[0] if len(data) == 1 else data
 
+    ds = x
     if inc_labels > 0.:
       ds = tf.data.Dataset.zip((x, y))
     ds = ds.map(_process, parallel)

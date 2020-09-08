@@ -17,4 +17,4 @@ class HumanEmbryos(BioDataset):
 
   @property
   def name(self):
-    return f"cortex"
+    return f"embryos"

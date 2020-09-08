@@ -17,16 +17,19 @@ from __future__ import absolute_import, division, print_function
 
 import warnings
 from collections import defaultdict
+from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import scipy as sp
 from sklearn.cluster import KMeans
 from sklearn.ensemble import GradientBoostingClassifier
-from sklearn.metrics import (adjusted_mutual_info_score, adjusted_rand_score,
-                             mutual_info_score, normalized_mutual_info_score,
-                             silhouette_score)
+from sklearn.metrics import adjusted_mutual_info_score, adjusted_rand_score
+from sklearn.metrics import completeness_score as _cluster_completeness_score
+from sklearn.metrics import (homogeneity_score, mutual_info_score,
+                             normalized_mutual_info_score, silhouette_score)
 from sklearn.metrics.cluster import entropy as entropy1D
 from sklearn.mixture import GaussianMixture
+from tqdm import tqdm
 
 from odin.bay.vi.downstream_metrics import *
 from odin.utils import catch_warnings_ignore
@@ -71,57 +74,100 @@ def _unsupervised_clustering_accuracy(y, y_pred):
   return sum([reward_matrix[i, j] for i, j in ind]) * 1.0 / y_pred.size, ind
 
 
-def _clustering_scores(X, y, algo, seed):
-  assert X.ndim == 2 and y.ndim == 1
+def _clustering_scores(y, X=None, z=None, algo='kmeans', random_state=1):
   n_factors = len(np.unique(y))
-  # simple normalization to 0-1, then pick the argmax
-  if algo == 'kmeans':
-    km = KMeans(n_factors, n_init=200, random_state=seed)
-    y_pred = km.fit_predict(X)
-  elif algo == 'gmm':
-    gmm = GaussianMixture(n_factors, random_state=seed)
-    gmm.fit(X)
-    y_pred = gmm.predict(X)
-  elif algo in ('both', 'avg', 'avr', 'average', 'mean'):
-    score1 = _clustering_scores(X, y, algo='kmeans', seed=seed)
-    score2 = _clustering_scores(X, y, algo='gmm', seed=seed)
-    return {k: (v + score2[k]) / 2 for k, v in score1.items()}
+  if z is None:
+    if algo == 'kmeans':
+      model = KMeans(n_factors, n_init=200, random_state=random_state)
+    elif algo == 'gmm':
+      model = GaussianMixture(n_factors, random_state=random_state)
+    elif algo in ('both', 'avg', 'avr', 'average', 'mean'):
+      score1 = _clustering_scores(X=X,
+                                  y=y,
+                                  z=z,
+                                  algo='kmeans',
+                                  random_state=random_state)
+      score2 = _clustering_scores(X=X,
+                                  y=y,
+                                  z=z,
+                                  algo='gmm',
+                                  random_state=random_state)
+      return {k: (v + score2[k]) / 2 for k, v in score1.items()}
+    else:
+      raise ValueError("Not support for prediction_algorithm: '%s'" % algo)
+    # the scores
+    y_pred = model.fit_predict(X)
   else:
-    raise ValueError("Not support for prediction_algorithm: '%s'" % algo)
-  # the scores
+    z = z.ravel()
+    assert z.shape[0] == y.shape[0], \
+      f"predictions must have shape: {y.shape}, but given: {z.shape}"
+    y_pred = z
   with catch_warnings_ignore(FutureWarning):
-    asw_score = silhouette_score(X, y)
-    ari_score = adjusted_rand_score(y, y_pred)
-    nmi_score = normalized_mutual_info_score(y, y_pred)
-    uca_score = _unsupervised_clustering_accuracy(y, y_pred)[0]
-  return dict(ASW=asw_score, ARI=ari_score, NMI=nmi_score, UCA=uca_score)
+    return dict(
+        ASW=silhouette_score(X if X is not None else np.expand_dims(z, axis=-1),
+                             y),
+        ARI=adjusted_rand_score(y, y_pred),
+        NMI=normalized_mutual_info_score(y, y_pred),
+        UCA=_unsupervised_clustering_accuracy(y, y_pred)[0],
+        HOS=homogeneity_score(y, y_pred),
+        COS=_cluster_completeness_score(y, y_pred),
+    )
 
 
-def unsupervised_clustering_scores(representations,
-                                   factors,
-                                   algorithm='both',
-                                   seed=1):
+def unsupervised_clustering_scores(factors: np.ndarray,
+                                   representations: Optional[np.ndarray] = None,
+                                   predictions: Optional[np.ndarray] = None,
+                                   algorithm: str = 'both',
+                                   random_state: int = 1,
+                                   n_cpu: int = 1,
+                                   verbose: bool = True) -> Dict[str, float]:
   r""" Calculating the unsupervised clustering Scores:
 
-    - ASW: silhouette_score (higher is better, best is 1, worst is -1)
-    - ARI: adjusted_rand_score (range [0, 1] - higher is better)
-    - NMI: normalized_mutual_info_score (range [0, 1] - higher is better)
-    - UCA: unsupervised_clustering_accuracy (range [0, 1] - higher is better)
-
-  Note: remember the order of returned value, the time complexity is
-  exponential as the number of labels increasing
+    - ASW : silhouette_score ([-1, 1], higher is better)
+        is calculated using the mean intra-cluster distance and the
+        mean nearest-cluster distance (b) for each sample. Values near 0
+        indicate overlapping clusters
+    - ARI : adjusted_rand_score ([-1, 1], higher is better)
+        A similarity measure between two clusterings by considering all pairs
+        of samples and counting pairs that are assigned in the same or
+        different clusters in the predicted and true clusterings.
+        Similarity score between -1.0 and 1.0. Random labelings have an ARI
+        close to 0.0. 1.0 stands for perfect match.
+    - NMI : normalized_mutual_info_score ([0, 1], higher is better)
+        Normalized Mutual Information between two clusterings.
+        1.0 stands for perfectly complete labeling
+    - UCA : unsupervised_clustering_accuracy ([0, 1], higher is better)
+        accuracy of the linear assignment between predicted labels and
+        ground-truth labels.
+    - HOS : homogeneity_score ([0, 1], higher is better)
+        A clustering result satisfies homogeneity if all of its clusters
+        contain only data points which are members of a single class.
+        1.0 stands for perfectly homogeneous
+    - COS : completeness_score ([0, 1], higher is better)
+        A clustering result satisfies completeness if all the data points
+        that are members of a given class are elements of the same cluster.
+        1.0 stands for perfectly complete labeling
 
   Arguments:
-    factors : a Matrix. Categorical factors (i.e. one-hot encoded), or multiple
-      factors
-    algorithm : {'kmean', 'gmm', 'both'}. The clustering algorithm for
-      assigning the cluster from representations
+    factors : a Matrix.
+      Categorical factors (i.e. one-hot encoded), or multiple factors.
+    algorithm : {'kmeans', 'gmm', 'both'}.
+      The clustering algorithm for assigning the cluster from representations
 
   Return:
-    dict(ASW=asw_score, ARI=ari_score, NMI=nmi_score, UCA=uca_score)
+    Dict mapping score alias to its scalar value
 
+  Note:
+    The time complexity is exponential as the number of labels increasing
   """
-  assert factors.ndim == 2, "Only support factors as a matrix."
+  if factors.ndim == 1:
+    factors = np.expand_dims(factors, axis=-1)
+  assert representations is not None or predictions is not None, \
+    "either representations or predictions must be provided"
+  ### preprocessing factors
+  # multinomial :
+  # binary :
+  # multibinary :
   factor_type = 'multinomial'
   if np.all(np.unique(factors) == [0., 1.]):
     if np.all(np.sum(factors, axis=1) == 1.):
@@ -130,12 +176,12 @@ def unsupervised_clustering_scores(representations,
       factor_type = 'multibinary'
   # start scoring
   if factor_type == 'binary':
-    return _clustering_scores(representations, np.argmax(factors, axis=1),
-                              algorithm, seed)
+    return _clustering_scores(X=representations,
+                              z=predictions,
+                              y=np.argmax(factors, axis=1),
+                              algo=algorithm,
+                              random_state=random_state)
   if factor_type in ('multinomial', 'multibinary'):
-    from tqdm import tqdm
-    scores = defaultdict(list)
-    prog = tqdm(desc="Scoring clusters", total=factors.shape[1])
 
     def _get_scores(idx):
       y = factors[:, idx]
@@ -144,18 +190,30 @@ def unsupervised_clustering_scores(representations,
         y = np.array([uni[i] for i in y])
       else:
         y = y.astype(np.int32)
-      return _clustering_scores(representations, y, algorithm, seed)
+      return _clustering_scores(X=representations,
+                                z=predictions,
+                                y=y,
+                                algo=algorithm,
+                                random_state=random_state)
 
-    ncpu = min(max(1, get_cpu_count() // 2 + 1), 10)
-    for s in MPI(jobs=list(range(factors.shape[1])),
-                 func=_get_scores,
-                 batch=1,
-                 ncpu=ncpu):
+    scores = defaultdict(list)
+    if factors.shape[1] == 1:
+      verbose = False
+    prog = tqdm(desc="Scoring clusters",
+                total=factors.shape[1],
+                disable=not verbose)
+    if n_cpu == 1:
+      it = (_get_scores(idx) for idx in range(factors.shape[1]))
+    else:
+      it = MPI(jobs=list(range(factors.shape[1])),
+               func=_get_scores,
+               batch=1,
+               ncpu=n_cpu)
+    for s in it:
       prog.update(1)
       for k, v in s.items():
         scores[k].append(v)
     return {k: np.mean(v) for k, v in scores.items()}
-  raise NotImplementedError("No support for factor type: %s" % factor_type)
 
 
 # ===========================================================================

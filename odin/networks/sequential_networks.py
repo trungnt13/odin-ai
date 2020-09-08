@@ -501,6 +501,9 @@ class NetworkConfig(dict):
     )
     return decoder
 
+  def __call__(self, input_shape=None, name=None) -> SequentialNetwork:
+    return self.create_network(input_shape=input_shape, name=name)
+
   def create_network(self, input_shape=None, name=None) -> SequentialNetwork:
     r"""
     Arguments:

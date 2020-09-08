@@ -7,13 +7,16 @@ from warnings import warn
 import numpy as np
 import scipy as sp
 import tensorflow as tf
+from scipy import sparse
+from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.keras import Input, Model, Sequential, activations
 from tensorflow.python.keras.layers import (Activation, BatchNormalization,
                                             Dense, Layer)
 from tensorflow_probability.python.math import softplus_inverse
+from tqdm import tqdm
 
 from odin.backend.tensor import dropout as apply_dropout
-from odin.bay.distributions import (Dirichlet, Distribution,
+from odin.bay.distributions import (Dirichlet, Distribution, LogitNormal,
                                     MultivariateNormalDiag, OneHotCategorical)
 from odin.bay.layers import (BinomialLayer, DenseDistribution,
                              DistributionLambda, MultinomialLayer,
@@ -87,7 +90,7 @@ class LDAoutput(Layer):
     # output distribution
     kw = dict(event_shape=(self.n_words,), name="WordsCount")
     count_activation = 'softplus'
-    if self.distribution in ('onehot', 'categorical'):
+    if self.distribution in ('categorical'):
       self.distribution_layer = OneHotCategoricalLayer(probs_input=True, **kw)
       self.n_parameterization = 1
     elif self.distribution in ('poisson',):
@@ -167,7 +170,7 @@ class LDAoutput(Layer):
 
   def __str__(self):
     return (f"<LDAoutput distribution:{self.distribution} "
-            f"activation:{self.inputs_activation.__name__}"
+            f"activation:{self.inputs_activation.__name__} "
             f"topics:{self.n_topics} vocab:{self.n_words} "
             f"dropout:({self.dropout_strategy}{self.dropout}) "
             f"batchnorm:{self.batch_norm}>")
@@ -259,61 +262,53 @@ class AmortizedLDA(BetaVAE):
   ):
     ### input shape
     n_words = int(n_words)
-    input_shape = kwargs.pop('input_shape', None)
-    if input_shape is not None:
-      warn(message=f"Ignore provided input_shape={input_shape}",
-           category=UserWarning)
-    input_shape = (n_words,)
+    input_shape = kwargs.pop('input_shape', (n_words,))
     ### topic latents distribution
     lda_posterior = str(lda_posterior).lower().strip()
-    latents = kwargs.pop("latents", None)
-    if latents is not None:
-      warn(message=f"Ignore provided latents variable {latents}",
-           category=UserWarning)
     n_topics = int(n_topics)
     if lda_posterior == 'dirichlet':
       posterior = "dirichlet"
       post_kwargs = dict(concentration_activation=activation,
                          concentration_clip=clipping)
     elif lda_posterior == "gaussian":
-      posterior = "gaussiandiag"
+      posterior = "gaussiandiag"  # should this be independent Normal
       post_kwargs = dict(loc_activation='identity', scale_activation=activation)
     else:
       raise NotImplementedError(
           "Support one of the following latent distribution: "
           "'gaussian', 'logistic', 'dirichlet'")
-    latents = RandomVariable(event_shape=(n_topics,),
-                             posterior=posterior,
-                             projection=True,
-                             kwargs=post_kwargs,
-                             name="DocsTopics")
-    self.lda_posterior = lda_posterior
+    latents = kwargs.pop(
+        "latents",
+        RandomVariable(event_shape=(n_topics,),
+                       posterior=posterior,
+                       projection=True,
+                       kwargs=post_kwargs,
+                       name="DocsTopics"))
     ### output layer
     # The observations are bag of words and therefore not one-hot. However,
     # log_prob of OneHotCategorical computes the probability correctly in
     # this case.
-    outputs = kwargs.pop('outputs', None)
-    if outputs is not None:
-      warn(message=f"Ignore provided outputs={outputs}")
-    outputs = LDAoutput(n_words=n_words,
-                        distribution=word_distribution,
-                        dropout=dropout,
-                        dropout_strategy=dropout_strategy,
-                        batch_norm=batch_norm,
-                        warmup=prior_warmup)
+    outputs = kwargs.pop(
+        'outputs',
+        LDAoutput(n_words=n_words,
+                  distribution=word_distribution,
+                  dropout=dropout,
+                  dropout_strategy=dropout_strategy,
+                  batch_norm=batch_norm,
+                  warmup=prior_warmup))
     ### analytic
-    if 'analytic' not in kwargs:
-      kwargs['analytic'] = True
-    super().__init__(latents=latents,
-                     input_shape=input_shape,
+    analytic = kwargs.pop('analytic', True)
+    super().__init__(input_shape=input_shape,
+                     latents=latents,
                      encoder=encoder,
                      decoder=decoder,
                      outputs=outputs,
                      beta=beta,
+                     analytic=analytic,
                      **kwargs)
-    ### store attributes
-    self.n_topics = int(n_topics)
-    self.n_words = int(n_words)
+    ### attributes
+    self.n_topics = n_topics
+    self.n_words = n_words
     self.clipping = bool(clipping)
     self.lda_posterior = lda_posterior
     self.word_distribution = word_distribution
@@ -387,6 +382,42 @@ class AmortizedLDA(BetaVAE):
       return self.latent_layers[0].prior
 
   ######## Utilities methods
+  def predict_topics(
+      self,
+      inputs,
+      hard_topics=False,
+      verbose=True) -> Union[Dirichlet, MultivariateNormalDiag, tf.Tensor]:
+    if not isinstance(inputs, DatasetV2):
+      inputs = [inputs]
+    concentration = []
+    loc, scale_diag = [], []
+    if verbose:
+      inputs = tqdm(inputs, desc="Predicting topics")
+    for x in inputs:
+      qZ_X = self.encode(x, training=False, sample_shape=())
+      if self.lda_posterior == 'dirichlet':
+        concentration.append(qZ_X.concentration)
+      elif self.lda_posterior == 'gaussian':
+        loc.append(qZ_X.loc)
+        scale_diag.append(qZ_X.scale._diag)
+    # final distribution
+    if self.lda_posterior == 'dirichlet':
+      concentration = tf.concat(concentration, axis=0)
+      dist = Dirichlet(concentration=concentration, name="TopicsDistribution")
+      if hard_topics:
+        return tf.argmax(dist.mean(), axis=-1)
+      return dist
+    elif self.lda_posterior == 'gaussian':
+      loc = tf.concat(loc, axis=0)
+      scale_diag = tf.concat(scale_diag, axis=0)
+      dist = MultivariateNormalDiag(loc=loc,
+                                    scale_diag=scale_diag,
+                                    name="TopicsDistribution")
+      if hard_topics:
+        probs = tf.nn.softmax(dist.mean(), axis=-1)
+        return tf.argmax(probs, axis=-1)
+      return dist
+
   def get_topics_string(self,
                         vocabulary: Dict[int, str],
                         n_words: int = 10,
@@ -394,6 +425,8 @@ class AmortizedLDA(BetaVAE):
                         show_word_prob: bool = False) -> List[str]:
     r""" Print most relevant topics and its most representative words
     distribution """
+    n_topics = min(int(n_topics), self.n_topics)
+    n_words = min(int(n_words), self.n_words)
     topics = self.topics_words_probs
     alpha = np.squeeze(self.topics_prior_concentration, axis=0)
     # Use a stable sorting algorithm so that when alpha is fixed
@@ -409,21 +442,75 @@ class AmortizedLDA(BetaVAE):
           f"[#{idx}]index:{topic_idx:3d} alpha={alpha[topic_idx]:.2f} {desc}")
     return np.array(text)
 
-  def perplexity(self, inputs, elbo=None) -> float:
+  def perplexity(self,
+                 inputs: Union[sparse.spmatrix, np.ndarray, tf.Tensor,
+                               DatasetV2],
+                 elbo=None,
+                 verbose=True) -> float:
     r""" The perplexity is an exponent of the average negative ELBO per word. """
-    if isinstance(inputs, sp.sparse.spmatrix):
-      inputs = inputs.toarray()
-    if elbo is None:
-      pX, qZ = self(inputs, training=False, sample_shape=())
-      elbo = self.elbo(inputs,
-                       pX_Z=pX,
-                       qZ_X=qZ,
-                       sample_shape=(),
-                       training=False,
-                       analytic=True)
-    # calculate the perplexity
-    words_per_doc = tf.reduce_sum(inputs, axis=-1)
-    log_perplexity = -elbo / words_per_doc
+    ### given an tensorflow interable dataset
+    if isinstance(inputs, DatasetV2):
+      log_perplexity = []
+      if verbose:
+        inputs = tqdm(inputs, desc="Calculating perplexity")
+      for x in inputs:
+        pX, qZ = self(x, training=False, sample_shape=())
+        elbo = self.elbo(x,
+                         pX_Z=pX,
+                         qZ_X=qZ,
+                         sample_shape=(),
+                         training=False,
+                         analytic=True)
+        words_per_doc = tf.reduce_sum(x, axis=-1)
+        log_perplexity.append(-elbo / words_per_doc)
+      log_perplexity = tf.concat(log_perplexity, axis=-1)
+    ### just single calculation
+    else:
+      if isinstance(inputs, sparse.spmatrix):
+        inputs = inputs.toarray()
+      if elbo is None:
+        pX, qZ = self(inputs, training=False, sample_shape=())
+        elbo = self.elbo(inputs,
+                         pX_Z=pX,
+                         qZ_X=qZ,
+                         sample_shape=(),
+                         training=False,
+                         analytic=True)
+      # calculate the perplexity
+      words_per_doc = tf.reduce_sum(inputs, axis=-1)
+      log_perplexity = -elbo / words_per_doc
+    ### final average
     log_perplexity_tensor = tf.reduce_mean(log_perplexity)
     perplexity_tensor = tf.exp(log_perplexity_tensor)
     return perplexity_tensor
+
+
+# ===========================================================================
+# VAELDA
+# ===========================================================================
+class LDVAE(AmortizedLDA):
+
+  def __init__(
+      self,
+      n_words: int,
+      n_topics: int = 20,
+      lda_posterior="dirichlet",
+      word_distribution="negativebinomial",
+      activation: Union[str, Callable] = 'softplus',
+      clipping: bool = True,
+      dropout: float = 0.0,
+      dropout_strategy: str = 'warmup',
+      batch_norm: bool = False,
+      prior_init: float = 0.7,
+      prior_warmup: int = 10000,
+      encoder: Union[Layer, NetworkConfig] = NetworkConfig(name="Encoder"),
+      decoder: Union[Layer, NetworkConfig] = NetworkConfig(name="Decoder"),
+      latents: Union[Layer,
+                     RandomVariable] = RandomVariable(10,
+                                                      posterior='gaussiandiag',
+                                                      projection=True,
+                                                      name="Latents"),
+      beta: float = 1.0,
+      **kwargs,
+  ):
+    super().__init__(input_shape=(int(n_words),))

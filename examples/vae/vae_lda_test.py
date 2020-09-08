@@ -33,17 +33,17 @@ args = ArgController(\
   ).add("-warmup", "number of iteration for warmup", 120000 \
   ).add("-niter", "maximum number of iteration", 180000 \
   ).add("-posterior", "latents distribution", 'dirichlet' \
-  ).add("-distribution", "words distribution", 'onehot' \
+  ).add("-distribution", "words distribution", 'categorical' \
   ).add("--override", "override exist model", False \
   ).add("--em", "Using sklearn and EM algorithm", False \
   ).parse()
 
 # --em --override
-# python vae_lda_test.py -posterior gaussian -distribution onehot --override
+# python vae_lda_test.py -posterior gaussian -distribution categorical --override
 # python vae_lda_test.py -posterior gaussian -distribution poisson --override
 # python vae_lda_test.py -posterior gaussian -distribution negativebinomial --override
 # python vae_lda_test.py -posterior gaussian -distribution zinb --override
-# python vae_lda_test.py -posterior dirichlet -distribution onehot --override
+# python vae_lda_test.py -posterior dirichlet -distribution categorical --override
 # python vae_lda_test.py -posterior dirichlet -distribution poisson --override
 # python vae_lda_test.py -posterior dirichlet -distribution negativebinomial --override
 # python vae_lda_test.py -posterior dirichlet -distribution zinb --override

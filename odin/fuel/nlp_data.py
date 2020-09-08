@@ -1,13 +1,19 @@
 import os
 import pickle
+import re
+from abc import ABCMeta, abstractproperty
+from itertools import chain
 from numbers import Number
 from types import MethodType
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, Generator, Iterable, List, Optional, Tuple, Union
+from urllib.request import urlretrieve
 
 import numpy as np
 import tensorflow as tf
+from numpy import ndarray
+from scipy import sparse
 from scipy.sparse import csr_matrix, spmatrix
-from six import string_types
+from six import add_metaclass, string_types
 from sklearn.datasets import fetch_20newsgroups
 from sklearn.exceptions import NotFittedError
 from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
@@ -28,34 +34,145 @@ except ImportError:
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _prepare_doc(document: str):
-  if os.path.exists(document) and os.path.isfile(document):
-    with open(document, "r") as f:
-      return f.read()
-  return document
+def download_newsgroup20_vocab(
+    data_dir="/tmp/newsgroup20_data") -> Dict[str, int]:
+  import pickle
+  import urllib
+  data_dir = os.path.abspath(os.path.expanduser(data_dir))
+  if not os.path.exists(data_dir):
+    os.makedirs(data_dir)
+  root_path = "https://github.com/akashgit/autoencoding_vi_for_topic_models/raw/9db556361409ecb3a732f99b4ef207aeb8516f83/data/20news_clean"
+  url = os.path.join(root_path, "vocab.pkl")
+  filepath = os.path.join(data_dir, os.path.basename(url))
+  urllib.request.urlretrieve(url, filepath)
+  with open(filepath, 'rb') as f:
+    return pickle.load(f)
 
 
+_token_pattern = re.compile(r"(?u)\b[a-fA-F]\w+\b")
+
+
+def _simple_tokenizer(doc: str) -> List[str]:
+  return _token_pattern.findall(doc)
+
+
+def _simple_preprocess(doc: str) -> str:
+  doc = doc.lower().strip()
+  doc = re.sub(r"'", "", doc)
+  doc = re.sub(r"\W", " ", doc)
+  doc = re.sub(r"\s+", " ", doc)
+  return doc
+
+
+# ===========================================================================
+# Base dataset
+# ===========================================================================
+@add_metaclass(ABCMeta)
 class NLPDataset(IterableDataset):
+  r"""
+  Arguments:
+    algorithm: {'tf', 'tfidf', 'bert'}
+      Which algorithm used for tokenizing
+        'tf' - term frequency or bag-of-words
+        'tfidf' - term count and inverse document frequency
+        'count' - count vectorizer
+        'bert' - BERT tokenizer
+    vocab_size: int
+      The size of the final vocabulary, including all tokens and alphabet.
+    min_frequency: int
+      When building the vocabulary ignore terms that have a document
+      frequency strictly lower than the given threshold. This value is also
+      called cut-off in the literature.
+      If float in range of [0.0, 1.0], the parameter represents a proportion
+      of documents, integer absolute counts.
+      This parameter is ignored if vocabulary is not None.
+    max_frequency : float or int, default=1.0
+      When building the vocabulary ignore terms that have a document
+      frequency strictly higher than the given threshold (corpus-specific
+      stop words).
+      If float in range [0.0, 1.0], the parameter represents a proportion of
+      documents, integer absolute counts.
+      This parameter is ignored if vocabulary is not None.
+    limit_alphabet: int
+      The maximum different characters to keep in the alphabet.
+    max_length : int
+      longest document length
+    ngram_range : tuple (min_n, max_n), default=(1, 1)
+      The lower and upper boundary of the range of n-values for different
+      n-grams to be extracted. All values of n such that min_n <= n <= max_n
+      will be used. For example an ``ngram_range`` of ``(1, 1)`` means only
+      only bigrams.
+      Only applies if ``analyzer is not callable``.
+  """
 
   def __init__(self,
-               tokenizer: Optional[BaseTokenizer] = None,
-               max_length: Optional[int] = None,
+               algorithm: str = 'tf',
+               vocab_size: int = 1000,
+               min_frequency: int = 2,
+               max_frequency: float = 0.98,
+               limit_alphabet: int = 1000,
+               max_length: Optional[int] = 1000,
+               ngram_range: Tuple[int, int] = (1, 1),
+               vocabulary: Dict[str, int] = None,
+               retrain_tokenizer: bool = False,
                cache_path: str = "~/nlp_data"):
     self._cache_path = os.path.abspath(os.path.expanduser(cache_path))
-    if tokenizer is None and \
-      os.path.exists(self.tokenizer_path) and \
-        os.path.isdir(self.tokenizer_path):
-      pkl_path = os.path.join(self.tokenizer_path, "tokenizer.pkl")
-      if os.path.isfile(pkl_path):
-        with open(pkl_path, 'rb') as f:
-          tokenizer = pickle.load(f)
-    self._tokenizer = tokenizer
-    # defaults
     self._labels = []
-    self._max_length = max_length
-    # vectorizers
-    self._count_vectorizers: Dict[str, CountVectorizer] = dict()
-    self._tfidf_vectorizers: Dict[str, TfidfVectorizer] = dict()
+    #
+    self._vocabulary = None
+    if vocabulary is not None:
+      vocab_size = len(vocabulary)
+      with open(os.path.join(self.cache_path, "bert_vocab.txt"), 'w') as f:
+        for special_token in ("[SEP]", "[UNK]", "[CLS]", "[PAD]", "[MASK]"):
+          f.write(f"{special_token}\n")
+        for term, idx in sorted(vocabulary.items(), key=lambda x: x[-1]):
+          f.write(term + '\n')
+    self._init_vocabulary = vocabulary
+    self.max_length = max_length
+    self.vocab_size = int(vocab_size)
+    self.min_frequency = int(min_frequency)
+    self.max_frequency = float(max_frequency)
+    self.limit_alphabet = int(limit_alphabet)
+    self.ngram_range = tuple(ngram_range)
+    self.retrain_tokenizer = bool(retrain_tokenizer)
+    # load exists tokenizer
+    algorithm = str(algorithm).lower().strip()
+    assert algorithm in ('tf', 'tfidf', 'bert', 'count'), \
+      f"Support algorithm: tf, tfidf, count and bert; but given:{algorithm}"
+    self.algorithm = algorithm
+    self._tokenizer = None
+
+  @property
+  def shape(self) -> List[int]:
+    return self.transform('train').shape[1:]
+
+  @property
+  def labels(self) -> List[str]:
+    return np.array(self._labels)
+
+  @abstractproperty
+  def train_text(self) -> Iterable[str]:
+    raise NotImplementedError
+
+  @abstractproperty
+  def valid_text(self) -> Iterable[str]:
+    raise NotImplementedError
+
+  @abstractproperty
+  def test_text(self) -> Iterable[str]:
+    raise NotImplementedError
+
+  @property
+  def train_labels(self) -> Union[ndarray, spmatrix]:
+    return np.asarray([])
+
+  @property
+  def valid_labels(self) -> Union[ndarray, spmatrix]:
+    return np.asarray([])
+
+  @property
+  def test_labels(self) -> Union[ndarray, spmatrix]:
+    return np.asarray([])
 
   def filter_by_length(
       self,
@@ -83,246 +200,130 @@ class NLPDataset(IterableDataset):
     mask = np.logical_and(lengths > lmin, lengths < lmax)
     return mask, lmin, lmax
 
-  def __call__(self,
-               X: Union[str, List[str]],
-               y: Optional[List[str]] = None,
-               padding: bool = True,
-               return_type="ids",
-               **kwargs) -> Union[List[Encoding], List[str], List[int]]:
-    r""" Transform inputs text and labels into vectors
-
-    Arguments:
-      X : input documents
-      y : labels (optional)
-      padding : perform post-process padding
-      return_type : str {'ids', 'tokens', 'encoding', 'tf', 'tfidf'}
-      kwargs : dict, extra keywords for `NLPDataset.vectorize` method
-    """
-    X = np.asarray(self.encode(X))
-    # store the documents
-    if y is not None:
-      y = np.asarray(y)
-      ids = self.labels_indices
-      y = one_hot(np.asarray([self.labels_indices[i] for i in y]),
-                  self.n_labels)
-    # prepare the padding
-    if self.tokenizer.padding and padding:
-      X = self.post_process(X)
-    if return_type == "ids":
-      X = np.asarray([i.ids for i in X])
-    elif return_type == "tokens":
-      X = np.asarray([i.tokens for i in X])
-    elif return_type == "encoding":
-      pass
-    elif return_type == "tf":
-      X = self.vectorize((i.tokens for i in X), algorithm='tf', **kwargs)
-    elif return_type == "tfidf":
-      X = self.vectorize((i.tokens for i in X), algorithm='tfidf', **kwargs)
-    else:
-      raise NotImplementedError(f"No support for return_type='{return_type}'")
-    return X if y is None else (X, y)
-
-  def vectorize(
-      self,
-      documents: Optional[Union[str, List[str]]] = None,
-      ngram_range: List[int] = (1, 1),
-      max_df: float = 0.95,
-      min_df: float = 2,
-      max_features: int = 1000,
-      sparse: str = 'csr',
-      algorithm: str = 'tf',
-  ) -> Union[spmatrix, CountVectorizer, TfidfVectorizer]:
-    r""" Vectorizing the tokens vector
-
-    Arguments:
-      ngram_range : tuple (min_n, max_n), default=(1, 1)
-          The lower and upper boundary of the range of n-values for different
-          n-grams to be extracted. All values of n such that min_n <= n <= max_n
-          will be used. For example an ``ngram_range`` of ``(1, 1)`` means only
-          unigrams, ``(1, 2)`` means unigrams and bigrams, and ``(2, 2)`` means
-          only bigrams.
-          Only applies if ``analyzer is not callable``.
-
-      max_df : float or int, default=1.0
-          When building the vocabulary ignore terms that have a document
-          frequency strictly higher than the given threshold (corpus-specific
-          stop words).
-          If float in range [0.0, 1.0], the parameter represents a proportion of
-          documents, integer absolute counts.
-          This parameter is ignored if vocabulary is not None.
-
-      min_df : float or int, default=1
-          When building the vocabulary ignore terms that have a document
-          frequency strictly lower than the given threshold. This value is also
-          called cut-off in the literature.
-          If float in range of [0.0, 1.0], the parameter represents a proportion
-          of documents, integer absolute counts.
-          This parameter is ignored if vocabulary is not None.
-
-      max_features : int, default=None
-          If not None, build a vocabulary that only consider the top
-          max_features ordered by term frequency across the corpus.
-
-      sparse : str, {'csr', 'csc', 'coo', 'dok', 'lil'}.
-        Sparse matrix format.
-
-      algorithm: str, {'tfidf', 'tf', 'count'}
-        strategy for vectorization.
-    """
-    algorithm = str(algorithm).lower().strip()
-    assert algorithm in ('tf', 'count', 'tfidf'), \
-      f"Only support 'count' (or 'tf') and 'tfidf' algorithm, given {algorithm}"
-    key = f"{ngram_range}({min_df},{max_df}){max_features}"
-    if algorithm in ('tf', 'count'):
-      models = self._count_vectorizers
-      algo = CountVectorizer
-    else:
-      models = self._tfidf_vectorizers
-      algo = TfidfVectorizer
-    if key not in models:
-      vectorizer = algo(ngram_range=ngram_range,
-                        max_df=max_df,
-                        min_df=min_df,
-                        max_features=max_features)
-      models[key] = vectorizer
-    vectorizer = models[key]
-    if documents is not None:
-      documents = (_prepare_doc(i)
-                   if isinstance(i, string_types) else ' '.join(i)
-                   for i in documents)
-      try:
-        check_is_fitted(vectorizer)
-        x = vectorizer.transform(documents)
-      except NotFittedError:
-        x = vectorizer.fit_transform(documents)
-      if sparse != 'csr':
-        x = getattr(x, f'to{sparse.lower()}')()
-      # sorted ensure right ordering for Tensorflow SparseTensor
-      x.totensor = MethodType(
-          lambda self: tf.SparseTensor(indices=sorted(zip(*self.nonzero())),
-                                       values=x.data,
-                                       dense_shape=x.shape), x)
+  def transform(self,
+                documents: Optional[Union[str, List[str]]] = None) -> spmatrix:
+    r""" Vectorize the input documents """
+    # cached transformed dataset
+    if isinstance(documents, string_types) and \
+      documents in ('train', 'valid', 'test'):
+      attr_name = f'_x_{documents}'
+      if hasattr(self, attr_name):
+        return getattr(self, attr_name)
+      x = self.transform(
+          get_partition(documents,
+                        train=self.train_text,
+                        valid=self.valid_text,
+                        test=self.test_text))
+      setattr(self, attr_name, x)
       return x
-    return vectorizer
-
-  @property
-  def labels(self) -> List[str]:
-    return np.array(self._labels)
-
-  @property
-  def max_length(self) -> Union[None, int]:
-    return self._max_length
+    # other data
+    if self.algorithm in ('tf', 'tfidf', 'count'):
+      x = self.tokenizer.transform(documents)
+      # sorted ensure right ordering for Tensorflow SparseTensor
+    else:
+      if isinstance(documents, Generator):
+        documents = [i for i in documents]
+      x = sparse.csr_matrix(
+          [i.ids for i in self.encode(documents, post_process=True)])
+    return x
 
   @property
   def cache_path(self) -> str:
-    p = os.path.join(self._cache_path, self.__class__.__name__)
-    if not os.path.exists(p):
-      os.makedirs(p)
-    return p
+    if not os.path.exists(self._cache_path):
+      os.makedirs(self._cache_path)
+    return self._cache_path
+
+  @property
+  def tokenizer(self) -> Union[BaseTokenizer, CountVectorizer, TfidfVectorizer]:
+    pkl_path = os.path.join(self.tokenizer_path, "model.pkl")
+    if self._tokenizer is not None:
+      return self._tokenizer
+    ### get pickled tokenizer
+    if os.path.exists(pkl_path) and not self.retrain_tokenizer:
+      with open(pkl_path, 'rb') as f:
+        tokenizer = pickle.load(f)
+    ### train new tokenizer
+    else:
+      self.retrain_tokenizer = False
+      if self.algorithm == 'bert':
+        from tokenizers import BertWordPieceTokenizer
+        tokenizer = BertWordPieceTokenizer(
+            vocab_file=None if self._init_vocabulary is None else os.path.
+            join(self.cache_path, "bert_vocab.txt"))
+        tokenizer.enable_truncation(max_length=self.max_length)
+        tokenizer.enable_padding(length=self.max_length)
+        # train the tokenizer
+        if self._init_vocabulary is None:
+          path = os.path.join(self.cache_path, 'train.txt')
+          with open(path, 'w') as f:
+            for i in chain(self.train_text, self.valid_text, self.test_text):
+              if len(i) == 0:
+                continue
+              f.write(i + "\n" if i[-1] != "\n" else i)
+          tokenizer.train(files=path,
+                          vocab_size=self.vocab_size,
+                          min_frequency=self.min_frequency,
+                          limit_alphabet=self.limit_alphabet,
+                          show_progress=True)
+        tokenizer.save_model(self.tokenizer_path)
+      elif self.algorithm in ('count', 'tf', 'tfidf'):
+        if self.algorithm == 'count':
+          tokenizer = CountVectorizer(input='content',
+                                      ngram_range=self.ngram_range,
+                                      min_df=self.min_frequency,
+                                      max_df=self.max_frequency,
+                                      max_features=self.vocab_size,
+                                      vocabulary=self._init_vocabulary,
+                                      tokenizer=_simple_tokenizer,
+                                      stop_words='english')
+        elif self.algorithm in ('tf', 'tfidf'):
+          tokenizer = TfidfVectorizer(
+              input='content',
+              ngram_range=self.ngram_range,
+              min_df=self.min_frequency,
+              max_df=self.max_frequency,
+              max_features=self.vocab_size,
+              stop_words='english',
+              vocabulary=self._init_vocabulary,
+              tokenizer=_simple_tokenizer,
+              use_idf=False if self.algorithm == 'tf' else True)
+        tokenizer.fit(
+            (_simple_preprocess(i)
+             for i in chain(self.train_text, self.valid_text, self.test_text)))
+      else:
+        raise NotImplementedError
+      # save the pickled model
+      with open(pkl_path, "wb") as f:
+        pickle.dump(tokenizer, f)
+    ### assign and return
+    self._tokenizer = tokenizer
+    return self._tokenizer
 
   @property
   def tokenizer_path(self) -> str:
-    p = os.path.join(self.cache_path, 'tokenizer')
+    p = os.path.join(
+        self.cache_path, f"tokenizer_{self.algorithm}_{self.vocab_size}_"
+        f"{self.min_frequency}_{self.max_frequency}_"
+        f"{self.limit_alphabet}")
     if not os.path.exists(p):
       os.makedirs(p)
     return p
 
   @property
-  def vocabulary(self) -> Dict[str, int]:
-    return self.tokenizer.get_vocab()
+  def vocabulary(self) -> Dict[int, str]:
+    if self._vocabulary is None:
+      if self.algorithm in ('tf', 'tfidf', 'count'):
+        vocab = self.tokenizer.vocabulary_
+      else:
+        vocab = self.tokenizer.get_vocab()
+      self._vocabulary = {
+          v: k for k, v in sorted(vocab.items(), key=lambda x: x[-1])
+      }
+    return self._vocabulary
 
   @property
   def vocabulary_size(self) -> int:
-    return self.tokenizer.get_vocab_size()
-
-  @property
-  def tokenizer(self) -> BaseTokenizer:
-    return self._tokenizer
-
-  @tokenizer.setter
-  def tokenizer(self, tk):
-    # create new basics word piece tokenizer
-    assert isinstance(tk, BaseTokenizer), \
-      ("tokenizer must be instance of "
-       "tokenizers.implementations.base_tokenizer.BaseTokenizer")
-    self._tokenizer = tk
-
-  def train_tokenizer(
-      self,
-      files_or_text: Union[str, List[str]],
-      vocab_size: int = 10000,
-      min_frequency: int = 2,
-      limit_alphabet: int = 1000,
-      initial_alphabet: List[str] = [],
-      special_tokens: List[str] = [
-          "[PAD]",
-          "[UNK]",
-          "[CLS]",
-          "[SEP]",
-          "[MASK]",
-      ],
-      show_progress: bool = True,
-      wordpieces_prefix: str = "##",
-  ):
-    r""" Train the tokenizer """
-    if self._tokenizer is None:
-      from tokenizers import BertWordPieceTokenizer
-      self._tokenizer = BertWordPieceTokenizer()
-    if isinstance(files_or_text, string_types):
-      files_or_text = [files_or_text]
-    files = []
-    path = os.path.join(self.cache_path, f"{self.__class__.__name__}_train.txt")
-    for f in files_or_text:
-      if not (os.path.exists(f) and os.path.isfile(f)):
-        with open(path, "a") as fout:
-          fout.write(f + "\n")
-        files.append(path)
-      else:
-        files.append(f)
-    files = list(set(files))
-    self.tokenizer.train(files=files,
-                         vocab_size=vocab_size,
-                         min_frequency=min_frequency,
-                         limit_alphabet=limit_alphabet,
-                         initial_alphabet=initial_alphabet,
-                         special_tokens=special_tokens,
-                         wordpieces_prefix=wordpieces_prefix,
-                         show_progress=show_progress)
-    self.tokenizer.save_model(self.tokenizer_path)
-    with open(os.path.join(self.tokenizer_path, 'tokenizer.pkl'), "wb") as f:
-      pickle.dump(self.tokenizer, f)
-    return self
-
-  def enable_padding(self,
-                     direction: Optional[str] = "right",
-                     pad_to_multiple_of: Optional[int] = None,
-                     pad_id: Optional[int] = 0,
-                     pad_type_id: Optional[int] = 0,
-                     pad_token: Optional[str] = "[PAD]",
-                     max_length: Optional[int] = None,
-                     stride: Optional[int] = 0,
-                     strategy: Optional[str] = "longest_first"):
-    r""" Change the padding and truncation strategy
-
-    Arguments:
-      stride: (`optional`) unsigned int:
-          The length of the previous first sequence to be included
-          in the overflowing sequence
-      strategy: (`optional) str:
-          Can be one of `longest_first`, `only_first` or `only_second`
-    """
-    if max_length is None:
-      max_length = self.max_length
-    self.tokenizer.enable_truncation(max_length=max_length,
-                                     stride=stride,
-                                     strategy=strategy)
-    self.tokenizer.enable_padding(direction=direction,
-                                  pad_to_multiple_of=pad_to_multiple_of,
-                                  pad_id=pad_id,
-                                  pad_type_id=pad_type_id,
-                                  pad_token=pad_token,
-                                  length=max_length)
-    return self
+    return len(self.vocabulary)
 
   def encode(self,
              inputs: Union[str, List[str]],
@@ -366,7 +367,7 @@ class NLPDataset(IterableDataset):
              skip_special_tokens: Optional[bool] = True) -> List[str]:
     r""" Decode sequence of integer indices and return original sequence """
     is_batch = True
-    if not isinstance(ids[0], (tuple, list, np.ndarray)):
+    if not isinstance(ids[0], (tuple, list, ndarray)):
       ids = [ids]
       is_batch = False
     outputs = self.tokenizer.decode_batch(
@@ -398,21 +399,49 @@ class NLPDataset(IterableDataset):
         mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
       where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
-    factors = self._factors
     inc_labels = float(inc_labels)
     gen = tf.random.experimental.Generator.from_seed(seed=seed)
+    x = self.transform(partition)
+    y = get_partition(partition,
+                      train=self.train_labels,
+                      valid=self.valid_labels,
+                      test=self.test_labels)
+    # remove empty docs
+    indices = np.array(np.sum(x, axis=-1) > 0).ravel()
+    x = x[indices]
+    if len(y) > 0:
+      y = y[indices]
+    # convert to one-hot
+    if inc_labels > 0 and len(y) > 0 and y.ndim == 1:
+      y = one_hot(y, self.n_labels)
 
-    def _process(data):
-      image = tf.cast(data['image'], tf.float32)
+    def _process(*data):
+      data = tuple([
+          tf.cast(
+              tf.sparse.to_dense(i) if isinstance(i, tf.SparseTensor) else i,
+              tf.float32) for i in data
+      ])
       if inc_labels:
-        label = tf.convert_to_tensor([data[i] for i in factors],
-                                     dtype=tf.float32)
         if 0. < inc_labels < 1.:  # semi-supervised mask
           mask = gen.uniform(shape=(1,)) < inc_labels
-          return dict(inputs=(image, label), mask=mask)
-        return image, label
-      return image
+          return dict(inputs=tuple(data), mask=mask)
+        return data
+      return data[0]
 
+    # prepare the sparse matrices
+    if isinstance(x, spmatrix):
+      x = tf.SparseTensor(indices=sorted(zip(*x.nonzero())),
+                          values=x.data,
+                          dense_shape=x.shape)
+    ds = tf.data.Dataset.from_tensor_slices(x)
+    if inc_labels > 0:
+      if isinstance(y, spmatrix):
+        y = tf.SparseTensor(indices=sorted(zip(*y.nonzero())),
+                            values=y.data,
+                            dense_shape=y.shape)
+      y = tf.data.Dataset.from_tensor_slices(y)
+      ds = tf.data.Dataset.zip((ds, y))
+    # configurate dataset
     ds = ds.map(_process, parallel)
     if cache is not None:
       ds = ds.cache(str(cache))
@@ -429,36 +458,107 @@ class NLPDataset(IterableDataset):
 # Datasets
 # ===========================================================================
 class Newsgroup20(NLPDataset):
+  r""" Categories:
+    - alt.atheism
+    - misc.forsale
+    - soc.religion.christian
+    - comp.graphics, comp.os.ms-windows.misc, comp.sys.ibm.pc.hardware,
+        comp.sys.mac.hardware, comp.windows.x
+    - rec.autos, rec.motorcycles, rec.sport.baseball, rec.sport.hockey
+    - sci.crypt, sci.electronics, sci.med, sci.space
+    - talk.politics.guns, talk.politics.mideast, talk.politics.misc,
+        talk.religion.misc
+  """
 
   def __init__(self,
-               tokenizer: Optional[BaseTokenizer] = None,
-               max_length: int = 1000,
-               cache_path: str = "~/nlp_data"):
-    super().__init__(tokenizer=tokenizer,
+               algorithm='count',
+               vocab_size: int = 2000,
+               min_frequency: int = 2,
+               max_frequency: float = 0.95,
+               max_length: int = 500,
+               cache_path: str = "~/nlp_data/newsgroup20",
+               **kwargs):
+    categorices = kwargs.pop('categorices', None)
+    super().__init__(algorithm=algorithm,
+                     vocab_size=vocab_size,
+                     min_frequency=min_frequency,
+                     max_frequency=max_frequency,
                      max_length=max_length,
-                     cache_path=cache_path)
-    data = fetch_20newsgroups(shuffle=True,
-                              random_state=1,
-                              remove=('headers', 'footers', 'quotes'),
-                              return_X_y=False)
-    sentences, topics = data.data, data.target
-    mask = np.array([len(i.split(' ')) for i in sentences]) < int(max_length)
-    sentences = np.asarray(sentences)[mask]
-    topics = np.asarray(topics)[mask]
-    names = data.target_names
-    topics = np.array([names[i] for i in topics])
-    X_train, X_test, y_train, y_test = train_test_split(sentences,
-                                                        topics,
-                                                        test_size=0.2,
-                                                        stratify=topics,
-                                                        shuffle=True,
-                                                        random_state=0)
-    self.train = (X_train, y_train)
-    self.test = (X_test, y_test)
-    self._labels = sorted(np.unique(topics))
-    if self._tokenizer is None:
-      self.train_tokenizer(X_train)
-    self.enable_padding()
+                     cache_path=cache_path,
+                     **kwargs)
+    kw = dict(shuffle=True,
+              random_state=1,
+              categories=categorices,
+              remove=('headers', 'footers', 'quotes'))
+    data = fetch_20newsgroups(subset='train', return_X_y=False, **kw)
+    X_train, y_train = data.data, data.target
+    labels_name = data.target_names
+    self.X_test, y_test = fetch_20newsgroups(subset='test',
+                                             return_X_y=True,
+                                             **kw)
+    self.X_train, self.X_valid, y_train, y_valid = train_test_split(
+        X_train, y_train, test_size=0.2, shuffle=True, random_state=0)
+    self._labels = np.array(labels_name)
+    self.y_train = one_hot(y_train, len(self._labels))
+    self.y_valid = one_hot(y_valid, len(self._labels))
+    self.y_test = one_hot(y_test, len(self._labels))
+
+  @property
+  def train_text(self) -> Iterable[str]:
+    for doc in self.X_train:
+      yield doc
+
+  @property
+  def valid_text(self) -> Iterable[str]:
+    for doc in self.X_valid:
+      yield doc
+
+  @property
+  def test_text(self) -> Iterable[str]:
+    for doc in self.X_test:
+      yield doc
+
+  @property
+  def train_labels(self) -> Union[ndarray, spmatrix]:
+    return self.y_train
+
+  @property
+  def valid_labels(self) -> Union[ndarray, spmatrix]:
+    return self.y_valid
+
+  @property
+  def test_labels(self) -> Union[ndarray, spmatrix]:
+    return self.y_test
+
+
+class Newsgroup5(Newsgroup20):
+  r""" Subset of 5 categories:
+    - 'soc.religion.christian'
+    - 'comp.graphics'
+    - 'rec.sport.hockey'
+    - 'sci.space'
+    - 'talk.politics.guns'
+  """
+
+  def __init__(self,
+               algorithm='count',
+               vocab_size: int = 2000,
+               min_frequency: int = 2,
+               max_frequency: float = 0.95,
+               max_length: int = 500,
+               cache_path: str = "~/nlp_data/newsgroup5",
+               **kwargs):
+    super().__init__(algorithm=algorithm,
+                     vocab_size=vocab_size,
+                     min_frequency=min_frequency,
+                     max_frequency=max_frequency,
+                     max_length=max_length,
+                     cache_path=cache_path,
+                     categorices=[
+                         'soc.religion.christian', 'comp.graphics',
+                         'rec.sport.hockey', 'sci.space', 'talk.politics.guns'
+                     ],
+                     **kwargs)
 
 
 class ImdbReview(NLPDataset):

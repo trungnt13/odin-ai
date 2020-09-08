@@ -408,10 +408,10 @@ class CriticizerMetrics(CriticizerBase):
     z_train, z_test = self.representations_mean
     f_train, f_test = self.factors
     return metrics.unsupervised_clustering_scores(
-        np.concatenate([z_train, z_test], axis=0),
-        np.concatenate([f_train, f_test], axis=0),
+        representations=np.concatenate([z_train, z_test], axis=0),
+        factors=np.concatenate([f_train, f_test], axis=0),
         algorithm=algorithm,
-        seed=self.randint)
+        random_state=self.randint)
 
   ##############  Posterior predictive check (PPC)
   def posterior_predictive_check(n_samples=100):
