@@ -1,5 +1,6 @@
 import base64
 import os
+import zipfile
 from urllib.request import urlretrieve
 
 import numpy as np
@@ -8,6 +9,7 @@ from scipy import sparse
 
 from odin.fuel.bio_data._base import BioDataset
 from odin.utils import one_hot
+from odin.utils.crypto import md5_checksum
 
 _URL = [
     r"https://github.com/aertslab/cisTopic/raw/3394de3fb57ba5a4e6ab557c7e948e98289ded2c/data/counts_mel.RData",
@@ -78,3 +80,64 @@ class MelanomaATAC(BioDataset):
     self.y = labels
     self.xvar = np.array([f"Region{i + 1}" for i in range(x.shape[1])])
     self.yvar = np.array(list(labels_name.keys()))
+
+
+# ===========================================================================
+# More datasets
+# ===========================================================================
+def _load_scale_dataset(path, dsname):
+  url = str(
+      base64.decodebytes(
+          b'aHR0cHM6Ly9haS1kYXRhc2V0cy5zMy5hbWF6b25hd3MuY29tL3NjYWxlX2RhdGFzZXRzLnppcA==\n'
+      ), 'utf-8')
+  md5 = r"5fc7c52108220e30a04f033e355716c0"
+  path = os.path.abspath(os.path.expanduser(path))
+  if not os.path.exists(path):
+    os.makedirs(path)
+  filename = os.path.basename(url)
+  filepath = os.path.join(path, filename)
+  # download
+  if not os.path.exists(filepath):
+    print(f"Downloading {url} ...")
+    urlretrieve(url, filename=filepath)
+  # extract
+  zip_path = os.path.join(path, 'scale_datasets')
+  if not os.path.exists(zip_path):
+    with zipfile.ZipFile(filepath, "r") as f:
+      f.extractall(path)
+  # load
+  cell = np.load(os.path.join(zip_path, f"{dsname}_cell"))
+  labels = np.load(os.path.join(zip_path, f"{dsname}_labels"))
+  peak = np.load(os.path.join(zip_path, f"{dsname}_peak"))
+  x = sparse.load_npz(os.path.join(zip_path, f"{dsname}_x"))
+  ids = {key: i for i, key in enumerate(sorted(set(labels)))}
+  labels = one_hot(np.array([ids[i] for i in labels]), len(ids))
+  return x, labels, peak, np.array(list(ids.keys()))
+
+
+class ForebrainATAC(BioDataset):
+
+  def __init__(self, path="~/tensorflow_datasets/scale_atac"):
+    self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
+        path=path, dsname="forebrain")
+
+
+class InSilicoATAC(BioDataset):
+
+  def __init__(self, path="~/tensorflow_datasets/scale_atac"):
+    self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
+        path=path, dsname="insilico")
+
+
+class BreastTumorATAC(BioDataset):
+
+  def __init__(self, path="~/tensorflow_datasets/scale_atac"):
+    self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
+        path=path, dsname="breast_tumor")
+
+
+class LeukemiaATAC(BioDataset):
+
+  def __init__(self, path="~/tensorflow_datasets/scale_atac"):
+    self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
+        path=path, dsname="leukemia")

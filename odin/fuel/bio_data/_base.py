@@ -32,6 +32,11 @@ class BioDataset(IterableDataset):
     self.valid_ids = None
     self.test_ids = None
 
+  def __str__(self):
+    return (f"<{self.__class__.__name__} "
+            f"{self.x.shape} {self.y.shape} "
+            f"{self.xvar.shape} {self.yvar.shape}>")
+
   @property
   def genes_dictionary(self) -> Dict[int, str]:
     attr_name = '_gene_dictionary'
