@@ -32,7 +32,8 @@ dependencies:
       - pytorch-lightning
       - bigarray==0.2.1
       - pandas>=1.0.3
-      - hydra-core
+      - hydra-core>=1.0.0
+      - hydra-joblib-launcher>=1.1.0
       - spacy
       - umap-learn
 
