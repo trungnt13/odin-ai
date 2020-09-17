@@ -37,6 +37,7 @@ __all__ = [
 # ===========================================================================
 YAML_REGEX = re.compile(r"\w+: \w+")
 OVERRIDE_PATTERN = re.compile(r"\A[\+\~]?[\w\.\\\@]+=[\w\(\)\[\]\{\}\,\.\']+")
+JOBS_PATTERN = re.compile(r"\A-{1,2}n?_?jobs[=\s](\d+)\Z")
 
 
 def _insert_argv(key, value, is_value_string=True):
@@ -176,9 +177,9 @@ def get_overrides() -> str:
 
 
 def get_output_dir() -> str:
-  r""" This is the same as `os.getcwd()` """
+  r""" Specific output dir based on the override """
   if len(get_overrides()) == 0:
-    return os.path.join(HydraConfig.get().run.dir, 'defaults')
+    return os.path.join(HydraConfig.get().run.dir, 'default')
   return HydraConfig.get().run.dir
 
 
@@ -256,16 +257,33 @@ def run_hydra(output_dir: str = './outputs',
       else:
         config_path, config_name = _save_config_to_tempdir(config)
       ### check if output dir is provided
+      # check if overrides provided
       is_overrided = False
       for a in sys.argv:
-        print(a, OVERRIDE_PATTERN.match(a))
         if OVERRIDE_PATTERN.match(a):
           is_overrided = True
+      # formatting output dirs
       time_fmt = r"${now:%j_%H%M%S}"
       if is_overrided:
         override_id = r"${hydra.job.override_dirname}"
       else:
         override_id = r"default"
+      # jobs provided
+      jobs = 1
+      for i, a in enumerate(sys.argv):
+        match = JOBS_PATTERN.match(a)
+        if match:
+          sys.argv.pop(i)
+          jobs = int(match.groups()[0])
+          break
+      if jobs > 1:
+        _insert_argv(key="hydra/launcher",
+                     value="joblib",
+                     is_value_string=False)
+        _insert_argv(key="hydra.launcher.n_jobs",
+                     value=f"{jobs}",
+                     is_value_string=False)
+      # running dirs
       _insert_argv(key="hydra.run.dir",
                    value=f"{output_dir}/{override_id}",
                    is_value_string=True)

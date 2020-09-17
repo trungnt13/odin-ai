@@ -9,12 +9,15 @@ import warnings
 from functools import partial
 from itertools import zip_longest
 from numbers import Number
-from typing import Callable, Dict, List, Optional, Text, Tuple, Union
+from typing import Callable, Dict, List, Optional, Text, Tuple, Type, Union
 
 import numpy as np
 import scipy as sp
 import tensorflow as tf
+from numpy import ndarray
+from scipy.sparse import spmatrix
 from six import string_types
+from tensorflow import Tensor, Variable
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
 from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
@@ -23,6 +26,8 @@ from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
+from tensorflow_probability.python.distributions import Distribution
+from typing_extensions import Literal
 
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
@@ -34,35 +39,26 @@ from odin.networks import NetworkConfig, SequentialNetwork
 from odin.utils import MD5object
 from odin.utils.python_utils import classproperty
 
-__all__ = ['TrainStep', 'VariationalAutoencoder', 'VAE']
+__all__ = [
+    'TensorTypes',
+    'LayerFactory',
+    'TrainStep',
+    'VariationalAutoencoder',
+    'VAE',
+]
+
+# ===========================================================================
+# Types
+# ===========================================================================
+LayerFactory = Union[Layer, Type[Layer], \
+                     NetworkConfig, RandomVariable, \
+                     Callable[[Optional[List[int]]], Layer]]
+TensorTypes = Union[spmatrix, ndarray, Tensor]
 
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _check_rv(rv, input_shape):
-  r""" Return the layer and its output_shape """
-  assert isinstance(rv, (RandomVariable, Layer)) or isinstance(rv, type), \
-    "Variable must be instance of odin.bay.RandomVariable or keras.layers.Layer, " + \
-      "but given: %s" % str(type(rv))
-  if isinstance(rv, RandomVariable):
-    rv = rv.create_posterior(input_shape=input_shape)
-  elif isinstance(rv, type) and \
-    "input_shape" in inspect.getfullargspec(rv).args:
-    rv = rv(input_shape=input_shape)
-  elif isinstance(rv, Layer):
-    if not rv.built and input_shape is not None:
-      rv(keras.Input(shape=input_shape))
-  else:
-    raise ValueError("Only support type RandomVariable, Layer, or classes")
-  ### get the event_shape
-  if hasattr(rv, 'event_shape'):
-    shape = rv.event_shape
-  else:
-    shape = rv.output_shape[1:]
-  return rv, shape
-
-
 def _get_args(layer):
   spec = inspect.getfullargspec(layer.call)
   return set(spec.args + spec.kwonlyargs)
@@ -94,6 +90,27 @@ def _reduce_latents(latents, mode):
     if mode == 'none':
       return latents
   return mode(latents)
+
+
+def _prepare_decode_latents(fn_reduce, latents, sample_shape):
+  # convert all latents to Tensor
+  list_latents = True
+  if isinstance(latents, tfd.Distribution) or tf.is_tensor(latents):
+    list_latents = False
+  latents = tf.nest.flatten(latents)
+  if isinstance(sample_shape, Number):
+    sample_shape = (int(sample_shape),)
+  # remove sample_shape
+  if sample_shape:
+    # if we call tf.convert_to_tensor or tf.reshape directly here the llk
+    # could go worse for some unknown reason, but using keras layers is ok!
+    ndim = len(sample_shape) + 1
+    reshape = keras.layers.Lambda(
+        lambda x: tf.reshape(x, tf.concat([(-1,), tf.shape(x)[ndim:]], axis=0)))
+    latents = [reshape(z) for z in latents]
+  # decoding
+  latents = _reduce_latents(latents, fn_reduce) if list_latents else latents[0]
+  return latents
 
 
 def _net2str(net):
@@ -136,12 +153,15 @@ def _to_optimizer(optimizer, learning_rate, clipnorm):
   return all_optimizers
 
 
-def parse_network(network, is_encoder, input_shape) -> List[Layer]:
+def parse_layers(network, input_shape=None, name=None) -> List[Layer]:
+  is_decoding = 'decoder' in str(name).lower()
+  ## identity
   if network is None or \
     (isinstance(network, string_types) and network in ('linear', 'identity')):
-    return keras.layers.Activation('linear',
-                                   name="Encoder" if is_encoder else "Decoder")
-  if inspect.isfunction(network) or isinstance(network, partial):
+    network = keras.layers.Activation('linear', name=name)
+  ## Callable or type
+  elif (inspect.isfunction(network) or isinstance(network, partial) or
+        isinstance(network, type)):
     args = inspect.getfullargspec(network).args
     kw = dict()
     for k in ('shape', 'input_shape', 'latent_shape'):
@@ -149,11 +169,11 @@ def parse_network(network, is_encoder, input_shape) -> List[Layer]:
         kw[k] = input_shape
         break
     network = network(**kw)
-  # make sure encoder is a list
-  if isinstance(network, (tuple, list)):
-    network = list(network)
-  else:
-    network = [network]
+  ## RandomVariable
+  elif isinstance(network, RandomVariable):
+    network = network.create_posterior(input_shape=input_shape, name=name)
+  ## make sure is a list
+  network = list(network) if isinstance(network, (tuple, list)) else [network]
   network = [i for i in network if i is not None]
   ## check different options
   layers = []
@@ -171,7 +191,7 @@ def parse_network(network, is_encoder, input_shape) -> List[Layer]:
                   skip_connect=False,
                   convolution=True,
                   input_shape=None,
-                  decoding=not is_encoder)
+                  decoding=is_decoding)
       elif cfg in ('shapes3d', 'dsprites', 'dspritesc', 'celeba', 'stl10',
                    'legofaces', 'cifar10', 'cifar20', 'cifar100'):
         n_channels = 1 if cfg in ('dsprites', 'dspritesc') else 3
@@ -188,22 +208,20 @@ def parse_network(network, is_encoder, input_shape) -> List[Layer]:
                   skip_connect=False,
                   convolution=True,
                   input_shape=None,
-                  decoding=not is_encoder)
+                  decoding=is_decoding)
       else:
         raise NotImplementedError(
-            f"No predefined network for dataset with name: {encoder}")
+            f"No predefined network for dataset with name: {cfg}")
       layers.append(ImageNet(**kw))
     # the NetworkConfig
     elif isinstance(cfg, NetworkConfig):
-      layers.append(
-          cfg.create_network(input_shape=input_shape,
-                             name="Encoder" if is_encoder else "Decoder"))
+      layers.append(cfg.create_network(input_shape=input_shape, name=name))
     # Layer
     elif isinstance(cfg, Layer):
       try:
         cfg.input_shape
       except AttributeError:
-        if input_shape is not None:
+        if not cfg.built and input_shape is not None:
           cfg(tf.keras.Input(shape=input_shape))
       layers.append(cfg)
     # no support
@@ -218,16 +236,14 @@ def _iter_lists(X, Y):
   the yield a pair of (x, y) with the condition x is not None
   """
   Y = Y * len(X) if len(Y) == 1 else Y
-  for x, y in zip_longest(X, Y):
+  for i, (x, y) in enumerate(zip_longest(X, Y)):
     if x is not None:
-      yield x, y
+      yield i, x, y
 
 
 def _validate_implementation(cls):
-  elbo_args = [
-      'inputs', 'pX_Z', 'qZ_X', 'analytic', 'reverse', 'sample_shape', 'mask',
-      'training'
-  ]
+  # 'analytic', 'reverse', 'sample_shape', 'mask', 'training'
+  elbo_args = ['inputs', 'pX_Z', 'qZ_X']
   call_args = ['inputs', 'training', 'mask', 'sample_shape']
   encode_args = ['inputs', 'training', 'mask', 'sample_shape']
   decode_args = ['latents', 'training', 'mask', 'sample_shape']
@@ -389,21 +405,20 @@ class VariationalAutoencoder(keras.Model, MD5object):
 
   def __init__(
       self,
-      encoder: Union[str, Layer, NetworkConfig, Callable] = NetworkConfig(),
-      decoder: Union[str, Layer, NetworkConfig, Callable] = NetworkConfig(),
-      outputs: Union[Layer, RandomVariable,
-                     Callable] = RandomVariable(64,
-                                                'gaus',
-                                                projection=True,
-                                                name="Input"),
-      latents: Union[Layer, RandomVariable,
-                     Callable] = RandomVariable(10,
-                                                'diag',
-                                                projection=True,
-                                                name="Latent"),
-      reduce_latent: str = 'concat',
+      encoder: Union[str, LayerFactory] = NetworkConfig(),
+      decoder: Union[str, LayerFactory] = NetworkConfig(),
+      outputs: Union[LayerFactory] = RandomVariable(64,
+                                                    'gaus',
+                                                    projection=True,
+                                                    name="Input"),
+      latents: Union[LayerFactory] = RandomVariable(10,
+                                                    'diag',
+                                                    projection=True,
+                                                    name="Latent"),
+      reduce_latent: Literal['concat', 'mean', 'min', 'max', 'sum',
+                             'none'] = 'concat',
       input_shape: Optional[List[int]] = None,
-      step: int = 0.,
+      step: Union[int, Variable] = 0.,
       analytic: bool = False,
       path: Optional[str] = None,
       **kwargs,
@@ -430,48 +445,43 @@ class VariationalAutoencoder(keras.Model, MD5object):
           f"Input shape not provide, infer using output shape {input_shape}"
           f" , the final input shape is: {tf.nest.flatten(input_shape)}")
     ### prepare support multiple encoders decoders
-    all_encoder = parse_network(network=encoder,
-                                is_encoder=True,
-                                input_shape=input_shape)
+    all_encoder = parse_layers(network=encoder,
+                               input_shape=input_shape,
+                               name="Encoder")
     ### create the latents and input distribution
     latents = tf.nest.flatten(latents)
-    all_latents = [
-        _check_rv(z, input_shape=e.output_shape[1:] if e is not None else None)
-        for z, e in _iter_lists(latents, all_encoder)
+    self.latent_layers = [
+        parse_layers(z,
+                     input_shape=e.output_shape[1:] if e is not None else None,
+                     name=f"Latents{i}")[0]
+        for i, z, e in _iter_lists(latents, all_encoder)
     ]
-    self.latent_layers = [z[0] for z in all_latents]
     self.latent_args = [_get_args(i) for i in self.latent_layers]
     # validate method for latent reduction
-    assert isinstance(reduce_latent, string_types) or \
-      callable(reduce_latent) or reduce_latent is None,\
-      ("reduce_latent must be None, string or callable, "
-       f"but given:{type(reduce_latent)}")
-    latent_shape = [shape for _, shape in all_latents]
-    if reduce_latent is None:
+    latent_shape = [
+        z.event_shape if hasattr(z, 'event_shape') else z.output_shape[1:]
+        for z in self.latent_layers
+    ]
+    reduce_latent = str(reduce_latent).strip().lower()
+    if reduce_latent == 'none':
       pass
-    elif isinstance(reduce_latent, string_types):
-      reduce_latent = reduce_latent.strip().lower()
-      if reduce_latent == 'concat':
-        latent_shape = sum(np.array(s) for s in latent_shape).tolist()
-      elif reduce_latent in ('mean', 'min', 'max', 'sum'):
-        latent_shape = latent_shape[0]
-      else:
-        raise ValueError(f"No support for reduce_latent='{reduce_latent}'")
+    elif reduce_latent == 'concat':
+      latent_shape = sum(np.array(s) for s in latent_shape).tolist()
+    elif reduce_latent in ('mean', 'min', 'max', 'sum'):
+      latent_shape = latent_shape[0]
     else:
-      zs = [
-          tf.zeros(shape=(1,) + tuple(s), dtype=self.dtype)
-          for s in latent_shape
-      ]
-      latent_shape = list(reduce_latent(zs).shape[1:])
+      raise ValueError(f"No support for reduce_latent='{reduce_latent}'")
     self.reduce_latent = reduce_latent
     ### Create the decoder
-    all_decoder = parse_network(decoder,
-                                is_encoder=False,
-                                input_shape=latent_shape)
+    all_decoder = parse_layers(decoder,
+                               input_shape=latent_shape,
+                               name="Decoder")
     ### Finally the output distributions
     all_outputs = [
-        _check_rv(x, d.output_shape[1:] if d is not None else None)
-        for x, d in _iter_lists(outputs, all_decoder)
+        parse_layers(o,
+                     input_shape=d.output_shape[1:] if d is not None else None,
+                     name=f"Outputs{i}")
+        for i, o, d in _iter_lists(outputs, all_decoder)
     ]
     self.output_layers = [x[0] for x in all_outputs]
     self.output_args = [_get_args(i) for i in self.output_layers]
@@ -545,7 +555,10 @@ class VariationalAutoencoder(keras.Model, MD5object):
   def save_path(self) -> str:
     return self._save_path
 
-  def load_weights(self, filepath, raise_notfound=False, verbose=False):
+  def load_weights(self,
+                   filepath: str,
+                   raise_notfound: bool = False,
+                   verbose: bool = False):
     r""" Load all the saved weights in tensorflow format at given path """
     if isinstance(filepath, string_types):
       files = glob.glob(filepath + '.*')
@@ -567,7 +580,9 @@ class VariationalAutoencoder(keras.Model, MD5object):
     self._save_path = filepath
     return self
 
-  def save_weights(self, filepath: Union[str] = None, overwrite: bool = True):
+  def save_weights(self,
+                   filepath: Optional[str] = None,
+                   overwrite: bool = True):
     r""" Just copy this function here to fix the `save_format` to 'tf'
 
     Since saving 'h5' will drop certain variables.
@@ -584,19 +599,19 @@ class VariationalAutoencoder(keras.Model, MD5object):
     logging.get_logger().disabled = False
 
   @property
-  def is_semi_supervised(self):
+  def is_semi_supervised(self) -> bool:
     return False
 
   @property
-  def is_self_supervised(self):
+  def is_self_supervised(self) -> bool:
     return False
 
   @property
-  def is_weak_supervised(self):
+  def is_weak_supervised(self) -> bool:
     return self.is_semi_supervised
 
   @property
-  def is_fitted(self):
+  def is_fitted(self) -> bool:
     return self.step.numpy() > 0
 
   @property
@@ -608,15 +623,15 @@ class VariationalAutoencoder(keras.Model, MD5object):
     return self.latent_layers
 
   @property
-  def n_latents(self):
+  def n_latents(self) -> int:
     return len(self.latent_layers)
 
   @property
-  def n_outputs(self):
+  def n_outputs(self) -> int:
     return len(self.output_layers)
 
   @property
-  def input_shape(self):
+  def input_shape(self) -> Union[List[int], List[List[int]]]:
     shape = [e.input_shape for e in tf.nest.flatten(self.encoder)]
     return shape[0] if len(shape) == 1 else shape
 
@@ -625,7 +640,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
     shape = [d.input_shape for d in tf.nest.flatten(self.decoder)]
     return shape[0] if len(shape) == 1 else shape
 
-  def sample_prior(self, sample_shape=(), seed=1):
+  def sample_prior(self, sample_shape: List[int] = (), seed: int = 1) -> Tensor:
     r""" Sampling from prior distribution """
     samples = []
     for latent in self.latent_layers:
@@ -633,7 +648,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
       samples.append(s)
     return samples[0] if len(samples) == 1 else tuple(samples)
 
-  def sample_data(self, sample_shape=(), seed=1):
+  def sample_data(self, sample_shape: List[int] = (), seed: int = 1) -> Tensor:
     r""" Sample from p(X) given that the prior of X is known, this could be
     wrong since `RandomVariable` often has a default prior. """
     samples = []
@@ -642,32 +657,15 @@ class VariationalAutoencoder(keras.Model, MD5object):
       samples.append(s)
     return samples[0] if len(samples) == 1 else tuple(samples)
 
-  def generate(self, sample_shape=(), seed=1, training=None, **kwargs):
+  def generate(self,
+               sample_shape: List[int] = (),
+               seed: int = 1,
+               training: Optional[bool] = None,
+               **kwargs) -> Union[Distribution, List[Distribution]]:
     r""" Randomly generate outputs by sampling from prior distribution then
     decode it. """
     z = self.sample_prior(sample_shape, seed)
     return self.decode(z, training=training, **kwargs)
-
-  def _prepare_decode_latents(self, latents, sample_shape):
-    # convert all latents to Tensor
-    list_latents = True
-    if isinstance(latents, tfd.Distribution) or tf.is_tensor(latents):
-      list_latents = False
-    latents = tf.nest.flatten(latents)
-    if isinstance(sample_shape, Number):
-      sample_shape = (int(sample_shape),)
-    # remove sample_shape
-    if sample_shape:
-      # if we call tf.convert_to_tensor or tf.reshape directly here the llk
-      # could go worse for some unknown reason, but using keras layers is ok!
-      ndim = len(sample_shape) + 1
-      reshape = keras.layers.Lambda(lambda x: tf.reshape(
-          x, tf.concat([(-1,), tf.shape(x)[ndim:]], axis=0)))
-      latents = [reshape(z) for z in latents]
-    # decoding
-    latents = _reduce_latents(
-        latents, self.reduce_latent) if list_latents else latents[0]
-    return latents
 
   def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
     r""" Encoding inputs to latent codes """
@@ -681,11 +679,19 @@ class VariationalAutoencoder(keras.Model, MD5object):
       e = encoder(inputs, **copy_kw)
       outputs.append(e)
     # create the latents distribution
-    qZ_X = [
-        latent(code, training=training, sample_shape=sample_shape)
-        for latent, code in _iter_lists(self.latent_layers, outputs)
-    ]
-    for q in qZ_X:  # remember to store the keras mask in outputs
+    qZ_X = []
+    for args, (_, latent, code) in zip(self.latent_args,
+                                       _iter_lists(self.latent_layers,
+                                                   outputs)):
+      kw = {}
+      if 'training' in args:
+        kw['training'] = training
+      if 'sample_shape' in args:
+        kw['sample_shape'] = sample_shape
+      qZ_X.append(latent(code, **kw))
+    qZ_X = tf.nest.flatten(qZ_X)
+    # remember to store the keras mask in outputs
+    for q in qZ_X:
       q._keras_mask = mask
     return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
@@ -698,7 +704,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
     r""" Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
     sample_shape = tf.nest.flatten(sample_shape)
-    latents = self._prepare_decode_latents(latents, sample_shape)
+    latents = _prepare_decode_latents(self.reduce_latent, latents, sample_shape)
     # apply the decoder and get back the sample shape
     outputs = []
     for decoder, args in zip(tf.nest.flatten(self.decoder), self._decoder_args):
@@ -720,13 +726,14 @@ class VariationalAutoencoder(keras.Model, MD5object):
           out = out[0]
       outputs.append(out)
     # create the output distribution
-    dist = [
+    pX_Z = tf.nest.flatten([
         layer(o, training=training)
-        for layer, o in _iter_lists(self.output_layers, outputs)
-    ]
-    for p in dist:  # remember to store the keras mask in outputs
+        for _, layer, o in _iter_lists(self.output_layers, outputs)
+    ])
+    # remember to store the keras mask in outputs
+    for p in pX_Z:
       p._keras_mask = mask
-    return dist[0] if len(self.output_layers) == 1 else tuple(dist)
+    return pX_Z[0] if len(pX_Z) == 1 else tuple(pX_Z)
 
   def call(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
     qZ_X = self.encode(
@@ -823,40 +830,43 @@ class VariationalAutoencoder(keras.Model, MD5object):
     return mllk, distortion
 
   def _elbo(self,
-            inputs,
-            pX_Z,
-            qZ_X,
-            analytic,
-            reverse,
-            sample_shape=None,
-            mask=None,
-            training=None,
-            **kwargs):
+            inputs: Union[Tensor, List[Tensor]],
+            pX_Z: Union[Distribution, List[Distribution]],
+            qZ_X: Union[Distribution, List[Distribution]],
+            analytic: Optional[bool] = None,
+            reverse: bool = True,
+            sample_shape: Optional[List[int]] = None,
+            mask: Optional[Tensor] = None,
+            training: Optional[bool] = None,
+            **kwargs) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     r""" The basic components of all ELBO """
     ### llk
     llk = {}
     for name, x, pX in zip(self.variable_names, inputs, pX_Z):
-      llk['llk_%s' % name] = pX.log_prob(x)
+      llk[f'llk_{name}'] = pX.log_prob(x)
     ### kl
-    div = {}
+    kl = {}
     for name, qZ in zip(self.latent_names, qZ_X):
-      div['kl_%s' % name] = qZ.KL_divergence(analytic=analytic,
-                                             reverse=reverse,
-                                             sample_shape=sample_shape,
-                                             keepdims=True)
-    return llk, div
+      if hasattr(qZ, "KL_divergence"):
+        kl[f'kl_{name}'] = qZ.KL_divergence(analytic=analytic,
+                                            reverse=reverse,
+                                            sample_shape=sample_shape,
+                                            keepdims=True)
+      else:
+        kl[f'kl_{name}'] = tf.constant(0., dtype=self.dtype)
+    return llk, kl
 
   def elbo(self,
-           inputs,
-           pX_Z,
-           qZ_X,
-           analytic=None,
-           reverse=True,
-           sample_shape=None,
-           mask=None,
-           training=None,
-           iw=False,
-           return_components=False,
+           inputs: Union[Tensor, List[Tensor]],
+           pX_Z: Union[Distribution, List[Distribution]],
+           qZ_X: Union[Distribution, List[Distribution]],
+           analytic: Optional[bool] = None,
+           reverse: bool = True,
+           sample_shape: Optional[List[int]] = None,
+           mask: Optional[Tensor] = None,
+           training: Optional[bool] = None,
+           iw: bool = False,
+           return_components: bool = False,
            **kwargs):
     r""" Calculate the distortion (log-likelihood) and rate (KL-divergence)
     for contruction the Evident Lower Bound (ELBO).
@@ -892,7 +902,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
       analytic = self.analytic
     # organize all inputs to list
     inputs = [
-        tf.convert_to_tensor(x, dtype=self.dtype)
+        tf.convert_to_tensor(x, dtype_hint=self.dtype)
         for x in tf.nest.flatten(inputs)
     ]
     pX_Z = tf.nest.flatten(pX_Z)
@@ -904,10 +914,10 @@ class VariationalAutoencoder(keras.Model, MD5object):
     # if hasattr(pX_Z[0], '_keras_mask') and pX_Z[0]._keras_mask is not None:
     # mask = pX_Z[0]._keras_mask
     llk, div = self._elbo(inputs,
-                          pX_Z,
-                          qZ_X,
-                          analytic,
-                          reverse,
+                          pX_Z=pX_Z,
+                          qZ_X=qZ_X,
+                          analytic=analytic,
+                          reverse=reverse,
                           sample_shape=sample_shape,
                           mask=mask,
                           training=training,
@@ -999,9 +1009,9 @@ class VariationalAutoencoder(keras.Model, MD5object):
                     call_kw=call_kw)
 
   def optimize(self,
-               inputs: Union[tf.Tensor, np.ndarray],
+               inputs: Union[Tensor, np.ndarray],
                training: bool = True,
-               mask: Optional[tf.Tensor] = None,
+               mask: Optional[Tensor] = None,
                optimizer: Optional[OptimizerV2] = None,
                sample_shape: List[int] = (),
                allow_none_gradients: bool = False,

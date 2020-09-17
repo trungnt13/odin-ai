@@ -9,6 +9,7 @@ from typing import Callable, List, Optional, Text, Union
 import numpy as np
 import tensorflow as tf
 from six import string_types
+from tensorflow import Tensor
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
 from tensorflow_probability import distributions as tfd
@@ -169,12 +170,15 @@ def coercible_tensor(d: tfd.Distribution,
 # ===========================================================================
 # Objectives
 # ===========================================================================
-def kl_divergence(q: Union[Distribution, Callable],
-                  p: Union[Distribution, Callable],
-                  analytic=False,
-                  q_sample=lambda q: q.sample(),
-                  reduce_axis=(),
-                  reverse=True):
+def kl_divergence(
+    q: Union[Distribution, Callable[[], Distribution]],
+    p: Union[Distribution, Callable[[], Distribution]],
+    analytic: bool = False,
+    q_sample: Union[int, Callable[[Distribution],
+                                  Tensor]] = lambda q: q.sample(),
+    reduce_axis: List[int] = (),
+    reverse: bool = True,
+) -> Tensor:
   r""" Calculating `KL(q(x)||p(x))` (if reverse=True) or
   `KL(p(x)||q(x))` (if reverse=False)
 

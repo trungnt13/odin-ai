@@ -1,16 +1,18 @@
 from odin.bay.vi.autoencoder.beta_vae import *
+from odin.bay.vi.autoencoder.conditional_vae import *
 from odin.bay.vi.autoencoder.dip_vae import *
 from odin.bay.vi.autoencoder.factor_vae import *
 from odin.bay.vi.autoencoder.info_vae import *
 from odin.bay.vi.autoencoder.lda_vae import *
+from odin.bay.vi.autoencoder.multitask_vae import *
+from odin.bay.vi.autoencoder.mutual_info_vae import *
 from odin.bay.vi.autoencoder.networks import *
 from odin.bay.vi.autoencoder.self_supervised_vae import *
-from odin.bay.vi.autoencoder.conditional_vae import *
-from odin.bay.vi.autoencoder.multitask_vae import *
 from odin.bay.vi.autoencoder.stochastic_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.bay.vi.autoencoder.vq_vae import *
-from odin.bay.vi.autoencoder.mutual_info_vae import *
+from odin.networks import NetworkConfig
+from odin.bay.random_variable import RandomVariable
 
 
 def get_vae(name=None) -> VariationalAutoencoder:

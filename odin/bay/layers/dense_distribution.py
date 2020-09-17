@@ -3,11 +3,12 @@ from __future__ import absolute_import, division, print_function
 import inspect
 from functools import partial
 from numbers import Number
-from typing import Callable, List, Optional, Text, Type, Union
+from typing import Any, Callable, List, Optional, Text, Type, Union
 
 import numpy as np
 import tensorflow as tf
 from six import string_types
+from tensorflow import Tensor
 from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.constraints import Constraint
@@ -28,6 +29,7 @@ from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize,
     _serialize_function)
+from typing_extensions import Literal
 
 from odin import backend as bk
 from odin.bay.helpers import (KLdivergence, is_binary_distribution,
@@ -87,22 +89,22 @@ class DenseDistribution(Dense):
       event_shape: List[int] = (),
       posterior: Union[str, DistributionLambda] = 'normal',
       posterior_kwargs: dict = {},
-      prior: Union[Distribution, DistributionLambda, Callable] = None,
-      convert_to_tensor_fn: Callable = Distribution.sample,
+      prior: Optional[Union[Distribution, Callable[[], Distribution]]] = None,
+      convert_to_tensor_fn: Callable[..., Tensor] = Distribution.sample,
       dropout: float = 0.0,
-      activation: Union[str, Callable] = 'linear',
+      activation: Union[str, Callable[..., Tensor]] = 'linear',
       use_bias: bool = True,
-      kernel_initializer: Union[str, Initializer, Callable] = 'glorot_normal',
-      bias_initializer: Union[str, Initializer, Callable] = 'zeros',
-      kernel_regularizer: Union[str, Regularizer, Callable] = None,
-      bias_regularizer: Union[str, Regularizer, Callable] = None,
-      activity_regularizer: Union[str, Regularizer, Callable] = None,
-      kernel_constraint: Union[str, Constraint, Callable] = None,
-      bias_constraint: Union[str, Constraint, Callable] = None,
+      kernel_initializer: Union[str, Initializer] = 'glorot_normal',
+      bias_initializer: Union[str, Initializer] = 'zeros',
+      kernel_regularizer: Union[str, Regularizer] = None,
+      bias_regularizer: Union[str, Regularizer] = None,
+      activity_regularizer: Union[str, Regularizer] = None,
+      kernel_constraint: Union[str, Constraint] = None,
+      bias_constraint: Union[str, Constraint] = None,
       projection: bool = True,
       **kwargs,
   ):
-    assert isinstance(prior, (Distribution, DistributionLambda, Callable, type(None))), \
+    assert isinstance(prior, (Distribution, Callable, type(None))), \
       ("prior can only be None or instance of Distribution, DistributionLambda"
        f",  but given: {prior}-{type(prior)}")
     # duplicated event_shape or event_size in posterior_kwargs
@@ -171,44 +173,44 @@ class DenseDistribution(Dense):
     return self._params_size
 
   @property
-  def projection(self):
+  def projection(self) -> bool:
     return self._projection and self.params_size > 0
 
   @property
-  def is_binary(self):
+  def is_binary(self) -> bool:
     return is_binary_distribution(self.posterior_layer)
 
   @property
-  def is_discrete(self):
+  def is_discrete(self) -> bool:
     return is_discrete_distribution(self.posterior_layer)
 
   @property
-  def is_mixture(self):
+  def is_mixture(self) -> bool:
     return is_mixture_distribution(self.posterior_layer)
 
   @property
-  def is_zero_inflated(self):
+  def is_zero_inflated(self) -> bool:
     return is_zeroinflated_distribution(self.posterior_layer)
 
   @property
-  def event_shape(self):
+  def event_shape(self) -> List[int]:
     shape = self._event_shape
     if not (tf.is_tensor(shape) or isinstance(shape, tf.TensorShape)):
       shape = tf.nest.flatten(shape)
     return shape
 
   @property
-  def event_size(self):
+  def event_size(self) -> int:
     return tf.cast(tf.reduce_prod(self._event_shape), tf.int32)
 
   @property
-  def prior(self) -> Union[Distribution, Callable]:
+  def prior(self) -> Optional[Union[Distribution, Callable[[], Distribution]]]:
     return self._prior
 
   @prior.setter
-  def prior(self, p):
-    assert isinstance(p,
-                      (Distribution, type(None), DistributionLambda, Callable))
+  def prior(self,
+            p: Optional[Union[Distribution, Callable[[],
+                                                     Distribution]]] = None):
     self._prior = p
 
   def _sample_fn(self, dist):
@@ -333,8 +335,8 @@ class DenseDistribution(Dense):
     else:
       prior = str(self.prior)
     posterior = self._posterior_class.__name__
-    built = self.built if not hasattr(self, 'input_shape') else self.input_shape
-    return (f"<'{self.name}' proj:{self.projection} built:{built} "
+    shape = None if not hasattr(self, 'input_shape') else self.input_shape
+    return (f"<'{self.name}' proj:{self.projection} inputs:{shape[1:]} "
             f"event:{self.event_shape} #params:{self.units} "
             f"post:{posterior} prior:{prior} "
             f"dropout:{self._dropout:.2f} kw:{self._posterior_kwargs}>")
