@@ -345,6 +345,7 @@ class AmortizedLDA(BetaVAE):
                      beta=beta,
                      analytic=kwargs.pop('analytic', True),
                      **kwargs)
+    lda.step = self.step
     self._lda_layer = lda
 
   @property

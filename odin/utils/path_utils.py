@@ -4,6 +4,7 @@ import inspect
 import os
 import shutil
 import sys
+from typing import Callable
 
 from six import string_types
 
@@ -45,7 +46,9 @@ def get_folder_size(path):
   raise NotImplementedError
 
 
-def clean_folder(path, filter=None, verbose=False):
+def clean_folder(path: str,
+                 filter: Callable[[str], bool] = None,
+                 verbose: bool = False) -> None:
   r""" Remove all files and subfolder in a directory """
   if os.path.exists(path) and os.path.isdir(path):
     for name in os.listdir(path):
@@ -63,3 +66,6 @@ def clean_folder(path, filter=None, verbose=False):
         shutil.rmtree(f)
         if verbose:
           print("Remove folder:", f)
+
+
+clear_folder = clean_folder

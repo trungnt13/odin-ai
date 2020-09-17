@@ -183,11 +183,11 @@ class BatchRenormalization(BatchNormalization):
 
 class Identity(Layer):
 
-  def __init__(self, name=None, **kwargs):
+  def __init__(self, name="Identity", **kwargs):
     super().__init__(name=name, **kwargs)
     self.supports_masking = True
 
-  def call(self, inputs, training=None, mask=None):
+  def call(self, inputs, training=None, mask=None, *args, **kwargs):
     return inputs
 
   def compute_output_shape(self, input_shape):

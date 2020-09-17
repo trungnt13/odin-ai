@@ -178,8 +178,6 @@ def get_overrides() -> str:
 
 def get_output_dir() -> str:
   r""" Specific output dir based on the override """
-  if len(get_overrides()) == 0:
-    return os.path.join(HydraConfig.get().run.dir, 'default')
   return HydraConfig.get().run.dir
 
 
@@ -190,7 +188,7 @@ def get_sweep_dir() -> str:
 # ===========================================================================
 # Main Function
 # ===========================================================================
-def run_hydra(output_dir: str = './outputs',
+def run_hydra(output_dir: str = '/tmp/outputs',
               exclude_keys: List[str] = []) -> Callable[[TaskFunction], Any]:
   r""" A modified main function of Hydra-core for flexibility
   Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
@@ -260,7 +258,8 @@ def run_hydra(output_dir: str = './outputs',
       # check if overrides provided
       is_overrided = False
       for a in sys.argv:
-        if OVERRIDE_PATTERN.match(a):
+        match = OVERRIDE_PATTERN.match(a)
+        if match and not any(k in match.string for k in exclude_keys):
           is_overrided = True
       # formatting output dirs
       time_fmt = r"${now:%j_%H%M%S}"
@@ -302,6 +301,7 @@ def run_hydra(output_dir: str = './outputs',
       config_path = _abspath(config_path)
       ## prepare arguments for task_function
       spec = inspect.getfullargspec(task_function)
+
       ## run hydra
       _run_hydra(
           args_parser=args,

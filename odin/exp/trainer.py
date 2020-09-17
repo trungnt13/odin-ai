@@ -433,7 +433,7 @@ class Trainer(object):
     return ds
 
   #######################################################
-  def __init__(self, logdir: Optional[str] = None, trace_on=False):
+  def __init__(self, logdir: Optional[str] = None, trace_on: bool = False):
     super().__init__()
     if logdir is None:
       logdir = tempfile.mkdtemp()
@@ -442,7 +442,7 @@ class Trainer(object):
     self.trace_on = bool(trace_on)
     self.n_iter = 0
     # default attributes
-    self._writer = None
+    self._summary_writer = None
     self._current_valid_loss = []
     self._current_train_progress = None
     self._cached_tensorboard = None
@@ -495,9 +495,9 @@ class Trainer(object):
 
   @property
   def summary_writer(self) -> tf.summary.SummaryWriter:
-    if self._writer is None:
-      self._writer = tf.summary.create_file_writer(self.logdir)
-    return self._writer
+    if self._summary_writer is None:
+      self._summary_writer = tf.summary.create_file_writer(self.logdir)
+    return self._summary_writer
 
   def __getstate__(self):
     return (self.logdir, self.trace_on, self.n_iter)
@@ -505,7 +505,7 @@ class Trainer(object):
   def __setstate__(self, states):
     (self.logdir, self.trace_on, self.n_iter) = states
     # default attributes
-    self._writer = None
+    self._summary_writer = None
     self._current_valid_loss = []
     self._current_train_progress = None
     self._cached_tensorboard = None

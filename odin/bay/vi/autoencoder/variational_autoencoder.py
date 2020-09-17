@@ -19,6 +19,7 @@ from scipy.sparse import spmatrix
 from six import string_types
 from tensorflow import Tensor, Variable
 from tensorflow.python import keras
+from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.keras.layers import Layer
 from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
 from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
@@ -35,7 +36,7 @@ from odin.bay.layers.dense_distribution import DenseDistribution
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.networks import ImageNet
 from odin.exp.trainer import Trainer
-from odin.networks import NetworkConfig, SequentialNetwork
+from odin.networks import Identity, NetworkConfig, SequentialNetwork
 from odin.utils import MD5object
 from odin.utils.python_utils import classproperty
 
@@ -156,9 +157,9 @@ def _to_optimizer(optimizer, learning_rate, clipnorm):
 def parse_layers(network, input_shape=None, name=None) -> List[Layer]:
   is_decoding = 'decoder' in str(name).lower()
   ## identity
-  if network is None or \
-    (isinstance(network, string_types) and network in ('linear', 'identity')):
-    network = keras.layers.Activation('linear', name=name)
+  if (network is None or (isinstance(network, string_types) and
+                          network in ('linear', 'identity'))):
+    network = Identity(name=name)
   ## Callable or type
   elif (inspect.isfunction(network) or isinstance(network, partial) or
         isinstance(network, type)):
@@ -453,7 +454,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
     self.latent_layers = [
         parse_layers(z,
                      input_shape=e.output_shape[1:] if e is not None else None,
-                     name=f"Latents{i}")[0]
+                     name=f"Latents{i if i > 0 else ''}")[0]
         for i, z, e in _iter_lists(latents, all_encoder)
     ]
     self.latent_args = [_get_args(i) for i in self.latent_layers]
@@ -1083,8 +1084,8 @@ class VariationalAutoencoder(keras.Model, MD5object):
 
   def fit(
       self,
-      train: tf.data.Dataset,
-      valid: Optional[tf.data.Dataset] = None,
+      train: Union[TensorTypes, DatasetV2],
+      valid: Optional[Union[TensorTypes, DatasetV2]] = None,
       valid_freq: int = 500,
       valid_interval: float = 0,
       optimizer: Union[str, OptimizerV2] = 'adam',
