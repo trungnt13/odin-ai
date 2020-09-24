@@ -1,15 +1,18 @@
 import collections
-from typing import Optional
+from dataclasses import dataclass
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.python import keras
-from tensorflow_probability.python.distributions import Distribution
-
-from odin.bay.random_variable import RandomVariable as RV
+from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.networks import FactorDiscriminator
-from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
+from odin.bay.vi.autoencoder.variational_autoencoder import (DatasetV2,
+                                                             OptimizerV2,
+                                                             TensorTypes,
+                                                             TrainStep, VAEStep)
+from tensorflow.python import keras
+from tensorflow_probability.python.distributions import Distribution
 
 
 # ===========================================================================
@@ -24,9 +27,48 @@ def _split_if_tensor(x):
   return x1, x2
 
 
-class FactorDiscriminatorStep(TrainStep):
+def _split_inputs(inputs, mask, call_kw):
+  r""" Split the data into 2 partitions for training the VAE and
+  Discriminator """
+  # split inputs into 2 mini-batches here
+  if tf.is_tensor(inputs):
+    x1, x2 = tf.split(inputs, 2, axis=0)
+  else:
+    inputs = [tf.split(x, 2, axis=0) for x in tf.nest.flatten(inputs)]
+    x1 = [i[0] for i in inputs]
+    x2 = [i[1] for i in inputs]
+  # split the mask
+  mask1 = None
+  mask2 = None
+  if mask is not None:
+    if tf.is_tensor(mask):
+      mask1, mask2 = tf.split(mask, 2, axis=0)
+    else:
+      mask = [tf.split(m, 2, axis=0) for m in tf.nest.flatten(mask)]
+      mask1 = [i[0] for i in mask]
+      mask2 = [i[1] for i in mask]
+  # split the call_kw
+  call_kw1 = {}
+  call_kw2 = {}
+  for k, v in call_kw.items():
+    is_list = False
+    if isinstance(v, collections.Sequence):
+      v = [_split_if_tensor(i) for i in v]
+      call_kw1[k] = [i[0] for i in v]
+      call_kw2[k] = [i[1] for i in v]
+    else:
+      v1, v2 = _split_if_tensor(v)
+      call_kw1[k] = v1
+      call_kw2[k] = v2
+  return (x1, mask1, call_kw1), (x2, mask2, call_kw2)
 
-  def call(self, inputs, mask, qZ_X, qZ_Xprime, training):
+
+@dataclass
+class FactorDiscriminatorStep(VAEStep):
+  qZ_X: Distribution
+
+  def optimize(self, inputs, mask, qZ_X, qZ_Xprime,
+               training) -> Tuple[tf.Tensor, Dict[str, Any]]:
     dtc_loss = self.vae.dtc_loss(qZ_X,
                                  qZ_Xprime,
                                  training=training,
@@ -34,8 +76,7 @@ class FactorDiscriminatorStep(TrainStep):
     metrics = dict(dtc_loss=dtc_loss)
     ## applying the classifier loss
     supervised_loss = 0.
-    if (len(tf.nest.flatten(inputs)) > len(self.vae.output_layers) and
-        hasattr(self.vae, 'supervised_loss')):
+    if hasattr(self.vae, 'supervised_loss'):
       labels = inputs[len(self.vae.output_layers):]
       supervised_loss = self.vae.supervised_loss(labels,
                                                  qZ_X,
@@ -45,33 +86,28 @@ class FactorDiscriminatorStep(TrainStep):
       metrics['supervised_loss'] = supervised_loss
     return dtc_loss + supervised_loss, metrics
 
-  def __call__(self):
-    inputs, qZ_X = self.inputs
+  def call(self) -> Tuple[tf.Tensor, Dict[str, Any]]:
+    inputs = self.inputs
+    qZ_X = self.qZ_X
     mask = self.mask
     training = self.training
     call_kw = self.call_kw
-    qZ_Xprime = self.vae.encode(inputs,
-                                training=training,
-                                mask=mask,
-                                sample_shape=self.sample_shape,
-                                **call_kw)
-    return self.call(inputs, mask, qZ_X, qZ_Xprime, training)
+    qZ_Xprime = self.vae.encode(inputs, training=training, mask=mask, **call_kw)
+    return self.optimize(inputs, mask, qZ_X, qZ_Xprime, training)
 
 
+@dataclass
 class Factor2DiscriminatorStep(FactorDiscriminatorStep):
 
-  def __call__(self):
-    inputs, qZ_X = self.inputs
+  def call(self) -> Tuple[tf.Tensor, Dict[str, Any]]:
+    inputs = self.inputs
+    qZ_X = self.qZ_X
     mask = self.mask
     training = self.training
     call_kw = self.call_kw
-    qZ_Xprime = self.vae.encode(inputs,
-                                training=training,
-                                mask=mask,
-                                sample_shape=self.sample_shape,
-                                **call_kw)
+    qZ_Xprime = self.vae.encode(inputs, training=training, mask=mask, **call_kw)
     # only select the last latent space
-    return self.call(inputs, mask, qZ_X[-1], qZ_Xprime[-1], training)
+    return self.optimize(inputs, mask, qZ_X[-1], qZ_Xprime[-1], training)
 
 
 # ===========================================================================
@@ -88,7 +124,7 @@ class FactorVAE(BetaVAE):
     X = minibatch()
     X1, X2 = split(X, 2, axis=0)
 
-    pX_Z, qZ_X = vae(X1, trainining=True)
+    pX_Z, qZ_X = vae(X1, training=True)
     loss = -vae.elbo(X1, pX_Z, qZ_X, training=True)
     vae_optimizer.apply_gradients(loss, vae.parameters)
 
@@ -124,31 +160,28 @@ class FactorVAE(BetaVAE):
   """
 
   def __init__(self,
-               discriminator=dict(units=[1000, 1000, 1000, 1000, 1000]),
-               gamma=6.0,
-               beta=1.0,
-               lamda=1.0,
-               maximize_tc=False,
+               discriminator: Union[FactorDiscriminator, Dict[str, Any]] = dict(
+                   units=[1000, 1000, 1000, 1000, 1000]),
+               gamma: float = 6.0,
+               beta: float = 1.0,
+               lamda: float = 1.0,
+               maximize_tc: bool = False,
                **kwargs):
-    latent_dim = kwargs.pop('latent_dim', None)
-    super().__init__(beta=beta,
-                     reduce_latent=kwargs.pop('reduce_latent', 'concat'),
-                     **kwargs)
+    super().__init__(beta=beta, reduce_latent='concat', **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     self.lamda = tf.convert_to_tensor(lamda, dtype=self.dtype, name='lamda')
     # all latents will be concatenated (a bit spooky to customize latent_dim)
-    if latent_dim is None:
-      latent_dim = np.prod(
-          sum(np.array(layer.event_shape) for layer in self.latent_layers))
+    latent_dim = np.prod(
+        sum(np.array(layer.event_shape) for layer in self.latent_layers))
     ## init discriminator
-    if not isinstance(discriminator, keras.layers.Layer):
+    if not isinstance(discriminator, FactorDiscriminator):
       discriminator = FactorDiscriminator(input_shape=(latent_dim,),
                                           **discriminator)
     self.discriminator = discriminator
     assert hasattr(self.discriminator, 'total_correlation') and \
       hasattr(self.discriminator, 'dtc_loss'), \
-        ("discriminator of type: %s must has method total_correlation and dtc_loss." %
-         str(type(self.discriminator)))
+        (f"discriminator of type: {type(self.discriminator)} "
+         "must has method total_correlation and dtc_loss.")
     # VAE and discriminator must be trained separated so we split
     # their params here
     self.disc_params = self.discriminator.trainable_variables
@@ -160,7 +193,7 @@ class FactorVAE(BetaVAE):
     ## For training
     # store class for training factor discriminator, this allow later
     # modification without re-writing the train_steps method
-    self._FactorStep = FactorDiscriminatorStep
+    self._factor_step = FactorDiscriminatorStep
     self._is_pretraining = False
 
   @property
@@ -176,17 +209,8 @@ class FactorVAE(BetaVAE):
     self._is_pretraining = False
     return self
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
-    llk, div = super()._elbo(inputs,
-                             pX_Z,
-                             qZ_X,
-                             analytic=analytic,
-                             reverse=reverse,
-                             sample_shape=sample_shape,
-                             mask=mask,
-                             training=training,
-                             **kwargs)
+  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     # by default, this support multiple latents by concatenating all latents
     tc = self.total_correlation(qZ_X, apply_gamma=True, training=training)
     if self.maximize_tc:
@@ -194,11 +218,12 @@ class FactorVAE(BetaVAE):
     div['total_corr'] = tc
     return llk, div
 
-  def total_correlation(self, qZ_X, training=None, apply_gamma=False):
+  def total_correlation(self,
+                        qZ_X: Distribution,
+                        training: Optional[bool] = None,
+                        apply_gamma: bool = False) -> tf.Tensor:
     r""" Using the discriminator output to estimate total correlation of
-    the latents
-
-    """
+    the latents """
     if self.is_pretraining:
       return 0.
     tc = self.discriminator.total_correlation(qZ_X, training=training)
@@ -206,7 +231,11 @@ class FactorVAE(BetaVAE):
       tc = self.gamma * tc
     return tc
 
-  def dtc_loss(self, qZ_X, qZ_Xprime=None, training=None, apply_lamda=False):
+  def dtc_loss(self,
+               qZ_X: Distribution,
+               qZ_Xprime: Optional[Distribution] = None,
+               training: Optional[bool] = None,
+               apply_lamda: bool = False) -> tf.Tensor:
     r""" Discrimination loss between real and permuted codes Algorithm (2) """
     loss = self.discriminator.dtc_loss(qZ_X,
                                        qZ_Xprime=qZ_Xprime,
@@ -215,49 +244,10 @@ class FactorVAE(BetaVAE):
       loss = self.lamda * loss
     return loss
 
-  def _prepare_steps(self, inputs, mask, call_kw):
-    r""" Split the data into 2 partitions for training the VAE and
-    Discriminator """
-    self.step.assign_add(1.)
-    # split inputs into 2 mini-batches here
-    if tf.is_tensor(inputs):
-      x1, x2 = tf.split(inputs, 2, axis=0)
-    else:
-      inputs = [tf.split(x, 2, axis=0) for x in tf.nest.flatten(inputs)]
-      x1 = [i[0] for i in inputs]
-      x2 = [i[1] for i in inputs]
-    # split the mask
-    mask1 = None
-    mask2 = None
-    if mask is not None:
-      if tf.is_tensor(mask):
-        mask1, mask2 = tf.split(mask, 2, axis=0)
-      else:
-        mask = [tf.split(m, 2, axis=0) for m in tf.nest.flatten(mask)]
-        mask1 = [i[0] for i in mask]
-        mask2 = [i[1] for i in mask]
-    # split the call_kw
-    call_kw1 = {}
-    call_kw2 = {}
-    for k, v in call_kw.items():
-      is_list = False
-      if isinstance(v, collections.Sequence):
-        v = [_split_if_tensor(i) for i in v]
-        call_kw1[k] = [i[0] for i in v]
-        call_kw2[k] = [i[1] for i in v]
-      else:
-        v1, v2 = _split_if_tensor(v)
-        call_kw1[k] = v1
-        call_kw2[k] = v2
-    return (x1, mask1, call_kw1), (x2, mask2, call_kw2)
-
   def train_steps(self,
                   inputs,
                   training=True,
                   mask=None,
-                  sample_shape=(),
-                  iw=False,
-                  elbo_kw={},
                   call_kw={}) -> TrainStep:
     r""" Facilitate multiple steps training for each iteration (similar to GAN)
 
@@ -278,36 +268,32 @@ class FactorVAE(BetaVAE):
       tape.gradient(loss, discriminator_step.parameters)
     ```
     """
-    (x1, mask1,
-     call_kw1), (x2, mask2,
-                 call_kw2) = self._prepare_steps(inputs, mask, call_kw)
+    (x1, mask1, call_kw1), \
+      (x2, mask2, call_kw2) = _split_inputs(inputs, mask, call_kw)
     # first step optimize VAE with total correlation loss
-    step1 = TrainStep(vae=self,
-                      inputs=x1,
-                      training=training,
-                      mask=mask1,
-                      sample_shape=sample_shape,
-                      iw=iw,
-                      elbo_kw=elbo_kw,
-                      call_kw=call_kw1,
-                      parameters=self.vae_params)
+    step1 = VAEStep(vae=self,
+                    inputs=x1,
+                    training=training,
+                    mask=mask1,
+                    call_kw=call_kw1,
+                    parameters=self.vae_params)
     yield step1
     # second step optimize the discriminator for discriminate permuted code
     # skip training Discriminator of pretraining
     if not self.is_pretraining:
-      step2 = self._FactorStep(vae=self,
-                               inputs=[x2, step1.qZ_X],
-                               training=training,
-                               mask=mask2,
-                               call_kw=call_kw2,
-                               sample_shape=sample_shape,
-                               parameters=self.disc_params)
+      step2 = self._factor_step(vae=self,
+                                inputs=x2,
+                                qZ_X=step1.qZ_X,
+                                training=training,
+                                mask=mask2,
+                                call_kw=call_kw2,
+                                parameters=self.disc_params)
       yield step2
 
   def fit(self,
-          train,
-          valid=None,
-          optimizer=[
+          train: Union[TensorTypes, DatasetV2],
+          valid: Optional[Union[TensorTypes, DatasetV2]] = None,
+          optimizer: Tuple[OptimizerV2, OptimizerV2] = [
               tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
               tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
           ],
@@ -315,6 +301,9 @@ class FactorVAE(BetaVAE):
     r""" Override the original fit method of keras to provide simplified
     procedure with `VariationalAutoencoder.optimize` and
     `VariationalAutoencoder.train_steps` """
+    assert isinstance(optimizer, (tuple, list)) and len(optimizer) == 2, \
+      ("Two different optimizer must be provided, "
+       "one for VAE, and one of FactorDiscriminator")
     return super().fit(train=train, valid=valid, optimizer=optimizer, **kwargs)
 
   def __str__(self):
@@ -339,7 +328,7 @@ class SemiFactorVAE(FactorVAE):
   """
 
   def __init__(self,
-               labels=RV(10, 'onehot', name="Labels"),
+               labels=RandomVariable(10, 'onehot', name="Labels"),
                discriminator=dict(units=[1000, 1000, 1000, 1000, 1000]),
                alpha=10.,
                ss_strategy='logsumexp',
@@ -407,11 +396,17 @@ class Factor2VAE(FactorVAE):
   """
 
   def __init__(self,
-               latents=RV(5, 'diag', projection=True, name='Latents'),
-               factors=RV(5, 'diag', projection=True, name="Factors"),
+               latents=RandomVariable(5,
+                                      'diag',
+                                      projection=True,
+                                      name='Latents'),
+               factors=RandomVariable(5,
+                                      'diag',
+                                      projection=True,
+                                      name="Factors"),
                **kwargs):
     latents = tf.nest.flatten(latents)
-    assert isinstance(factors, RV), \
+    assert isinstance(factors, RandomVariable), \
       "factors must be instance of RandomVariable, but given: %s" % \
         str(type(factors))
     latents.append(factors)
@@ -457,9 +452,9 @@ class SemiFactor2VAE(SemiFactorVAE, Factor2VAE):
 
   # construction of SemiFactor2VAE for MNIST dataset
   vae = SemiFactor2VAE(encoder='mnist',
-                       outputs=RV((28, 28, 1), 'bern', name="Image"),
-                       latents=RV(10, 'diag', projection=True, name='Latents'),
-                       factors=RV(10, 'diag', projection=True, name='Factors'),
+                       outputs=RandomVariable((28, 28, 1), 'bern', name="Image"),
+                       latents=RandomVariable(10, 'diag', projection=True, name='Latents'),
+                       factors=RandomVariable(10, 'diag', projection=True, name='Factors'),
                        alpha=10.,
                        n_labels=10,
                        ss_strategy='logsumexp')
@@ -475,7 +470,13 @@ class SemiFactor2VAE(SemiFactorVAE, Factor2VAE):
   """
 
   def __init__(self,
-               latents=RV(5, 'diag', projection=True, name='Latents'),
-               factors=RV(5, 'diag', projection=True, name='Factors'),
+               latents=RandomVariable(5,
+                                      'diag',
+                                      projection=True,
+                                      name='Latents'),
+               factors=RandomVariable(5,
+                                      'diag',
+                                      projection=True,
+                                      name='Factors'),
                **kwargs):
     super().__init__(latents=latents, factors=factors, **kwargs)

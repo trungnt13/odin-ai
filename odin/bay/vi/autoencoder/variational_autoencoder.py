@@ -1,4 +1,4 @@
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 import copy
 import glob
@@ -44,7 +44,6 @@ from typing_extensions import Literal
 __all__ = [
     'LayerCreator',
     'VAEStep',
-    'TrainStep',
     'VariationalAutoencoder',
 ]
 
@@ -217,16 +216,13 @@ def _iter_lists(X, Y):
 class VAEStep(TrainStep):
   r""" A single train step (iteration) for Variational Autoencoder """
 
-  vae: 'VariationalAutoencoder'
-  sample_shape: List[int]
+  vae: VariationalAutoencoder
   call_kw: Dict[str, Any]
-  elbo_kw: Dict[str, Any]
 
   def call(self) -> Tuple[tf.Tensor, Dict[str, Union[tf.Tensor, str]]]:
     pX_Z, qZ_X = self.vae(self.inputs,
                           training=self.training,
                           mask=self.mask,
-                          sample_shape=self.sample_shape,
                           **self.call_kw)
     # store so it could be reused
     self.pX_Z = pX_Z
@@ -236,8 +232,7 @@ class VAEStep(TrainStep):
                              qZ_X,
                              training=self.training,
                              mask=self.mask,
-                             return_components=True,
-                             **self.elbo_kw)
+                             return_components=True)
     # sum all the components log-likelihood and divergence
     llk_sum = tf.constant(0., dtype=self.vae.dtype)
     div_sum = tf.constant(0., dtype=self.vae.dtype)
@@ -264,6 +259,15 @@ class VariationalAutoencoder(Networks):
     decoder : `keras.layers.Layer` or `odin.networks.NetworkConfig`.
     outputs : `RandomVariable` or `Layer`. List of output distribution
     latents : `RandomVariable` or `Layer`. List of latent distribution
+    analytic : bool (default: False)
+      if True, use the close-form solution  for
+    reverse : bool (default: True)
+      If `True`, calculating `KL(q||p)` which optimizes `q`
+      (or p_model) by greedily filling in the highest modes of data (or, in
+      other word, placing low probability to where data does not occur).
+      Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
+      propagation place high probability at anywhere data occur
+      (i.e. averagely fitting the data).
 
   Call return:
     pX_Z : a single or a list of `tensorflow_probability.Distribution`
@@ -294,11 +298,13 @@ class VariationalAutoencoder(Networks):
                              'none'] = 'concat',
       input_shape: Optional[List[int]] = None,
       analytic: bool = False,
+      reverse: bool = True,
       **kwargs,
   ):
     ### keras want this supports_masking on to enable support masking
     self.supports_masking = True
     super().__init__(**kwargs)
+    self._sample_shape = ()
     ### First, infer the right input_shape
     if not isinstance(outputs, (tuple, list)):
       outputs = [outputs]
@@ -364,7 +370,6 @@ class VariationalAutoencoder(Networks):
         # call this dummy input to build the layer
         layer(keras.Input(shape=shape[1:], batch_size=shape[0]))
     ### the training step
-    self.analytic = analytic
     self.latent_names = [i.name for i in self.latent_layers]
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
@@ -382,6 +387,27 @@ class VariationalAutoencoder(Networks):
         inspect.getfullargspec(i.call).args[1:]
         for i in tf.nest.flatten(self.decoder)
     ]
+    self.analytic = analytic
+    self.reverse = reverse
+
+  @property
+  def sample_shape(self) -> List[int]:
+    return self._sample_shape
+
+  def set_elbo_configs(self, analytic: bool,
+                       reverse: bool) -> VariationalAutoencoder:
+    self.analytic = analytic
+    self.reverse = reverse
+    return self
+
+  def set_sample_shape(
+      self, sample_shape: Union[int, List[int]] = ()) -> VariationalAutoencoder:
+    r"""
+    sample_shape : {Tensor, Number}
+      number of MCMC samples for MCMC estimation of KL-divergence
+    """
+    self._sample_shape = tf.nest.flatten(sample_shape)
+    return self
 
   @property
   def encoder(self) -> Union[Layer, List[Layer]]:
@@ -400,15 +426,13 @@ class VariationalAutoencoder(Networks):
     return self._output_layers
 
   @property
-  def init_args(self) -> dict:
+  def init_args(self) -> Dict[str, Any]:
     r""" Return a dictionary of arguments used for initialized this class """
     return self._init_args
 
   @classproperty
-  def default_args(cls) -> dict:
-    r""" Return:
-
-      - a dictionary of the default keyword arguments of all subclass start
+  def default_args(cls) -> Dict[str, Any]:
+    r""" Return a dictionary of the default keyword arguments of all subclass start
           from VariationalAutoencoder.
     """
     kw = dict()
@@ -450,7 +474,9 @@ class VariationalAutoencoder(Networks):
     shape = [d.input_shape for d in tf.nest.flatten(self.decoder)]
     return shape[0] if len(shape) == 1 else shape
 
-  def sample_prior(self, sample_shape: List[int] = (), seed: int = 1) -> Tensor:
+  def sample_prior(self,
+                   sample_shape: Union[int, List[int]] = (),
+                   seed: int = 1) -> Tensor:
     r""" Sampling from prior distribution """
     samples = []
     for latent in self.latent_layers:
@@ -458,7 +484,9 @@ class VariationalAutoencoder(Networks):
       samples.append(s)
     return samples[0] if len(samples) == 1 else tuple(samples)
 
-  def sample_data(self, sample_shape: List[int] = (), seed: int = 1) -> Tensor:
+  def sample_data(self,
+                  sample_shape: Union[int, List[int]] = (),
+                  seed: int = 1) -> Tensor:
     r""" Sample from p(X) given that the prior of X is known, this could be
     wrong since `RandomVariable` often has a default prior. """
     samples = []
@@ -481,7 +509,6 @@ class VariationalAutoencoder(Networks):
              inputs: TensorTypes,
              training: Optional[bool] = None,
              mask: Optional[Tensor] = None,
-             sample_shape: Union[int, List[int]] = (),
              **kwargs) -> Union[Distribution, List[Distribution]]:
     r""" Encoding inputs to latent codes """
     outputs = []
@@ -502,7 +529,7 @@ class VariationalAutoencoder(Networks):
       if 'training' in args:
         kw['training'] = training
       if 'sample_shape' in args:
-        kw['sample_shape'] = sample_shape
+        kw['sample_shape'] = self.sample_shape
       qZ_X.append(latent(code, **kw))
     qZ_X = tf.nest.flatten(qZ_X)
     # remember to store the keras mask in outputs
@@ -514,12 +541,11 @@ class VariationalAutoencoder(Networks):
              latents: Union[TensorTypes, Distribution],
              training: Optional[bool] = None,
              mask: Optional[Tensor] = None,
-             sample_shape: Union[int, List[int]] = (),
              **kwargs) -> Union[Distribution, List[Distribution]]:
     r""" Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
-    sample_shape = tf.nest.flatten(sample_shape)
-    latents = _prepare_decode_latents(self.reduce_latent, latents, sample_shape)
+    latents = _prepare_decode_latents(self.reduce_latent, latents,
+                                      self.sample_shape)
     # apply the decoder and get back the sample shape
     outputs = []
     for decoder, args in zip(tf.nest.flatten(self.decoder), self._decoder_args):
@@ -529,12 +555,13 @@ class VariationalAutoencoder(Networks):
       if 'training' in args:
         copy_kw['training'] = training
       out = decoder(latents, **copy_kw)
-      if len(sample_shape) > 0:
+      if len(self.sample_shape) > 0:
         list_outputs = False
         if not tf.is_tensor(out):
           list_outputs = True
         out = [
-            tf.reshape(o, tf.concat([sample_shape, (-1,), o.shape[1:]], axis=0))
+            tf.reshape(
+                o, tf.concat([self.sample_shape, (-1,), o.shape[1:]], axis=0))
             for o in tf.nest.flatten(out)
         ]
         if not list_outputs:
@@ -555,7 +582,6 @@ class VariationalAutoencoder(Networks):
       inputs: TensorTypes,
       training: Optional[bool] = None,
       mask: Optional[Tensor] = None,
-      sample_shape: Union[int, List[int]] = (),
       **kwargs
   ) -> Tuple[Union[Distribution, List[Distribution], Union[
       Distribution, List[Distribution]]]]:
@@ -563,7 +589,6 @@ class VariationalAutoencoder(Networks):
         inputs,
         training=training,
         mask=mask,
-        sample_shape=sample_shape,
         **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
     )
     # transfer the mask from encoder to decoder here
@@ -575,7 +600,6 @@ class VariationalAutoencoder(Networks):
         qZ_X,
         training=training,
         mask=mask,
-        sample_shape=sample_shape,
         **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
     )
     return pX_Z, qZ_X
@@ -585,7 +609,6 @@ class VariationalAutoencoder(Networks):
                         inputs: TensorTypes,
                         training: Optional[bool] = None,
                         mask: Optional[Tensor] = None,
-                        sample_shape: Union[int, List[int]] = 100,
                         **kwargs) -> Tuple[Tensor, Tensor]:
     r""" Marginal log likelihood `log(p(X))`, an biased estimation.
 
@@ -608,12 +631,8 @@ class VariationalAutoencoder(Networks):
       distortion : a Dictionary mapping from distribution name to Tensor
         of shape `[batch_size]`, the negative reconstruction cost.
     """
-    sample_shape = [tf.cast(tf.reduce_prod(sample_shape), tf.int32)]
-    pX_Z, qZ_X = self.call(inputs,
-                           training=training,
-                           mask=mask,
-                           sample_shape=sample_shape,
-                           **kwargs)
+    sample_shape = [tf.cast(tf.reduce_prod(self.sample_shape), tf.int32)]
+    pX_Z, qZ_X = self.call(inputs, training=training, mask=mask, **kwargs)
     ## Marginal LLK
     llk = []
     distortion = {}
@@ -652,16 +671,14 @@ class VariationalAutoencoder(Networks):
     }
     return mllk, distortion
 
-  def _elbo(self,
-            inputs: Union[TensorTypes, List[TensorTypes]],
-            pX_Z: Union[Distribution, List[Distribution]],
-            qZ_X: Union[Distribution, List[Distribution]],
-            analytic: Optional[bool] = None,
-            reverse: bool = True,
-            sample_shape: Optional[List[int]] = None,
-            mask: Optional[Tensor] = None,
-            training: Optional[bool] = None,
-            **kwargs) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
+  def _elbo(
+      self,
+      inputs: Union[TensorTypes, List[TensorTypes]],
+      pX_Z: Union[Distribution, List[Distribution]],
+      qZ_X: Union[Distribution, List[Distribution]],
+      mask: Optional[Tensor] = None,
+      training: Optional[bool] = None
+  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     r""" The basic components of all ELBO """
     ### llk
     llk = {}
@@ -671,9 +688,9 @@ class VariationalAutoencoder(Networks):
     kl = {}
     for name, qZ in zip(self.latent_names, qZ_X):
       if hasattr(qZ, "KL_divergence"):
-        kl[f'kl_{name}'] = qZ.KL_divergence(analytic=analytic,
-                                            reverse=reverse,
-                                            sample_shape=sample_shape,
+        kl[f'kl_{name}'] = qZ.KL_divergence(analytic=self.analytic,
+                                            reverse=self.reverse,
+                                            sample_shape=self.sample_shape,
                                             keepdims=True)
       else:
         kl[f'kl_{name}'] = tf.constant(0., dtype=self.dtype)
@@ -683,14 +700,9 @@ class VariationalAutoencoder(Networks):
            inputs: Union[Tensor, List[Tensor]],
            pX_Z: Union[Distribution, List[Distribution]],
            qZ_X: Union[Distribution, List[Distribution]],
-           analytic: Optional[bool] = None,
-           reverse: bool = True,
-           sample_shape: Optional[List[int]] = None,
            mask: Optional[Tensor] = None,
            training: Optional[bool] = None,
-           iw: bool = False,
-           return_components: bool = False,
-           **kwargs):
+           return_components: bool = False):
     r""" Calculate the distortion (log-likelihood) and rate (KL-divergence)
     for contruction the Evident Lower Bound (ELBO).
 
@@ -698,18 +710,6 @@ class VariationalAutoencoder(Networks):
       `ELBO = E_{z~q(Z|X)}[log(p(X|Z))] - KL_{x~p(X)}[q(Z|X)||p(Z)]`
 
     Arguments:
-      analytic : bool (default: False)
-        if True, use the close-form solution  for
-      sample_shape : {Tensor, Number}
-        number of MCMC samples for MCMC estimation of KL-divergence
-      reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
-        (or p_model) by greedily filling in the highest modes of data (or, in
-        other word, placing low probability to where data does not occur).
-        Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
-        propagation place high probability at anywhere data occur
-        (i.e. averagely fitting the data).
-      iw : a Boolean. If True, the final ELBO is importance weighted sampled.
-        This won't be applied if `return_components=True` or `rank(elbo)` <= 1.
       return_components : a Boolean. If True return the log-likelihood and the
         KL-divergence instead of final ELBO.
 
@@ -721,8 +721,6 @@ class VariationalAutoencoder(Networks):
         divergence : dictionary of `Tensor` shape [sample_shape, batch_size].
           The reversed KL-divergence or rate
     """
-    if analytic is None:
-      analytic = self.analytic
     # organize all inputs to list
     inputs = [
         tf.convert_to_tensor(x, dtype_hint=self.dtype)
@@ -739,12 +737,8 @@ class VariationalAutoencoder(Networks):
     llk, div = self._elbo(inputs,
                           pX_Z=pX_Z,
                           qZ_X=qZ_X,
-                          analytic=analytic,
-                          reverse=reverse,
-                          sample_shape=sample_shape,
                           mask=mask,
-                          training=training,
-                          **kwargs)
+                          training=training)
     if not (isinstance(llk, dict) and isinstance(div, dict)):
       raise RuntimeError(
           "When overriding VariationalAutoencoder _elbo method must return "
@@ -766,11 +760,9 @@ class VariationalAutoencoder(Networks):
                    "probably because of numerical instability."))
       div_sum += x
     elbo = llk_sum - div_sum
-    if iw and tf.rank(elbo) > 1:
-      elbo = self.importance_weighted(elbo, axis=0)
     return elbo
 
-  def importance_weighted(self, elbo, axis=0):
+  def importance_weighted(self, elbo: TensorTypes, axis: int = 0):
     r""" VAE objective can lead to overly simplified representations which
     fail to use the network’s entire modeling capacity.
 
@@ -795,19 +787,15 @@ class VariationalAutoencoder(Networks):
                   inputs: TensorTypes,
                   training: Optional[bool] = None,
                   mask: Optional[Tensor] = None,
-                  sample_shape: List[int] = (),
-                  call_kw: Dict[str, Any] = {},
-                  elbo_kw: Dict[str, Any] = {}) -> Iterator[VAEStep]:
+                  call_kw: Dict[str, Any] = {}) -> Iterator[VAEStep]:
     r""" Facilitate multiple steps training for each iteration
     (similar to GAN) """
     yield VAEStep(vae=self,
                   parameters=self.trainable_variables,
-                  sample_shape=sample_shape,
                   inputs=inputs,
                   training=training,
                   mask=mask,
-                  call_kw=call_kw,
-                  elbo_kw=elbo_kw)
+                  call_kw=call_kw)
 
   def __str__(self):
     cls = [
@@ -817,8 +805,10 @@ class VariationalAutoencoder(Networks):
             f"(semi:{self.is_semi_supervised} self:{self.is_self_supervised} "
             f"weak:{self.is_weak_supervised})")
     text += f'\n Tensorboard : {self.tensorboard_logdir}'
-    text += f'\n Analytic    : {self.analytic}'
-    text += f'\n Fitted      : {int(self.step.numpy())}(iters)'
+    text += f'\n Analytic     : {self.analytic}'
+    text += f'\n Reverse      : {self.reverse}'
+    text += f'\n Sample Shape: {self.sample_shape}'
+    text += f'\n Fitted        : {int(self.step.numpy())}(iters)'
     text += f'\n MD5 checksum: {self.md5_checksum}'
     ## encoder
     for i, encoder in enumerate(tf.nest.flatten(self.encoder)):

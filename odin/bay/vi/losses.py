@@ -1,10 +1,12 @@
 import inspect
+from typing import Callable, List, Union
 
 import numpy as np
 import tensorflow as tf
-from tensorflow_probability.python.distributions import Distribution, Normal
-
 from odin.bay.helpers import kl_divergence
+from tensorflow import Tensor
+from tensorflow_probability.python.distributions import Distribution, Normal
+from typing_extensions import Literal
 
 __all__ = [
     'disentangled_inferred_prior_loss',
@@ -18,7 +20,7 @@ __all__ = [
 # ===========================================================================
 # Helper
 # ===========================================================================
-def get_divergence(name):
+def get_divergence(name: str) -> Callable[[Distribution, Distribution], Tensor]:
   div = dict(dip=disentangled_inferred_prior_loss,
              tc=total_correlation,
              mmd=maximum_mean_discrepancy,
@@ -35,9 +37,9 @@ def get_divergence(name):
 # Losses
 # ===========================================================================
 def disentangled_inferred_prior_loss(qZ_X: Distribution,
-                                     only_mean=False,
-                                     lambda_offdiag=2.,
-                                     lambda_diag=1.):
+                                     only_mean: bool = False,
+                                     lambda_offdiag: float = 2.,
+                                     lambda_diag: float = 1.) -> Tensor:
   r""" Disentangled inferred prior (DIP) matches the covariance of the prior
   distributions with the inferred prior
 
@@ -96,7 +98,7 @@ def disentangled_inferred_prior_loss(qZ_X: Distribution,
     lambda_diag * tf.reduce_sum((z_cov_diag - 1.) ** 2)
 
 
-def total_correlation(z_samples, qZ_X: Distribution):
+def total_correlation(z_samples: Tensor, qZ_X: Distribution) -> Tensor:
   r"""Estimate of total correlation using Gaussian distribution on a batch.
 
   We need to compute the expectation over a batch of:
@@ -153,7 +155,7 @@ def total_correlation(z_samples, qZ_X: Distribution):
 # ===========================================================================
 # Maximum-mean discrepancy
 # ===========================================================================
-def pairwise_distances(x, y, keepdims=True):
+def pairwise_distances(x: Tensor, y: Tensor, keepdims: bool = True) -> Tensor:
   r"""
   Arguments:
     x : a Tensor batch_shape1 + (dim,)
@@ -217,11 +219,12 @@ def polynomial_kernel(x, y, d=2):
   d = pairwise_distances(x, y, keepdims=False)
 
 
-def maximum_mean_discrepancy(qZ: Distribution,
-                             pZ: Distribution,
-                             q_sample_shape=(),
-                             p_sample_shape=100,
-                             kernel='gaussian'):
+def maximum_mean_discrepancy(
+    qZ: Distribution,
+    pZ: Distribution,
+    q_sample_shape: Union[int, List[int]] = (),
+    p_sample_shape: Union[int, List[int]] = 100,
+    kernel: Literal['gaussian', 'linear', 'polynomial'] = 'gaussian') -> Tensor:
   r""" is a distance-measure between distributions p(X) and q(Y) which is
   defined as the squared distance between their embeddings in the a
   "reproducing kernel Hilbert space".

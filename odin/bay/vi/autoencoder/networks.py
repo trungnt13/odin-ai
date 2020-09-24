@@ -1,19 +1,20 @@
 from functools import partial
 from numbers import Number
+from typing import Any, Callable, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.python import keras
-from tensorflow.python.keras.utils import layer_utils
-from tensorflow_probability.python.distributions import (Distribution,
-                                                         Independent)
-
 from odin.backend.keras_helpers import layer2text
-from odin.bay.random_variable import RandomVariable as RV
+from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.utils import permute_dims
 from odin.networks import (NetworkConfig, ParallelNetwork, SequentialNetwork,
                            SkipConnection, dense_network)
 from odin.utils import as_tuple
+from tensorflow.python import keras
+from tensorflow.python.keras.utils import layer_utils
+from tensorflow_probability.python.distributions import (Distribution,
+                                                         Independent)
+from typing_extensions import Literal
 
 __all__ = [
     'create_mnist_autoencoder',
@@ -347,18 +348,23 @@ class FactorDiscriminator(SequentialNetwork):
   """
 
   def __init__(self,
-               input_shape,
-               batchnorm=False,
-               input_dropout=0.,
-               dropout=0.,
-               units=[1000, 1000, 1000, 1000, 1000],
-               outputs=RV(1, 'bernoulli', name="Discriminator"),
-               activation=tf.nn.leaky_relu,
-               ss_strategy='logsumexp',
-               name="FactorDiscriminator"):
+               input_shape: List[int],
+               batchnorm: bool = False,
+               input_dropout: float = 0.,
+               dropout: float = 0.,
+               units: List[int] = [1000, 1000, 1000, 1000, 1000],
+               outputs: RandomVariable = RandomVariable(1,
+                                                        'bernoulli',
+                                                        name="Discriminator"),
+               activation: Union[str, Callable[[], Any]] = tf.nn.leaky_relu,
+               ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
+                                    'min'] = 'logsumexp',
+               name: str = "FactorDiscriminator"):
+    if not isinstance(outputs, (tuple, list)):
+      outputs = [outputs]
     outputs = tf.nest.flatten(outputs)
     assert len(outputs) > 0, "No output is given for FactorDiscriminator"
-    assert all(isinstance(o, RV) for o in outputs), \
+    assert all(isinstance(o, RandomVariable) for o in outputs), \
       (f"outputs must be instance of RandomVariable, but given:{outputs}")
     n_outputs = 0
     for o in outputs:
@@ -429,7 +435,9 @@ class FactorDiscriminator(SequentialNetwork):
     # multiple units, reduce
     return getattr(tf, 'reduce_%s' % self.ss_strategy)(Xs, axis=-1)
 
-  def total_correlation(self, qZ_X, training=None):
+  def total_correlation(self,
+                        qZ_X: Distribution,
+                        training: Optional[bool] = None) -> tf.Tensor:
     r""" Total correlation Eq(3)
     ```
     TC(z) = KL(q(z)||q(z-)) = E_q(z)[log(q(z) / q(z-))]
@@ -455,11 +463,13 @@ class FactorDiscriminator(SequentialNetwork):
     logits = self._tc_logits(logits)
     # in case using sigmoid, other implementation use -logits here but it
     # should be logits.
-    # if it is negative here, TC is reduce, but reasonably, it must be positive
-    # (?)
+    # if it is negative here, TC is reduce, but reasonably, it must be positive (?)
     return tf.reduce_mean(logits)
 
-  def dtc_loss(self, qZ_X, qZ_Xprime=None, training=None):
+  def dtc_loss(self,
+               qZ_X: Distribution,
+               qZ_Xprime: Optional[Distribution] = None,
+               training: Optional[bool] = None) -> tf.Tensor:
     r""" Discriminated total correlation loss Algorithm(2)
 
     Minimize the probability of:
@@ -493,7 +503,12 @@ class FactorDiscriminator(SequentialNetwork):
     loss = 0.5 * (tf.reduce_mean(d_z) + tf.reduce_mean(zperm_logits + d_zperm))
     return loss
 
-  def supervised_loss(self, labels, qZ_X, mean=False, mask=None, training=None):
+  def supervised_loss(self,
+                      labels: tf.Tensor,
+                      qZ_X: Distribution,
+                      mean: bool = False,
+                      mask: Optional[tf.Tensor] = None,
+                      training: Optional[bool] = None) -> tf.Tensor:
     labels = tf.nest.flatten(labels)
     z = self._to_samples(qZ_X, mean=mean, stop_grad=True)
     distributions = tf.nest.flatten(self(z, training=training))

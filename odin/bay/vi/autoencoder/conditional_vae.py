@@ -1,22 +1,25 @@
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 import os
 from functools import partial
+from typing import Any, Dict, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.python import keras
-from tensorflow_probability.python.distributions import OneHotCategorical
-
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
 from odin.bay.helpers import kl_divergence
 from odin.bay.layers.distribution_util_layers import ConditionalTensorLayer
-from odin.bay.random_variable import RandomVariable as RV
+from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.networks import FactorDiscriminator, ImageNet
+from odin.bay.vi.autoencoder.variational_autoencoder import LayerCreator
 from odin.bay.vi.utils import marginalize_categorical_labels
+from odin.networks import TensorTypes
 from odin.networks.conditional_embedding import get_conditional_embedding
+from tensorflow.python import keras
+from tensorflow_probability.python.distributions import OneHotCategorical
+from typing_extensions import Literal
 
 __all__ = ['ConditionalM2VAE']
 
@@ -32,6 +35,8 @@ class ConditionalM2VAE(BetaVAE):
   r""" Implementation of M2 model (Kingma et al. 2014). The default
   configuration of this layer is optimized for MNIST.
 
+  # TODO: check error here
+
   ```
   q(z|y,x) = N(z|f_mu(y,x),f_sig(x)))
   q(y|x) = Cat(y|pi)
@@ -39,10 +44,11 @@ class ConditionalM2VAE(BetaVAE):
   ```
 
   Arguments:
-    conditional_embedding : {'repeat', 'embed', 'project'}. Strategy for
-      concatenating one-hot encoded labels to inputs.
-    alpha : a Scalar. The weight of discriminative objective added to the
-      labelled data objective. In the paper, it is recommended:
+    conditional_embedding : {'repeat', 'embed', 'project'}.
+      Strategy for concatenating one-hot encoded labels to inputs.
+    alpha : a Scalar.
+      The weight of discriminative objective added to the labelled data objective.
+      In the paper, it is recommended:
       `alpha = 0.1 * (n_total_samples / n_labelled_samples)`
 
   Example:
@@ -69,33 +75,36 @@ class ConditionalM2VAE(BetaVAE):
       arXiv:1406.5298 [cs, stat].
   """
 
-  def __init__(self,
-               latents=RV(10, 'diag', projection=True, name='Latent'),
-               outputs=RV((28, 28, 1),
-                          'bernoulli',
-                          projection=False,
-                          name='Image'),
-               labels=RV(10, 'onehot', projection=False, name="Label"),
-               classifier=dict(units=[1000, 1000, 1000, 1000, 1000]),
-               conditional_embedding="embed",
-               alpha=1.,
-               **kwargs):
-    assert isinstance(labels, RV), "labels must be instance of %s" % str(RV)
+  def __init__(
+      self,
+      latents: LayerCreator = RandomVariable(10,
+                                             'diag',
+                                             projection=True,
+                                             name='Latent'),
+      outputs: RandomVariable = RandomVariable((28, 28, 1),
+                                               'bernoulli',
+                                               projection=False,
+                                               name='Image'),
+      labels: RandomVariable = RandomVariable(10,
+                                              'onehot',
+                                              projection=False,
+                                              name="Label"),
+      classifier: Union[FactorDiscriminator,
+                        Dict[str,
+                             Any]] = dict(units=[1000, 1000, 1000, 1000, 1000]),
+      conditional_embedding: Literal['repeat', 'embed', 'project'] = "embed",
+      alpha: float = 1.,
+      **kwargs):
+    assert isinstance(
+        labels, RandomVariable
+    ), f"labels must be instance of RandomVariable, but given:{type(labels)}"
     self.n_labels = int(np.prod(labels.event_shape))
     super().__init__(latents=latents, outputs=outputs, **kwargs)
-    # the distribution of labels
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name="alpha")
-    self.labels = labels.create_posterior()
-    if self.labels.prior is None:
-      p = 1. / self.n_labels
-      self.labels.prior = OneHotCategorical(
-          logits=[np.log(p / (1. - p))] * self.n_labels,
-          name="LabelPrior",
-      )
     # create the classifier
-    if not isinstance(classifier, keras.layers.Layer):
+    if not isinstance(classifier, FactorDiscriminator):
       classifier = dict(classifier)
-      classifier['outputs'] = self.n_labels
+      classifier['outputs'] = labels
       if 'input_shape' not in classifier:
         input_shape = [i.event_shape for i in self.output_layers]
         if len(input_shape) == 1:
@@ -103,41 +112,52 @@ class ConditionalM2VAE(BetaVAE):
         classifier['input_shape'] = input_shape
       classifier = FactorDiscriminator(**classifier)
     self.classifier = classifier
+    # the distribution of labels
+    self.labels = labels.create_posterior()
+    if self.labels.prior is None:
+      p = 1. / self.n_labels
+      self.labels.prior = OneHotCategorical(
+          logits=[np.log(p / (1. - p))] * self.n_labels,
+          name="LabelPrior",
+      )
+    # validate the shape
+    s1 = tuple(classifier.distributions[0].event_shape)
+    s2 = tuple(self.labels.event_shape)
+    assert s1 == s2, f"Classifier output shape is: {s1} but labels event shape is: {s2}"
     # resolve the conditional embedding
     embedder = get_conditional_embedding(conditional_embedding)
     self.embedder = embedder(num_classes=self.n_labels,
                              output_shape=outputs.event_shape)
     self.embedder.build(self.labels.event_shape)
-    # validate the shape
-    assert tuple(classifier.output_shape[1:]) == tuple(self.labels.event_shape), \
-      "Classifier output shape is: %s but labels event shape is: %s" % \
-        (classifier.output_shape[1:], self.labels.event_shape)
-    # conditioned encoder
-    s1 = tuple(self.output_layers[0].event_shape)
-    s2 = tuple(self.embedder.embedding_shape[1:])
-    s = s1[:-1] + (s1[-1] + s2[-1],)
-    s3 = tuple(self.encoder.input_shape[1:])
-    assert s == s3, \
-      ("Encoder input shape is %s, must equal to the concatenation of "
-        "inputs %s and labels %s" % (s3, s1, s2))
-    # conditioned decoder
-    s1 = self.latent_layers[0].event_shape
-    s3 = self.decoder.input_shape[1:]
-    assert s1[-1] + self.n_labels == s3[-1], \
-      ("Decoder input shape is %s, must equal to the concatenation of "
-       "latents %s and labels (%d,)" % (s3, s1, self.n_labels))
 
-  def classify(self, X, proba=False):
-    y = self.classifier(X)
+  def classify(self,
+               inputs: TensorTypes,
+               training: bool = False,
+               proba: bool = False) -> tf.Tensor:
+    r""" Return the prediction of labels. """
+    y = self.classifier(inputs, training=training)
     if proba:
       return tf.nn.softmax(y, axis=-1)
     return self.labels(y)
 
-  def sample_labels(self, sample_shape=(), seed=1):
+  def sample_labels(self,
+                    sample_shape: List[int] = (),
+                    seed: int = 1) -> tf.Tensor:
+    r""" Sample labels from prior of the labels distribution. """
     return bk.atleast_2d(
         self.labels.prior.sample(sample_shape=sample_shape, seed=seed))
 
-  def prepare_inputs(self, inputs, mask):
+  def prepare_inputs(
+      self, inputs: Union[TensorTypes, List[TensorTypes]],
+      mask: TensorTypes) -> Tuple[tf.Tensor, tf.Tensor, tf.Tensor]:
+    r""" Prepare the inputs for the semi-supervised VAE, three cases arise:
+
+      - Only the unlabeled data given
+      - Only the labeled data given
+      - A mixture of both unlabeled and labeled data
+
+    The `mask` is given as indicator, 1 for labeled sample and 0 for unlabeled samples
+    """
     n_labels = self.n_labels
     n_outputs = len(self.output_layers)
     inputs = tf.nest.flatten(inputs)
@@ -185,21 +205,22 @@ class ConditionalM2VAE(BetaVAE):
     ]
     return X, y, mask
 
-  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+  def encode(self,
+             inputs: Union[TensorTypes, List[TensorTypes]],
+             training: Optional[bool] = None,
+             mask: Optional[TensorTypes] = None,
+             **kwargs):
     X, y, mask = self.prepare_inputs(inputs, mask=mask)
     # conditional embedding y
     y_embedded = self.embedder(y, training=training)
     X = [tf.concat([i, y_embedded], axis=-1) for i in X]
-    if len(self.output_layers) == 1:
-      X = X[0]
     # encode normally
-    qZ_X = super().encode(X,
+    qZ_X = super().encode(X[0] if len(X) == 0 else X,
                           training=training,
                           mask=mask,
-                          sample_shape=sample_shape,
                           **kwargs)
     qZ_X = [
-        ConditionalTensorLayer(sample_shape=sample_shape)([qZ_X, y])
+        ConditionalTensorLayer(sample_shape=self.sample_shape)([qZ_X, y])
         for q in tf.nest.flatten(qZ_X)
     ]
     # remember to store the new mask
@@ -207,8 +228,7 @@ class ConditionalM2VAE(BetaVAE):
       q._keras_mask = mask
     return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
+  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
     org_inputs = inputs
     inputs = inputs[:len(self.output_layers)]
     if mask is None:
@@ -226,12 +246,8 @@ class ConditionalM2VAE(BetaVAE):
     llk, div = super()._elbo(org_inputs,
                              pX_Z,
                              qZ_X,
-                             analytic=analytic,
-                             reverse=reverse,
-                             sample_shape=sample_shape,
                              mask=mask,
-                             training=training,
-                             **kwargs)
+                             training=training)
     mask = tf.reshape(mask, (-1,))
     ### for unlabelled data
     mask_unlabelled = tf.logical_not(mask)

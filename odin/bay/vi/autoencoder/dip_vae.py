@@ -1,5 +1,4 @@
 import tensorflow as tf
-
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.losses import disentangled_inferred_prior_loss
 
@@ -22,10 +21,10 @@ class DIPVAE(BetaVAE):
   """
 
   def __init__(self,
-               only_mean=False,
-               lambda_diag=1.0,
-               lambda_offdiag=2.0,
-               beta=1.0,
+               only_mean: bool = False,
+               lambda_diag: float = 1.0,
+               lambda_offdiag: float = 2.0,
+               beta: float = 1.0,
                **kwargs):
     super().__init__(beta=beta, **kwargs)
     self.only_mean = bool(only_mean)
@@ -36,17 +35,8 @@ class DIPVAE(BetaVAE):
                                                dtype=self.dtype,
                                                name='lambda_offdiag')
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
-    llk, div = super()._elbo(inputs,
-                             pX_Z,
-                             qZ_X,
-                             analytic=analytic,
-                             reverse=reverse,
-                             sample_shape=sample_shape,
-                             mask=mask,
-                             training=training,
-                             **kwargs)
+  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     for name, q in zip(self.latent_names, qZ_X):
       dip = disentangled_inferred_prior_loss(q,
                                              only_mean=self.only_mean,

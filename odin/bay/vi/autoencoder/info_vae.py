@@ -1,20 +1,23 @@
+import inspect
+from functools import partial
 from numbers import Number
+from typing import Callable
 
 import numpy as np
 import tensorflow as tf
-from tensorflow_probability.python.distributions import (Distribution,
-                                                         OneHotCategorical)
-
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.losses import get_divergence, maximum_mean_discrepancy
+from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.bay.vi.utils import permute_dims
+from tensorflow import Tensor
+from tensorflow_probability.python.distributions import (Distribution,
+                                                         OneHotCategorical)
+from typing_extensions import Literal
 
 
 class InfoVAE(BetaVAE):
-  r"""
-  For MNIST, the authors used scaling coefficient lambda(gamma)=1000, and
-  information preference alpha=0.
+  r""" For MNIST, the authors used scaling coefficient `lambda(gamma)=1000`,
+  and information preference `alpha=0`.
 
   Increase `np` (number of prior samples) in `divergence_kw` to reduce the
   variance of MMD estimation.
@@ -24,7 +27,8 @@ class InfoVAE(BetaVAE):
       Higher value of alpha places lower weight on the KL-divergence
     gamma : a Scalar. This is the value of lambda in the paper
       Higher value of gamma place more weight on the Info-divergence (i.e. MMD)
-    divergence : a String. Divergences families, for now only support 'mmd'
+    divergence : a Callable.
+      Divergences families, for now only support 'mmd'
       i.e. maximum-mean discrepancy.
 
   Reference:
@@ -36,43 +40,33 @@ class InfoVAE(BetaVAE):
   """
 
   def __init__(self,
-               alpha=0.0,
-               gamma=100.0,
-               divergence='mmd',
-               divergence_kw=dict(kernel='gaussian',
-                                  q_sample_shape=None,
-                                  p_sample_shape=100),
+               alpha: float = 0.0,
+               gamma: float = 100.0,
+               divergence: Callable[[Distribution, Distribution],
+                                    Tensor] = partial(maximum_mean_discrepancy,
+                                                      kernel='gaussian',
+                                                      q_sample_shape=None,
+                                                      p_sample_shape=100),
                **kwargs):
     super().__init__(beta=1 - alpha, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     # select right divergence
-    self.divergence_name = str(divergence)
-    self.divergence = get_divergence(self.divergence_name)
-    self.divergence_kw = dict(divergence_kw)
+    assert callable(divergence), \
+      f"divergence must be callable, but given: {type(divergence)}"
+    self.divergence = divergence
 
   @property
   def alpha(self):
     return 1 - self.beta
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
-    llk, div = super()._elbo(inputs,
-                             pX_Z,
-                             qZ_X,
-                             analytic=analytic,
-                             reverse=reverse,
-                             sample_shape=sample_shape,
-                             mask=mask,
-                             training=training,
-                             **kwargs)
+  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     # repeat for each latent
     for name, q in zip(self.latent_names, qZ_X):
+      # div(qZ||pZ)
       info_div = (self.gamma - self.beta) * self.divergence(
-          qZ=q,
-          pZ=q.KL_divergence.prior,
-          **self.divergence_kw,
-      )
-      div['%s_%s' % (self.divergence_name, name)] = info_div
+          q, q.KL_divergence.prior)
+      div[f'div_{name}'] = info_div
     return llk, div
 
 

@@ -1,5 +1,4 @@
 import tensorflow as tf
-
 from odin.backend import interpolation as interp
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
@@ -34,17 +33,8 @@ class BetaVAE(VariationalAutoencoder):
     else:
       self._beta = tf.convert_to_tensor(b, dtype=self.dtype, name='beta')
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
-    llk, div = super()._elbo(inputs,
-                             pX_Z,
-                             qZ_X,
-                             analytic,
-                             reverse,
-                             sample_shape=sample_shape,
-                             mask=mask,
-                             training=training,
-                             **kwargs)
+  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     div = {key: self.beta * val for key, val in div.items()}
     return llk, div
 
@@ -62,20 +52,11 @@ class BetaTCVAE(BetaVAE):
       arXiv:1802.04942 [cs, stat].
   """
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
-    llk, div = super()._elbo(inputs,
-                             pX_Z,
-                             qZ_X,
-                             analytic,
-                             reverse,
-                             sample_shape=sample_shape,
-                             mask=mask,
-                             training=training,
-                             **kwargs)
+  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     for name, q in zip(self.latent_names, qZ_X):
       tc = total_correlation(q.sample(), q)
-      div['tc_%s' % name] = (self.beta - 1.) * tc
+      div[f'tc_{name}'] = (self.beta - 1.) * tc
     return llk, div
 
 
@@ -116,17 +97,8 @@ class AnnealedVAE(VariationalAutoencoder):
         vmax=tf.constant(c_max, self.dtype),
         norm=int(iter_max))
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
-    llk, div = super()._elbo(inputs,
-                             pX_Z,
-                             qZ_X,
-                             analytic,
-                             reverse,
-                             sample_shape=sample_shape,
-                             mask=mask,
-                             training=training,
-                             **kwargs)
+  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     # step : training step, updated when call `.train_steps()`
     c = self.interpolation(self.step)
     div = {key: self.gamma * tf.math.abs(val - c) for key, val in div.items()}

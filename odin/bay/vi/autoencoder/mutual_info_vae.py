@@ -1,8 +1,7 @@
 from numbers import Number
 
 import tensorflow as tf
-
-from odin.bay.random_variable import RandomVariable as RV
+from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.losses import get_divergence, maximum_mean_discrepancy
 
@@ -46,12 +45,18 @@ class MutualInfoVAE(BetaVAE):
   """
 
   def __init__(self,
-               beta=1.0,
-               gamma=1.0,
-               latents=RV(5, 'diag', True, "Latents"),
-               factors=RV(5, 'diag', True, 'Factors'),
-               resample_zprime=False,
-               kl_factors=True,
+               beta: float = 1.0,
+               gamma: float = 1.0,
+               latents: RandomVariable = RandomVariable(5,
+                                                        'diag',
+                                                        projection=True,
+                                                        name="Latents"),
+               factors: RandomVariable = RandomVariable(5,
+                                                        'diag',
+                                                        projection=True,
+                                                        name='Factors'),
+               resample_zprime: bool = False,
+               kl_factors: bool = True,
                **kwargs):
     latents = tf.nest.flatten(latents)
     latents.append(factors)
@@ -65,19 +70,14 @@ class MutualInfoVAE(BetaVAE):
     self.resample_zprime = bool(resample_zprime)
     self.kl_factors = bool(kl_factors)
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
+  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
     # NOTE: the original implementation does not take KL of qC_X,
     # only maximize the mutual information of q(c|X)
     llk, div = super()._elbo(inputs,
                              pX_Z,
                              qZ_X[:-1] if not self.kl_factors else qZ_X,
-                             analytic=analytic,
-                             reverse=reverse,
-                             sample_shape=sample_shape,
                              mask=mask,
-                             training=training,
-                             **kwargs)
+                             training=training)
     # the latents, in the implementation, the author reuse z samples here,
     # but in the algorithm, z_prime is re-sampled from the prior.
     # But, reasonably, we want to hold z_prime fix to z, and c_prime is the
@@ -109,6 +109,7 @@ class SemiInfoVAE(MutualInfoVAE):
   r""" This idea combining FactorVAE (Kim et al. 2018) and
   MutualInfoVAE (Ducau et al. 2017)
 
+  # TODO
   """
 
   def __init__(self, alpha=1., **kwargs):

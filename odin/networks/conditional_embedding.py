@@ -1,9 +1,11 @@
+from typing import List
+
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.keras.layers import Dense, Embedding, Lambda, Layer
-
 from odin import backend as bk
-from odin.networks.sequential_networks import SequentialNetwork
+from odin.networks.base_networks import SequentialNetwork
+from tensorflow.python.keras.layers import Dense, Embedding, Lambda, Layer
+from typing_extensions import Literal
 
 __all__ = [
     'get_conditional_embedding', 'RepeaterEmbedding', 'ConditionalEmbedding',
@@ -14,11 +16,12 @@ __all__ = [
 class Embedder:
 
   @property
-  def embedding_shape(self):
+  def embedding_shape(self) -> List[int]:
     raise NotImplementedError
 
 
-def get_conditional_embedding(method) -> Embedder:
+def get_conditional_embedding(
+    method: Literal['repeat', 'project', 'embed']) -> Embedder:
   r""" Three support method for conditional embedding:
 
       - 'repeat': repeat the labels to match the input image
@@ -41,7 +44,10 @@ class RepeaterEmbedding(Layer, Embedder):
   r""" Expand and repeat the inputs so that it is concatenate-able to the
   output_shape """
 
-  def __init__(self, num_classes, output_shape, name='RepeaterEmbedding'):
+  def __init__(self,
+               num_classes: int,
+               output_shape: List[int],
+               name: str = 'RepeaterEmbedding'):
     super().__init__(name=name)
     self._shape = [int(i) for i in tf.nest.flatten(output_shape)]
     self._ndim = len(self._shape) + 1  # add batch_dim

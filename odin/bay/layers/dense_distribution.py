@@ -7,6 +7,12 @@ from typing import Any, Callable, List, Optional, Text, Type, Union
 
 import numpy as np
 import tensorflow as tf
+from odin import backend as bk
+from odin.bay.helpers import (KLdivergence, is_binary_distribution,
+                              is_discrete_distribution, is_mixture_distribution,
+                              is_zeroinflated_distribution, kl_divergence)
+from odin.bay.layers.deterministic_layers import VectorDeterministicLayer
+from odin.bay.layers.distribution_util_layers import Moments, Sampling
 from six import string_types
 from tensorflow import Tensor
 from tensorflow.python.keras import Model, Sequential
@@ -30,13 +36,6 @@ from tensorflow_probability.python.layers.distribution_layer import (
     DistributionLambda, _get_convert_to_tensor_fn, _serialize,
     _serialize_function)
 from typing_extensions import Literal
-
-from odin import backend as bk
-from odin.bay.helpers import (KLdivergence, is_binary_distribution,
-                              is_discrete_distribution, is_mixture_distribution,
-                              is_zeroinflated_distribution, kl_divergence)
-from odin.bay.layers.deterministic_layers import VectorDeterministicLayer
-from odin.bay.layers.distribution_util_layers import Moments, Sampling
 
 __all__ = [
     'DenseDeterministic', 'DenseDistribution', 'MixtureDensityNetwork',
@@ -335,8 +334,8 @@ class DenseDistribution(Dense):
     else:
       prior = str(self.prior)
     posterior = self._posterior_class.__name__
-    shape = None if not hasattr(self, 'input_shape') else self.input_shape
-    return (f"<'{self.name}' proj:{self.projection} inputs:{shape[1:]} "
+    shape = None if not hasattr(self, 'input_shape') else self.input_shape[1:]
+    return (f"<'{self.name}' proj:{self.projection} inputs:{shape} "
             f"event:{self.event_shape} #params:{self.units} "
             f"post:{posterior} prior:{prior} "
             f"dropout:{self._dropout:.2f} kw:{self._posterior_kwargs}>")
