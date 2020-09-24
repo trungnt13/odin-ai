@@ -1,8 +1,12 @@
+from typing import Dict, List, Optional, Tuple, Union
+
 import tensorflow as tf
 from odin.backend import interpolation as interp
-from odin.bay.vi.autoencoder.variational_autoencoder import \
-    VariationalAutoencoder
+from odin.bay.vi.autoencoder.variational_autoencoder import (
+    TensorTypes, VariationalAutoencoder)
 from odin.bay.vi.losses import total_correlation
+from tensorflow import Tensor
+from tensorflow_probability.python.distributions import Distribution
 
 
 class BetaVAE(VariationalAutoencoder):
@@ -16,7 +20,7 @@ class BetaVAE(VariationalAutoencoder):
       ICLR'17
   """
 
-  def __init__(self, beta=10.0, **kwargs):
+  def __init__(self, beta: float = 10.0, **kwargs):
     super().__init__(**kwargs)
     self.beta = beta
 
@@ -33,7 +37,14 @@ class BetaVAE(VariationalAutoencoder):
     else:
       self._beta = tf.convert_to_tensor(b, dtype=self.dtype, name='beta')
 
-  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+  def _elbo(
+      self,
+      inputs: Union[TensorTypes, List[TensorTypes]],
+      pX_Z: Union[Distribution, List[Distribution]],
+      qZ_X: Union[Distribution, List[Distribution]],
+      mask: Optional[TensorTypes] = None,
+      training: Optional[bool] = None
+  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     div = {key: self.beta * val for key, val in div.items()}
     return llk, div
@@ -52,7 +63,14 @@ class BetaTCVAE(BetaVAE):
       arXiv:1802.04942 [cs, stat].
   """
 
-  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+  def _elbo(
+      self,
+      inputs: Union[TensorTypes, List[TensorTypes]],
+      pX_Z: Union[Distribution, List[Distribution]],
+      qZ_X: Union[Distribution, List[Distribution]],
+      mask: Optional[TensorTypes] = None,
+      training: Optional[bool] = None
+  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     for name, q in zip(self.latent_names, qZ_X):
       tc = total_correlation(q.sample(), q)
@@ -84,11 +102,11 @@ class AnnealedVAE(VariationalAutoencoder):
   """
 
   def __init__(self,
-               gamma=1.0,
-               c_min=0.,
-               c_max=25.,
-               iter_max=1000,
-               interpolation='linear',
+               gamma: float = 1.0,
+               c_min: float = 0.,
+               c_max: float = 25.,
+               iter_max: int = 1000,
+               interpolation: str = 'linear',
                **kwargs):
     super().__init__(**kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
@@ -97,7 +115,14 @@ class AnnealedVAE(VariationalAutoencoder):
         vmax=tf.constant(c_max, self.dtype),
         norm=int(iter_max))
 
-  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+  def _elbo(
+      self,
+      inputs: Union[TensorTypes, List[TensorTypes]],
+      pX_Z: Union[Distribution, List[Distribution]],
+      qZ_X: Union[Distribution, List[Distribution]],
+      mask: Optional[TensorTypes] = None,
+      training: Optional[bool] = None
+  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     # step : training step, updated when call `.train_steps()`
     c = self.interpolation(self.step)

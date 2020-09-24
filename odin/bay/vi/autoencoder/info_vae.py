@@ -1,12 +1,13 @@
 import inspect
 from functools import partial
 from numbers import Number
-from typing import Callable
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.variational_autoencoder import TensorTypes
 from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.bay.vi.utils import permute_dims
 from tensorflow import Tensor
@@ -59,7 +60,14 @@ class InfoVAE(BetaVAE):
   def alpha(self):
     return 1 - self.beta
 
-  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+  def _elbo(
+      self,
+      inputs: Union[TensorTypes, List[TensorTypes]],
+      pX_Z: Union[Distribution, List[Distribution]],
+      qZ_X: Union[Distribution, List[Distribution]],
+      mask: Optional[TensorTypes] = None,
+      training: Optional[bool] = None
+  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     # repeat for each latent
     for name, q in zip(self.latent_names, qZ_X):

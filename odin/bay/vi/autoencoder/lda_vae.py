@@ -19,7 +19,7 @@ from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              TensorTypes,
-                                                             TrainStep)
+                                                             VAEStep)
 from odin.networks import NetworkConfig
 from scipy import sparse
 from tensorflow import Tensor, Variable
@@ -101,7 +101,7 @@ class LatentDirichletDecoder(Model):
       n_words: int,
       n_topics: int = 10,
       posterior: Literal['gaussian', 'dirichlet'] = 'dirichlet',
-      posterior_activation: Union[str, Callable[..., Tensor]] = 'softplus',
+      posterior_activation: Union[str, Callable[[], Tensor]] = 'softplus',
       concentration_clip: bool = True,
       distribution: Literal['categorical', 'negativebinomial', 'binomial',
                             'poisson', 'zinb'] = 'negativebinomial',
@@ -133,7 +133,7 @@ class LatentDirichletDecoder(Model):
       self.step = Variable(int(step),
                            dtype=tf.float32,
                            trainable=False,
-                           name="TrainStep")
+                           name="Step")
     ### batch norm
     if self.batch_norm:
       self._batch_norm_layer = BatchNormalization(trainable=True)
@@ -253,10 +253,9 @@ class LatentDirichletDecoder(Model):
     return prior
 
   def call(self,
-           inputs,
-           training=None,
-           sample_shape=(),
-           *args,
+           inputs: Union[TensorTypes, List[TensorTypes]],
+           training: Optional[bool] = None,
+           mask: Optional[TensorTypes] = None,
            **kwargs) -> Tuple[Distribution, Distribution]:
     r"""
     Return:
@@ -327,7 +326,7 @@ class AmortizedLDA(BetaVAE):
       encoder: LayerCreator = NetworkConfig(name="Encoder"),
       decoder: LayerCreator = NetworkConfig(name="Decoder"),
       latents: LayerCreator = RandomVariable(10,
-                                             posterior='diag',
+                                             'diag',
                                              projection=True,
                                              name="Latents"),
       warmup: Optional[int] = None,
@@ -356,7 +355,8 @@ class AmortizedLDA(BetaVAE):
       inputs: Union[Tensor, List[Tensor]],
       pX_Z: Union[Distribution, List[Distribution]],
       qZ_X: Union[Distribution, List[Distribution]],
-      **kwargs,
+      mask: Optional[Tensor] = None,
+      training: Optional[bool] = None
   ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     llk, kl = super()._elbo(inputs, pX_Z, qZ_X, **kwargs)
     topics = pX_Z[-1]

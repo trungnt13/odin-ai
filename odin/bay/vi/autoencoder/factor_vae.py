@@ -1,6 +1,6 @@
 import collections
 from dataclasses import dataclass
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
@@ -13,6 +13,7 @@ from odin.bay.vi.autoencoder.variational_autoencoder import (DatasetV2,
                                                              TrainStep, VAEStep)
 from tensorflow.python import keras
 from tensorflow_probability.python.distributions import Distribution
+from typing_extensions import Literal
 
 
 # ===========================================================================
@@ -245,10 +246,10 @@ class FactorVAE(BetaVAE):
     return loss
 
   def train_steps(self,
-                  inputs,
-                  training=True,
-                  mask=None,
-                  call_kw={}) -> TrainStep:
+                  inputs: Union[TensorTypes, List[TensorTypes]],
+                  training: bool = True,
+                  mask: Optional[TensorTypes] = None,
+                  call_kw: Dict[str, Any] = {}) -> TrainStep:
     r""" Facilitate multiple steps training for each iteration (similar to GAN)
 
     Example:
@@ -328,10 +329,15 @@ class SemiFactorVAE(FactorVAE):
   """
 
   def __init__(self,
-               labels=RandomVariable(10, 'onehot', name="Labels"),
-               discriminator=dict(units=[1000, 1000, 1000, 1000, 1000]),
-               alpha=10.,
-               ss_strategy='logsumexp',
+               labels: RandomVariable = RandomVariable(10,
+                                                       'onehot',
+                                                       projection=True,
+                                                       name="Labels"),
+               discriminator: Union[FactorDiscriminator, Dict[str, Any]] = dict(
+                   units=[1000, 1000, 1000, 1000, 1000]),
+               alpha: float = 10.,
+               ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
+                                    'min'] = 'logsumexp',
                **kwargs):
     if isinstance(discriminator, dict):
       discriminator['outputs'] = labels
@@ -342,17 +348,19 @@ class SemiFactorVAE(FactorVAE):
     self.labels = labels
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
 
-  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+  def encode(self,
+             inputs: Union[TensorTypes, List[TensorTypes]],
+             training: Optional[bool] = None,
+             mask: Optional[TensorTypes] = None,
+             **kwargs) -> Union[Distribution, List[Distribution]]:
     inputs = tf.nest.flatten(inputs)[:self.n_unsupervised]
     if len(inputs) == 1:
       inputs = inputs[0]
-    return super().encode(inputs,
-                          training=training,
-                          mask=mask,
-                          sample_shape=sample_shape,
-                          **kwargs)
+    return super().encode(inputs, training=training, mask=mask, **kwargs)
 
-  def classify(self, inputs, training=None):
+  def classify(self,
+               inputs: Union[TensorTypes, List[TensorTypes]],
+               training: Optional[bool] = None) -> Distribution:
     qZ_X = self.encode(inputs, training=training)
     if hasattr(self.discriminator, '_to_samples'):
       z = self.discriminator._to_samples(qZ_X)
@@ -365,11 +373,11 @@ class SemiFactorVAE(FactorVAE):
     return y
 
   def supervised_loss(self,
-                      labels,
-                      qZ_X,
-                      mask=None,
-                      training=None,
-                      apply_alpha=False):
+                      labels: tf.Tensor,
+                      qZ_X: Distribution,
+                      mask: Optional[TensorTypes] = None,
+                      training: Optional[bool] = None,
+                      apply_alpha: bool = False):
     r""" The semi-supervised classifier loss, `mask` is given to indicate
     labelled examples (i.e. `mask=1`), and otherwise, unlabelled examples.
     """
@@ -393,17 +401,19 @@ class Factor2VAE(FactorVAE):
   r""" The same architecture as `FactorVAE`, however, utilize two different
   latents `Z` for contents generalizability and `C` for disentangling of
   invariant factors.
+
+  TODO:
   """
 
   def __init__(self,
-               latents=RandomVariable(5,
-                                      'diag',
-                                      projection=True,
-                                      name='Latents'),
-               factors=RandomVariable(5,
-                                      'diag',
-                                      projection=True,
-                                      name="Factors"),
+               latents: RandomVariable = RandomVariable(5,
+                                                        'diag',
+                                                        projection=True,
+                                                        name='Latents'),
+               factors: RandomVariable = RandomVariable(5,
+                                                        'diag',
+                                                        projection=True,
+                                                        name="Factors"),
                **kwargs):
     latents = tf.nest.flatten(latents)
     assert isinstance(factors, RandomVariable), \
@@ -414,24 +424,21 @@ class Factor2VAE(FactorVAE):
                      latent_dim=int(np.prod(factors.event_shape)),
                      **kwargs)
     self.factors = factors
-    self._FactorStep = Factor2DiscriminatorStep
+    self._factor_step = Factor2DiscriminatorStep
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
-    llk, div = super(BetaVAE, self)._elbo(inputs,
-                                          pX_Z,
-                                          qZ_X,
-                                          analytic=analytic,
-                                          reverse=reverse,
-                                          sample_shape=sample_shape,
-                                          mask=mask,
-                                          training=training,
-                                          **kwargs)
+  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
+    llk, div = super(BetaVAE, self)._elbo(
+        inputs,
+        pX_Z,
+        qZ_X,
+        mask=mask,
+        training=training,
+    )
     # only use the assumed factors space for total correlation
     tc = self.total_correlation(qZ_X[-1], apply_gamma=True, training=training)
     if self.maximize_tc:
       tc = -tc
-    div['tc_%s' % self.factors.name] = tc
+    div[f'tc_{self.factors.name}'] = tc
     return llk, div
 
 
