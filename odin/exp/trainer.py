@@ -8,12 +8,15 @@ import warnings
 from collections import defaultdict
 from functools import partial
 from numbers import Number
-from typing import Callable, Dict, List, Optional, Text, Tuple, Union
+from threading import RLock
+from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
 from six import string_types
+from tensorflow import Tensor, Variable
 from tensorflow.python import keras
+from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.data.ops.iterator_ops import OwnedIterator
 from tensorflow.python.eager.def_function import Function
 from tensorflow.python.keras import Model, Sequential
@@ -24,12 +27,15 @@ from tqdm import tqdm
 
 from odin.utils import as_tuple
 
+__all__ = ['Trainer', 'get_current_trainer']
+
 # ===========================================================================
 # Helpers
 # ===========================================================================
 _BEST_WEIGHTS = {}
 _BEST_OPTIMIZER = {}
 _CHECKPOINT_MANAGER = {}
+_CURRENT_TRAINER = None
 
 
 def _validate_optimize(func):
@@ -47,12 +53,16 @@ def _validate_optimize(func):
   return args
 
 
+def _is_text(x):
+  return isinstance(x, string_types) or \
+      (isinstance(x, np.ndarray) and isinstance(x[0], string_types))
+
+
 def _save_summary(loss, metrics, prefix="", flush=False):
   tf.summary.scalar(f"{prefix}loss", loss)
   for k, v in metrics.items():
     k = f"{prefix}{k}"
-    if isinstance(v, string_types) or \
-      (isinstance(v, np.ndarray) and isinstance(v[0], string_types)):
+    if _is_text(v):
       tf.summary.text(k, v)
     else:
       tf.summary.scalar(k, v)
@@ -66,14 +76,29 @@ def _print_summary(progress: tqdm,
                    metrics: dict,
                    n_iter: int,
                    is_valid: bool = False):
-  msg = " ".join([
-      f"{k}:" + (v if isinstance(v, string_types) else f"{v:.4f}")
-      for k, v in metrics.items()
-  ])
   log_tag = ("" if len(log_tag) == 0 else f"{log_tag} ")
   if is_valid:
     log_tag = f" * [VALID]{log_tag}"
-  progress.write(f"{log_tag} #{int(n_iter)} loss:{loss:.4f} {msg} ")
+  progress.write(f"{log_tag} #{int(n_iter)} loss:{loss:.4f}")
+  for k, v in metrics.items():
+    v = str(v) if _is_text(v) else f"{v:.4f}"
+    progress.write(f"{len(log_tag) * ' '} {k}:{v}")
+
+
+def _process_callback_returns(progress: tqdm,
+                              log_tag: str,
+                              n_iter: int,
+                              metrics: Optional[dict] = None):
+  if metrics is not None and isinstance(metrics, dict) and len(metrics) > 0:
+    progress.write(f"{log_tag} [Callback#{int(n_iter)}]:")
+    for k, v in metrics.items():
+      if _is_text(v):
+        tf.summary.text(k, v)
+        v = str(v)
+      else:
+        tf.summary.scalar(k, v)
+        v = f"{v:.4f}"
+      progress.write(f" {k}:{v}")
 
 
 def read_tensorboard(logdir: str) -> Dict[Text, Tuple[float, int, float]]:
@@ -114,9 +139,6 @@ def read_tensorboard(logdir: str) -> Dict[Text, Tuple[float, int, float]]:
 # ===========================================================================
 class Trainer(object):
   r""" Simple training procedure """
-
-  SIGNAL_TERMINATE = '__signal_terminate__'
-  SIGNAL_BEST = '__signal_best__'
 
   @staticmethod
   def save_weights(models, optimizers=None):
@@ -313,9 +335,6 @@ class Trainer(object):
         Note, all the metrics won't be updated until the given epoch.
 
     Return:
-      Trainer.SIGNAL_TERMINATE : stop training
-      Trainer.SIGNAL_BEST : best model achieved
-      None : no action needed, continue training
 
     Reference:
       Prechelt, L. (1998). "Early Stopping | but when?".
@@ -412,7 +431,7 @@ class Trainer(object):
       (tf.data.experimental.AUTOTUNE if parallel_postprocess == -1 else
        int(parallel_postprocess))
 
-    if not isinstance(ds, tf.data.Dataset):
+    if not isinstance(ds, DatasetV2):
       ds = tf.data.Dataset.from_tensor_slices(ds)
 
     if shuffle:
@@ -446,6 +465,7 @@ class Trainer(object):
     self._current_valid_loss = []
     self._current_train_progress = None
     self._cached_tensorboard = None
+    self._is_training = False
 
   @property
   def tensorboard(self) -> Dict[Text, Tuple[float, int, float]]:
@@ -473,7 +493,7 @@ class Trainer(object):
   def train_metrics(self) -> Dict[str, List[float]]:
     metrics = dict()
     for key, val in self.tensorboard.items():
-      if "train_" == key[:6] and key != "train_loss":
+      if "train/" == key[:6] and key != "train_loss":
         key = key[6:]
         val = [i[-1] for i in val]
         metrics[key] = val
@@ -483,7 +503,7 @@ class Trainer(object):
   def valid_metrics(self) -> Dict[str, List[float]]:
     metrics = dict()
     for key, val in self.tensorboard.items():
-      if "valid_" == key[:6] and key != "valid_loss":
+      if "valid/" == key[:6] and key != "valid_loss":
         key = key[6:]
         val = [i[-1] for i in val]
         metrics[key] = val
@@ -499,6 +519,13 @@ class Trainer(object):
       self._summary_writer = tf.summary.create_file_writer(self.logdir)
     return self._summary_writer
 
+  @property
+  def is_training(self) -> bool:
+    return self._is_training
+
+  def terminate(self):
+    self._is_training = False
+
   def __getstate__(self):
     return (self.logdir, self.trace_on, self.n_iter)
 
@@ -509,11 +536,12 @@ class Trainer(object):
     self._current_valid_loss = []
     self._current_train_progress = None
     self._cached_tensorboard = None
+    self._is_training = False
 
   def fit(self,
-          train_ds: tf.data.Dataset,
-          optimize: Callable,
-          valid_ds: Optional[tf.data.Dataset] = None,
+          train_ds: DatasetV2,
+          optimize: Callable[..., Tuple[Tensor, Dict[str, Tensor]]],
+          valid_ds: Optional[DatasetV2] = None,
           valid_freq: int = 1000,
           valid_interval: float = 0,
           compile_graph: bool = True,
@@ -522,7 +550,7 @@ class Trainer(object):
           log_tag: str = '',
           max_iter: int = -1,
           terminate_on_nan: bool = True,
-          callback: Optional[Callable] = lambda: None):
+          callback: Callable[[], Optional[dict]] = lambda: None):
     r""" A simplified fitting API
 
     Arguments:
@@ -618,6 +646,9 @@ class Trainer(object):
       return epoch_loss, epoch_metrics
 
     def train():
+      global _CURRENT_TRAINER
+      _CURRENT_TRAINER = self
+      self._is_training = True
       progress = tqdm(train_ds, desc=f"Traning {max_iter}(its)")
       self._current_train_progress = progress
       start_time = progress.start_t
@@ -625,6 +656,9 @@ class Trainer(object):
       last_valid_time = start_time
       for cur_iter, inputs in enumerate(progress):
         self.n_iter += 1
+        # ====== check maximum iteration ====== #
+        if max_iter > 0 and cur_iter >= max_iter:
+          break
         tf.summary.experimental.set_step(self.n_iter)
         # the tensorboard will change after each iteration
         self._cached_tensorboard = None
@@ -635,7 +669,7 @@ class Trainer(object):
             # finish the validation
             val_loss, val_metrics = valid()
             self._current_valid_loss.append(val_loss)
-            _save_summary(val_loss, val_metrics, prefix="valid_", flush=True)
+            _save_summary(val_loss, val_metrics, prefix="valid/", flush=True)
             _print_summary(progress,
                            log_tag,
                            val_loss,
@@ -643,9 +677,8 @@ class Trainer(object):
                            self.n_iter,
                            is_valid=True)
           # callback always called
-          signal = callback()
-          if isinstance(signal, string_types) and \
-            signal == Trainer.SIGNAL_TERMINATE:
+          _process_callback_returns(progress, log_tag, self.n_iter, callback())
+          if not self.is_training:
             break
           last_valid_time = progress._time()
         # ====== train ====== #
@@ -660,7 +693,7 @@ class Trainer(object):
         interval = progress._time() - last_print_time
         if interval >= logging_interval:
           # summarize the batch loss and metrics
-          _save_summary(loss, metrics, prefix="train_")
+          _save_summary(loss, metrics, prefix="train/")
           _print_summary(progress,
                          log_tag,
                          loss,
@@ -668,9 +701,9 @@ class Trainer(object):
                          self.n_iter,
                          is_valid=False)
           last_print_time = progress._time()
-        # ====== check maximum iteration ====== #
-        if max_iter > 0 and cur_iter >= max_iter:
-          break
+      # Final callback to signal train ended
+      _process_callback_returns(progress, log_tag, self.n_iter, callback())
+      # end the progress
       progress.clear()
       progress.close()
 
@@ -804,3 +837,10 @@ class Trainer(object):
     fig.savefig(path, dpi=dpi)
     plt.close(fig)
     return self
+
+
+# ===========================================================================
+# Helpers
+# ===========================================================================
+def get_current_trainer() -> Trainer:
+  return _CURRENT_TRAINER

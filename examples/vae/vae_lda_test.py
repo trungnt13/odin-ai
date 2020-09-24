@@ -18,9 +18,13 @@ from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.layers import DistributionLambda
 from tqdm import tqdm
 
-from odin.bay.vi import AmortizedLDA, LatentDirichletDecoder, NetworkConfig
-from odin.exp import Trainer
-from odin.exp.experimenter import get_output_dir, run_hydra
+from odin.bay.layers import DenseDistribution
+from odin.bay.vi import (AmortizedLDA, BetaVAE, LatentDirichletDecoder,
+                         NetworkConfig, RandomVariable, TwoStageLDA)
+from odin.exp import Trainer, get_current_trainer
+from odin.exp.experimenter import get_output_dir, run_hydra, save_to_yaml
+from odin.fuel import (Cortex, LeukemiaATAC, Newsgroup5, Newsgroup20,
+                       Newsgroup20_clean)
 from odin.utils import ArgController, clean_folder
 
 tf.debugging.set_log_device_placement(False)
@@ -35,14 +39,19 @@ np.random.seed(1)
 # ===========================================================================
 CONFIG = \
 r"""
+ds: news20clean
 n_topics: 50
 n_iter: 180000
 warmup: 120000
 posterior: dirichlet
 distribution: categorical
 override: False
-em: False
+model: lda
 """
+# support model:
+# - em
+# - lda
+# - lda2
 learning_rate = 3e-4
 batch_size = 128
 valid_freq = 5000
@@ -57,66 +66,11 @@ if not os.path.exists(OUTPUT_DIR):
 
 
 # ===========================================================================
-# Download data
-# ===========================================================================
-def download_newsgroup20(
-    data_dir) -> Tuple[Dict[str, np.ndarray], Dict[int, str]]:
-  root_path = "https://github.com/akashgit/autoencoding_vi_for_topic_models/raw/9db556361409ecb3a732f99b4ef207aeb8516f83/data/20news_clean"
-  file_template = "{split}.txt.npy"
-  filename = [
-      ("vocab.pkl", os.path.join(root_path, "vocab.pkl")),
-      ("train", os.path.join(root_path, file_template.format(split="train"))),
-      ("test", os.path.join(root_path, file_template.format(split="test"))),
-  ]
-  data = {}
-  for name, url in filename:
-    filepath = os.path.join(data_dir, name)
-    # download
-    if not os.path.exists(filepath):
-      print(f"Download file {filepath}")
-      urllib.request.urlretrieve(url, filepath)
-    # load
-    if '.pkl' in name:
-      with open(filepath, 'rb') as f:
-        words_to_idx = pickle.load(f)
-      n_words = len(words_to_idx)
-      data[name.split(".")[0]] = words_to_idx
-    else:
-      x = np.load(filepath, allow_pickle=True, encoding="latin1")[:-1]
-      n_documents = x.shape[0]
-      indices = np.array([(row_idx, column_idx)
-                          for row_idx, row in enumerate(x)
-                          for column_idx in row])
-      sparse_matrix = sp.sparse.coo_matrix(
-          (np.ones(indices.shape[0]), (indices[:, 0], indices[:, 1])),
-          shape=(n_documents, n_words),
-          dtype=np.float32)
-      sparse_matrix = sparse_matrix.tocsr()
-      data[name] = sparse_matrix
-  vocabulary = {idx: word for word, idx in words_to_idx.items()}
-  return data, vocabulary
-
-
-def create_tfds(x):
-  x = tf.SparseTensor(indices=sorted(zip(*x.nonzero())),
-                      values=x.data,
-                      dense_shape=x.shape)
-  x = tf.data.Dataset.from_tensor_slices(x).batch(batch_size).map(
-      lambda y: tf.cast(tf.sparse.to_dense(y), tf.float32))
-  shape = tf.data.experimental.get_structure(x).shape[1:]
-  return x, shape
-
-
-data, vocabulary = download_newsgroup20(DATA_DIR)
-n_words = len(vocabulary)
-train_ds, input_shape = create_tfds(data['train'])
-test_ds, _ = create_tfds(data['test'])
-
-
-# ===========================================================================
 # Helpers
 # ===========================================================================
-def get_topics_text(lda: LatentDirichletAllocation, show_word_prob=False):
+def get_topics_text(lda: LatentDirichletAllocation,
+                    vocabulary,
+                    show_word_prob=False):
   topics = lda.components_
   alpha = np.sum(topics, axis=1)
   alpha = alpha / np.sum(alpha)
@@ -133,83 +87,147 @@ def get_topics_text(lda: LatentDirichletAllocation, show_word_prob=False):
   return text
 
 
-def callback(vae: AmortizedLDA):
-  print(f"*** {vae.lda.posterior}-{vae.lda.distribution} ***")
-  text = vae.get_topics_string(vocabulary, n_topics=20)
-  tf.summary.text("topics", text)
-  perplexity = vae.perplexity(data['test'])
-  tf.summary.scalar("perplexity", perplexity)
-  print("\n".join(text))
-  print(f"[#{int(vae.lda.step.numpy())}]Perplexity:", float(perplexity))
+def callback(vae: AmortizedLDA, test, vocabulary):
+  print(f"[{type(vae).__name__}]{vae.lda.posterior}-{vae.lda.distribution}")
+  # end of training
+  if not get_current_trainer().is_training:
+    vae.save_weights(overwrite=True)
+  return dict(topics=vae.get_topics_string(vocabulary, n_topics=20),
+              perplexity=vae.perplexity(test, verbose=False))
 
 
 # ===========================================================================
 # Create AmortizedLDA
 # ===========================================================================
-@run_hydra(output_dir=OUTPUT_DIR, exclude_keys=['override', 'em'])
+@run_hydra(output_dir=OUTPUT_DIR, exclude_keys=['override'])
 def main(cfg):
+  save_to_yaml(cfg)
+  if cfg.ds == 'news5':
+    ds = Newsgroup5()
+  elif cfg.ds == 'news20':
+    ds = Newsgroup20()
+  elif cfg.ds == 'news20clean':
+    ds = Newsgroup20_clean()
+  elif cfg.ds == 'cortex':
+    ds = Cortex()
+  elif cfg.ds == 'leukemia':
+    ds = LeukemiaATAC()
+  else:
+    raise NotImplementedError(f"No support for dataset: {cfg.ds}")
+  train = ds.create_dataset(batch_size=batch_size, partition='train')
+  valid = ds.create_dataset(batch_size=batch_size, partition='valid')
+  test = ds.create_dataset(batch_size=batch_size, partition='test')
+  n_words = ds.vocabulary_size
+  vocabulary = ds.vocabulary
+  ######## prepare the path
   output_dir = get_output_dir()
+  if not os.path.exists(output_dir):
+    os.makedirs(output_dir)
+  model_path = os.path.join(output_dir, 'model')
   if cfg.override:
     clean_folder(output_dir, verbose=True)
-  if not cfg.em:
-    # VAE with Dirichlet latent posterior
-    lda = LatentDirichletDecoder(
-        posterior=cfg.posterior,
-        distribution=cfg.distribution,
-        n_words=n_words,
-        n_topics=cfg.n_topics,
-        warmup=cfg.warmup,
-    )
+  # preparing
+  lda = LatentDirichletDecoder(
+      posterior=cfg.posterior,
+      distribution=cfg.distribution,
+      n_words=n_words,
+      n_topics=cfg.n_topics,
+      warmup=cfg.warmup,
+  )
+  fit_kw = dict(train=train,
+                valid=valid,
+                max_iter=cfg.n_iter,
+                optimizer='adam',
+                learning_rate=learning_rate,
+                batch_size=batch_size,
+                valid_freq=valid_freq,
+                compile_graph=True,
+                logdir=output_dir,
+                skip_fitted=True)
+  ######## AmortizedLDA
+  if cfg.model == 'lda':
     vae = AmortizedLDA(lda=lda,
                        encoder=NetworkConfig(units=[300, 300, 300],
                                              name='Encoder'),
                        decoder='identity',
-                       latents='identity')
-    vae.fit(train=train_ds,
-            valid=test_ds,
-            max_iter=cfg.n_iter,
-            optimizer='adam',
-            learning_rate=learning_rate,
-            batch_size=batch_size,
-            valid_freq=valid_freq,
-            compile_graph=True,
-            logdir=output_dir,
-            checkpoint=output_dir,
-            callback=partial(callback, vae=vae),
-            skip_fitted=True)
-    with vae.summary_writer.as_default():
-      callback(vae)
+                       latents='identity',
+                       path=model_path)
+    vae.fit(callback=partial(callback,
+                             vae=vae,
+                             test=test,
+                             vocabulary=vocabulary),
+            **fit_kw)
+  ######## TwoStageLDA
+  elif cfg.model == 'lda2':
+    vae0_iter = 15000
+    vae0 = BetaVAE(beta=10.0,
+                   encoder=NetworkConfig(units=[300], name='Encoder'),
+                   decoder=NetworkConfig(units=[300, 300], name='Decoder'),
+                   outputs=DenseDistribution(
+                       (n_words,),
+                       posterior='nb',
+                      #  posterior_kwargs=dict(probs_input=True),
+                       # activation='softmax',
+                       name="Words"),
+                   latents=RandomVariable(cfg.n_topics,
+                                          'diag',
+                                          projection=True,
+                                          name="Latents"),
+                   input_shape=(n_words,),
+                   path=model_path + '_vae0')
+    vae0.fit(callback=lambda: None
+             if get_current_trainer().is_training else vae0.save_weights(),
+             **dict(fit_kw,
+                    logdir=output_dir + "_vae0",
+                    max_iter=vae0_iter,
+                    learning_rate=learning_rate,
+                    track_gradients=True))
+    vae = TwoStageLDA(lda=lda,
+                      encoder=vae0.encoder,
+                      decoder=vae0.decoder,
+                      latents=vae0.latent_layers,
+                      warmup=cfg.warmup - vae0_iter,
+                      path=model_path)
+    vae.fit(callback=partial(callback,
+                             vae=vae,
+                             test=test,
+                             vocabulary=vocabulary),
+            **dict(fit_kw,
+                   max_iter=cfg.n_iter - vae0_iter,
+                   track_gradients=True))
   ######## EM-LDA
-  else:
-    if os.path.exists(LOGDIR + ".pkl"):
-      with open(LOGDIR + ".pkl", 'rb') as f:
+  elif cfg.model == 'em':
+    if os.path.exists(model_path):
+      with open(model_path, 'rb') as f:
         lda = pickle.load(f)
     else:
-      writer = tf.summary.create_file_writer(LOGDIR)
-      lda = LatentDirichletAllocation(n_components=n_topics,
+      writer = tf.summary.create_file_writer(output_dir)
+      lda = LatentDirichletAllocation(n_components=cfg.n_topics,
                                       doc_topic_prior=0.7,
                                       learning_method='online',
                                       verbose=True,
                                       n_jobs=4,
                                       random_state=1)
       with writer.as_default():
-        prog = tqdm(train_ds.repeat(-1), desc="Fitting LDA")
+        prog = tqdm(train.repeat(-1), desc="Fitting LDA")
         for n_iter, x in enumerate(prog):
           lda.partial_fit(x)
           if n_iter % 500 == 0:
-            text = get_topics_text(lda)
-            perp = lda.perplexity(data['test'])
+            text = get_topics_text(lda, vocabulary)
+            perp = lda.perplexity(test)
             tf.summary.text("topics", text, n_iter)
             tf.summary.scalar("perplexity", perp, n_iter)
             prog.write(f"[#{n_iter}]Perplexity: {perp:.2f}")
             prog.write("\n".join(text))
           if n_iter >= 20000:
             break
-      with open(LOGDIR + ".pkl", 'wb') as f:
+      with open(model_path, 'wb') as f:
         pickle.dump(lda, f)
     # final evaluation
-    text = get_topics_text(lda)
-    print(f"Perplexity:", lda.perplexity(data['test']))
+    text = get_topics_text(lda, vocabulary)
+    final_score = lda.perplexity(data['test'])
+    tf.summary.scalar("perplexity", final_score, step=n_iter + 1)
+    print(f"Perplexity:", final_score)
     print("\n".join(text))
 
 

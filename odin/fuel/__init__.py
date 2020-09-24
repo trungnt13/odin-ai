@@ -7,6 +7,7 @@ from odin.fuel.bio_data import *
 from odin.fuel.human_genome import *
 from odin.fuel.dataset_base import *
 from odin.fuel.nlp_data import *
+from odin.fuel.newsgroup20_clean import *
 
 def get_dataset(name):
   import inspect

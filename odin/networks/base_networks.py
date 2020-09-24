@@ -1,31 +1,46 @@
 from __future__ import absolute_import, division, print_function
 
 import collections
+import copy
 import dataclasses
+import glob
 import inspect
+import os
+import pickle
 import types
-from copy import deepcopy
+from functools import partial
 from numbers import Number
-from typing import List, MutableSequence, Optional, Union
+from typing import (Any, Callable, Dict, Iterator, List, MutableSequence,
+                    Optional, Text, Tuple, Union)
 
 import numpy as np
 import tensorflow as tf
+from scipy import sparse
 from six import string_types
 from tensorflow.python import keras
+from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.framework import tensor_shape
 from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.layers.convolutional import Conv as _Conv
+from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
 from tensorflow.python.keras.utils import layer_utils
+from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
+from tensorflow.python.platform import tf_logging as logging
+from tensorflow.python.training.tracking import base as trackable
 from tensorflow.python.util import tf_inspect
 
 from odin.backend.alias import (parse_activation, parse_constraint,
                                 parse_initializer, parse_regularizer)
 from odin.backend.keras_helpers import layer2text
+from odin.exp import Trainer
 from odin.networks.util_layers import (Conv1DTranspose, ExpandDims, Identity,
                                        ReshapeMCMC)
-from odin.utils import as_tuple
+from odin.utils import MD5object, as_tuple
 
 __all__ = [
+    'TensorTypes',
+    'TrainStep',
+    'Networks',
     'SequentialNetwork',
     'dense_network',
     'conv_network',
@@ -68,7 +83,398 @@ def _infer_rank_and_input_shape(rank, input_shape):
 
 
 # ===========================================================================
-# Base classes
+# Networks
+# ===========================================================================
+TensorTypes = Union[sparse.spmatrix, np.ndarray, tf.Tensor]
+
+
+def _to_optimizer(optimizer, learning_rate, clipnorm):
+  optimizer = tf.nest.flatten(optimizer)
+  learning_rate = tf.nest.flatten(learning_rate)
+  clipnorm = tf.nest.flatten(clipnorm)
+  if len(learning_rate) == 1:
+    learning_rate = learning_rate * len(optimizer)
+  if len(clipnorm) == 1:
+    clipnorm = clipnorm * len(clipnorm)
+  ## create the optimizer
+  all_optimizers = []
+  for opt, lr, clip in zip(optimizer, learning_rate, clipnorm):
+    # string
+    if isinstance(opt, string_types):
+      config = dict(learning_rate=float(lr))
+      if clip is not None:
+        config['clipnorm'] = clip
+      opt = tf.optimizers.get({'class_name': opt, 'config': config})
+    # the instance
+    elif isinstance(opt, OptimizerV2):
+      pass
+    # type
+    elif inspect.isclass(opt) and issubclass(opt, OptimizerV2):
+      opt = opt(learning_rate=float(learning_rate)) \
+        if clipnorm is None else \
+        opt(learning_rate=float(learning_rate), clipnorm=clipnorm)
+    # no support
+    else:
+      raise ValueError("No support for optimizer: %s" % str(opt))
+    all_optimizers.append(opt)
+  return all_optimizers
+
+
+def _to_dataset(x, batch_size, dtype):
+  # sparse matrix
+  if isinstance(x, sparse.spmatrix):
+    x = tf.SparseTensor(indices=sorted(zip(*x.nonzero())),
+                        values=x.data,
+                        dense_shape=x.shape)
+    x = tf.data.Dataset.from_tensor_slices(x).batch(batch_size).map(
+        lambda y: tf.cast(tf.sparse.to_dense(y), dtype))
+  # numpy ndarray
+  elif isinstance(x, np.ndarray) or tf.is_tensor(x):
+    x = tf.data.Dataset.from_tensor_slices(x).batch(batch_size)
+  return x
+
+
+@dataclasses.dataclass
+class TrainStep:
+  r""" Encapsulate a training step into a class, when called return
+  a tensor for loss value, and a dictionary of metrics for monitoring. """
+  inputs: TensorTypes
+  training: bool
+  mask: Optional[TensorTypes]
+  parameters: List[tf.Variable]
+
+  def call(self) -> Tuple[tf.Tensor, Dict[str, Union[tf.Tensor, str]]]:
+    return tf.constant(0., dtype=tf.float32), {}
+
+  def __call__(self) -> Tuple[tf.Tensor, Dict[str, Union[tf.Tensor, str]]]:
+    loss, metrics = self.call()
+    assert isinstance(loss, tf.Tensor), \
+      f"loss must be instance of tf.Tensor but given: {type(loss)}"
+    assert isinstance(metrics, dict), \
+      f"metrics must be instance of dictionary but given: {type(metrics)}"
+    return loss, metrics
+
+
+class Networks(keras.Model, MD5object):
+  r""" A more civilized version of `keras.Model`, a container of multiple
+  networks that serve a computational model. """
+
+  def __new__(cls, *args, **kwargs):
+    class_tree = [c for c in type.mro(cls) if issubclass(c, keras.Model)][::-1]
+    # get default arguments from parents classes
+    kw = dict()
+    for c in class_tree:
+      spec = inspect.getfullargspec(c.__init__)
+      if spec.defaults is not None:
+        for key, val in zip(spec.args[::-1], spec.defaults[::-1]):
+          kw[key] = val
+    # update the user provided arguments
+    for k, v in zip(spec.args[1:], args):
+      kw[k] = v
+    kw.update(kwargs)
+    # deep copy is necessary here otherwise the init function will modify
+    # the arguments
+    kw = copy.copy(kw)
+    # create the instance
+    instance = super().__new__(cls, *args, **kwargs)
+    # must make _init_args NonDependency (i.e. nontrackable and won't be
+    # saved in save_weights)
+    with trackable.no_automatic_dependency_tracking_scope(instance):
+      instance._init_args = kw
+    return instance
+
+  def __init__(self,
+               path: Optional[str] = None,
+               step: int = 0,
+               *args,
+               **kwargs):
+    super().__init__(name=kwargs.pop('name',
+                                     type(self).__name__),
+                     *args,
+                     **kwargs)
+    self.step = tf.Variable(step,
+                            dtype=self.dtype,
+                            trainable=False,
+                            name="Step")
+    self._save_path = path
+    self.trainer = None
+
+  def load_weights(self,
+                   filepath: str,
+                   raise_notfound: bool = False,
+                   verbose: bool = False):
+    r""" Load all the saved weights in tensorflow format at given path """
+    if isinstance(filepath, string_types):
+      files = glob.glob(filepath + '.*')
+      # load weights
+      if len(files) > 0 and (filepath + '.index') in files:
+        if verbose:
+          print(f"Loading weights at path: {filepath}")
+        super().load_weights(filepath, by_name=False, skip_mismatch=False)
+      elif raise_notfound:
+        raise FileNotFoundError(
+            f"Cannot find saved weights at path: {filepath}")
+      # load trainer
+      trainer_path = filepath + '.trainer'
+      if os.path.exists(trainer_path):
+        if verbose:
+          print(f"Loading trainer at path: {trainer_path}")
+        with open(trainer_path, 'rb') as f:
+          self.trainer = pickle.load(f)
+    self._save_path = filepath
+    return self
+
+  def save_weights(self,
+                   filepath: Optional[str] = None,
+                   overwrite: bool = True):
+    r""" Just copy this function here to fix the `save_format` to 'tf'
+
+    Since saving 'h5' will drop certain variables.
+    """
+    if filepath is None:
+      filepath = self.save_path
+    assert filepath is not None
+    with open(filepath + '.trainer', 'wb') as f:
+      pickle.dump(self.trainer, f)
+    logging.get_logger().disabled = True
+    super().save_weights(filepath=filepath,
+                         overwrite=overwrite,
+                         save_format='tf')
+    logging.get_logger().disabled = False
+
+  def train_steps(self,
+                  inputs: TensorTypes,
+                  training: bool = True,
+                  mask: Optional[TensorTypes] = None,
+                  **kwargs) -> Iterator[TrainStep]:
+    yield TrainStep(inputs=inputs,
+                    training=training,
+                    mask=mask,
+                    parameters=self.trainable_variables,
+                    **kwargs)
+
+  def optimize(self,
+               inputs: TensorTypes,
+               training: bool = True,
+               mask: Optional[TensorTypes] = None,
+               optimizer: Optional[OptimizerV2] = None,
+               allow_none_gradients: bool = False,
+               track_gradients: bool = False,
+               **kwargs):
+    r""" Optimization function, could be used for autograph
+
+    Return:
+      loss : a Scalar, the loss Tensor used for optimization
+      metrics : a Dictionary, mapping from name to values
+    """
+    if training:
+      self.step.assign_add(1)
+    ## prepare the optimizer
+    if optimizer is None:
+      optimizer = [self.optimizer]
+    elif not isinstance(optimizer, (tuple, list)):
+      optimizer = [optimizer]
+    ## prepare loss and metrics
+    all_metrics = {}
+    total_loss = 0.
+    optimizer = tf.nest.flatten(optimizer)
+    n_optimizer = len(optimizer)
+    for i, step in enumerate(
+        self.train_steps(inputs=inputs, training=training, mask=mask,
+                         **kwargs)):
+      assert isinstance(step, TrainStep), \
+        ("method train_steps must return an Iterator of TrainStep, "
+         f"but return type: {type(step)}")
+      step: TrainStep
+      opt = optimizer[i % n_optimizer]
+      parameters = step.parameters
+      ## for training
+      if training:
+        with tf.GradientTape(watch_accessed_variables=False) as tape:
+          tape.watch(parameters)
+          loss, metrics = step()
+        # applying the gradients
+        gradients = tape.gradient(loss, parameters)
+        # for debugging gradients
+        grads_params = [(g, p)
+                        for g, p in zip(gradients, parameters)
+                        if g is not None or allow_none_gradients]
+        opt.apply_gradients(grads_params)
+        # tracking the gradient norms for debugging
+        if track_gradients:
+          for g, p in grads_params:
+            metrics[f'grad/{p.name}'] = tf.linalg.norm(g)
+      ## for validation
+      else:
+        tape = None
+        loss, metrics = step()
+      ## update metrics and loss
+      all_metrics.update(metrics)
+      total_loss += loss
+    return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
+
+  def fit(
+      self,
+      train: Union[TensorTypes, DatasetV2],
+      valid: Optional[Union[TensorTypes, DatasetV2]] = None,
+      valid_freq: int = 500,
+      valid_interval: float = 0,
+      optimizer: Union[str, OptimizerV2] = 'adam',
+      learning_rate: float = 1e-3,
+      clipnorm: Optional[float] = None,
+      epochs: int = -1,
+      max_iter: int = 1000,
+      batch_size: int = 32,
+      sample_shape: List[int] = (),  # for ELBO
+      analytic: Optional[bool] = None,  # for ELBO
+      iw: bool = False,  # for ELBO
+      callback: Callable[[], Optional[dict]] = lambda: None,
+      compile_graph: bool = True,
+      autograph: bool = False,
+      logging_interval: float = 3,
+      skip_fitted: bool = False,
+      terminate_on_nan: bool = True,
+      logdir: Optional[str] = None,
+      allow_none_gradients: bool = False,
+      track_gradients: bool = False):
+    r""" Override the original fit method of keras to provide simplified
+    procedure with `Networks.optimize` and
+    `Networks.train_steps`
+
+    Arguments:
+      optimizer : Text, instance of `tf.optimizers.Optimizer`
+        or `None`. A list of optimizers is accepted in case of multiple
+        steps training.
+        - If `None`, re-use stored optimizer, raise `RuntimeError` if no
+          predefined optimizer found.
+      callback : a Callable, called every `valid_freq` steps or
+        `valid_interval` seconds
+      compile_graph : a Boolean. If True, using tensorflow autograph for
+        optimize function (about 2 times better speed), otherwise, run the
+        function in Eager mode (better for debugging).
+
+    """
+    batch_size = int(batch_size)
+    # validate the dataset
+    train = _to_dataset(train, batch_size, self.dtype)
+    if valid is not None:
+      valid = _to_dataset(valid, batch_size, self.dtype)
+    # skip training if model is fitted or reached a number of iteration
+    if self.is_fitted and skip_fitted:
+      if isinstance(skip_fitted, bool):
+        return self
+      skip_fitted = int(skip_fitted)
+      if int(self.step.numpy()) >= skip_fitted:
+        return self
+    # create the trainer
+    if self.trainer is None:
+      with trackable.no_automatic_dependency_tracking_scope(self):
+        trainer = Trainer(logdir=logdir)
+        self.trainer = trainer
+    else:
+      trainer = self.trainer
+    ## if already called repeat, then no need to repeat more
+    if hasattr(train, 'repeat'):
+      train = train.repeat(int(epochs))
+    ## create the optimizer, turn off tracking so the optimizer
+    # won't be saved in save_weights
+    if optimizer is not None and self.optimizer is None:
+      with trackable.no_automatic_dependency_tracking_scope(self):
+        self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
+    if self.optimizer is None:
+      raise RuntimeError("No optimizer found!")
+    ## run early stop and callback
+    self.trainer.fit(
+        train_ds=train,
+        optimize=partial(self.optimize,
+                         allow_none_gradients=allow_none_gradients,
+                         track_gradients=track_gradients),
+        valid_ds=valid,
+        valid_freq=valid_freq,
+        valid_interval=valid_interval,
+        compile_graph=compile_graph,
+        autograph=autograph,
+        logging_interval=logging_interval,
+        log_tag=self.name,
+        max_iter=max_iter,
+        terminate_on_nan=terminate_on_nan,
+        callback=callback,
+    )
+    return self
+
+  def plot_learning_curves(self,
+                           path="/tmp/tmp.png",
+                           summary_steps=[10, 5],
+                           show_validation=True,
+                           dpi=200,
+                           title=None):
+    r""" Plot the learning curves on train and validation sets. """
+    assert self.trainer is not None, \
+      "fit method must be called before plotting learning curves"
+    fig = self.trainer.plot_learning_curves(path=path,
+                                            summary_steps=summary_steps,
+                                            show_validation=show_validation,
+                                            dpi=dpi,
+                                            title=title)
+    if path is None:
+      return fig
+    return self
+
+  @property
+  def is_semi_supervised(self) -> bool:
+    return False
+
+  @property
+  def is_self_supervised(self) -> bool:
+    return False
+
+  @property
+  def is_weak_supervised(self) -> bool:
+    return False
+
+  @property
+  def summary_writer(self) -> SummaryWriter:
+    if self.trainer is not None:
+      return self.trainer.summary_writer
+    return None
+
+  @property
+  def tensorboard(self) -> Dict[Text, Tuple[float, int, float]]:
+    if self.trainer is not None:
+      return self.trainer.tensorboard
+    return None
+
+  @property
+  def tensorboard_logdir(self) -> str:
+    if self.trainer is not None:
+      return self.trainer.logdir
+    return None
+
+  def _md5_objects(self):
+    varray = []
+    for n, v in enumerate(self.variables):
+      v = v.numpy()
+      varray.append(v.shape)
+      varray.append(v.ravel())
+    varray.append([n])
+    varray = np.concatenate(varray, axis=0)
+    return varray
+
+  @property
+  def save_path(self) -> Optional[str]:
+    return self._save_path
+
+  @property
+  def init_args(self) -> Dict[str, Any]:
+    return self._init_args
+
+  @property
+  def is_fitted(self) -> bool:
+    return self.step.numpy() > 0
+
+
+# ===========================================================================
+# SequentialNetwork
 # ===========================================================================
 class SequentialNetwork(keras.Sequential):
 
@@ -389,7 +795,7 @@ class NetworkConfig(dict):
     return getattr(self, key)
 
   def copy(self, **kwargs):
-    obj = deepcopy(self)
+    obj = copy.deepcopy(self)
     return dataclasses.replace(obj, **kwargs)
 
   ################ Create the networks

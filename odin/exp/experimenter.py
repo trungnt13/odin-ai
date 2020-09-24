@@ -7,6 +7,7 @@ import tempfile
 from copy import deepcopy
 from typing import Any, Callable, List, Optional, Union
 
+import numpy as np
 from six import string_types
 
 from odin.utils import as_tuple
@@ -27,7 +28,7 @@ except ImportError as e:
   print(e)
 
 __all__ = [
-    'pretty_print', 'flatten_config', 'hash_config', \
+    'pretty_print', 'flatten_config', 'hash_config', 'save_to_yaml', \
     'get_hydra_config', 'get_overrides', 'get_output_dir', 'get_sweep_dir', \
     'run_hydra'
 ]
@@ -37,7 +38,7 @@ __all__ = [
 # ===========================================================================
 YAML_REGEX = re.compile(r"\w+: \w+")
 OVERRIDE_PATTERN = re.compile(r"\A[\+\~]?[\w\.\\\@]+=[\w\(\)\[\]\{\}\,\.\']+")
-JOBS_PATTERN = re.compile(r"\A-{1,2}n?_?jobs[=\s](\d+)\Z")
+JOBS_PATTERN = re.compile(r"\~-{1,2}n?\_?jobs[=\~]?(\d+)\~")
 
 
 def _insert_argv(key, value, is_value_string=True):
@@ -168,6 +169,21 @@ def hash_config(cfg: DictConfig,
   return md5_checksum(cfg)[:int(length)]
 
 
+def save_to_yaml(config: DictConfig, path: Optional[str] = None) -> str:
+  r""" by default, save the config dictionary to file name: `config.yaml` at
+  `get_output_dir()` """
+  if path is None:
+    output_dir = get_output_dir()
+    if not os.path.exists(output_dir):
+      os.makedirs(output_dir)
+    path = os.path.join(output_dir, 'config.yaml')
+  else:
+    path = _abspath(path)
+  with open(path, 'w') as f:
+    f.write(OmegaConf.to_yaml(config, sort_keys=True))
+  return path
+
+
 def get_hydra_config() -> DictConfig:
   return HydraConfig.get()
 
@@ -269,12 +285,12 @@ def run_hydra(output_dir: str = '/tmp/outputs',
         override_id = r"default"
       # jobs provided
       jobs = 1
-      for i, a in enumerate(sys.argv):
-        match = JOBS_PATTERN.match(a)
-        if match:
-          sys.argv.pop(i)
-          jobs = int(match.groups()[0])
-          break
+      text = '~'.join(sys.argv)
+      match = JOBS_PATTERN.search(text)
+      if match:
+        jobs = int(match.groups()[0])
+        text = re.sub(JOBS_PATTERN, "~", text)
+        sys.argv = text.split("~")
       if jobs > 1:
         _insert_argv(key="hydra/launcher",
                      value="joblib",

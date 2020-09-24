@@ -6,15 +6,26 @@ import inspect
 import os
 import pickle
 import warnings
+from dataclasses import dataclass
 from functools import partial
 from itertools import zip_longest
 from numbers import Number
-from typing import Callable, Dict, List, Optional, Text, Tuple, Type, Union
+from typing import (Any, Callable, Dict, Iterator, List, Optional, Text, Tuple,
+                    Type, Union)
 
 import numpy as np
 import scipy as sp
 import tensorflow as tf
 from numpy import ndarray
+from odin import backend as bk
+from odin.backend.keras_helpers import layer2text
+from odin.bay.layers.dense_distribution import DenseDistribution
+from odin.bay.random_variable import RandomVariable
+from odin.bay.vi.autoencoder.networks import ImageNet
+from odin.exp.trainer import Trainer
+from odin.networks import (Identity, NetworkConfig, Networks, TensorTypes,
+                           TrainStep)
+from odin.utils.python_utils import classproperty
 from scipy.sparse import spmatrix
 from six import string_types
 from tensorflow import Tensor, Variable
@@ -30,31 +41,19 @@ from tensorflow_probability.python import layers as tfl
 from tensorflow_probability.python.distributions import Distribution
 from typing_extensions import Literal
 
-from odin import backend as bk
-from odin.backend.keras_helpers import layer2text
-from odin.bay.layers.dense_distribution import DenseDistribution
-from odin.bay.random_variable import RandomVariable
-from odin.bay.vi.autoencoder.networks import ImageNet
-from odin.exp.trainer import Trainer
-from odin.networks import Identity, NetworkConfig, SequentialNetwork
-from odin.utils import MD5object
-from odin.utils.python_utils import classproperty
-
 __all__ = [
-    'TensorTypes',
-    'LayerFactory',
+    'LayerCreator',
+    'VAEStep',
     'TrainStep',
     'VariationalAutoencoder',
-    'VAE',
 ]
 
 # ===========================================================================
 # Types
 # ===========================================================================
-LayerFactory = Union[Layer, Type[Layer], \
+LayerCreator = Union[str, Layer, Type[Layer], \
                      NetworkConfig, RandomVariable, \
                      Callable[[Optional[List[int]]], Layer]]
-TensorTypes = Union[spmatrix, ndarray, Tensor]
 
 
 # ===========================================================================
@@ -122,39 +121,7 @@ def _net2str(net):
   return str(net)
 
 
-def _to_optimizer(optimizer, learning_rate, clipnorm):
-  optimizer = tf.nest.flatten(optimizer)
-  learning_rate = tf.nest.flatten(learning_rate)
-  clipnorm = tf.nest.flatten(clipnorm)
-  if len(learning_rate) == 1:
-    learning_rate = learning_rate * len(optimizer)
-  if len(clipnorm) == 1:
-    clipnorm = clipnorm * len(clipnorm)
-  ## create the optimizer
-  all_optimizers = []
-  for opt, lr, clip in zip(optimizer, learning_rate, clipnorm):
-    # string
-    if isinstance(opt, string_types):
-      config = dict(learning_rate=float(lr))
-      if clip is not None:
-        config['clipnorm'] = clip
-      opt = tf.optimizers.get({'class_name': opt, 'config': config})
-    # the instance
-    elif isinstance(opt, tf.optimizers.Optimizer):
-      pass
-    # type
-    elif inspect.isclass(opt) and issubclass(opt, tf.optimizers.Optimizer):
-      opt = opt(learning_rate=float(learning_rate)) \
-        if clipnorm is None else \
-        opt(learning_rate=float(learning_rate), clipnorm=clipnorm)
-    # no support
-    else:
-      raise ValueError("No support for optimizer: %s" % str(opt))
-    all_optimizers.append(opt)
-  return all_optimizers
-
-
-def parse_layers(network, input_shape=None, name=None) -> List[Layer]:
+def _parse_layers(network, input_shape=None, name=None) -> List[Layer]:
   is_decoding = 'decoder' in str(name).lower()
   ## identity
   if (network is None or (isinstance(network, string_types) and
@@ -172,7 +139,8 @@ def parse_layers(network, input_shape=None, name=None) -> List[Layer]:
     network = network(**kw)
   ## RandomVariable
   elif isinstance(network, RandomVariable):
-    network = network.create_posterior(input_shape=input_shape, name=name)
+    network = network.create_posterior(
+        input_shape=input_shape, name=name if network.name is None else None)
   ## make sure is a list
   network = list(network) if isinstance(network, (tuple, list)) else [network]
   network = [i for i in network if i is not None]
@@ -242,83 +210,19 @@ def _iter_lists(X, Y):
       yield i, x, y
 
 
-def _validate_implementation(cls):
-  # 'analytic', 'reverse', 'sample_shape', 'mask', 'training'
-  elbo_args = ['inputs', 'pX_Z', 'qZ_X']
-  call_args = ['inputs', 'training', 'mask', 'sample_shape']
-  encode_args = ['inputs', 'training', 'mask', 'sample_shape']
-  decode_args = ['latents', 'training', 'mask', 'sample_shape']
-  for args, method in [
-      (elbo_args, cls._elbo),
-      (elbo_args, cls.elbo),
-      (call_args, cls.call),
-      (encode_args, cls.encode),
-      (decode_args, cls.decode),
-  ]:
-    spec = inspect.getfullargspec(method)
-    assert all(a in spec.args for a in args) and spec.varkw is not None,\
-      (f"Invalid implementation of VariationalAutoencoder, class {cls.__name__} "
-       f"method {method} must contain arguments: {elbo_args} and include "
-       f"**kwargs, but given: {spec}")
-
-
-def _to_dataset(x, batch_size, dtype):
-  # sparse matrix
-  if isinstance(x, sp.sparse.spmatrix):
-    x = tf.SparseTensor(indices=sorted(zip(*x.nonzero())),
-                        values=x.data,
-                        dense_shape=x.shape)
-    x = tf.data.Dataset.from_tensor_slices(x).batch(batch_size).map(
-        lambda y: tf.cast(tf.sparse.to_dense(y), dtype))
-  # numpy ndarray
-  elif isinstance(x, np.ndarray) or tf.is_tensor(x):
-    x = tf.data.Dataset.from_tensor_slices(x).batch(batch_size)
-  return x
-
-
 # ===========================================================================
 # Training step
 # ===========================================================================
-class TrainStep:
-  r""" A single train step (iteration) for Variational Autoencoder,
-  when called will return:
+@dataclass
+class VAEStep(TrainStep):
+  r""" A single train step (iteration) for Variational Autoencoder """
 
-    - a scalar for loss
-    - a dictionary of Tensor for monitoring metrics
+  vae: 'VariationalAutoencoder'
+  sample_shape: List[int]
+  call_kw: Dict[str, Any]
+  elbo_kw: Dict[str, Any]
 
-  Arguments:
-    vae : `VariationalAutoencoder`
-    inputs : a list of input `Tensor`
-    sample_shape : MCMC sample shape
-    iw : a Boolean. If True, enable importance weight sampling
-    elbo_kw : a Dictionary. Keyword arguments for elbo function
-    parameters : list of variables for optimizing.
-      If None, all parameters of VAE are optimized
-  """
-
-  def __init__(self,
-               vae,
-               inputs=None,
-               training=None,
-               mask=None,
-               sample_shape=(),
-               iw=False,
-               parameters=None,
-               elbo_kw={},
-               call_kw={}):
-    self.vae = vae
-    assert isinstance(vae, VariationalAutoencoder)
-    self.parameters = (vae.trainable_variables
-                       if parameters is None else parameters)
-    self.inputs = inputs
-    self.mask = mask
-    self.sample_shape = sample_shape
-    self.training = training
-    self.call_kw = call_kw
-    self.iw = iw
-    self.elbo_kw = elbo_kw
-
-  def __call__(self):
+  def call(self) -> Tuple[tf.Tensor, Dict[str, Union[tf.Tensor, str]]]:
     pX_Z, qZ_X = self.vae(self.inputs,
                           training=self.training,
                           mask=self.mask,
@@ -342,8 +246,6 @@ class TrainStep:
     for x in div.values():
       div_sum += x
     elbo = llk_sum - div_sum
-    if self.iw and tf.rank(elbo) > 1:
-      elbo = self.vae.importance_weighted(elbo, axis=0)
     loss = -tf.reduce_mean(elbo)
     # metrics
     metrics = llk
@@ -354,7 +256,7 @@ class TrainStep:
 # ===========================================================================
 # Model
 # ===========================================================================
-class VariationalAutoencoder(keras.Model, MD5object):
+class VariationalAutoencoder(Networks):
   r""" Base class for all variational autoencoder
 
   Arguments:
@@ -376,65 +278,30 @@ class VariationalAutoencoder(keras.Model, MD5object):
       the output variable (random or deterministic variable)
   """
 
-  def __new__(cls, *args, **kwargs):
-    _validate_implementation(cls)
-    class_tree = [
-        c for c in type.mro(cls) if issubclass(c, VariationalAutoencoder)
-    ][::-1]
-    # get default arguments from parents classes
-    kw = dict()
-    for c in class_tree:
-      spec = inspect.getfullargspec(c.__init__)
-      if spec.defaults is not None:
-        for key, val in zip(spec.args[::-1], spec.defaults[::-1]):
-          kw[key] = val
-    # update the user provided arguments
-    for k, v in zip(spec.args[1:], args):
-      kw[k] = v
-    kw.update(kwargs)
-    # deep copy is necessary here otherwise the init function will modify
-    # the arguments
-    # TODO: check if deepcopy possible here
-    kw = copy.copy(kw)
-    # create the instance
-    instance = super().__new__(cls, *args, **kwargs)
-    # must make _init_args NonDependency (i.e. nontrackable and won't be
-    # saved in save_weights)
-    with trackable.no_automatic_dependency_tracking_scope(instance):
-      instance._init_args = kw
-    return instance
-
   def __init__(
       self,
-      encoder: Union[str, LayerFactory] = NetworkConfig(),
-      decoder: Union[str, LayerFactory] = NetworkConfig(),
-      outputs: Union[LayerFactory] = RandomVariable(64,
-                                                    'gaus',
-                                                    projection=True,
-                                                    name="Input"),
-      latents: Union[LayerFactory] = RandomVariable(10,
-                                                    'diag',
-                                                    projection=True,
-                                                    name="Latent"),
+      encoder: LayerCreator = NetworkConfig(),
+      decoder: LayerCreator = NetworkConfig(),
+      outputs: LayerCreator = RandomVariable(64,
+                                             'gaus',
+                                             projection=True,
+                                             name="Input"),
+      latents: LayerCreator = RandomVariable(10,
+                                             'diag',
+                                             projection=True,
+                                             name="Latent"),
       reduce_latent: Literal['concat', 'mean', 'min', 'max', 'sum',
                              'none'] = 'concat',
       input_shape: Optional[List[int]] = None,
-      step: Union[int, Variable] = 0.,
       analytic: bool = False,
-      path: Optional[str] = None,
       **kwargs,
   ):
-    name = kwargs.pop('name', None)
-    optimizer = kwargs.pop('optimizer', None)
-    learning_rate = kwargs.pop('learning_rate', 1e-4)
-    clipnorm = kwargs.pop('clipnorm', None)
-    if name is None:
-      name = type(self).__name__
     ### keras want this supports_masking on to enable support masking
     self.supports_masking = True
     super().__init__(**kwargs)
     ### First, infer the right input_shape
-    outputs = tf.nest.flatten(outputs)
+    if not isinstance(outputs, (tuple, list)):
+      outputs = [outputs]
     if input_shape is None:
       input_shape = [
           o.event_shape if hasattr(o, 'event_shape') else o.output_shape
@@ -446,15 +313,16 @@ class VariationalAutoencoder(keras.Model, MD5object):
           f"Input shape not provide, infer using output shape {input_shape}"
           f" , the final input shape is: {tf.nest.flatten(input_shape)}")
     ### prepare support multiple encoders decoders
-    all_encoder = parse_layers(network=encoder,
-                               input_shape=input_shape,
-                               name="Encoder")
+    all_encoder = _parse_layers(network=encoder,
+                                input_shape=input_shape,
+                                name="Encoder")
     ### create the latents and input distribution
-    latents = tf.nest.flatten(latents)
-    self.latent_layers = [
-        parse_layers(z,
-                     input_shape=e.output_shape[1:] if e is not None else None,
-                     name=f"Latents{i if i > 0 else ''}")[0]
+    if not isinstance(latents, (tuple, list)):
+      latents = [latents]
+    self._latent_layers = [
+        _parse_layers(z,
+                      input_shape=e.output_shape[1:] if e is not None else None,
+                      name=f"Latents{i if i > 0 else ''}")[0]
         for i, z, e in _iter_lists(latents, all_encoder)
     ]
     self.latent_args = [_get_args(i) for i in self.latent_layers]
@@ -474,21 +342,20 @@ class VariationalAutoencoder(keras.Model, MD5object):
       raise ValueError(f"No support for reduce_latent='{reduce_latent}'")
     self.reduce_latent = reduce_latent
     ### Create the decoder
-    all_decoder = parse_layers(decoder,
-                               input_shape=latent_shape,
-                               name="Decoder")
+    all_decoder = _parse_layers(decoder,
+                                input_shape=latent_shape,
+                                name="Decoder")
     ### Finally the output distributions
-    all_outputs = [
-        parse_layers(o,
-                     input_shape=d.output_shape[1:] if d is not None else None,
-                     name=f"Outputs{i}")
+    self._output_layers = [
+        _parse_layers(o,
+                      input_shape=d.output_shape[1:] if d is not None else None,
+                      name=f"Outputs{i}")[0]
         for i, o, d in _iter_lists(outputs, all_decoder)
     ]
-    self.output_layers = [x[0] for x in all_outputs]
     self.output_args = [_get_args(i) for i in self.output_layers]
     ### check type
-    self.encoder = all_encoder[0] if len(all_encoder) == 1 else all_encoder
-    self.decoder = all_decoder[0] if len(all_decoder) == 1 else all_decoder
+    self._encoder = all_encoder[0] if len(all_encoder) == 1 else all_encoder
+    self._decoder = all_decoder[0] if len(all_decoder) == 1 else all_decoder
     ### build the latent and output layers
     for layer in self.latent_layers + self.output_layers:
       if (hasattr(layer, '_batch_input_shape') and not layer.built and
@@ -498,23 +365,12 @@ class VariationalAutoencoder(keras.Model, MD5object):
         layer(keras.Input(shape=shape[1:], batch_size=shape[0]))
     ### the training step
     self.analytic = analytic
-    self.step = tf.Variable(step,
-                            dtype=self.dtype,
-                            trainable=False,
-                            name="Step")
     self.latent_names = [i.name for i in self.latent_layers]
     # keras already use output_names, cannot override it
     self.variable_names = [i.name for i in self.output_layers]
-    ### load saved weights if available
-    if optimizer is not None:
-      self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
-    else:
-      self.optimizer = None
     ### others
-    self.trainer = None
-    self._save_path = None
-    if path is not None:
-      self.load_weights(path, raise_notfound=False, verbose=True)
+    if self.save_path is not None:
+      self.load_weights(self.save_path, raise_notfound=False, verbose=True)
     # encode and decode arguments
     self._encode_func_args = inspect.getfullargspec(self.encode).args[1:]
     self._encoder_args = [
@@ -526,6 +382,22 @@ class VariationalAutoencoder(keras.Model, MD5object):
         inspect.getfullargspec(i.call).args[1:]
         for i in tf.nest.flatten(self.decoder)
     ]
+
+  @property
+  def encoder(self) -> Union[Layer, List[Layer]]:
+    return self._encoder
+
+  @property
+  def decoder(self) -> Union[Layer, List[Layer]]:
+    return self._decoder
+
+  @property
+  def latent_layers(self) -> Union[Layer, List[Layer]]:
+    return self._latent_layers
+
+  @property
+  def output_layers(self) -> Union[Layer, List[Layer]]:
+    return self._output_layers
 
   @property
   def init_args(self) -> dict:
@@ -551,69 +423,6 @@ class VariationalAutoencoder(keras.Model, MD5object):
           kw[key] = val
     args = [i for i in set(args) if i not in kw and i != 'self']
     return kw
-
-  @property
-  def save_path(self) -> str:
-    return self._save_path
-
-  def load_weights(self,
-                   filepath: str,
-                   raise_notfound: bool = False,
-                   verbose: bool = False):
-    r""" Load all the saved weights in tensorflow format at given path """
-    if isinstance(filepath, string_types):
-      files = glob.glob(filepath + '.*')
-      # load weights
-      if len(files) > 0 and (filepath + '.index') in files:
-        if verbose:
-          print(f"Loading weights at path: {filepath}")
-        super().load_weights(filepath, by_name=False, skip_mismatch=False)
-      elif raise_notfound:
-        raise FileNotFoundError(
-            f"Cannot find saved weights at path: {filepath}")
-      # load trainer
-      trainer_path = filepath + '.trainer'
-      if os.path.exists(trainer_path):
-        if verbose:
-          print(f"Loading trainer at path: {trainer_path}")
-        with open(trainer_path, 'rb') as f:
-          self.trainer = pickle.load(f)
-    self._save_path = filepath
-    return self
-
-  def save_weights(self,
-                   filepath: Optional[str] = None,
-                   overwrite: bool = True):
-    r""" Just copy this function here to fix the `save_format` to 'tf'
-
-    Since saving 'h5' will drop certain variables.
-    """
-    if filepath is None:
-      filepath = self.save_path
-    assert filepath is not None
-    with open(filepath + '.trainer', 'wb') as f:
-      pickle.dump(self.trainer, f)
-    logging.get_logger().disabled = True
-    super().save_weights(filepath=filepath,
-                         overwrite=overwrite,
-                         save_format='tf')
-    logging.get_logger().disabled = False
-
-  @property
-  def is_semi_supervised(self) -> bool:
-    return False
-
-  @property
-  def is_self_supervised(self) -> bool:
-    return False
-
-  @property
-  def is_weak_supervised(self) -> bool:
-    return self.is_semi_supervised
-
-  @property
-  def is_fitted(self) -> bool:
-    return self.step.numpy() > 0
 
   @property
   def posteriors(self) -> List[DenseDistribution]:
@@ -668,7 +477,12 @@ class VariationalAutoencoder(keras.Model, MD5object):
     z = self.sample_prior(sample_shape, seed)
     return self.decode(z, training=training, **kwargs)
 
-  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+  def encode(self,
+             inputs: TensorTypes,
+             training: Optional[bool] = None,
+             mask: Optional[Tensor] = None,
+             sample_shape: Union[int, List[int]] = (),
+             **kwargs) -> Union[Distribution, List[Distribution]]:
     r""" Encoding inputs to latent codes """
     outputs = []
     for encoder, args in zip(tf.nest.flatten(self.encoder), self._encoder_args):
@@ -697,11 +511,11 @@ class VariationalAutoencoder(keras.Model, MD5object):
     return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
 
   def decode(self,
-             latents,
-             training=None,
-             mask=None,
-             sample_shape=(),
-             **kwargs):
+             latents: Union[TensorTypes, Distribution],
+             training: Optional[bool] = None,
+             mask: Optional[Tensor] = None,
+             sample_shape: Union[int, List[int]] = (),
+             **kwargs) -> Union[Distribution, List[Distribution]]:
     r""" Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
     sample_shape = tf.nest.flatten(sample_shape)
@@ -736,7 +550,15 @@ class VariationalAutoencoder(keras.Model, MD5object):
       p._keras_mask = mask
     return pX_Z[0] if len(pX_Z) == 1 else tuple(pX_Z)
 
-  def call(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+  def call(
+      self,
+      inputs: TensorTypes,
+      training: Optional[bool] = None,
+      mask: Optional[Tensor] = None,
+      sample_shape: Union[int, List[int]] = (),
+      **kwargs
+  ) -> Tuple[Union[Distribution, List[Distribution], Union[
+      Distribution, List[Distribution]]]]:
     qZ_X = self.encode(
         inputs,
         training=training,
@@ -760,11 +582,11 @@ class VariationalAutoencoder(keras.Model, MD5object):
 
   @tf.function(autograph=False)
   def marginal_log_prob(self,
-                        inputs,
-                        training=False,
-                        mask=None,
-                        sample_shape=100,
-                        **kwargs):
+                        inputs: TensorTypes,
+                        training: Optional[bool] = None,
+                        mask: Optional[Tensor] = None,
+                        sample_shape: Union[int, List[int]] = 100,
+                        **kwargs) -> Tuple[Tensor, Tensor]:
     r""" Marginal log likelihood `log(p(X))`, an biased estimation.
 
     With sufficient amount of MCMC samples (-> inf), the value will converges
@@ -831,7 +653,7 @@ class VariationalAutoencoder(keras.Model, MD5object):
     return mllk, distortion
 
   def _elbo(self,
-            inputs: Union[Tensor, List[Tensor]],
+            inputs: Union[TensorTypes, List[TensorTypes]],
             pX_Z: Union[Distribution, List[Distribution]],
             qZ_X: Union[Distribution, List[Distribution]],
             analytic: Optional[bool] = None,
@@ -970,285 +792,22 @@ class VariationalAutoencoder(keras.Model, MD5object):
 
   ################## For training
   def train_steps(self,
-                  inputs,
-                  training=True,
-                  mask=None,
-                  sample_shape=(),
-                  iw=False,
-                  elbo_kw={},
-                  call_kw={}) -> TrainStep:
+                  inputs: TensorTypes,
+                  training: Optional[bool] = None,
+                  mask: Optional[Tensor] = None,
+                  sample_shape: List[int] = (),
+                  call_kw: Dict[str, Any] = {},
+                  elbo_kw: Dict[str, Any] = {}) -> Iterator[VAEStep]:
     r""" Facilitate multiple steps training for each iteration
-    (similar to GAN)
-
-    Example:
-    ```
-    vae = FactorVAE()
-    x = vae.sample_data()
-    vae_step, discriminator_step = list(vae.train_steps(x))
-
-    # optimizer VAE with total correlation loss
-    with tf.GradientTape(watch_accessed_variables=False) as tape:
-      tape.watch(vae_step.parameters)
-      loss, metrics = vae_step()
-      tape.gradient(loss, vae_step.parameters)
-
-    # optimizer the discriminator
-    with tf.GradientTape(watch_accessed_variables=False) as tape:
-      tape.watch(discriminator_step.parameters)
-      loss, metrics = discriminator_step()
-      tape.gradient(loss, discriminator_step.parameters)
-    ```
-    """
-    self.step.assign_add(1)
-    yield TrainStep(vae=self,
-                    inputs=inputs,
-                    training=training,
-                    mask=mask,
-                    sample_shape=sample_shape,
-                    iw=iw,
-                    elbo_kw=elbo_kw,
-                    call_kw=call_kw)
-
-  def optimize(self,
-               inputs: Union[Tensor, np.ndarray],
-               training: bool = True,
-               mask: Optional[Tensor] = None,
-               optimizer: Optional[OptimizerV2] = None,
-               sample_shape: List[int] = (),
-               allow_none_gradients: bool = False,
-               track_gradient_norms: bool = False,
-               iw: bool = False,
-               elbo_kw: dict = {},
-               **call_kw):
-    r""" ELBO-optimization function, could be used for autograph
-
-    Return:
-      loss : a Scalar, the loss (i.e. `-ELBO`) used for optimization
-      metrics : a Dictionary, mapping from name to scalar values
-
-    Example:
-    ```
-    vae = VariationalAutoencoder()
-    optimizer = tf.optimizers.Adam()
-    @tf.function
-    def train_step(x):
-      loss, metrics = vae.optimize(x, training=True, optimizer=optimizer)
-      return metrics
-    for it, x in tqdm(enumerate(train_ds.repeat(-1))):
-      metrics = train_step(x)
-    ```
-    """
-    if optimizer is None:
-      optimizer = tf.nest.flatten(self.optimizer)
-    all_metrics = {}
-    total_loss = 0.
-    optimizer = tf.nest.flatten(optimizer)
-    n_optimizer = len(optimizer)
-    for i, step in enumerate(
-        self.train_steps(inputs=inputs,
-                         training=training,
-                         mask=mask,
-                         sample_shape=sample_shape,
-                         iw=iw,
-                         call_kw=call_kw,
-                         elbo_kw=elbo_kw)):
-      opt = optimizer[i % n_optimizer]
-      parameters = step.parameters
-      ## for training
-      if training:
-        # this GradientTape somehow more inconvenient than pytorch
-        with tf.GradientTape(watch_accessed_variables=False) as tape:
-          tape.watch(parameters)
-          loss, metrics = step()
-        # applying the gradients
-        gradients = tape.gradient(loss, parameters)
-        # for debugging gradients
-        if allow_none_gradients:
-          grad_param = zip(gradients, parameters)
-        else:
-          grad_param = [
-              (g, p) for g, p in zip(gradients, parameters) if g is not None
-          ]
-        opt.apply_gradients(grad_param)
-        # tracking the gradient norms for debugging
-        if track_gradient_norms:
-          metrics['grad_norms'] = tf.linalg.global_norm(gradients)
-      ## for validation
-      else:
-        tape = None
-        loss, metrics = step()
-      # update metrics and loss
-      all_metrics.update(metrics)
-      total_loss += loss
-    return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
-
-  def fit(
-      self,
-      train: Union[TensorTypes, DatasetV2],
-      valid: Optional[Union[TensorTypes, DatasetV2]] = None,
-      valid_freq: int = 500,
-      valid_interval: float = 0,
-      optimizer: Union[str, OptimizerV2] = 'adam',
-      learning_rate: float = 1e-3,
-      clipnorm: Optional[float] = None,
-      epochs: int = -1,
-      max_iter: int = 1000,
-      batch_size: int = 32,
-      sample_shape: List[int] = (),  # for ELBO
-      analytic: Optional[bool] = None,  # for ELBO
-      iw: bool = False,  # for ELBO
-      callback: Optional[List[Callable]] = None,
-      compile_graph: bool = True,
-      autograph: bool = False,
-      logging_interval: float = 3,
-      skip_fitted: bool = False,
-      terminate_on_nan: bool = True,
-      checkpoint: Optional[Union[Callable, str]] = None,
-      logdir: Optional[str] = None,
-      allow_none_gradients: bool = False,
-      track_gradient_norms: bool = False):
-    r""" Override the original fit method of keras to provide simplified
-    procedure with `VariationalAutoencoder.optimize` and
-    `VariationalAutoencoder.train_steps`
-
-    Arguments:
-      optimizer : Text, instance of `tf.optimizers.Optimizer`
-        or `None`. A list of optimizers is accepted in case of multiple
-        steps training.
-        - If `None`, re-use stored optimizer, raise `RuntimeError` if no
-          predefined optimizer found.
-      callback : a Callable, called every `valid_freq` steps or
-        `valid_interval` seconds
-      compile_graph : a Boolean. If True, using tensorflow autograph for
-        optimize function (about 2 times better speed), otherwise, run the
-        function in Eager mode (better for debugging).
-
-    """
-    batch_size = int(batch_size)
-    # validate the dataset
-    train = _to_dataset(train, batch_size, self.dtype)
-    if valid is not None:
-      valid = _to_dataset(valid, batch_size, self.dtype)
-    # validate the paths
-    if checkpoint is None:
-      checkpoint = self.save_path
-    elif self._save_path is None:
-      self._save_path = checkpoint
-    if logdir is None and checkpoint is not None:
-      logdir = f"{checkpoint}_logdir"
-    # skip training if model is fitted or reached a number of iteration
-    if self.is_fitted and skip_fitted:
-      if isinstance(skip_fitted, bool):
-        return self
-      skip_fitted = int(skip_fitted)
-      if int(self.step.numpy()) >= skip_fitted:
-        return self
-    # create the trainer
-    if self.trainer is None:
-      with trackable.no_automatic_dependency_tracking_scope(self):
-        trainer = Trainer(logdir=logdir)
-        self.trainer = trainer
-    else:
-      trainer = self.trainer
-    ## if already called repeat, then no need to repeat more
-    if hasattr(train, 'repeat'):
-      train = train.repeat(int(epochs))
-    ## create the optimizer, turn off tracking so the optimizer
-    # won't be saved in save_weights
-    if optimizer is not None and self.optimizer is None:
-      with trackable.no_automatic_dependency_tracking_scope(self):
-        self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
-    if self.optimizer is None:
-      raise RuntimeError("No optimizer found!")
-    # prepare the callback
-    callback_functions = [i for i in tf.nest.flatten(callback) if callable(i)]
-    if checkpoint is not None:
-      assert isinstance(checkpoint, string_types) or callable(checkpoint), \
-        ("checkpoint can be path for saving weights or callable, "
-         f"but given: {str(type(checkpoint))}")
-    checkpoint_fn = lambda: (self.save_weights(str(checkpoint), overwrite=True)
-                             if isinstance(checkpoint, string_types) else
-                             checkpoint())
-
-    ## run early stop and callback
-    def _callback():
-      signal = None
-      for f in callback_functions:
-        ret = f()
-        if ret is not None:
-          signal = ret
-      return signal
-
-    self.trainer.fit(
-        train_ds=train,
-        optimize=partial(self.optimize,
-                         sample_shape=sample_shape,
-                         iw=iw,
-                         elbo_kw=dict(analytic=analytic),
-                         allow_none_gradients=allow_none_gradients,
-                         track_gradient_norms=track_gradient_norms),
-        valid_ds=valid,
-        valid_freq=valid_freq,
-        valid_interval=valid_interval,
-        compile_graph=compile_graph,
-        autograph=autograph,
-        logging_interval=logging_interval,
-        log_tag=self.__class__.__name__,
-        max_iter=max_iter,
-        terminate_on_nan=terminate_on_nan,
-        callback=_callback,
-    )
-    # restore best weights
-    if checkpoint is not None:
-      checkpoint_fn()
-      print(f"Saved best checkpoint {str(checkpoint)}")
-    return self
-
-  @property
-  def summary_writer(self) -> SummaryWriter:
-    if self.trainer is not None:
-      return self.trainer.summary_writer
-    return None
-
-  @property
-  def tensorboard(self) -> Dict[Text, Tuple[float, int, float]]:
-    if self.trainer is not None:
-      return self.trainer.tensorboard
-    return None
-
-  @property
-  def tensorboard_logdir(self) -> str:
-    if self.trainer is not None:
-      return self.trainer.logdir
-    return None
-
-  def plot_learning_curves(self,
-                           path="/tmp/tmp.png",
-                           summary_steps=[10, 5],
-                           show_validation=True,
-                           dpi=200,
-                           title=None):
-    r""" Plot the learning curves on train and validation sets. """
-    assert self.trainer is not None, \
-      "fit method must be called before plotting learning curves"
-    fig = self.trainer.plot_learning_curves(path=path,
-                                            summary_steps=summary_steps,
-                                            show_validation=show_validation,
-                                            dpi=dpi,
-                                            title=title)
-    if path is None:
-      return fig
-    return self
-
-  def _md5_objects(self):
-    varray = []
-    for n, v in enumerate(self.variables):
-      v = v.numpy()
-      varray.append(v.shape)
-      varray.append(v.ravel())
-    varray.append([n])
-    varray = np.concatenate(varray, axis=0)
-    return varray
+    (similar to GAN) """
+    yield VAEStep(vae=self,
+                  parameters=self.trainable_variables,
+                  sample_shape=sample_shape,
+                  inputs=inputs,
+                  training=training,
+                  mask=mask,
+                  call_kw=call_kw,
+                  elbo_kw=elbo_kw)
 
   def __str__(self):
     cls = [
@@ -1285,6 +844,3 @@ class VariationalAutoencoder(keras.Model, MD5object):
           text += "\n  ".join(
               ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
     return text
-
-
-VAE = VariationalAutoencoder

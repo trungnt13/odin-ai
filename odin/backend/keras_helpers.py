@@ -92,17 +92,12 @@ def layer2text(layer, inc_name=False, padding=''):
   ## Distribution layer
   elif isinstance(layer, DistributionLambda):
     fn = layer._make_distribution_fn
+    kw = dict(inspect.getclosurevars(fn).nonlocals)
+    kw.pop('self', None)
     cls_name = type(layer).__name__
-    layer = dict(layer.get_config())
-    del layer['function']
-    del layer['module']
-    del layer['function_type']
-    del layer['make_distribution_fn']
-    layer.update(inspect.getclosurevars(fn).nonlocals)
-    layer.pop('self', None)
-    layer['class'] = cls_name
-    text = padding + "\n".join(
-        ["%s:%s" % (str(i), str(j)) for i, j in layer.items()])
+    text = padding + (f"[{cls_name}] {kw} "
+                      f"fn:{layer._convert_to_tensor_fn.__name__} "
+                      f"kw:{layer._kwargs}")
   ## Lambda
   elif isinstance(layer, keras.layers.Lambda):
     spec = inspect.getfullargspec(layer.function)

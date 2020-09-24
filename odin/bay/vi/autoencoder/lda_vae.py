@@ -7,16 +7,6 @@ from warnings import warn
 import numpy as np
 import scipy as sp
 import tensorflow as tf
-from scipy import sparse
-from tensorflow import Tensor, Variable
-from tensorflow.python.data.ops.dataset_ops import DatasetV2
-from tensorflow.python.keras import Input, Model, Sequential, activations
-from tensorflow.python.keras.layers import (Activation, BatchNormalization,
-                                            Dense, Layer)
-from tensorflow_probability.python.math import softplus_inverse
-from tqdm import tqdm
-from typing_extensions import Literal
-
 from odin.backend.tensor import dropout as apply_dropout
 from odin.bay.distributions import (Dirichlet, Distribution, LogitNormal,
                                     MultivariateNormalDiag, OneHotCategorical)
@@ -27,15 +17,21 @@ from odin.bay.layers import (BinomialLayer, DenseDistribution, DirichletLayer,
                              ZINegativeBinomialLayer)
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.autoencoder.variational_autoencoder import (LayerFactory,
+from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              TensorTypes,
                                                              TrainStep)
-from odin.networks.sequential_networks import NetworkConfig
+from odin.networks import NetworkConfig
+from scipy import sparse
+from tensorflow import Tensor, Variable
+from tensorflow.python.data.ops.dataset_ops import DatasetV2
+from tensorflow.python.keras import Input, Model, Sequential, activations
+from tensorflow.python.keras.layers import (Activation, BatchNormalization,
+                                            Dense, InputLayer, Layer)
+from tensorflow_probability.python.math import softplus_inverse
+from tqdm import tqdm
+from typing_extensions import Literal
 
-__all__ = [
-    'LatentDirichletDecoder',
-    'AmortizedLDA',
-]
+__all__ = ['LatentDirichletDecoder', 'AmortizedLDA', 'TwoStageLDA']
 
 
 # ===========================================================================
@@ -328,20 +324,23 @@ class AmortizedLDA(BetaVAE):
   def __init__(
       self,
       lda: LatentDirichletDecoder,
-      encoder: Union[Layer, NetworkConfig] = NetworkConfig(name="Encoder"),
-      decoder: Union[Layer, NetworkConfig] = NetworkConfig(name="Decoder"),
-      latents: Union[Layer, RandomVariable] = RandomVariable(10,
-                                                             posterior='diag',
-                                                             projection=True,
-                                                             name="Latents"),
+      encoder: LayerCreator = NetworkConfig(name="Encoder"),
+      decoder: LayerCreator = NetworkConfig(name="Decoder"),
+      latents: LayerCreator = RandomVariable(10,
+                                             posterior='diag',
+                                             projection=True,
+                                             name="Latents"),
+      warmup: Optional[int] = None,
       beta: float = 1.0,
       **kwargs,
   ):
+    if warmup is not None:
+      lda.warmup = int(warmup)
     super().__init__(input_shape=kwargs.pop('input_shape', (lda.n_words,)),
                      latents=latents,
                      encoder=encoder,
                      decoder=decoder,
-                     outputs=kwargs.pop('outputs', lda),
+                     outputs=lda,
                      beta=beta,
                      analytic=kwargs.pop('analytic', True),
                      **kwargs)
@@ -468,3 +467,48 @@ class AmortizedLDA(BetaVAE):
     log_perplexity_tensor = tf.reduce_mean(log_perplexity)
     perplexity_tensor = tf.exp(log_perplexity_tensor)
     return perplexity_tensor
+
+
+# ===========================================================================
+# Two-stage VAE
+# ===========================================================================
+class TwoStageLDA(AmortizedLDA):
+  r""" Two-stage latent dirichlet allocation """
+
+  def __init__(
+      self,
+      lda: LatentDirichletDecoder,
+      encoder: LayerCreator = NetworkConfig(name="Encoder"),
+      decoder: LayerCreator = NetworkConfig(name="Decoder"),
+      latents: LayerCreator = RandomVariable(10,
+                                             posterior='diag',
+                                             projection=True,
+                                             name="Latents"),
+      **kwargs,
+  ):
+    super().__init__(lda=lda,
+                     latents=latents,
+                     encoder=encoder,
+                     decoder=decoder,
+                     **kwargs)
+    # this layer won't train the KL divergence or the encoder
+    self.encoder.trainable = False
+    for l in self.latent_layers:
+      l.trainable = False
+
+  def _elbo(
+      self,
+      inputs: Union[Tensor, List[Tensor]],
+      pX_Z: Union[Distribution, List[Distribution]],
+      qZ_X: Union[Distribution, List[Distribution]],
+      **kwargs,
+  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
+    llk, kl = super(BetaVAE, self)._elbo(inputs, pX_Z, qZ_X, **kwargs)
+    # stop all the kl gradients just for sure
+    kl = {k: tf.stop_gradient(v) for k, v in kl.items()}
+    # add the topics KL
+    topics = pX_Z[-1]
+    kl_topics = topics.KL_divergence(
+        analytic=kwargs.get('analytic', self.analytic))
+    kl[f'kl_{self.lda.name}'] = kl_topics
+    return llk, kl
