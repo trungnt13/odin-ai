@@ -6,7 +6,7 @@ import types
 from collections import MutableSequence, Sequence
 from copy import deepcopy
 from numbers import Number
-from typing import Any, Callable, List, Optional, Union, Dict
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
@@ -188,6 +188,8 @@ class RandomVariable:
     projection : a Boolean (default: False)
       If True, use a fully connected feedforward network to project the input
       to a desire number of parameters for the distribution.
+    preactivation : a String,
+      Activation function applied on the inputs before the reparameterization.
     dropout : a Float (default: 0)
       Dropout probability of input parameters before the reparameterization.
     name : a String. Identity of the random variable.
@@ -203,6 +205,7 @@ class RandomVariable:
   projection: bool = False
   dropout: float = 0.0
   name: Optional[str] = None
+  preactivation: str = 'linear'
   prior: Optional[Union[Distribution, DistributionLambda,
                         Callable[[], Distribution]]] = None
   kwargs: Dict[str, Any] = dataclasses.field(default_factory=dict)
@@ -349,7 +352,7 @@ class RandomVariable:
     if posterior in dir(tf.losses) or posterior in dir(keras.activations):
       distribution_layer = obl.VectorDeterministicLayer
       if posterior in dir(tf.losses):
-        activation = posterior_kwargs.pop('activation', 'linear')
+        activation = 'linear'
         fn = tf.losses.get(str(posterior))
       else:  # just activation function, loss default MSE
         activation = keras.activations.get(self.posterior)
@@ -359,9 +362,8 @@ class RandomVariable:
     # ====== probabilistic loss ====== #
     else:
       distribution_layer = parse_distribution(self.posterior)[0]
-      activation = 'linear'
+      activation = self.preactivation
     # ====== create distribution layers ====== #
-    activation = posterior_kwargs.pop('activation', activation)
     kw = dict(projection=self.projection)
     if input_shape is not None:
       kw['input_shape'] = input_shape

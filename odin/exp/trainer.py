@@ -13,6 +13,7 @@ from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
+from odin.utils import as_tuple
 from six import string_types
 from tensorflow import Tensor, Variable
 from tensorflow.python import keras
@@ -24,8 +25,6 @@ from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
 from tensorflow.python.ops import summary_ops_v2
 from tensorflow.python.summary.summary_iterator import summary_iterator
 from tqdm import tqdm
-
-from odin.utils import as_tuple
 
 __all__ = ['Trainer', 'get_current_trainer']
 
@@ -92,12 +91,14 @@ def _process_callback_returns(progress: tqdm,
   if metrics is not None and isinstance(metrics, dict) and len(metrics) > 0:
     progress.write(f"{log_tag} [Callback#{int(n_iter)}]:")
     for k, v in metrics.items():
+      # text
       if _is_text(v):
         tf.summary.text(k, v)
-        v = str(v)
+      # scalar or tensor
       else:
-        tf.summary.scalar(k, v)
-        v = f"{v:.4f}"
+        tf.cond(tf.less(tf.rank(v), 1),
+                true_fn=lambda: tf.summary.scalar(k, v),
+                false_fn=lambda: tf.summary.histogram(k, v))
       progress.write(f" {k}:{v}")
 
 
@@ -662,6 +663,28 @@ class Trainer(object):
         tf.summary.experimental.set_step(self.n_iter)
         # the tensorboard will change after each iteration
         self._cached_tensorboard = None
+        # ====== train ====== #
+        loss, metrics = fn_step(self.n_iter, inputs, training=True)
+        # do not record the loss and metrics at every iteration, the
+        # performance will drop about 40%
+        if terminate_on_nan and np.isnan(loss) or np.isinf(loss):
+          progress.write(
+              f" *Terminated on NaN loss at iteration #{int(self.n_iter)}")
+          for k, v in metrics.items():
+            progress.write(f"\t{k}: {v}")
+          break
+        # ====== logging ====== #
+        interval = progress._time() - last_print_time
+        if interval >= logging_interval:
+          # summarize the batch loss and metrics
+          _save_summary(loss, metrics, prefix="train/")
+          _print_summary(progress,
+                         log_tag,
+                         loss,
+                         metrics,
+                         self.n_iter,
+                         is_valid=False)
+          last_print_time = progress._time()
         # ====== validation ====== #
         interval = progress._time() - last_valid_time
         if self.n_iter % valid_freq == 0 and interval >= valid_interval:
@@ -681,26 +704,7 @@ class Trainer(object):
           if not self.is_training:
             break
           last_valid_time = progress._time()
-        # ====== train ====== #
-        loss, metrics = fn_step(self.n_iter, inputs, training=True)
-        # do not record the loss and metrics at every iteration, the
-        # performance will drop about 40%
-        if terminate_on_nan and np.isnan(loss) or np.isinf(loss):
-          progress.write(
-              f" *Terminated on NaN at iteration #{int(self.n_iter)}")
-          break
-        # ====== logging ====== #
-        interval = progress._time() - last_print_time
-        if interval >= logging_interval:
-          # summarize the batch loss and metrics
-          _save_summary(loss, metrics, prefix="train/")
-          _print_summary(progress,
-                         log_tag,
-                         loss,
-                         metrics,
-                         self.n_iter,
-                         is_valid=False)
-          last_print_time = progress._time()
+        #########
       # Final callback to signal train ended
       _process_callback_returns(progress, log_tag, self.n_iter, callback())
       # end the progress
@@ -763,9 +767,9 @@ class Trainer(object):
         Number of iteration for estimating the mean and variance for training
         and validation.
     """
-    from odin import visual as vs
-    from matplotlib import pyplot as plt
     import seaborn as sns
+    from matplotlib import pyplot as plt
+    from odin import visual as vs
     sns.set()
     summary_steps = as_tuple(summary_steps, N=2, t=int)
     is_validated = bool(len(self.valid_loss) > 0) and bool(show_validation)

@@ -11,21 +11,22 @@ from typing import Dict, Tuple
 import numpy as np
 import scipy as sp
 import tensorflow as tf
+from odin.bay import concat_distributions
+from odin.bay.layers import DenseDistribution
+from odin.bay.vi import (AmortizedLDA, BetaVAE, FactorVAE,
+                         LatentDirichletDecoder, MutualInfoVAE, NetworkConfig,
+                         RandomVariable, TwoStageLDA, VariationalAutoencoder)
+from odin.exp import Trainer, get_current_trainer
+from odin.exp.experimenter import get_output_dir, run_hydra, save_to_yaml
+from odin.fuel import (Cortex, LeukemiaATAC, Newsgroup5, Newsgroup20,
+                       Newsgroup20_clean)
+from odin.utils import ArgController, clean_folder
 from sklearn.decomposition import LatentDirichletAllocation
 from tensorflow.python import keras
 from tensorflow.python.ops import summary_ops_v2
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.layers import DistributionLambda
 from tqdm import tqdm
-
-from odin.bay.layers import DenseDistribution
-from odin.bay.vi import (AmortizedLDA, BetaVAE, LatentDirichletDecoder,
-                         NetworkConfig, RandomVariable, TwoStageLDA)
-from odin.exp import Trainer, get_current_trainer
-from odin.exp.experimenter import get_output_dir, run_hydra, save_to_yaml
-from odin.fuel import (Cortex, LeukemiaATAC, Newsgroup5, Newsgroup20,
-                       Newsgroup20_clean)
-from odin.utils import ArgController, clean_folder
 
 tf.debugging.set_log_device_placement(False)
 tf.autograph.set_verbosity(0)
@@ -39,19 +40,18 @@ np.random.seed(1)
 # ===========================================================================
 CONFIG = \
 r"""
-ds: news20clean
+ds: news5
 n_topics: 50
 n_iter: 180000
+beta: 1
 warmup: 120000
 posterior: dirichlet
-distribution: categorical
+distribution: onehot
 override: False
 model: lda
 """
-# support model:
-# - em
-# - lda
-# - lda2
+# support dataset: news5, news20, news20clean, cortex, leukemia
+# support model: em, lda, lda2
 learning_rate = 3e-4
 batch_size = 128
 valid_freq = 5000
@@ -87,13 +87,36 @@ def get_topics_text(lda: LatentDirichletAllocation,
   return text
 
 
-def callback(vae: AmortizedLDA, test, vocabulary):
+# ===========================================================================
+# Callback function
+# ===========================================================================
+def callback(
+    vae: AmortizedLDA,
+    test: tf.data.Dataset,
+    vocabulary: Dict[int, str],
+):
   print(f"[{type(vae).__name__}]{vae.lda.posterior}-{vae.lda.distribution}")
   # end of training
   if not get_current_trainer().is_training:
     vae.save_weights(overwrite=True)
   return dict(topics=vae.get_topics_string(vocabulary, n_topics=20),
               perplexity=vae.perplexity(test, verbose=False))
+
+
+def callback1(
+    vae: VariationalAutoencoder,
+    test: tf.data.Dataset,
+    vocabulary: Dict[int, str],
+):
+  px = []
+  qz = []
+  for inputs in test:
+    dists = vae(inputs, training=False)
+    px.append(dists[0])
+    qz.append(dists[1])
+  px = concat_distributions(px, axis=0, name="Docs")
+  qz = concat_distributions(qz, axis=0, name="Topics")
+  return dict(vars=tf.reduce_mean(qz.stddev(), axis=0))
 
 
 # ===========================================================================
@@ -110,11 +133,13 @@ def main(cfg):
     ds = Newsgroup20_clean()
   elif cfg.ds == 'cortex':
     ds = Cortex()
-  elif cfg.ds == 'leukemia':
+  elif cfg.ds == 'lkm':
     ds = LeukemiaATAC()
   else:
     raise NotImplementedError(f"No support for dataset: {cfg.ds}")
-  train = ds.create_dataset(batch_size=batch_size, partition='train')
+  train = ds.create_dataset(batch_size=batch_size,
+                            partition='train',
+                            drop_remainder=True)
   valid = ds.create_dataset(batch_size=batch_size, partition='valid')
   test = ds.create_dataset(batch_size=batch_size, partition='test')
   n_words = ds.vocabulary_size
@@ -126,7 +151,7 @@ def main(cfg):
   model_path = os.path.join(output_dir, 'model')
   if cfg.override:
     clean_folder(output_dir, verbose=True)
-  # preparing
+  ######### preparing all layers
   lda = LatentDirichletDecoder(
       posterior=cfg.posterior,
       distribution=cfg.distribution,
@@ -144,11 +169,21 @@ def main(cfg):
                 compile_graph=True,
                 logdir=output_dir,
                 skip_fitted=True)
+  output_dist = RandomVariable(
+      n_words,
+      cfg.distribution,
+      projection=True,
+      preactivation='softmax' if cfg.distribution == 'onehot' else 'linear',
+      kwargs=dict(probs_input=True) if cfg.distribution == 'onehot' else {},
+      name="Words")
+  latent_dist = RandomVariable(cfg.n_topics,
+                               'diag',
+                               projection=True,
+                               name="Latents")
   ######## AmortizedLDA
   if cfg.model == 'lda':
     vae = AmortizedLDA(lda=lda,
-                       encoder=NetworkConfig(units=[300, 300, 300],
-                                             name='Encoder'),
+                       encoder=NetworkConfig([300, 300, 300], name='Encoder'),
                        decoder='identity',
                        latents='identity',
                        path=model_path)
@@ -157,24 +192,76 @@ def main(cfg):
                              test=test,
                              vocabulary=vocabulary),
             **fit_kw)
+  ######## VDA - Variational Dirichlet Autoencoder
+  elif cfg.model == 'vda':
+    vae = BetaVAE(
+        beta=cfg.beta,
+        encoder=NetworkConfig([300, 150], name='Encoder'),
+        decoder=NetworkConfig([150, 300], name='Decoder'),
+        latents=RandomVariable(cfg.n_topics,
+                               'dirichlet',
+                               projection=True,
+                               prior=None,
+                               name="Topics"),
+        outputs=output_dist,
+        # important, MCMC KL for Dirichlet is very unstable
+        analytic=True,
+        path=model_path)
+    callback1(vae, test, vocabulary)
+    kw = dict(fit_kw)
+    del kw['optimizer']
+    vae.fit(optimizer=tf.optimizers.Adam(learning_rate=1e-4),
+            callback=partial(callback1,
+                             vae=vae,
+                             test=test,
+                             vocabulary=vocabulary),
+            **kw)
+  ######## VAE
+  elif cfg.model == 'bvae':
+    vae = BetaVAE(beta=cfg.beta,
+                  encoder=NetworkConfig([300, 150], name='Encoder'),
+                  decoder=NetworkConfig([150, 300], name='Decoder'),
+                  latents=latent_dist,
+                  outputs=output_dist,
+                  path=model_path)
+    kw = dict(fit_kw)
+    del kw['optimizer']
+    vae.fit(optimizer=tf.optimizers.Adam(learning_rate=1e-4), **kw)
+  ######## FactorVAE
+  elif cfg.model == 'fvae':
+    vae = FactorVAE(gamma=6.0,
+                    beta=cfg.beta,
+                    encoder=NetworkConfig([300, 150], name='Encoder'),
+                    decoder=NetworkConfig([150, 300], name='Decoder'),
+                    latents=latent_dist,
+                    outputs=output_dist,
+                    path=model_path)
+    kw = dict(fit_kw)
+    del kw['optimizer']
+    vae.fit(optimizer=[
+        tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
+        tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
+    ],
+            **kw)
   ######## TwoStageLDA
   elif cfg.model == 'lda2':
     vae0_iter = 15000
-    vae0 = BetaVAE(beta=10.0,
-                   encoder=NetworkConfig(units=[300], name='Encoder'),
-                   decoder=NetworkConfig(units=[300, 300], name='Decoder'),
-                   outputs=DenseDistribution(
-                       (n_words,),
-                       posterior='nb',
-                      #  posterior_kwargs=dict(probs_input=True),
-                       # activation='softmax',
-                       name="Words"),
-                   latents=RandomVariable(cfg.n_topics,
-                                          'diag',
-                                          projection=True,
-                                          name="Latents"),
-                   input_shape=(n_words,),
-                   path=model_path + '_vae0')
+    vae0 = BetaVAE(
+        beta=10.0,
+        encoder=NetworkConfig(units=[300], name='Encoder'),
+        decoder=NetworkConfig(units=[300, 300], name='Decoder'),
+        outputs=DenseDistribution(
+            (n_words,),
+            posterior='nb',
+            #  posterior_kwargs=dict(probs_input=True),
+            # activation='softmax',
+            name="Words"),
+        latents=RandomVariable(cfg.n_topics,
+                               'diag',
+                               projection=True,
+                               name="Latents"),
+        input_shape=(n_words,),
+        path=model_path + '_vae0')
     vae0.fit(callback=lambda: None
              if get_current_trainer().is_training else vae0.save_weights(),
              **dict(fit_kw,

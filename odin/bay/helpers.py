@@ -8,6 +8,7 @@ from typing import Callable, List, Optional, Text, Union
 
 import numpy as np
 import tensorflow as tf
+from odin.bay import distributions as obd
 from six import string_types
 from tensorflow import Tensor
 from tensorflow.python import keras
@@ -21,8 +22,6 @@ from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible as dtc
 from tensorflow_probability.python.layers.internal import \
     tensor_tuple as tensor_tuple
-
-from odin.bay import distributions as obd
 
 __all__ = [
     'print_distribution',

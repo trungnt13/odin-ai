@@ -201,8 +201,7 @@ def _parse_layers(network, input_shape=None, name=None) -> List[Layer]:
 
 def _iter_lists(X, Y):
   r""" Try to match the length of list-Y to list-X,
-  the yield a pair of (x, y) with the condition x is not None
-  """
+  the yield a pair of (x, y) with the condition x is not None """
   Y = Y * len(X) if len(Y) == 1 else Y
   for i, (x, y) in enumerate(zip_longest(X, Y)):
     if x is not None:
@@ -218,6 +217,8 @@ class VAEStep(TrainStep):
 
   vae: VariationalAutoencoder
   call_kw: Dict[str, Any]
+  pX_Z: Optional[Distribution, List[Distribution]] = None
+  qZ_X: Optional[Distribution, List[Distribution]] = None
 
   def call(self) -> Tuple[tf.Tensor, Dict[str, Union[tf.Tensor, str]]]:
     pX_Z, qZ_X = self.vae(self.inputs,

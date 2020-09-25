@@ -1,4 +1,4 @@
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 import collections
 import copy
@@ -15,20 +15,6 @@ from typing import (Any, Callable, Dict, Iterator, List, MutableSequence,
 
 import numpy as np
 import tensorflow as tf
-from scipy import sparse
-from six import string_types
-from tensorflow.python import keras
-from tensorflow.python.data.ops.dataset_ops import DatasetV2
-from tensorflow.python.framework import tensor_shape
-from tensorflow.python.keras.engine import training_utils
-from tensorflow.python.keras.layers.convolutional import Conv as _Conv
-from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
-from tensorflow.python.keras.utils import layer_utils
-from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
-from tensorflow.python.platform import tf_logging as logging
-from tensorflow.python.training.tracking import base as trackable
-from tensorflow.python.util import tf_inspect
-
 from odin.backend.alias import (parse_activation, parse_constraint,
                                 parse_initializer, parse_regularizer)
 from odin.backend.keras_helpers import layer2text
@@ -36,6 +22,21 @@ from odin.exp import Trainer
 from odin.networks.util_layers import (Conv1DTranspose, ExpandDims, Identity,
                                        ReshapeMCMC)
 from odin.utils import MD5object, as_tuple
+from scipy import sparse
+from six import string_types
+from tensorflow.python import keras
+from tensorflow.python.data.ops.dataset_ops import DatasetV2
+from tensorflow.python.framework import tensor_shape
+from tensorflow.python.keras.engine import training_utils
+from tensorflow.python.keras.layers import Layer
+from tensorflow.python.keras.layers.convolutional import Conv as _Conv
+from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
+from tensorflow.python.keras.utils import layer_utils
+from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
+from tensorflow.python.platform import tf_logging as logging
+from tensorflow.python.training.tracking import base as trackable
+from tensorflow.python.util import tf_inspect
+from typing_extensions import Literal
 
 __all__ = [
     'TensorTypes',
@@ -199,10 +200,15 @@ class Networks(keras.Model, MD5object):
     self._save_path = path
     self.trainer = None
 
+  @property
+  def n_parameters(self) -> int:
+    """ Return the total number of trainable parameters (or variables) """
+    return sum(np.prod(v.shape) for v in self.trainable_variables)
+
   def load_weights(self,
                    filepath: str,
                    raise_notfound: bool = False,
-                   verbose: bool = False):
+                   verbose: bool = False) -> Networks:
     r""" Load all the saved weights in tensorflow format at given path """
     if isinstance(filepath, string_types):
       files = glob.glob(filepath + '.*')
@@ -226,7 +232,7 @@ class Networks(keras.Model, MD5object):
 
   def save_weights(self,
                    filepath: Optional[str] = None,
-                   overwrite: bool = True):
+                   overwrite: bool = True) -> Networks:
     r""" Just copy this function here to fix the `save_format` to 'tf'
 
     Since saving 'h5' will drop certain variables.
@@ -241,6 +247,7 @@ class Networks(keras.Model, MD5object):
                          overwrite=overwrite,
                          save_format='tf')
     logging.get_logger().disabled = False
+    return self
 
   def train_steps(self,
                   inputs: TensorTypes,
@@ -254,13 +261,13 @@ class Networks(keras.Model, MD5object):
                     **kwargs)
 
   def optimize(self,
-               inputs: TensorTypes,
+               inputs: Union[TensorTypes, List[TensorTypes]],
                training: bool = True,
                mask: Optional[TensorTypes] = None,
                optimizer: Optional[OptimizerV2] = None,
                allow_none_gradients: bool = False,
                track_gradients: bool = False,
-               **kwargs):
+               **kwargs) -> Tuple[tf.Tensor, Dict[str, Any]]:
     r""" Optimization function, could be used for autograph
 
     Return:
@@ -762,9 +769,9 @@ class NetworkConfig(dict):
   input_dropout: float = 0.
   dropout: Union[float, List[float]] = 0.
   linear_decoder: bool = False
-  network: str = 'dense'
+  network: Literal['conv', 'deconv', 'dense'] = 'dense'
   flatten_inputs: bool = True
-  projection: int = None
+  projection: Optional[int] = None
   input_shape: List[int] = None
   name: Optional[str] = None
 
@@ -799,10 +806,15 @@ class NetworkConfig(dict):
     return dataclasses.replace(obj, **kwargs)
 
   ################ Create the networks
-  def create_autoencoder(self, input_shape, latent_shape, name=None):
+  def create_autoencoder(
+      self,
+      input_shape: List[int],
+      latent_shape: List[int],
+      name: Optional[str] = None
+  ) -> Tuple[SequentialNetwork, SequentialNetwork]:
     r""" Create both encoder and decoder at once """
-    encoder_name = None if name is None else "%s_%s" % (name, "encoder")
-    decoder_name = None if name is None else "%s_%s" % (name, "decoder")
+    encoder_name = None if name is None else f"{name}_encoder"
+    decoder_name = None if name is None else f"{name}_decoder"
     encoder = self.create_network(input_shape=input_shape, name=encoder_name)
     decoder = self.create_decoder(encoder=encoder,
                                   latent_shape=latent_shape,
@@ -810,10 +822,10 @@ class NetworkConfig(dict):
     return encoder, decoder
 
   def create_decoder(self,
-                     encoder,
-                     latent_shape,
-                     n_parameterization=1,
-                     name=None) -> SequentialNetwork:
+                     encoder: Layer,
+                     latent_shape: List[int],
+                     n_parameterization: int = 1,
+                     name: Optional[str] = None) -> SequentialNetwork:
     r"""
     Arguments:
       latent_shape : a tuple of Integer. Shape of latent without the batch
@@ -907,10 +919,14 @@ class NetworkConfig(dict):
     )
     return decoder
 
-  def __call__(self, input_shape=None, name=None) -> SequentialNetwork:
+  def __call__(self,
+               input_shape: Optional[List[int]] = None,
+               name: Optional[str] = None) -> SequentialNetwork:
     return self.create_network(input_shape=input_shape, name=name)
 
-  def create_network(self, input_shape=None, name=None) -> SequentialNetwork:
+  def create_network(self,
+                     input_shape: Optional[List[int]] = None,
+                     name: Optional[str] = None) -> SequentialNetwork:
     r"""
     Arguments:
       input_shape : a tuple of Integer. Shape of input without the batch

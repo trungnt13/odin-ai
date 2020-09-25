@@ -1,4 +1,4 @@
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 from functools import partial
 from typing import Callable, Dict, List, Optional, Tuple, Union
@@ -62,7 +62,7 @@ class LatentDirichletDecoder(Model):
     posterior : {"gaussian", "dirichlet"},
       "gaussian" - logistic gaussian (explicit) reparameterization
       "dirichlet" - latent Dirichlet (implicit) reparameterization
-    distribution : {'categorical', 'negativebinomial', 'binomial', 'poisson',
+    distribution : {'onehot', 'negativebinomial', 'binomial', 'poisson',
       'zinb'}
       the output distribution for documents-words matrix
     warmup: int = 10000,
@@ -103,8 +103,8 @@ class LatentDirichletDecoder(Model):
       posterior: Literal['gaussian', 'dirichlet'] = 'dirichlet',
       posterior_activation: Union[str, Callable[[], Tensor]] = 'softplus',
       concentration_clip: bool = True,
-      distribution: Literal['categorical', 'negativebinomial', 'binomial',
-                            'poisson', 'zinb'] = 'negativebinomial',
+      distribution: Literal['onehot', 'negativebinomial', 'binomial', 'poisson',
+                            'zinb'] = 'negativebinomial',
       dropout: float = 0.0,
       dropout_strategy: Literal['all', 'warmup', 'finetune'] = 'warmup',
       batch_norm: bool = False,
@@ -167,7 +167,7 @@ class LatentDirichletDecoder(Model):
     ### output distribution
     kw = dict(event_shape=(self.n_words,), name="WordsDistribution")
     count_activation = 'softplus'
-    if self.distribution in ('categorical'):
+    if self.distribution in ('onehot',):
       self.distribution_layer = OneHotCategoricalLayer(probs_input=True, **kw)
       self.n_parameterization = 1
     elif self.distribution in ('poisson',):
@@ -256,6 +256,7 @@ class LatentDirichletDecoder(Model):
            inputs: Union[TensorTypes, List[TensorTypes]],
            training: Optional[bool] = None,
            mask: Optional[TensorTypes] = None,
+           sample_shape=(),
            **kwargs) -> Tuple[Distribution, Distribution]:
     r"""
     Return:
@@ -292,7 +293,7 @@ class LatentDirichletDecoder(Model):
                                                  training=training)
     # something wrong, using logits value for OneHotCategorical make the model
     # does not converge
-    if self.distribution == 'categorical':
+    if self.distribution == 'onehot':
       docs_words_probs = tf.nn.softmax(docs_words_logits, axis=-1)
       docs_words_dist = self.distribution_layer(docs_words_probs,
                                                 training=training)
@@ -358,10 +359,9 @@ class AmortizedLDA(BetaVAE):
       mask: Optional[Tensor] = None,
       training: Optional[bool] = None
   ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
-    llk, kl = super()._elbo(inputs, pX_Z, qZ_X, **kwargs)
+    llk, kl = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
     topics = pX_Z[-1]
-    kl_topics = topics.KL_divergence(
-        analytic=kwargs.get('analytic', self.analytic))
+    kl_topics = topics.KL_divergence(analytic=self.analytic)
     kl[f'kl_{self.lda.name}'] = kl_topics
     return llk, kl
 
@@ -379,7 +379,7 @@ class AmortizedLDA(BetaVAE):
     concentration = []
     loc, scale_diag = [], []
     for x in inputs:
-      (_, qZ_X), _ = self(x, training=False, sample_shape=())
+      (_, qZ_X), _ = self(x, training=False)
       if self.lda.posterior == 'dirichlet':
         concentration.append(qZ_X.concentration)
       elif self.lda.posterior == 'gaussian':
@@ -438,13 +438,8 @@ class AmortizedLDA(BetaVAE):
       if verbose:
         inputs = tqdm(inputs, desc="Calculating perplexity")
       for x in inputs:
-        pX, qZ = self(x, training=False, sample_shape=())
-        elbo = self.elbo(x,
-                         pX_Z=pX,
-                         qZ_X=qZ,
-                         sample_shape=(),
-                         training=False,
-                         analytic=True)
+        pX, qZ = self(x, training=False)
+        elbo = self.elbo(x, pX_Z=pX, qZ_X=qZ, training=False)
         words_per_doc = tf.reduce_sum(x, axis=-1)
         log_perplexity.append(-elbo / words_per_doc)
       log_perplexity = tf.concat(log_perplexity, axis=-1)
@@ -453,13 +448,8 @@ class AmortizedLDA(BetaVAE):
       if isinstance(inputs, sparse.spmatrix):
         inputs = inputs.toarray()
       if elbo is None:
-        pX, qZ = self(inputs, training=False, sample_shape=())
-        elbo = self.elbo(inputs,
-                         pX_Z=pX,
-                         qZ_X=qZ,
-                         sample_shape=(),
-                         training=False,
-                         analytic=True)
+        pX, qZ = self(inputs, training=False)
+        elbo = self.elbo(inputs, pX_Z=pX, qZ_X=qZ, training=False)
       # calculate the perplexity
       words_per_doc = tf.reduce_sum(inputs, axis=-1)
       log_perplexity = -elbo / words_per_doc
