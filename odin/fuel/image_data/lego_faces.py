@@ -13,13 +13,12 @@ from urllib.request import urlretrieve
 
 import numpy as np
 import tensorflow as tf
+from odin.fuel.image_data._base import ImageDataset, get_partition
+from odin.utils.crypto import md5_folder
+from odin.utils.mpi import MPI
 from six import string_types
 from urllib3 import PoolManager
 from urllib3.exceptions import InsecureRequestWarning
-
-from odin.fuel._image_base import ImageDataset, get_partition
-from odin.utils.crypto import md5_folder
-from odin.utils.mpi import MPI
 
 
 # ===========================================================================
@@ -50,8 +49,8 @@ def _resize(img, image_size, outpath=None):
 
 def scrap_lego_faces(metadata, path, resize=64, n_processes=4):
   r""" This function does not filter out bad images """
-  from tqdm import tqdm
   from PIL import Image
+  from tqdm import tqdm
 
   def _download_image(meta, conn):
     part_id, desc = meta

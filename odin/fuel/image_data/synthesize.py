@@ -2,8 +2,7 @@ import os
 
 import numpy as np
 import tensorflow as tf
-
-from odin.fuel._image_base import ImageDataset, get_partition
+from odin.fuel.image_data._base import ImageDataset, get_partition
 from odin.utils.crypto import md5_checksum
 
 
@@ -117,7 +116,7 @@ class YDisentanglement(ImageDataset):
 
   @staticmethod
   def generate_data(num=16, image_path=None, training=True, seed=1):
-    from PIL import Image, ImageDraw, ImageColor, ImageChops
+    from PIL import Image, ImageChops, ImageColor, ImageDraw
     size = 48
     resample = Image.BICUBIC
     org = Image.new("1", (size, size))

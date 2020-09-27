@@ -803,8 +803,7 @@ class VariationalAutoencoder(Networks):
         i for i in type.mro(type(self)) if issubclass(i, VariationalAutoencoder)
     ]
     text = (f"{'->'.join([i.__name__ for i in cls[::-1]])} "
-            f"(semi:{self.is_semi_supervised} self:{self.is_self_supervised} "
-            f"weak:{self.is_weak_supervised})")
+            f"(semi:{self.is_semi_supervised})")
     text += f'\n Tensorboard : {self.tensorboard_logdir}'
     text += f'\n Analytic     : {self.analytic}'
     text += f'\n Reverse      : {self.reverse}'

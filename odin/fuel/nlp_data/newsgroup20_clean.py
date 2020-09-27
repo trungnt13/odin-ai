@@ -6,7 +6,6 @@ from typing import Dict, List, Tuple
 import numpy as np
 import scipy as sp
 import tensorflow as tf
-
 from odin.fuel.dataset_base import IterableDataset, get_partition
 
 
@@ -64,6 +63,10 @@ class Newsgroup20_clean(IterableDataset):
     self.valid = train[ids[:start]]
     self.train = train[ids[start:]]
     self.test = data['test']
+
+  @property
+  def data_type(self) -> str:
+    return 'text'
 
   @property
   def vocabulary(self) -> Dict[int, str]:

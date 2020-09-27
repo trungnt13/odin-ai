@@ -8,19 +8,18 @@ import pandas as pd
 import seaborn as sns
 import tensorflow as tf
 from matplotlib import pyplot as plt
-from sklearn.metrics import accuracy_score, classification_report
-from tensorflow.python import keras
-from tqdm import tqdm
-
 from odin import search
 from odin import visual as vs
-from odin.bay import RandomVariable as RV
+from odin.bay import RandomVariable
 from odin.bay.vi import Criticizer
 from odin.bay.vi.autoencoder import (Factor2VAE, FactorDiscriminator, FactorVAE,
                                      SemiFactor2VAE, SemiFactorVAE)
 from odin.exp import Experimenter, pretty_config
 from odin.fuel import get_dataset
 from odin.utils import md5_folder
+from sklearn.metrics import accuracy_score, classification_report
+from tensorflow.python import keras
+from tqdm import tqdm
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
@@ -31,18 +30,6 @@ sns.set()
 
 # ===========================================================================
 # Helpers
-# vae=factor,factor2 ds=celeba,mnist pretrain=0,1000 finetune=12000 maxtc=True,False
-# vae=semi,semi2 ds=celeba,mnist pretrain=0,1000 finetune=12000 alpha=1,10 strategy=logsumexp,max
-#
-# python factor_vae.py vae=factor,factor2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 -m -ncpu=3;
-# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 semi=0.1,0.01 -m -ncpu=3;
-# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=1000 finetune=10000 semi=0.1,0.01 strategy=max -m -ncpu=3;
-#
-# python factor_vae.py vae=factor,factor2 ds=cifar10,cifar20,cifar100,mnist pretrain=0 finetune=10000 -m -ncpu=3;
-# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=0 finetune=10000 semi=0.1,0.01 -m -ncpu=3;
-# python factor_vae.py vae=semi,semi2 ds=cifar10,cifar20,cifar100,mnist pretrain=0 finetune=10000 semi=0.1,0.01 strategy=max -m -ncpu=3;
-#
-# python factor_vae.py vae=factor,factor2 ds=shapes3D,dsprites,celeba -m -ncpu=2
 # ===========================================================================
 CONFIG = \
 r"""
@@ -119,24 +106,24 @@ class Factor(Experimenter):
       del kw['alpha']
       model = FactorVAE(
           encoder=cfg.ds,
-          outputs=RV(self.ds.shape, 'bern', name="Image"),
-          latents=RV(20, 'diag', projection=True, name="Latents"),
+          outputs=RandomVariable(self.ds.shape, 'bern', name="Image"),
+          latents=RandomVariable(20, 'diag', projection=True, name="Latents"),
           **kw,
       )
     elif cfg.vae == 'factor2':
       del kw['alpha']
       model = Factor2VAE(
           encoder=cfg.ds,
-          outputs=RV(self.ds.shape, 'bern', name="Image"),
-          latents=RV(10, 'diag', projection=True, name='Latents'),
-          factors=RV(10, 'diag', projection=True, name='Factors'),
+          outputs=RandomVariable(self.ds.shape, 'bern', name="Image"),
+          latents=RandomVariable(10, 'diag', projection=True, name='Latents'),
+          factors=RandomVariable(10, 'diag', projection=True, name='Factors'),
           **kw,
       )
     elif cfg.vae == 'semi':
       model = SemiFactorVAE(
           encoder=cfg.ds,
-          outputs=RV(self.ds.shape, 'bern', name="Image"),
-          latents=RV(20, 'diag', projection=True, name="Latents"),
+          outputs=RandomVariable(self.ds.shape, 'bern', name="Image"),
+          latents=RandomVariable(20, 'diag', projection=True, name="Latents"),
           n_labels=self.ds.n_labels,
           ss_strategy=cfg.strategy,
           **kw,

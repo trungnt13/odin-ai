@@ -2,7 +2,7 @@ from __future__ import absolute_import, annotations, division, print_function
 
 import os
 from functools import partial
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf

@@ -432,14 +432,6 @@ class Networks(keras.Model, MD5object):
     return False
 
   @property
-  def is_self_supervised(self) -> bool:
-    return False
-
-  @property
-  def is_weak_supervised(self) -> bool:
-    return False
-
-  @property
   def summary_writer(self) -> SummaryWriter:
     if self.trainer is not None:
       return self.trainer.summary_writer

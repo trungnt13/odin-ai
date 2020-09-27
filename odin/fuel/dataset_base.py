@@ -1,7 +1,8 @@
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import numpy as np
 import tensorflow as tf
+from typing_extensions import Literal
 
 
 # ===========================================================================
@@ -37,6 +38,10 @@ def get_partition(part,
 class IterableDataset:
 
   @property
+  def data_type(self) -> Literal['image', 'audio', 'text', 'gene']:
+    raise NotImplementedError
+
+  @property
   def name(self) -> str:
     return self.__class__.__name__.lower()
 
@@ -63,13 +68,14 @@ class IterableDataset:
     raise NotImplementedError()
 
   def create_dataset(self,
-                     batch_size=64,
-                     drop_remainder=False,
-                     shuffle=1000,
-                     prefetch=tf.data.experimental.AUTOTUNE,
-                     cache='',
-                     parallel=None,
-                     partition='train',
-                     inc_labels=False,
-                     seed=1) -> tf.data.Dataset:
+                     batch_size: int = 64,
+                     drop_remainder: bool = False,
+                     shuffle: int = 1000,
+                     prefetch: int = tf.data.experimental.AUTOTUNE,
+                     cache: str = '',
+                     parallel: Optional[int] = None,
+                     partition: Literal['train', 'valid', 'test',
+                                        'unlabelled'] = 'train',
+                     inc_labels: bool = False,
+                     seed: int = 1) -> tf.data.Dataset:
     raise NotImplementedError()

@@ -1,3 +1,7 @@
+import inspect
+from typing import Optional, Type
+
+from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import *
 from odin.bay.vi.autoencoder.conditional_vae import *
 from odin.bay.vi.autoencoder.dip_vae import *
@@ -12,12 +16,10 @@ from odin.bay.vi.autoencoder.stochastic_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.bay.vi.autoencoder.vq_vae import *
 from odin.networks import NetworkConfig
-from odin.bay.random_variable import RandomVariable
+from six import string_types
 
 
-def get_vae(name=None) -> VariationalAutoencoder:
-  import inspect
-  from six import string_types
+def get_vae(name: Optional[str] = None) -> Type[VariationalAutoencoder]:
   if not isinstance(name, string_types):
     if inspect.isclass(name):
       name = name.__name__

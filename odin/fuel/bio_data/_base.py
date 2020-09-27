@@ -5,10 +5,9 @@ from urllib.request import urlretrieve
 
 import numpy as np
 import tensorflow as tf
-from scipy import sparse
-
 from odin.fuel.dataset_base import IterableDataset, get_partition
 from odin.utils.crypto import md5_checksum
+from scipy import sparse
 
 
 def _tensor(x):
@@ -31,6 +30,10 @@ class BioDataset(IterableDataset):
     self.train_ids = None
     self.valid_ids = None
     self.test_ids = None
+
+  @property
+  def data_type(self) -> str:
+    return 'gene'
 
   def __str__(self):
     return (f"<{self.__class__.__name__} "

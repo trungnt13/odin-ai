@@ -4,7 +4,6 @@ from urllib.request import urlretrieve
 
 import numpy as np
 import tensorflow as tf
-
 from odin.fuel.dataset_base import IterableDataset, get_partition
 from odin.utils import md5_checksum, one_hot
 from odin.utils.net_utils import download_and_extract
@@ -14,6 +13,10 @@ from odin.utils.net_utils import download_and_extract
 # Helpers
 # ===========================================================================
 class ImageDataset(IterableDataset):
+
+  @property
+  def data_type(self) -> str:
+    return 'image'
 
   def sample_images(self,
                     save_path=None,

@@ -41,7 +41,7 @@ np.random.seed(1)
 CONFIG = \
 r"""
 ds: news5
-n_topics: 50
+n_topics: 20
 n_iter: 180000
 beta: 1
 warmup: 120000
@@ -54,7 +54,7 @@ model: lda
 # support model: em, lda, lda2
 learning_rate = 3e-4
 batch_size = 128
-valid_freq = 5000
+valid_freq = 2500
 
 DATA_DIR = "/tmp/lda_vae_data"
 if not os.path.exists(DATA_DIR):
@@ -68,23 +68,22 @@ if not os.path.exists(OUTPUT_DIR):
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def get_topics_text(lda: LatentDirichletAllocation,
-                    vocabulary,
-                    show_word_prob=False):
-  topics = lda.components_
+def get_topics_text(topics_words, vocabulary, show_word_prob=False):
+  topics = topics_words
   alpha = np.sum(topics, axis=1)
   alpha = alpha / np.sum(alpha)
   topics = topics / np.sum(topics, axis=1, keepdims=True)
   # Use a stable sorting algorithm so that when alpha is fixed
   # we always get the same topics.
   text = []
-  for topic_idx in np.argsort(-alpha, kind="mergesort")[:20]:
+  for idx, topic_idx in enumerate(np.argsort(-alpha, kind="mergesort")[:20]):
     words = topics[topic_idx]
     desc = " ".join(f"{vocabulary[i]}_{words[i]:.2f}"
                     if show_word_prob else f"{vocabulary[i]}"
                     for i in np.argsort(-words)[:10])
-    text.append(f"Topic#{topic_idx:3d} alpha={alpha[topic_idx]:.2f} {desc}")
-  return text
+    text.append(
+        f"[#{idx}]index:{topic_idx:3d} alpha={alpha[topic_idx]:.2f} {desc}")
+  return np.asarray(text)
 
 
 # ===========================================================================
@@ -110,13 +109,23 @@ def callback1(
 ):
   px = []
   qz = []
+  docs_words = []
   for inputs in test:
+    docs_words.append(inputs)
     dists = vae(inputs, training=False)
     px.append(dists[0])
     qz.append(dists[1])
   px = concat_distributions(px, axis=0, name="Docs")
   qz = concat_distributions(qz, axis=0, name="Topics")
-  return dict(vars=tf.reduce_mean(qz.stddev(), axis=0))
+  stddev = tf.reduce_mean(qz.stddev(), axis=0)
+  docs_words = tf.concat(docs_words, axis=0)
+  if isinstance(qz, tfd.MultivariateNormalDiag):
+    docs_topics = tf.nn.softmax(qz.mean(), axis=-1)
+  elif isinstance(qz, tfd.Dirichlet):
+    docs_topics = qz.mean()
+  topics_words = tf.matmul(tf.transpose(docs_topics), docs_words)
+  topics = get_topics_text(topics_words, vocabulary)
+  return dict(stddev=stddev, topics=topics)
 
 
 # ===========================================================================
@@ -206,27 +215,32 @@ def main(cfg):
         outputs=output_dist,
         # important, MCMC KL for Dirichlet is very unstable
         analytic=True,
-        path=model_path)
-    callback1(vae, test, vocabulary)
-    kw = dict(fit_kw)
-    del kw['optimizer']
-    vae.fit(optimizer=tf.optimizers.Adam(learning_rate=1e-4),
-            callback=partial(callback1,
+        path=model_path,
+        name="VDA")
+    vae.fit(callback=partial(callback1,
                              vae=vae,
                              test=test,
                              vocabulary=vocabulary),
-            **kw)
+            **dict(fit_kw,
+                   valid_freq=1000,
+                   optimizer=tf.optimizers.Adam(learning_rate=1e-4)))
   ######## VAE
-  elif cfg.model == 'bvae':
+  elif cfg.model == 'vae':
     vae = BetaVAE(beta=cfg.beta,
-                  encoder=NetworkConfig([300, 150], name='Encoder'),
-                  decoder=NetworkConfig([150, 300], name='Decoder'),
+                  encoder=NetworkConfig([300, 300], name='Encoder'),
+                  decoder=NetworkConfig([300], name='Decoder'),
                   latents=latent_dist,
                   outputs=output_dist,
-                  path=model_path)
-    kw = dict(fit_kw)
-    del kw['optimizer']
-    vae.fit(optimizer=tf.optimizers.Adam(learning_rate=1e-4), **kw)
+                  path=model_path,
+                  name="VAE")
+    callback1(vae, test, vocabulary)
+    vae.fit(callback=partial(callback1,
+                             vae=vae,
+                             test=test,
+                             vocabulary=vocabulary),
+            **dict(fit_kw,
+                   valid_freq=1000,
+                   optimizer=tf.optimizers.Adam(learning_rate=1e-4)))
   ######## FactorVAE
   elif cfg.model == 'fvae':
     vae = FactorVAE(gamma=6.0,
@@ -236,39 +250,45 @@ def main(cfg):
                     latents=latent_dist,
                     outputs=output_dist,
                     path=model_path)
-    kw = dict(fit_kw)
-    del kw['optimizer']
-    vae.fit(optimizer=[
-        tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
-        tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
-    ],
-            **kw)
+    vae.fit(callback=partial(callback1,
+                             vae=vae,
+                             test=test,
+                             vocabulary=vocabulary),
+            **dict(fit_kw,
+                   valid_freq=1000,
+                   optimizer=[
+                       tf.optimizers.Adam(learning_rate=1e-4,
+                                          beta_1=0.9,
+                                          beta_2=0.999),
+                       tf.optimizers.Adam(learning_rate=1e-4,
+                                          beta_1=0.5,
+                                          beta_2=0.9)
+                   ]))
   ######## TwoStageLDA
   elif cfg.model == 'lda2':
-    vae0_iter = 15000
-    vae0 = BetaVAE(
-        beta=10.0,
-        encoder=NetworkConfig(units=[300], name='Encoder'),
-        decoder=NetworkConfig(units=[300, 300], name='Decoder'),
-        outputs=DenseDistribution(
-            (n_words,),
-            posterior='nb',
-            #  posterior_kwargs=dict(probs_input=True),
-            # activation='softmax',
-            name="Words"),
-        latents=RandomVariable(cfg.n_topics,
-                               'diag',
-                               projection=True,
-                               name="Latents"),
-        input_shape=(n_words,),
-        path=model_path + '_vae0')
+    vae0_iter = 10000
+    vae0 = BetaVAE(beta=1.0,
+                   encoder=NetworkConfig(units=[300], name='Encoder'),
+                   decoder=NetworkConfig(units=[300, 300], name='Decoder'),
+                   outputs=DenseDistribution(
+                       (n_words,),
+                       posterior='onehot',
+                       posterior_kwargs=dict(probs_input=True),
+                       activation='softmax',
+                       name="Words"),
+                   latents=RandomVariable(cfg.n_topics,
+                                          'diag',
+                                          projection=True,
+                                          name="Latents"),
+                   input_shape=(n_words,),
+                   path=model_path + '_vae0')
     vae0.fit(callback=lambda: None
              if get_current_trainer().is_training else vae0.save_weights(),
              **dict(fit_kw,
                     logdir=output_dir + "_vae0",
                     max_iter=vae0_iter,
                     learning_rate=learning_rate,
-                    track_gradients=True))
+                    track_gradients=False))
     vae = TwoStageLDA(lda=lda,
                       encoder=vae0.encoder,
                       decoder=vae0.decoder,
@@ -281,7 +301,7 @@ def main(cfg):
                              vocabulary=vocabulary),
             **dict(fit_kw,
                    max_iter=cfg.n_iter - vae0_iter,
-                   track_gradients=True))
+                   track_gradients=False))
   ######## EM-LDA
   elif cfg.model == 'em':
     if os.path.exists(model_path):
@@ -300,7 +320,7 @@ def main(cfg):
         for n_iter, x in enumerate(prog):
           lda.partial_fit(x)
           if n_iter % 500 == 0:
-            text = get_topics_text(lda, vocabulary)
+            text = get_topics_text(lda.components_, vocabulary)
             perp = lda.perplexity(test)
             tf.summary.text("topics", text, n_iter)
             tf.summary.scalar("perplexity", perp, n_iter)

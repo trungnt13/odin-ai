@@ -462,6 +462,10 @@ class AmortizedLDA(BetaVAE):
 # ===========================================================================
 # Two-stage VAE
 # ===========================================================================
+class ConditionalLDA(AmortizedLDA):
+  pass
+
+
 class TwoStageLDA(AmortizedLDA):
   r""" Two-stage latent dirichlet allocation """
 
