@@ -18,7 +18,7 @@ import tensorflow as tf
 from odin.backend.alias import (parse_activation, parse_constraint,
                                 parse_initializer, parse_regularizer)
 from odin.backend.keras_helpers import layer2text
-from odin.exp import Trainer
+from odin.exp import Callback, Trainer
 from odin.networks.util_layers import (Conv1DTranspose, ExpandDims, Identity,
                                        ReshapeMCMC)
 from odin.utils import MD5object, as_tuple
@@ -335,11 +335,11 @@ class Networks(keras.Model, MD5object):
       sample_shape: List[int] = (),  # for ELBO
       analytic: Optional[bool] = None,  # for ELBO
       iw: bool = False,  # for ELBO
-      callback: Callable[[], Optional[dict]] = lambda: None,
+      callback: Union[Callback, List[Callback]] = lambda: None,
       compile_graph: bool = True,
       autograph: bool = False,
       logging_interval: float = 3,
-      skip_fitted: bool = False,
+      skip_fitted: Union[bool, int] = False,
       terminate_on_nan: bool = True,
       logdir: Optional[str] = None,
       allow_none_gradients: bool = False,

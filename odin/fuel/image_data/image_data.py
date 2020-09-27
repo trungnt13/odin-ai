@@ -12,9 +12,9 @@ from numbers import Number
 import numpy as np
 import tensorflow as tf
 from bigarray import MmapArray, MmapArrayWriter
-from odin.fuel.image_data._image_base import (MNIST, BinarizedAlphaDigits,
-                                              BinarizedMNIST, ImageDataset,
-                                              get_partition)
+from odin.fuel.image_data._base import (MNIST, BinarizedAlphaDigits,
+                                        BinarizedMNIST, ImageDataset,
+                                        get_partition)
 from odin.utils import as_tuple, batching, get_datasetpath, one_hot
 from odin.utils.crypto import md5_checksum
 from odin.utils.net_utils import download_and_extract, download_google_drive

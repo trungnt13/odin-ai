@@ -14,9 +14,9 @@ from odin import visual as vs
 from odin.backend import interpolation
 from odin.bay.vi import (Criticizer, NetworkConfig, RandomVariable,
                          VariationalAutoencoder, get_vae)
-from odin.exp import get_output_dir, run_hydra
-from odin.fuel import get_dataset
-from odin.utils import ArgController, as_tuple
+from odin.exp import get_current_trainer, get_output_dir, run_hydra
+from odin.fuel import IterableDataset, get_dataset
+from odin.utils import ArgController, as_tuple, clear_folder
 from tensorflow.python import keras
 from tqdm import tqdm
 
@@ -28,60 +28,30 @@ tf.autograph.set_verbosity(0)
 tf.random.set_seed(8)
 np.random.seed(8)
 sns.set()
+
 # ===========================================================================
 # Configuration
-# TODO: grammarVAE, graphVAE, CycleConsistentVAE, AdaptiveVAE
-# vae=betavae,betatcvae,annealedvae,dipvae,infovae,mutualinfovae,factorvae,factor2vae,semifactorvae,semifactor2vae,multitaskvae,multiheadvae
-# ds=mnist,dspritesc,celeba -m -ncpu 4
 # ===========================================================================
 CONFIG = \
 r"""
 vae:
 ds:
-zdim: 20
-batch_size: 128
-max_iter: 12000
-px: gaussian
+px:
+beta: 1
+gamma: 6
+alpha: 10
+zdim: 64
 py: onehot
 qz: diag
+batch_size: 128
+max_iter: 25000
+override: False
 """
 
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def save_images(pX_Z, name, step, path):
-  X = pX_Z.mean().numpy()
-  if X.shape[-1] == 1:
-    X = np.squeeze(X, axis=-1)
-  else:
-    X = np.transpose(X, (0, 3, 1, 2))
-  fig = vs.plot_figure(nrow=16, ncol=16, dpi=60)
-  vs.plot_images(X, fig=fig, title="[%s]#Iter: %d" % (name, step))
-  fig.savefig(path, dpi=60)
-  plt.close(fig)
-  del X
-
-
-def callback(vae: VariationalAutoencoder):
-  name = type(self.model).__name__
-  step = int(self.model.step.numpy())
-  # reconstructed images
-  pX_Z, _ = self.model(self.x_test, training=False)
-  save_images(pX_Z, name, step,
-              os.path.join(self.output_path, 'reconstruct_%d.png' % step))
-  # sampled images
-  pX_Z = self.model.decode(self.z_samples, training=False)
-  save_images(pX_Z, name, step,
-              os.path.join(self.output_path, 'sample_%d.png' % step))
-  # learning curves
-  self.model.trainer.plot_learning_curves(
-      path=os.path.join(self.output_path, 'learning_curves.png'),
-      summary_steps=[100, 10],
-      dpi=60,
-  )
-
-
 def load_data(name: str, batch_size: int):
   dataset = get_dataset(name)()
   kw = dict(batch_size=batch_size, drop_remainder=True)
@@ -94,51 +64,109 @@ def load_data(name: str, batch_size: int):
   return dataset, (sample_images, y), (images_shape, labels_shape)
 
 
+def to_image(X):
+  if X.shape[-1] == 1:  # grayscale image
+    X = np.squeeze(X, axis=-1)
+  else:  # color image
+    X = np.transpose(X, (0, 3, 1, 2))
+  fig = vs.plot_figure(nrow=8, ncol=8, dpi=100)
+  vs.plot_images(X, fig=fig)
+  image = vs.plot_to_image(fig)
+  return image
+
+
+def evaluate(vae: VariationalAutoencoder, ds: IterableDataset):
+  test_u = ds.create_dataset(batch_size=32,
+                             drop_remainder=True,
+                             partition='test',
+                             inc_labels=False)
+  test_l = ds.create_dataset(batch_size=32,
+                             drop_remainder=True,
+                             partition='test',
+                             inc_labels=1.0)
+
+
 # ===========================================================================
 # Main
 # ===========================================================================
-@run_hydra(output_dir='/tmp/all_vae_exp', exclude_keys=['max_iter'])
+@run_hydra(output_dir='/tmp/all_vae_exp', exclude_keys=['max_iter', 'override'])
 def main(cfg: dict):
+  assert cfg.px is not None, "Output distribution 'px=...' must be given."
   assert cfg.vae is not None, \
     ('No VAE model given, select one of the following: '
      f"{', '.join(i.__name__.lower() for i in get_vae())}")
   assert cfg.ds is not None, \
     ('No dataset given, select one of the following: '
      'mnist, dsprites, shapes3d, celeba, cortex, newsgroup20, newsgroup5, ...')
+  ### paths
   output_dir = get_output_dir()
+  model_path = os.path.join(output_dir, 'model')
+  if cfg.override:
+    clear_folder(output_dir, verbose=True)
+  ### load dataset
   ds, (x_samples, y_samples), (x_shape, y_shape) = \
     load_data(name=cfg.ds, batch_size=cfg.batch_size)
-  ### create the model
+  assert ds.has_labels, f"Dataset with name={cfg.ds} has no labels"
+  ds_kw = dict(batch_size=int(cfg.batch_size), drop_remainder=True)
+  ### the variables
   labels = RandomVariable(y_shape, cfg.py, projection=True, name="Labels")
   latents = RandomVariable(cfg.zdim, cfg.qz, projection=True, name="Latents"),
   inputs = RandomVariable(x_shape, cfg.px, projection=True, name="Inputs")
-  # create the model
+  ### create the model
   model = get_vae(cfg.vae)
   model_kw = inspect.getfullargspec(model.__init__).args[1:]
   kw = {k: v for k, v in cfg.items() if k in model_kw}
   if 'labels' in model_kw:
     kw['labels'] = labels
-  model = model(encoder=NetworkConfig([256, 256, 256], name='Encoder'),
-                decoder=NetworkConfig([256, 256, 256], name='Decoder'),
-                outputs=inputs,
-                latents=latents,
-                input_shape=x_shape,
-                **kw)
-  if model.is_semi_supervised:
-    train = None
-    valid = None
+  vae = model(encoder=NetworkConfig([256, 256, 256], name='Encoder'),
+              decoder=NetworkConfig([256, 256, 256], name='Decoder'),
+              outputs=inputs,
+              latents=latents,
+              input_shape=x_shape,
+              path=model_path,
+              **kw)
+  z_samples = vae.sample_prior(sample_shape=16, seed=1)
+  if vae.is_semi_supervised:
+    train = ds.create_dataset(partition='train', inc_labels=0.1, **ds_kw)
+    valid = ds.create_dataset(partition='valid', inc_labels=1.0, **ds_kw)
   else:
-    train = None
-    valid = None
-  model.fit(train,
-            valid=valid,
-            epochs=-1,
-            max_iter=int(cfg.max_iter),
-            valid_interval=10,
-            logging_interval=2,
-            log_tag=f"[{cfg.vae}, {cfg.ds}]",
-            skip_fitted=True,
-            compile_graph=True)
+    train = ds.create_dataset(partition='train', inc_labels=0., **ds_kw)
+    valid = ds.create_dataset(partition='valid', inc_labels=0., **ds_kw)
+
+  ### fit the network
+  def callback():
+    losses = get_current_trainer().valid_loss
+    if losses[-1] <= np.min(losses):
+      vae.save_weights(overwrite=True)
+    px, qz = vae(x_samples, training=False)
+    px = as_tuple(px)
+    qz = as_tuple(qz)
+    # store the histogram
+    mean = tf.reduce_mean(qz[0].mean(), axis=0)
+    std = tf.reduce_mean(qz[0].stddev(), axis=0)
+    # show reconstructed image
+    image_reconstructed = to_image(px[0].mean().numpy())
+    # show sampled image
+    px = as_tuple(vae.decode(z_samples, training=False))
+    image_sampled = to_image(px[0].mean().numpy())
+    return dict(mean=mean,
+                std=std,
+                reconstructed=image_reconstructed,
+                sampled=image_sampled)
+
+  vae.fit(train,
+          valid=valid,
+          epochs=-1,
+          max_iter=int(cfg.max_iter),
+          valid_interval=10,
+          logging_interval=2,
+          skip_fitted=True,
+          callback=callback,
+          logdir=output_dir,
+          compile_graph=True)
+
+  ### evaluation
+  evaluate(vae, ds)
 
 
 # ===========================================================================

@@ -501,8 +501,23 @@ class VariationalAutoencoder(Networks):
                seed: int = 1,
                training: Optional[bool] = None,
                **kwargs) -> Union[Distribution, List[Distribution]]:
-    r""" Randomly generate outputs by sampling from prior distribution then
-    decode it. """
+    r"""Randomly generate outputs by sampling from prior distribution then
+    decode it.
+
+    Parameters
+    ----------
+    sample_shape : List[int], optional
+        the sample shape, by default ()
+    seed : int, optional
+        seed for the Tensorflow random state, by default 1
+    training : Optional[bool], optional
+        invoke call method in which training mode, by default None
+
+    Returns
+    -------
+    Union[Distribution, List[Distribution]]
+        the output distribution(s)
+    """
     z = self.sample_prior(sample_shape, seed)
     return self.decode(z, training=training, **kwargs)
 

@@ -9,6 +9,7 @@ from __future__ import absolute_import, division, print_function
 
 import colorsys
 import copy
+import io
 import itertools
 import os
 import sys
@@ -18,20 +19,26 @@ from contextlib import contextmanager
 from numbers import Number
 
 import numpy as np
-from scipy import stats
-from six import string_types
-from six.moves import range, zip
-
+from odin.utils import as_tuple
 from odin.visual.heatmap_plot import *
 from odin.visual.histogram_plot import *
 from odin.visual.plot_utils import *
 from odin.visual.scatter_plot import *
 from odin.visual.stats_plot import *
+from scipy import stats
+from six import string_types
+from six.moves import range, zip
 
-# try:
-#     import seaborn # import seaborn for pretty plot
-# except:
-#     pass
+try:
+  import matplotlib as mpl
+  import seaborn  # import seaborn for pretty plot
+  import tensorflow as tf
+  from matplotlib import pyplot as plt
+except ImportError:
+  seaborn = None
+  mpl = None
+  plt = None
+  tf = None
 
 
 # ===========================================================================
@@ -85,8 +92,6 @@ def time_ticks(locs, *args, **kwargs):  # pylint: disable=star-args
   >>> # Tick along the y axis
   >>> librosa.display.time_ticks(beat_times, axis='y')
   '''
-  from matplotlib import pyplot as plt
-
   n_ticks = kwargs.pop('n_ticks', 5)
   axis = kwargs.pop('axis', 'x')
   time_fmt = kwargs.pop('time_fmt', None)
@@ -171,9 +176,6 @@ def _cmap(data):
   matplotlib.pyplot.colormaps
   seaborn.cubehelix_palette
   '''
-  import matplotlib as mpl
-  from matplotlib import pyplot as plt
-
   _HAS_SEABORN = False
   try:
     _matplotlibrc = copy.deepcopy(mpl.rcParams)
@@ -213,7 +215,6 @@ def _cmap(data):
 # ===========================================================================
 @contextmanager
 def figure(nrow=8, ncol=8, dpi=180, show=False, tight_layout=True, title=''):
-  from matplotlib import pyplot as plt
   inches_for_box = 2.4
   if nrow != ncol:
     nrow = inches_for_box * ncol
@@ -244,25 +245,21 @@ def fig2data(fig):
 
 
 def data2fig(data):
-  from matplotlib import pyplot as plt
   fig = plt.figure()
   plt.imshow(data)
   return fig
 
 
 def plot_figure(nrow=8, ncol=8, dpi=180):
-  from matplotlib import pyplot as plt
   fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
   return fig
 
 
 def plot_title(title, fontsize=12):
-  from matplotlib import pyplot as plt
   plt.suptitle(str(title), fontsize=fontsize)
 
 
 def subplot(*arg, **kwargs):
-  from matplotlib import pyplot as plt
   subplot = plt.subplot(*arg)
   if 'title' in kwargs:
     subplot.set_title(kwargs['title'])
@@ -314,7 +311,6 @@ def plot_gridSpec(nrow, ncol, wspace=None, hspace=None):
   plt.subplot(grid[1, :2])
   plt.subplot(grid[1, 2])
   """
-  from matplotlib import pyplot as plt
   grid = plt.GridSpec(nrows=nrow, ncols=ncol, wspace=wspace, hspace=hspace)
   yield grid
 
@@ -328,7 +324,6 @@ def plot_gridSubplot(shape, loc, colspan=1, rowspan=1):
   ax3 = plt.subplot2grid((3, 3), (1, 0), colspan=2, rowspan=2)
   ax4 = plt.subplot2grid((3, 3), (1, 2), rowspan=2)
   """
-  from matplotlib import pyplot as plt
   return plt.subplot2grid(shape=shape,
                           loc=loc,
                           colspan=colspan,
@@ -336,7 +331,6 @@ def plot_gridSubplot(shape, loc, colspan=1, rowspan=1):
 
 
 def plot_subplot(*args):
-  from matplotlib import pyplot as plt
   return plt.subplot(*args)
 
 
@@ -350,7 +344,6 @@ def set_labels(ax, title=None, xlabel=None, ylabel=None):
 
 
 def plot_vline(x, ymin=0., ymax=1., color='r', ax=None):
-  from matplotlib import pyplot as plt
   ax = ax if ax is not None else plt.gca()
   ax.axvline(x=x, ymin=ymin, ymax=ymax, color=color, linewidth=1, alpha=0.6)
   return ax
@@ -388,7 +381,6 @@ def plot_comparison_track(Xs,
                      "number of xticks' labels: %d" %
                      (len(Xs[0], len(tick_labels))))
   nb_points = len(Xs[0])
-  from matplotlib import pyplot as plt
   # ====== some default styles ====== #
   default_marker_styles = ['o', '^', 's', '*', '+', 'X', '|', 'D', 'H', '8']
   if marker_styles is None and nb_series <= len(default_marker_styles):
@@ -453,10 +445,10 @@ def plot_gaussian_mixture(x,
                           legend=True,
                           ax=None,
                           title=None):
-  from sklearn.mixture import GaussianMixture
-  from odin.utils import as_tuple, catch_warnings_ignore
   import seaborn as sns
+  from odin.utils import as_tuple, catch_warnings_ignore
   from scipy import stats
+  from sklearn.mixture import GaussianMixture
   ax = to_axis(ax, is_3D=False)
   n_points = int(bins * 12)
   assert gmm.means_.shape[1] == 1, "Only support plotting 1-D series GMM"
@@ -552,8 +544,6 @@ def plot_gaussian_mixture(x,
 def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
   '''Plot the amplitude envelope of a waveform.
   '''
-  from matplotlib import pyplot as plt
-
   ax = ax if ax is not None else plt.gca()
   if y is None:
     ax.plot(x, c=color, lw=lw, **kwargs)
@@ -567,8 +557,6 @@ def plot_ellipses(mean, sigma, color, alpha=0.75, ax=None):
   If the data is more than 2-D, you can use PCA before
   fitting the GMM.
   """
-  import matplotlib as mpl
-  from matplotlib import pyplot as plt
   # ====== prepare ====== #
   mean = mean.ravel()
   assert len(mean) == 2, "mean must be vector of size 2"
@@ -589,10 +577,7 @@ def plot_ellipses(mean, sigma, color, alpha=0.75, ax=None):
 
 
 def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
-  from matplotlib import pyplot as plt
-
   ax = ax if ax is not None else plt.gca()
-
   x = range(idx.shape[0]) if x is None else x
   for i, j in zip(idx, x):
     if i:
@@ -676,8 +661,6 @@ def plot_multiple_features(features,
       # For image processing
       # For video processing
   ]
-
-  from matplotlib import pyplot as plt
   if isinstance(features, (tuple, list)):
     features = OrderedDict(features)
   if not isinstance(features, Mapping):
@@ -770,7 +753,6 @@ def plot_spectrogram(x,
       ambiguous. Use a.any() or a.all()
 
   '''
-  from matplotlib import pyplot as plt
   if vmin == 'auto':
     vmin = np.min(x)
   if vmax == 'auto':
@@ -841,7 +823,6 @@ def plot_images(X, tile_shape=None, tile_spacing=None, fig=None, title=None):
   tile_spacing : tuple
       space betwen rows and columns of images
   """
-  from matplotlib import pyplot as plt
   if not isinstance(X, (tuple, list)):
     X = [X]
   X = [np.asarray(x) for x in X]
@@ -875,7 +856,6 @@ def plot_images_old(x, fig=None, titles=None, show=False):
   x : 2D-gray or 3D-color images
       for color image the color channel is second dimension
   '''
-  from matplotlib import pyplot as plt
   if x.ndim == 3 or x.ndim == 2:
     cmap = plt.cm.Greys_r
   elif x.ndim == 4:
@@ -931,7 +911,6 @@ def plot_hinton(matrix, max_weight=None, ax=None):
       W = np.random.rand(10,10)
       hinton_plot(W)
   '''
-  from matplotlib import pyplot as plt
   """Draw Hinton diagram for visualizing a weight matrix."""
   ax = ax if ax is not None else plt.gca()
 
@@ -962,7 +941,6 @@ def plot_hinton(matrix, max_weight=None, ax=None):
 # Helper methods
 # ===========================================================================
 def plot_show(block=True, tight_layout=False):
-  from matplotlib import pyplot as plt
   if tight_layout:
     plt.tight_layout()
   plt.show(block=block)
@@ -1063,9 +1041,8 @@ def plot_detection_curve(x,
   for 'roc': xaxis is FPR - Pfa, and yaxis is TPR
   for 'prc': xaxis is, yaxis is
   """
-  from matplotlib import pyplot as plt
   from odin import backend as K
-  from odin.utils import as_tuple
+
   # ====== preprocessing ====== #
   if not isinstance(x, (tuple, list)):
     x = (x,)
@@ -1239,9 +1216,6 @@ def plot_colorbar(colormap,
   label : text label
   fig : figure instance matplotlib
   """
-  import matplotlib as mpl
-  from matplotlib import pyplot as plt
-
   if isinstance(colormap, string_types):
     cmap = mpl.cm.get_cmap(name=colormap)
   else:
@@ -1287,8 +1261,22 @@ def plot_colorbar(colormap,
 # Shortcut
 # ===========================================================================
 def plot_close():
-  from matplotlib import pyplot as plt
   plt.close('all')
+
+
+def plot_to_image(figure):
+  # Save the plot to a PNG in memory.
+  buf = io.BytesIO()
+  figure.savefig(buf, format='png')
+  # Closing the figure prevents it from being displayed directly inside
+  # the notebook.
+  plt.close(figure)
+  buf.seek(0)
+  # Convert PNG buffer to TF image
+  image = tf.image.decode_png(buf.getvalue(), channels=4)
+  # Add the batch dimension
+  image = tf.expand_dims(image, 0)
+  return image
 
 
 def plot_save(path='/tmp/tmp.pdf',
@@ -1305,7 +1293,6 @@ def plot_save(path='/tmp/tmp.pdf',
       if True, remove all saved figures from current figure list
       in matplotlib
   """
-  import matplotlib.pyplot as plt
   if tight_plot:
     plt.tight_layout()
   if os.path.exists(path) and os.path.isfile(path):

@@ -2,7 +2,6 @@ import glob
 import inspect
 import os
 import pickle
-import sys
 import tempfile
 import warnings
 from collections import defaultdict
@@ -31,6 +30,8 @@ __all__ = ['Trainer', 'get_current_trainer']
 # ===========================================================================
 # Helpers
 # ===========================================================================
+Callback = Callable[[], Optional[dict]]
+
 _BEST_WEIGHTS = {}
 _BEST_OPTIMIZER = {}
 _CHECKPOINT_MANAGER = {}
@@ -61,10 +62,18 @@ def _save_summary(loss, metrics, prefix="", flush=False):
   tf.summary.scalar(f"{prefix}loss", loss)
   for k, v in metrics.items():
     k = f"{prefix}{k}"
+    # text
     if _is_text(v):
       tf.summary.text(k, v)
-    else:
+    # scalar
+    elif tf.less(tf.rank(v), 1):
       tf.summary.scalar(k, v)
+    # images
+    elif v.dtype == tf.uint8:
+      tf.summary.image(k, v)
+    # histogram
+    else:
+      tf.summary.histogram(k, v)
   if flush:
     tf.summary.flush()
 
@@ -94,11 +103,16 @@ def _process_callback_returns(progress: tqdm,
       # text
       if _is_text(v):
         tf.summary.text(k, v)
-      # scalar or tensor
+      # scalar
+      elif tf.less(tf.rank(v), 1):
+        tf.summary.scalar(k, v)
+      # images
+      elif v.dtype == tf.uint8:
+        tf.summary.image(k, v)
+        v = f'image{v.shape}'
+      # histogram
       else:
-        tf.cond(tf.less(tf.rank(v), 1),
-                true_fn=lambda: tf.summary.scalar(k, v),
-                false_fn=lambda: tf.summary.histogram(k, v))
+        tf.summary.histogram(k, v)
       progress.write(f" {k}:{v}")
 
 
@@ -121,15 +135,23 @@ def read_tensorboard(logdir: str) -> Dict[Text, Tuple[float, int, float]]:
         meta = value.metadata
         dtype = meta.plugin_data.plugin_name
         data = tf.make_ndarray(value.tensor)
+        # scalars values
         if dtype == "scalars":
           pass
+        # text values
         elif dtype == "text":
           if len(value.tensor.tensor_shape.dim) == 0:
             data = str(data.tolist(), 'utf-8')
           else:
             data = np.array([str(i, 'utf-8') for i in data])
+        # image
+        elif dtype == "images":
+          data = data  # byte string
+        # histogram
+        elif dtype == "histograms":
+          data = data  # array
         else:
-          raise NotImplementedError(f"Unknown data type: {summary}")
+          raise NotImplementedError(f"Unknown data type: {dtype}-{data}")
         all_log[tag].append((t, step, data))
   all_log = {i: sorted(j, key=lambda x: x[1]) for i, j in all_log.items()}
   return all_log
@@ -342,7 +364,7 @@ class Trainer(object):
     """
     if len(losses) < max(2., min_epoch):
       tf.print("[EarlyStop] Priming first 2 warmup epochs.")
-      return Trainer.SIGNAL_BEST
+      return 'SIGNAL_BEST'
     # generalization error (smaller is better)
     current = losses[-1]
     best = np.min(losses[:-1])
@@ -360,12 +382,12 @@ class Trainer(object):
     if error >= -threshold:
       tf.print("[EarlyStop] improvement:%.4f progression:%.4f threshold:%.4f" %
                (-generalization, progression, threshold))
-      return Trainer.SIGNAL_TERMINATE
+      return 'SIGNAL_TERMINATE'
     elif generalization < 0:
       if verbose:
         tf.print("[EarlyStop] Best model, improvement:%.4f, threshold:%.4f" %
                  ((best / current - 1.), np.abs(threshold)))
-      return Trainer.SIGNAL_BEST
+      return 'SIGNAL_BEST'
 
   @staticmethod
   def apply_gradients(tape, optimizer, loss, model_or_weights):
@@ -410,7 +432,7 @@ class Trainer(object):
               shuffle=None,
               parallel_preprocess=0,
               parallel_postprocess=0):
-    r""" A standarlized procedure for preparing `tf.data.Dataset` for training
+    r""" A standardalized procedure for preparing `tf.data.Dataset` for training
     or evaluation.
 
     Arguments:
@@ -480,13 +502,13 @@ class Trainer(object):
 
   @property
   def train_loss(self) -> List[float]:
-    losses = self.tensorboard.get('train_loss', [])
+    losses = self.tensorboard.get('train/loss', [])
     losses = [i[-1] for i in losses]
     return losses
 
   @property
   def valid_loss(self) -> List[float]:
-    losses = self.tensorboard.get('valid_loss', [])
+    losses = self.tensorboard.get('valid/loss', [])
     losses = [i[-1] for i in losses]
     return losses
 
@@ -494,7 +516,7 @@ class Trainer(object):
   def train_metrics(self) -> Dict[str, List[float]]:
     metrics = dict()
     for key, val in self.tensorboard.items():
-      if "train/" == key[:6] and key != "train_loss":
+      if "train/" == key[:6] and key != "train/loss":
         key = key[6:]
         val = [i[-1] for i in val]
         metrics[key] = val
@@ -504,7 +526,7 @@ class Trainer(object):
   def valid_metrics(self) -> Dict[str, List[float]]:
     metrics = dict()
     for key, val in self.tensorboard.items():
-      if "valid/" == key[:6] and key != "valid_loss":
+      if "valid/" == key[:6] and key != "valid/loss":
         key = key[6:]
         val = [i[-1] for i in val]
         metrics[key] = val
@@ -551,7 +573,7 @@ class Trainer(object):
           log_tag: str = '',
           max_iter: int = -1,
           terminate_on_nan: bool = True,
-          callback: Callable[[], Optional[dict]] = lambda: None):
+          callback: Union[Callback, List[Callback]] = lambda: None):
     r""" A simplified fitting API
 
     Arguments:
@@ -627,7 +649,18 @@ class Trainer(object):
       assert isinstance(metrics, dict), "Metrics must be instance of dictionary"
       return loss, metrics
 
-    ### validation
+    ### callback function
+    def _callback():
+      results = {}
+      if not isinstance(callback, (tuple, list)):
+        callback = [callback]
+      for fn in callback:
+        r = fn()
+        if isinstance(r, dict):
+          results.update(r)
+      return None if len(results) == 0 else results
+
+    ### validating function
     def valid():
       epoch_loss = []
       epoch_metrics = defaultdict(list)
@@ -646,6 +679,7 @@ class Trainer(object):
       }
       return epoch_loss, epoch_metrics
 
+    ### training function
     def train():
       global _CURRENT_TRAINER
       _CURRENT_TRAINER = self
@@ -687,7 +721,8 @@ class Trainer(object):
           last_print_time = progress._time()
         # ====== validation ====== #
         interval = progress._time() - last_valid_time
-        if self.n_iter % valid_freq == 0 and interval >= valid_interval:
+        if cur_iter == 0 or \
+          (self.n_iter % valid_freq == 0 and interval >= valid_interval):
           if valid_ds is not None:
             # finish the validation
             val_loss, val_metrics = valid()
@@ -799,9 +834,8 @@ class Trainer(object):
       subplots.append(ax)
       batch_size = summary_steps[1 if 'val_' == name[:4] else 0]
       if batch_size > len(data):
-        warnings.warn(
-            "Given summary_steps=%d but only has %d data points, skip plot!" %
-            (batch_size, len(data)))
+        warnings.warn(f"Given summary_steps={batch_size} but only "
+                      f"has {len(data)} data points, skip plot!")
         return self
       data = [batch for batch in tf.data.Dataset.from_tensor_slices(\
         data).batch(batch_size)]
@@ -847,4 +881,12 @@ class Trainer(object):
 # Helpers
 # ===========================================================================
 def get_current_trainer() -> Trainer:
+  """Return the current operating Trainer, this function is progress safe but not
+  thread safe.
+
+  Returns
+  -------
+  Trainer
+      the Trainer that is training.
+  """
   return _CURRENT_TRAINER

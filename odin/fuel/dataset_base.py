@@ -46,6 +46,10 @@ class IterableDataset:
     return self.__class__.__name__.lower()
 
   @property
+  def has_labels(self) -> bool:
+    return self.n_labels > 0
+
+  @property
   def n_labels(self) -> int:
     return len(self.labels)
 
