@@ -89,7 +89,7 @@ def evaluate(vae: VariationalAutoencoder, ds: IterableDataset):
 # ===========================================================================
 # Main
 # ===========================================================================
-@run_hydra(output_dir='/tmp/all_vae_exp', exclude_keys=['max_iter', 'override'])
+@run_hydra(output_dir='/tmp/all_vae', exclude_keys=['max_iter', 'override'])
 def main(cfg: dict):
   assert cfg.px is not None, "Output distribution 'px=...' must be given."
   assert cfg.vae is not None, \

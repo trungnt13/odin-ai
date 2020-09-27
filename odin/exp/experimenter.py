@@ -8,10 +8,9 @@ from copy import deepcopy
 from typing import Any, Callable, List, Optional, Union
 
 import numpy as np
-from six import string_types
-
 from odin.utils import as_tuple
 from odin.utils.crypto import md5_checksum
+from six import string_types
 
 try:
   from hydra import __version__
@@ -20,10 +19,10 @@ try:
   from hydra._internal.config_loader_impl import ConfigLoaderImpl
   from hydra._internal.config_search_path_impl import ConfigSearchPathImpl
   from hydra._internal.utils import _run_hydra, get_args_parser
+  from hydra.experimental import compose, initialize
   from hydra.types import TaskFunction
   from hydra.utils import HydraConfig, to_absolute_path
-  from omegaconf import DictConfig, OmegaConf, ListConfig
-  from hydra.experimental import initialize, compose
+  from omegaconf import DictConfig, ListConfig, OmegaConf
 except ImportError as e:
   print(e)
 
@@ -38,7 +37,7 @@ __all__ = [
 # ===========================================================================
 YAML_REGEX = re.compile(r"\w+: \w+")
 OVERRIDE_PATTERN = re.compile(r"\A[\+\~]?[\w\.\\\@]+=[\w\(\)\[\]\{\}\,\.\']+")
-JOBS_PATTERN = re.compile(r"\~-{1,2}n?\_?jobs[=\~]?(\d+)\~")
+JOBS_PATTERN = re.compile(r"\A-{1,2}j=?(\d+)\Z")
 
 
 def _insert_argv(key, value, is_value_string=True):
@@ -170,8 +169,21 @@ def hash_config(cfg: DictConfig,
 
 
 def save_to_yaml(config: DictConfig, path: Optional[str] = None) -> str:
-  r""" by default, save the config dictionary to file name: `config.yaml` at
-  `get_output_dir()` """
+  """Save the given configuration to given path in YAML format
+
+  Parameters
+  ----------
+  config : DictConfig
+      the configuration
+  path : Optional[str], optional
+      the path to output YAML file. If None, use the `get_output_dir()/config.yaml`
+      , by default None
+
+  Returns
+  -------
+  str
+      path to the output YAML file
+  """
   if path is None:
     output_dir = get_output_dir()
     if not os.path.exists(output_dir):
@@ -185,15 +197,17 @@ def save_to_yaml(config: DictConfig, path: Optional[str] = None) -> str:
 
 
 def get_hydra_config() -> DictConfig:
+  r""" Return the configuration """
   return HydraConfig.get()
 
 
 def get_overrides() -> str:
+  r""" Return the configuration overrides """
   return HydraConfig.get().job.override_dirname
 
 
 def get_output_dir() -> str:
-  r""" Specific output dir based on the override """
+  r""" Return an unique output dir based on the configuration overrides """
   return HydraConfig.get().run.dir
 
 
@@ -270,27 +284,26 @@ def run_hydra(output_dir: str = '/tmp/outputs',
       ## dictionary, tuple, list, DictConfig
       else:
         config_path, config_name = _save_config_to_tempdir(config)
-      ### check if output dir is provided
-      # check if overrides provided
+      ### check if overrides provided
       is_overrided = False
       for a in sys.argv:
         match = OVERRIDE_PATTERN.match(a)
         if match and not any(k in match.string for k in exclude_keys):
           is_overrided = True
-      # formatting output dirs
+      ### formatting output dirs
       time_fmt = r"${now:%j_%H%M%S}"
       if is_overrided:
         override_id = r"${hydra.job.override_dirname}"
       else:
         override_id = r"default"
-      # jobs provided
+      ### parallel jobs provided
       jobs = 1
-      text = '~'.join(sys.argv)
-      match = JOBS_PATTERN.search(text)
-      if match:
-        jobs = int(match.groups()[0])
-        text = re.sub(JOBS_PATTERN, "~", text)
-        sys.argv = text.split("~")
+      for i, a in enumerate(list(sys.argv)):
+        match = JOBS_PATTERN.match(a)
+        if match:
+          jobs = int(match.groups()[-1])
+          sys.argv.pop(i)
+          break
       if jobs > 1:
         _insert_argv(key="hydra/launcher",
                      value="joblib",
@@ -298,7 +311,7 @@ def run_hydra(output_dir: str = '/tmp/outputs',
         _insert_argv(key="hydra.launcher.n_jobs",
                      value=f"{jobs}",
                      is_value_string=False)
-      # running dirs
+      ### running dirs
       _insert_argv(key="hydra.run.dir",
                    value=f"{output_dir}/{override_id}",
                    is_value_string=True)
@@ -317,7 +330,6 @@ def run_hydra(output_dir: str = '/tmp/outputs',
       config_path = _abspath(config_path)
       ## prepare arguments for task_function
       spec = inspect.getfullargspec(task_function)
-
       ## run hydra
       _run_hydra(
           args_parser=args,
