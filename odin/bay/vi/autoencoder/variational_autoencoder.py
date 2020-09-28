@@ -255,32 +255,55 @@ class VAEStep(TrainStep):
 class VariationalAutoencoder(Networks):
   r""" Base class for all variational autoencoder
 
-  Arguments:
-    encoder : `keras.layers.Layer` or `odin.networks.NetworkConfig`.
-    decoder : `keras.layers.Layer` or `odin.networks.NetworkConfig`.
-    outputs : `RandomVariable` or `Layer`. List of output distribution
-    latents : `RandomVariable` or `Layer`. List of latent distribution
-    analytic : bool (default: False)
-      if True, use the close-form solution  for
-    reverse : bool (default: True)
+  Parameters
+  ----------
+  encoder : LayerCreator, optional
+      the encoder network, by default NetworkConfig()
+  decoder : LayerCreator, optional
+      the decoder network, by default NetworkConfig()
+  outputs : LayerCreator, optional
+      a descriptor for the input/output, by default
+      `RandomVariable(64, 'gaus', projection=True, name="Input")`
+  latents : LayerCreator, optional
+      a descriptor for the latents' distribution, by default
+      `RandomVariable(10, 'diag', projection=True, name="Latent")`
+  reduce_latent : {'concat', 'mean', 'min', 'max', 'sum', 'none'}, optional
+      how multiple latents are handled when feeding to the decoder,
+      by default 'concat'
+  input_shape : Optional[List[int]], optional
+      specific input_shape for the network, if not given, use the given `outputs`,
+      by default None
+  analytic : bool, optional
+      if True, use close-form solution for KL, by default False
+  reverse : bool, optional
       If `True`, calculating `KL(q||p)` which optimizes `q`
       (or p_model) by greedily filling in the highest modes of data (or, in
       other word, placing low probability to where data does not occur).
       Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
       propagation place high probability at anywhere data occur
-      (i.e. averagely fitting the data).
+      (i.e. averagely fitting the data), by default True
 
-  Call return:
-    pX_Z : a single or a list of `tensorflow_probability.Distribution`
-    qZ_X : a single or a list of `tensorflow_probability.Distribution`
+  Raises
+  ------
+  ValueError
+      wrong value for `reduce_latents`
 
-  Layers:
-    encoder : `keras.layers.Layer`. Encoding inputs to latents
-    decoder : `keras.layers.Layer`. Decoding latents to intermediate states
-    latent_layers : `keras.layers.Layer`. A list of the Dense layer that create
-      the latent variable (random variable)
-    output_layers : `keras.layers.Layer`. A list of the Dense layer that create
-      the output variable (random or deterministic variable)
+  Call return
+  ----------
+    p(X|Z) : a single or a list of `tensorflow_probability.Distribution`
+    q(Z|X) : a single or a list of `tensorflow_probability.Distribution`
+
+  Layers
+  ------
+    encoder : `keras.layers.Layer`.
+      Encoding inputs to latents
+    decoder : `keras.layers.Layer`.
+      Decoding latents to intermediate states
+    latent_layers : `keras.layers.Layer`.
+      A list of the Dense layer that create the latent variable (random variable)
+    output_layers : `keras.layers.Layer`.
+      A list of the Dense layer that create the output variable
+      (random or deterministic variable)
   """
 
   def __init__(
@@ -395,19 +418,40 @@ class VariationalAutoencoder(Networks):
   def sample_shape(self) -> List[int]:
     return self._sample_shape
 
-  def set_elbo_configs(self, analytic: bool,
-                       reverse: bool) -> VariationalAutoencoder:
-    self.analytic = analytic
-    self.reverse = reverse
-    return self
+  def set_elbo_configs(
+      self,
+      analytic: Optional[bool] = None,
+      reverse: Optional[bool] = None,
+      sample_shape: Optional[Union[int, List[int]]] = None
+  ) -> VariationalAutoencoder:
+    """[summary]
 
-  def set_sample_shape(
-      self, sample_shape: Union[int, List[int]] = ()) -> VariationalAutoencoder:
-    r"""
-    sample_shape : {Tensor, Number}
-      number of MCMC samples for MCMC estimation of KL-divergence
+    Parameters
+    ----------
+    analytic : Optional[bool], optional
+        if True use close-form solution for KL, by default None
+    reverse : Optional[bool], optional
+        If `True`, calculating `KL(q||p)` which optimizes `q`
+        (or p_model) by greedily filling in the highest modes of data (or, in
+        other word, placing low probability to where data does not occur).
+        Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
+        propagation place high probability at anywhere data occur
+        (i.e. averagely fitting the data)., by default None
+    sample_shape : Optional[Union[int, List[int]]], optional
+        number of MCMC samples for MCMC estimation of KL-divergence,
+        by default None
+
+    Returns
+    -------
+    VariationalAutoencoder
+        the object itself for method chaining
     """
-    self._sample_shape = tf.nest.flatten(sample_shape)
+    if analytic is not None:
+      self.analytic = bool(analytic)
+    if reverse is not None:
+      self.reverse = bool(reverse)
+    if sample_shape is not None:
+      self._sample_shape = sample_shape
     return self
 
   @property
@@ -522,9 +566,9 @@ class VariationalAutoencoder(Networks):
     return self.decode(z, training=training, **kwargs)
 
   def encode(self,
-             inputs: TensorTypes,
+             inputs: Union[TensorTypes, ListTensorTypes],
              training: Optional[bool] = None,
-             mask: Optional[Tensor] = None,
+             mask: Optional[TensorTypes] = None,
              **kwargs) -> Union[Distribution, List[Distribution]]:
     r""" Encoding inputs to latent codes """
     outputs = []
@@ -822,7 +866,7 @@ class VariationalAutoencoder(Networks):
     text += f'\n Tensorboard : {self.tensorboard_logdir}'
     text += f'\n Analytic     : {self.analytic}'
     text += f'\n Reverse      : {self.reverse}'
-    text += f'\n Sample Shape: {self.sample_shape}'
+    text += f'\n Sample Shape : {self.sample_shape}'
     text += f'\n Fitted        : {int(self.step.numpy())}(iters)'
     text += f'\n MD5 checksum: {self.md5_checksum}'
     ## encoder

@@ -264,15 +264,34 @@ class Networks(keras.Model, MD5object):
                inputs: Union[TensorTypes, List[TensorTypes]],
                training: bool = True,
                mask: Optional[TensorTypes] = None,
-               optimizer: Optional[OptimizerV2] = None,
+               optimizer: Optional[Union[List[OptimizerV2],
+                                         OptimizerV2]] = None,
                allow_none_gradients: bool = False,
                track_gradients: bool = False,
                **kwargs) -> Tuple[tf.Tensor, Dict[str, Any]]:
-    r""" Optimization function, could be used for autograph
+    """Optimization function, could be used for autograph
 
-    Return:
-      loss : a Scalar, the loss Tensor used for optimization
-      metrics : a Dictionary, mapping from name to values
+    Parameters
+    ----------
+    inputs : Union[TensorTypes, List[TensorTypes]]
+        a single or list of input tensors
+    training : bool, optional
+        indicating the training mode for call method, by default True
+    mask : Optional[TensorTypes], optional
+        mask tensor, by default None
+    optimizer : Optional[OptimizerV2], optional
+        optimizer, by default None
+    allow_none_gradients : bool, optional
+        allow variables with None gradients during training, by default False
+    track_gradients : bool, optional
+        track and return the metrics includes the gradients' L2-norm for each
+        trainable variable, by default False
+
+    Returns
+    -------
+    Tuple[tf.Tensor, Dict[str, Any]]
+        loss : a Scalar, the loss Tensor used for optimization
+        metrics : a Dictionary, mapping from name to values
     """
     if training:
       self.step.assign_add(1)
@@ -320,46 +339,87 @@ class Networks(keras.Model, MD5object):
       total_loss += loss
     return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
 
-  def fit(
-      self,
-      train: Union[TensorTypes, DatasetV2],
-      valid: Optional[Union[TensorTypes, DatasetV2]] = None,
-      valid_freq: int = 500,
-      valid_interval: float = 0,
-      optimizer: Union[str, OptimizerV2] = 'adam',
-      learning_rate: float = 1e-3,
-      clipnorm: Optional[float] = None,
-      epochs: int = -1,
-      max_iter: int = 1000,
-      batch_size: int = 32,
-      sample_shape: List[int] = (),  # for ELBO
-      analytic: Optional[bool] = None,  # for ELBO
-      iw: bool = False,  # for ELBO
-      callback: Union[Callback, List[Callback]] = lambda: None,
-      compile_graph: bool = True,
-      autograph: bool = False,
-      logging_interval: float = 3,
-      skip_fitted: Union[bool, int] = False,
-      terminate_on_nan: bool = True,
-      logdir: Optional[str] = None,
-      allow_none_gradients: bool = False,
-      track_gradients: bool = False):
-    r""" Override the original fit method of keras to provide simplified
-    procedure with `Networks.optimize` and
-    `Networks.train_steps`
+  def fit(self,
+          train: Union[TensorTypes, DatasetV2],
+          valid: Optional[Union[TensorTypes, DatasetV2]] = None,
+          valid_freq: int = 500,
+          valid_interval: float = 0,
+          optimizer: Union[str, List[str], OptimizerV2,
+                           List[OptimizerV2]] = 'adam',
+          learning_rate: float = 1e-3,
+          clipnorm: Optional[float] = None,
+          epochs: int = -1,
+          max_iter: int = 1000,
+          batch_size: int = 32,
+          callback: Union[Callback, List[Callback]] = lambda: None,
+          compile_graph: bool = True,
+          autograph: bool = False,
+          logging_interval: float = 3,
+          skip_fitted: Union[bool, int] = False,
+          terminate_on_nan: bool = True,
+          logdir: Optional[str] = None,
+          allow_none_gradients: bool = False,
+          track_gradients: bool = False) -> Networks:
+    """Override the original fit method of keras to provide simplified
+    procedure with `Networks.optimize` and `Networks.train_steps`
 
-    Arguments:
-      optimizer : Text, instance of `tf.optimizers.Optimizer`
-        or `None`. A list of optimizers is accepted in case of multiple
-        steps training.
-        - If `None`, re-use stored optimizer, raise `RuntimeError` if no
-          predefined optimizer found.
-      callback : a Callable, called every `valid_freq` steps or
-        `valid_interval` seconds
-      compile_graph : a Boolean. If True, using tensorflow autograph for
-        optimize function (about 2 times better speed), otherwise, run the
-        function in Eager mode (better for debugging).
+    Parameters
+    ----------
+    train : Union[TensorTypes, DatasetV2]
+        tensorflow Dataset for training
+    valid : Optional[Union[TensorTypes, DatasetV2]], optional
+        tensorflow Dataset for validation, by default None
+    valid_freq : int, optional
+        the frequency, in steps, for performing validation, by default 500
+    valid_interval : float, optional
+        the interval, in second, for performing validation, by default 0
+    optimizer : Union[str, OptimizerV2], optional
+        A list of optimizers is accepted in case of multiple steps training.
+        If `None`, re-use stored optimizer, raise `RuntimeError` if no
+        predefined optimizer found., by default 'adam'
+    learning_rate : float, optional
+        learning rate for initializing the optimizer, by default 1e-3
+    clipnorm : Optional[float], optional
+        global L2-norm value for clipping the gradients, by default None
+    epochs : int, optional
+        maximum number of epochs, by default -1
+    max_iter : int, optional
+        maximum number of iteration, by default 1000
+    batch_size : int, optional
+        number of examples for mini-batch, by default 32
+    callback : Union[Callback, List[Callback]], optional
+        a function or list of functions called every `valid_freq` steps or
+        `valid_interval` seconds, by default lambda:None
+    compile_graph : bool, optional
+        If True, using tensorflow autograph for optimize function (about 2 times
+        speed gain), otherwise, run the function in Eager mode (better for
+        debugging), by default True
+    autograph : bool, optional
+        use autograph to compile the function, by default False
+    logging_interval : float, optional
+        interval, in seconds, for printing logging information, by default 3
+    skip_fitted : Union[bool, int], optional
+        skip this function if the model if fitted, or fitted for certain amount of
+        steps, by default False
+    terminate_on_nan : bool, optional
+        terminate the training if NaNs returned, by default True
+    logdir : Optional[str], optional
+        tensorboard logging directory, by default None
+    allow_none_gradients : bool, optional
+        allow variables with None gradients during training, by default False
+    track_gradients : bool, optional
+        track and return the metrics includes the gradients' L2-norm for each
+        trainable variable, by default False
 
+    Returns
+    -------
+    Networks
+        the network itself for method chaining
+
+    Raises
+    ------
+    RuntimeError
+        if the optimizer is not defined.
     """
     batch_size = int(batch_size)
     # validate the dataset

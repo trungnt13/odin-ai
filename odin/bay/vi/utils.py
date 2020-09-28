@@ -3,11 +3,13 @@ from __future__ import absolute_import, division, print_function
 import types
 import warnings
 from numbers import Number
+from typing import List
 
 import numpy as np
 import tensorflow as tf
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import KBinsDiscretizer
+from typing_extensions import Literal
 
 __all__ = [
     'discretizing',
@@ -24,11 +26,12 @@ def _gmm_discretizing_predict(self, X):
   return np.expand_dims(np.argsort(means)[ids], axis=1)
 
 
-def discretizing(*factors,
-                 independent=True,
-                 n_bins=5,
-                 strategy='quantile',
-                 return_model=False):
+def discretizing(*factors: List[np.ndarray],
+                 independent: bool = True,
+                 n_bins: int = 5,
+                 strategy: Literal['uniform', 'quantile', 'kmeans',
+                                   'gmm'] = 'quantile',
+                 return_model: bool = False):
   r""" Transform continuous value into discrete
 
   Note: the histogram discretizer is equal to
