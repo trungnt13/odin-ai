@@ -6,7 +6,6 @@ import numpy as np
 import seaborn as sns
 import tensorflow as tf
 from matplotlib import pyplot as plt
-
 from odin import visual as vs
 from odin.bay.vi import discretizing
 
@@ -25,7 +24,7 @@ for dist, fn in [('uniform', np.random.rand), ('normal', np.random.randn)]:
   x = fn(*shape)
   vs.plot_figure(nrow=12, ncol=12, dpi=120)
   ax = vs.subplot(nrow, ncol, 1)
-  ax = vs.plot_histogram(x, bins=hist_bins, title=dist, ax=ax)
+  ax, _, _ = vs.plot_histogram(x, bins=hist_bins, title=dist, ax=ax)
   idx = 2
   for strategy in ('gmm', 'uniform', 'quantile', 'kmeans'):
     for n_bins in (5, 10):

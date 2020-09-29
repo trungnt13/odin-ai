@@ -5,7 +5,7 @@ import warnings
 from collections import Counter, OrderedDict
 from functools import partial
 from numbers import Number
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import scipy as sp
@@ -18,6 +18,7 @@ from odin.bay.vi.autoencoder.variational_autoencoder import \
 from odin.bay.vi.metrics import (mutual_info_estimate, mutual_info_gap,
                                  representative_importance_matrix)
 from odin.bay.vi.utils import discretizing
+from odin.ml import dimension_reduce, linear_classifier
 from odin.search import diagonal_linear_assignment
 from odin.utils import as_tuple
 from six import string_types
@@ -333,12 +334,118 @@ class Factor:
 # ===========================================================================
 class Posterior(vs.Visualizer):
 
+  def plot_scatter(
+      self,
+      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
+      classifier: Optional[Literal['svm', 'tree', 'logistic', 'knn', 'lda',
+                                   'gbt']] = None,
+      classifier_kw: Dict[str, Any] = {},
+      dimension_reduction: Literal['pca', 'umap', 'tsne', 'knn',
+                                   'kmean'] = 'tsne',
+      factor_indices: Optional[Union[int, str, List[Union[int, str]]]] = None,
+      n_samples: Optional[int] = None,
+      return_figure: bool = False,
+      seed: int = 1,
+  ):
+    cmap = 'bwr'
+    ## get all relevant factors
+    if factor_indices is None:
+      factor_indices = list(range(self.n_factors))
+    factor_indices = [
+        int(i) if isinstance(i, Number) else self.factor_names.index(i)
+        for i in as_tuple(factor_indices)
+    ]
+    f = self.factors[:, factor_indices]
+    if f.ndim == 1:
+      f = np.expand_dims(f, axis=1)
+    names = np.asarray(self.factor_names)[factor_indices]
+    ## reduce latents dimension
+    z = convert_to_tensor(self.latents).numpy()
+    z = dimension_reduce(z,
+                         algo=dimension_reduction,
+                         n_components=2,
+                         random_state=seed)
+    x_min, x_max = np.min(z[:, 0]), np.max(z[:, 0])
+    y_min, y_max = np.min(z[:, 1]), np.max(z[:, 1])
+    # standardlize the factors
+    f_norm = (f - np.mean(f, axis=0, keepdims=True)) / np.std(
+        f, axis=0, keepdims=True)
+    ## downsample
+    if isinstance(n_samples, Number):
+      n_samples = int(n_samples)
+      if n_samples < z.shape[0]:
+        rand = np.random.RandomState(seed=seed)
+        ids = rand.choice(np.arange(z.shape[0], dtype=np.int32),
+                          size=n_samples,
+                          replace=False)
+        z = z[ids]
+        f = f[ids]
+    n_samples = z.shape[0]
+    if classifier is not None:
+      xx, yy = np.meshgrid(np.linspace(x_min, x_max, n_samples),
+                           np.linspace(y_min, y_max, n_samples))
+      xy = np.c_[xx.ravel(), yy.ravel()]
+    ## plotting
+    from matplotlib import pyplot as plt
+    n_cols = 4
+    n_rows = int(np.ceil(f.shape[1] / n_cols))
+    fig = plt.figure(figsize=(n_cols * 2, n_rows * 2),
+                     constrained_layout=False,
+                     dpi=120)
+    grids = fig.add_gridspec(n_rows, n_cols, wspace=0, hspace=0)
+    for c in range(n_cols):
+      for r in range(n_rows):
+        idx = r * n_cols + c
+        if idx >= f.shape[1]:
+          continue
+        ax = fig.add_subplot(grids[r, c])
+        # scatter plot
+        vs.plot_scatter(x=z,
+                        val=f_norm[:, idx],
+                        color=cmap,
+                        ax=ax,
+                        size=10.,
+                        alpha=0.5)
+        ax.grid(False)
+        ax.tick_params(axis='both',
+                       bottom=False,
+                       top=False,
+                       left=False,
+                       right=False)
+        ax.text(x_min,
+                y_max,
+                names[idx],
+                horizontalalignment='left',
+                verticalalignment='top',
+                fontdict=dict(size=10,
+                              color='Green',
+                              alpha=0.5,
+                              weight='normal'))
+        # classifier boundary
+        if classifier is not None:
+          model = linear_classifier(z,
+                                    f[:, idx],
+                                    algo=classifier,
+                                    seed=seed,
+                                    **classifier_kw)
+          ax.contourf(xx,
+                      yy,
+                      model.predict(xy).reshape(xx.shape),
+                      cmap=cmap,
+                      alpha=0.4)
+    ## return or save
+    if return_figure:
+      return fig
+    return self.add_figure(
+        name=f'scatter_{dimension_reduction}_{str(classifier).lower()}',
+        fig=fig)
+
   def plot_histogram(
       self,
       convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
-      histogram_bins=120,
-      original_factors=True,
-      return_figure=False,
+      histogram_bins: int = 120,
+      original_factors: bool = True,
+      return_figure: bool = False,
   ):
     Z = convert_to_tensor(self.latents).numpy()
     F = self.factors_original if original_factors else self.factors
@@ -362,15 +469,21 @@ class Posterior(vs.Visualizer):
     return self.add_figure(
         f"histogram_{'original' if original_factors else 'discretized'}", fig)
 
-  def plot_disentanglement(self,
-                           factor_names=None,
-                           n_bins_factors=15,
-                           n_bins_codes=80,
-                           corr_type='average',
-                           original_factors=True,
-                           show_all_codes=False,
-                           title='',
-                           return_figure=False):
+  def plot_disentanglement(
+      self,
+      factor_indices: Optional[Union[int, str, List[Union[int, str]]]] = None,
+      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
+      n_bins_factors: int = 15,
+      n_bins_codes: int = 80,
+      corr_type: Union[Literal['spearman', 'pearson', 'lasso', 'average', 'mi'],
+                       ndarray] = 'average',
+      original_factors: bool = True,
+      show_all_codes: bool = False,
+      sort_pairs: bool = True,
+      title: str = '',
+      return_figure: bool = False,
+      seed: int = 1,
+  ):
     r""" To illustrate the disentanglement of the codes, the codes' histogram
     bars are colored by the value of factors.
 
@@ -398,87 +511,84 @@ class Posterior(vs.Visualizer):
                   color='bwr',
                   alpha=0.8)
     # get all relevant factors
-    factor_ids = self._check_factors(factor_names)
+    if factor_indices is None:
+      factor_indices = list(range(self.n_factors))
+    factor_indices = [
+        int(i) if isinstance(i, Number) else self.factor_names.index(i)
+        for i in as_tuple(factor_indices)
+    ]
     ### correlation
     if isinstance(corr_type, string_types):
       if corr_type == 'mi':
-        train_corr, test_corr = self.create_mutualinfo_matrix(mean=True)
+        corr = self.mutualinfo_matrix(convert_to_tensor=convert_to_tensor,
+                                      seed=seed)
         score_type = 'mutual-info'
       else:
-        train_corr, test_corr = self.create_correlation_matrix(mean=True,
-                                                               method=corr_type)
+        corr = self.correlation_matrix(convert_to_tensor=convert_to_tensor,
+                                       method=corr_type,
+                                       seed=seed)
         score_type = corr_type
       # [n_factors, n_codes]
-      corr = ((train_corr + test_corr) / 2.).T
-      corr = corr[factor_ids]
-      code_ids = diagonal_linear_assignment(np.abs(corr), nan_policy=0)
-      if not show_all_codes:
-        code_ids = code_ids[:len(factor_ids)]
-    # directly give the correlation matrix
+      corr = corr.T[factor_indices]
+    ### directly give the correlation matrix
     elif isinstance(corr_type, ndarray):
       corr = corr_type
-      if self.n_codes != self.n_factors and corr.shape[0] == self.n_codes:
+      if self.n_latents != self.n_factors and corr.shape[0] == self.n_latents:
         corr = corr.T
-      assert corr.shape == (self.n_factors, self.n_codes), \
+      assert corr.shape == (self.n_factors, self.n_latents), \
         (f"Correlation matrix expect shape (n_factors={self.n_factors}, "
          f"n_codes={self.n_codes}) but given shape: {corr.shape}")
       score_type = 'score'
-      corr = corr[factor_ids]
-      code_ids = diagonal_linear_assignment(np.abs(corr), nan_policy=0)
-      if not show_all_codes:
-        code_ids = code_ids[:len(factor_ids)]
-    # no correlation provided
-    elif corr_type is None:
-      train_corr, test_corr = self.create_correlation_matrix(mean=True,
-                                                             method='spearman')
-      score_type = 'spearman'
-      # [n_factors, n_codes]
-      corr = ((train_corr + test_corr) / 2.).T
-      code_ids = np.arange(self.n_codes, dtype=np.int32)
-    # exception
+      corr = corr[factor_indices]
+    ### exception
     else:
       raise ValueError(
           f"corr_type could be string, None or a matrix but given: {type(corr_type)}"
       )
-    # applying the indexing
-    corr = corr[:, code_ids]
+    ### sorting the latents
+    if sort_pairs:
+      latent_indices = diagonal_linear_assignment(np.abs(corr), nan_policy=0)
+    else:
+      latent_indices = np.arange(self.n_latents, dtype=np.int32)
+    if not show_all_codes:
+      latent_indices = latent_indices[:len(factor_indices)]
+    corr = corr[:, latent_indices]
     ### prepare the data
     # factors
-    F = np.concatenate(
-        self.original_factors if original_factors else self.factors,
-        axis=0,
-    )[:, factor_ids]
-    factor_names = self.factor_names[factor_ids]
+    F = (self.factors_original
+         if original_factors else self.factors)[:, factor_indices]
+    factor_names = np.asarray(self.factor_names)[factor_indices]
     # codes
-    Z = np.concatenate(self.representations_mean, axis=0)[:, code_ids]
-    code_names = self.code_names[code_ids]
+    Z = convert_to_tensor(self.latents).numpy()[:, latent_indices]
+    latent_names = np.asarray(self.latent_names)[latent_indices]
     ### create the figure
     nrow = F.shape[1]
     ncol = Z.shape[1] + 1
-    fig = vs.plot_figure(nrow=nrow * 3, ncol=ncol * 2.8, dpi=80)
+    fig = vs.plot_figure(nrow=nrow * 3, ncol=ncol * 2.8, dpi=100)
     count = 1
     for fidx, (f, fname) in enumerate(zip(F.T, factor_names)):
       # the first plot show how the factor clustered
-      ax = vs.plot_histogram(x=f,
-                             color_val=f,
-                             ax=(nrow, ncol, count),
-                             cbar=False,
-                             title=f"{fname}",
-                             **styles)
-      plt.gca().tick_params(axis='y', labelleft=False)
+      ax, _, _ = vs.plot_histogram(x=f,
+                                   color_val=f,
+                                   ax=(nrow, ncol, count),
+                                   cbar=False,
+                                   title=f"{fname}",
+                                   **styles)
+      ax.tick_params(axis='y', labelleft=False)
       count += 1
       # the rest of the row show how the codes align with the factor
-      for zidx, (score, z, zname) in enumerate(zip(corr[fidx], Z.T,
-                                                   code_names)):
+      for zidx, (score, z,
+                 zname) in enumerate(zip(corr[fidx], Z.T, latent_names)):
         text = "*" if fidx == zidx else ""
-        ax = vs.plot_histogram(x=z,
-                               color_val=f,
-                               ax=(nrow, ncol, count),
-                               cbar=False,
-                               title=f"{text}{fname}-{zname} (${score:.2f}$)",
-                               bold_title=True if fidx == zidx else False,
-                               **styles)
-        plt.gca().tick_params(axis='y', labelleft=False)
+        ax, _, _ = vs.plot_histogram(
+            x=z,
+            color_val=f,
+            ax=(nrow, ncol, count),
+            cbar=False,
+            title=f"{text}{fname}-{zname} (${score:.2f}$)",
+            bold_title=True if fidx == zidx else False,
+            **styles)
+        ax.tick_params(axis='y', labelleft=False)
         count += 1
     ### fine tune the plot
     fig.suptitle(f"[{score_type}]{title}", fontsize=12)
@@ -538,7 +648,7 @@ class Posterior(vs.Visualizer):
       self,
       convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
       method: Literal['spearman', 'pearson', 'lasso', 'average'] = 'spearman',
-      assignment: bool = False,
+      sort_pairs: bool = False,
       seed: int = 1,
   ) -> ndarray:
     """Correlation matrix of `latent codes` (row) and `groundtruth factors`
@@ -555,7 +665,7 @@ class Posterior(vs.Visualizer):
         'lasso' - lasso regression
         'average' - compute all known method then taking average,
         by default 'spearman'
-    assignment : bool, optional
+    sort_pairs : bool, optional
         If True, reorganize the row of correlation matrix
         for the best match between code-factor (i.e. the largest diagonal sum).
         Note: the decoding is performed on train matrix, then applied to test
@@ -579,7 +689,7 @@ class Posterior(vs.Visualizer):
       corr_mat = sum(
           self.correlation_matrix(convert_to_tensor=convert_to_tensor,
                                   method=corr,
-                                  assignment=False,
+                                  sort_pairs=False,
                                   seed=seed)
           for corr in ['spearman', 'pearson', 'lasso']) / 3
     ### specific mode
@@ -607,7 +717,7 @@ class Posterior(vs.Visualizer):
               corr = sp.stats.pearsonr(x, y)[0]
             corr_mat[code, fact] = corr
     ## decoding and return
-    if assignment:
+    if sort_pairs:
       ids = diagonal_linear_assignment(corr_mat)
       corr_mat = corr_mat[ids, :]
       return corr_mat, OrderedDict(zip(range(self.n_factors), ids))

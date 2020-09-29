@@ -5,16 +5,15 @@ from collections import defaultdict
 from numbers import Number
 
 import numpy as np
-from scipy import stats
-
 from odin.visual.plot_utils import *
+from scipy import stats
 
 
 def _fit(x, y, n_bins):
-  from sklearn.preprocessing import KBinsDiscretizer
-  from sklearn.model_selection import GridSearchCV
-  from sklearn.linear_model import LogisticRegression
   from odin.utils import catch_warnings_ignore
+  from sklearn.linear_model import LogisticRegression
+  from sklearn.model_selection import GridSearchCV
+  from sklearn.preprocessing import KBinsDiscretizer
   x = x[:, np.newaxis]
   y = KBinsDiscretizer(n_bins=int(n_bins), encode='ordinal').fit_transform(
       y[:, np.newaxis]).ravel().astype(np.int64)
@@ -57,8 +56,8 @@ def plot_histogram(x,
     covariance_factor : None or float,
       smaller value lead to more detail for KDE plot
   """
-  from matplotlib import pyplot as plt
   import matplotlib as mpl
+  from matplotlib import pyplot as plt
   bins_color = int(bins_color)
   bins = int(bins)
   # ====== prepare ====== #
@@ -143,7 +142,7 @@ def plot_histogram(x,
     ax.set_title(str(title),
                  fontsize=fontsize,
                  fontweight='bold' if bold_title else 'regular')
-  return hist, hist_bins
+  return ax, hist, hist_bins
 
 
 def plot_histogram_layers(Xs,

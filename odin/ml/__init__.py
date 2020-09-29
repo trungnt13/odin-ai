@@ -1,18 +1,77 @@
+from typing import Optional, Union
+
+import numpy as np
 from odin.ml.base import evaluate
 from odin.ml.cluster import fast_dbscan, fast_kmeans, fast_knn
 from odin.ml.decompositions import *
+from odin.ml.fast_lda_topics import fast_lda_topics, get_topics_string
 from odin.ml.fast_tsne import fast_tsne
 from odin.ml.fast_umap import fast_umap
-from odin.ml.fast_lda_topics import fast_lda_topics, get_topics_string
-from odin.ml.gmm_thresholding import GMMThreshold
 from odin.ml.gmm_classifier import GMMclassifier
 from odin.ml.gmm_embedding import ProbabilisticEmbedding
+from odin.ml.gmm_thresholding import GMMThreshold
 from odin.ml.gmm_tmat import GMM, Tmatrix
 from odin.ml.ivector import Ivector
+from odin.ml.neural_nlp import *
 from odin.ml.plda import PLDA
 from odin.ml.scoring import (Scorer, VectorNormalizer, compute_class_avg,
                              compute_wccn, compute_within_cov)
-from odin.ml.neural_nlp import *
+from sklearn.base import ClassifierMixin
+from typing_extensions import Literal
+
+
+def linear_classifier(X: np.ndarray,
+                      y: np.ndarray,
+                      algo: Literal['svm', 'lda', 'knn', 'tree', 'logistic',
+                                    'gbt'],
+                      seed: int = 1,
+                      **kwargs) -> ClassifierMixin:
+  """Train a linear classifier
+
+  Parameters
+  ----------
+  X : np.ndarray
+    input data
+  y : np.ndarray
+    target data
+  algo : 'svm', 'lda', 'knn', 'tree', 'logistic', 'gbt'
+    classifier algorithm
+  seed : int, optional
+      seed for random state, by default 1
+
+  Returns
+  -------
+  ClassifierMixin
+      the trained classifier
+
+  Raises
+  ------
+  ValueError
+      Unknown classifier algorithm
+  """
+  if algo == 'svm':
+    from sklearn.svm import LinearSVC
+    model = LinearSVC(random_state=seed, **kwargs)
+  elif algo == 'lda':
+    from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
+    model = LinearDiscriminantAnalysis(**kwargs)
+  elif algo == 'knn':
+    from sklearn.neighbors import KNeighborsClassifier
+    model = KNeighborsClassifier(**kwargs)
+  elif algo == 'tree':
+    from sklearn.tree import DecisionTreeClassifier
+    model = DecisionTreeClassifier(random_state=seed, **kwargs)
+  elif algo == 'logistic':
+    from sklearn.linear_model import LogisticRegression
+    model = LogisticRegression(random_state=seed, **kwargs)
+  elif algo == 'gbt':
+    from sklearn.ensemble import GradientBoostingClassifier
+    model = GradientBoostingClassifier(random_state=seed, **kwargs)
+  else:
+    raise ValueError(f"No support for linear classifier with name='{algo}'")
+  model.fit(X, y)
+  return model
+
 
 def clustering(X,
                algo,
@@ -43,25 +102,37 @@ def clustering(X,
 
 
 def dimension_reduce(*X,
-                     algo,
-                     n_components=2,
-                     return_model=False,
-                     random_state=1234,
-                     **kwargs):
-  r""" Unified interface for dimension reduction algorithms
+                     algo: Literal['pca', 'umap', 'tsne', 'knn',
+                                   'kmean'] = 'pca',
+                     n_components: int = 2,
+                     return_model: bool = False,
+                     random_state: int = 1,
+                     **kwargs) -> np.ndarray:
+  """Applying dimension reduction algorithm on a list of array
 
-  Arguments:
-    X : the first array will be use for training, all inputs will be
-      transformed by the same model afterward.
-    algo : {'pca', 'umap', 'tsne', 'knn', 'kmean}
-    n_components : an Integer or None (all dimensions remained)
-    return_model : a Boolean. If `True`, return both transformed array and
-      trained models, otherwise, only return the array.
-    random_state : an Integer or `numpy.random.RandomState`
-    kwargs : specialized arguments for each algorithm
+  Parameters
+  ----------
+  algo :  {'pca', 'umap', 'tsne', 'knn', 'kmean'}, optional
+      the algorithm, by default pca
+  n_components : int, optional
+      number of components or cluster, by default 2
+  return_model : bool, optional
+      If `True`, return both transformed array and trained models,
+      otherwise, only return the array., by default False
+  random_state : int, optional
+      seed for random state, by default 1
+  kwargs : dict
+      specialized arguments for each algorithm
 
-  Returns:
-    transformed array and trained model (if `return_model=True`)
+  Returns
+  -------
+  np.ndarray
+      the transformed array and trained model (if `return_model=True`)
+
+  Raises
+  ------
+  ValueError
+      Invalid algorithm
   """
   algo = str(algo).strip().lower()
   if 'pca' in algo:

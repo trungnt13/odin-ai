@@ -166,7 +166,7 @@ class CriticizerPlot(CriticizerMetrics, vs.Visualizer):
     count = 1
     for fidx, (f, fname) in enumerate(zip(F.T, factor_names)):
       # the first plot show how the factor clustered
-      ax = vs.plot_histogram(x=f,
+      ax, _, _ = vs.plot_histogram(x=f,
                              color_val=f,
                              ax=(nrow, ncol, count),
                              cbar=False,
@@ -178,7 +178,7 @@ class CriticizerPlot(CriticizerMetrics, vs.Visualizer):
       for zidx, (score, z, zname) in enumerate(zip(corr[fidx], Z.T,
                                                    code_names)):
         text = "*" if fidx == zidx else ""
-        ax = vs.plot_histogram(x=z,
+        ax, _, _ = vs.plot_histogram(x=z,
                                color_val=f,
                                ax=(nrow, ncol, count),
                                cbar=False,

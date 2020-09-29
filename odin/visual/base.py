@@ -1,8 +1,10 @@
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 import os
 from collections import defaultdict
 from typing import Dict, Text
+
+from matplotlib import pyplot as plt
 
 _FIGURE_LIST = defaultdict(dict)
 _FIGURE_COUNT = defaultdict(lambda: defaultdict(int))
@@ -12,7 +14,6 @@ class Visualizer(object):
   r""" Visualizer """
 
   def assert_figure(self, fig):
-    from matplotlib import pyplot as plt
     assert isinstance(fig, plt.Figure), \
     'fig must be instance of matplotlib.Figure, but given: %s' % str(type(fig))
     return fig
@@ -26,10 +27,10 @@ class Visualizer(object):
     return ax
 
   @property
-  def figures(self) -> Dict[Text, 'Figure']:
+  def figures(self) -> Dict[Text, plt.Figure]:
     return _FIGURE_LIST[id(self)]
 
-  def add_figure(self, name, fig):
+  def add_figure(self, name: str, fig: plt.Figure) -> Visualizer:
     from matplotlib import pyplot as plt
     self.assert_figure(fig)
     figures = _FIGURE_LIST[id(self)]
@@ -41,11 +42,11 @@ class Visualizer(object):
     return self
 
   def save_figures(self,
-                   path='/tmp/tmp.pdf',
-                   dpi=100,
-                   separate_files=True,
-                   clear_figures=True,
-                   verbose=False):
+                   path: str = '/tmp/tmp.pdf',
+                   dpi: int = 100,
+                   separate_files: bool = True,
+                   clear_figures: bool = True,
+                   verbose: bool = False) -> Visualizer:
     r""" Saving all stored figures to path
 
     Arguments:
@@ -57,8 +58,9 @@ class Visualizer(object):
       clear_figures : remove and close all stored figures
       verbose : print out the log
     """
-    from odin.utils import ctext
     from matplotlib import pyplot as plt
+    from odin.utils import ctext
+
     # checking arguments
     if os.path.isfile(path) or '.pdf' == path[-4:].lower():
       separate_files = False
