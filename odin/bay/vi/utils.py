@@ -26,12 +26,13 @@ def _gmm_discretizing_predict(self, X):
   return np.expand_dims(np.argsort(means)[ids], axis=1)
 
 
-def discretizing(*factors: List[np.ndarray],
-                 independent: bool = True,
-                 n_bins: int = 5,
-                 strategy: Literal['uniform', 'quantile', 'kmeans',
-                                   'gmm'] = 'quantile',
-                 return_model: bool = False):
+def discretizing(
+    *factors: List[np.ndarray],
+    independent: bool = True,
+    n_bins: int = 5,
+    strategy: Literal['uniform', 'quantile', 'kmeans', 'gmm'] = 'quantile',
+    return_model: bool = False,
+):
   r""" Transform continuous value into discrete
 
   Note: the histogram discretizer is equal to

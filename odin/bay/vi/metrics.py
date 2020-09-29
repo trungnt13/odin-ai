@@ -21,6 +21,9 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import scipy as sp
+from odin.bay.vi.downstream_metrics import *
+from odin.utils import catch_warnings_ignore
+from odin.utils.mpi import MPI, get_cpu_count
 from sklearn.cluster import KMeans
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.metrics import adjusted_mutual_info_score, adjusted_rand_score
@@ -30,10 +33,6 @@ from sklearn.metrics import (homogeneity_score, mutual_info_score,
 from sklearn.metrics.cluster import entropy as entropy1D
 from sklearn.mixture import GaussianMixture
 from tqdm import tqdm
-
-from odin.bay.vi.downstream_metrics import *
-from odin.utils import catch_warnings_ignore
-from odin.utils.mpi import MPI, get_cpu_count
 
 __all__ = [
     'discrete_mutual_info',
@@ -271,7 +270,8 @@ def mutual_info_estimate(representations,
                          continuous_representations=True,
                          continuous_factors=False,
                          n_neighbors=3,
-                         random_state=1234):
+                         n_cpu=1,
+                         seed=1):
   r""" Nonparametric method for estimating entropy from k-nearest neighbors
   distances (note: this implementation use multi-processing)
 
@@ -302,14 +302,15 @@ def mutual_info_estimate(representations,
                      factors[:, idx],
                      discrete_features=not continuous_representations,
                      n_neighbors=n_neighbors,
-                     random_state=random_state)
+                     random_state=seed)
     return idx, mi
 
-  for i, mi in MPI(jobs=list(range(num_factors)),
-                   func=func,
-                   ncpu=min(max(1,
-                                get_cpu_count() - 1), 10),
-                   batch=1):
+  jobs = list(range(num_factors))
+  if n_cpu < 2:
+    it = (func(i) for i in jobs)
+  else:
+    it = MPI(jobs=jobs, func=func, ncpu=n_cpu, batch=1)
+  for i, mi in it:
     mi_matrix[:, i] = mi
   return mi_matrix
 

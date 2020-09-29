@@ -2,19 +2,26 @@ from __future__ import absolute_import, annotations, division, print_function
 
 import random
 import warnings
-from collections import Counter
+from collections import Counter, OrderedDict
 from functools import partial
 from numbers import Number
 from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
+import scipy as sp
 import tensorflow as tf
+from numpy import ndarray
+from odin import visual as vs
 from odin.bay.distributions import CombinedDistribution
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
+from odin.bay.vi.metrics import (mutual_info_estimate, mutual_info_gap,
+                                 representative_importance_matrix)
 from odin.bay.vi.utils import discretizing
+from odin.search import diagonal_linear_assignment
 from odin.utils import as_tuple
 from six import string_types
+from tensorflow import Tensor
 from tensorflow.python import keras
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow_probability.python.distributions import (Distribution,
@@ -29,7 +36,7 @@ __all__ = ['Factor', 'VariationalPosterior']
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _fast_samples_indices(known: np.ndarray, factors: np.ndarray):
+def _fast_samples_indices(known: ndarray, factors: ndarray):
   outputs = [-1] * len(known)
   for k_idx in range(len(known)):
     for f_idx in range(len(factors)):
@@ -46,11 +53,12 @@ try:
   # without numba: ~19.3 sec
   # ~15 times faster
   from numba import jit
-  _fast_samples_indices = jit(_fast_samples_indices,
-                              target='cpu',
-                              cache=False,
-                              parallel=False,
-                              nopython=True)
+  _fast_samples_indices = jit(
+      _fast_samples_indices,
+      # target='cpu',
+      cache=False,
+      parallel=False,
+      nopython=True)
 except ImportError:
   pass
 
@@ -75,8 +83,7 @@ def prepare_inputs_factors(inputs, latents, factors, verbose):
     if verbose:
       inputs = tqdm(inputs, desc="Reading data")
     if factors is None:  # include factors
-      assert n_inputs >= 2, \
-        "factors are not included in the dataset: %s" % str(inputs)
+      assert n_inputs >= 2, f"factors are not included in the dataset: {inputs}"
       x, y = [list() for _ in range((n_inputs - 1))], []
       for data in inputs:
         if isinstance(data, dict):  # this is an ad-hoc hack
@@ -111,7 +118,7 @@ def prepare_inputs_factors(inputs, latents, factors, verbose):
   return inputs, latents, factors
 
 
-def _boostrap_sampling(vae: VariationalAutoencoder, inputs: List[np.ndarray],
+def _boostrap_sampling(vae: VariationalAutoencoder, inputs: List[ndarray],
                        factors: Factor,
                        reduce_latents: Callable[[List[Distribution]],
                                                 List[Distribution]],
@@ -208,7 +215,7 @@ class Factor:
   """
 
   def __init__(self,
-               factors: np.ndarray,
+               factors: ndarray,
                factor_names: Optional[List[str]] = None):
     if isinstance(factors, tf.data.Dataset):
       factors = tf.stack([x for x in factors])
@@ -260,7 +267,7 @@ class Factor:
                      num: int = 16,
                      replace: bool = False,
                      return_indices: bool = False,
-                     seed: int = 1) -> Tuple[np.ndarray, np.ndarray]:
+                     seed: int = 1) -> Tuple[ndarray, ndarray]:
     r"""Sample a batch of factors with output shape `[num, num_factor]`.
 
     Arguments:
@@ -300,8 +307,8 @@ class Factor:
     return factors
 
   def sample_indices_from_factors(self,
-                                  factors: np.ndarray,
-                                  seed: int = 1) -> np.ndarray:
+                                  factors: ndarray,
+                                  seed: int = 1) -> ndarray:
     r"""Sample a batch of observations indices given a batch of factors.
       In other words, the algorithm find all the samples with matching factor
       in given batch, then return the indices of those samples.
@@ -324,13 +331,361 @@ class Factor:
 # ===========================================================================
 # Sampler
 # ===========================================================================
-class Posterior:
+class Posterior(vs.Visualizer):
+
+  def plot_histogram(
+      self,
+      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
+      histogram_bins=120,
+      original_factors=True,
+      return_figure=False,
+  ):
+    Z = convert_to_tensor(self.latents).numpy()
+    F = self.factors_original if original_factors else self.factors
+    X = [i for i in F.T] + [i for i in Z.T]
+    labels = self.factor_names + self.latent_names
+    # create the figure
+    ncol = int(np.ceil(np.sqrt(len(X)))) + 1
+    nrow = int(np.ceil(len(X) / ncol))
+    fig = vs.plot_figure(nrow=12, ncol=20, dpi=100)
+    for i, (x, lab) in enumerate(zip(X, labels)):
+      vs.plot_histogram(x,
+                        ax=(nrow, ncol, i + 1),
+                        bins=int(histogram_bins),
+                        title=lab,
+                        alpha=0.8,
+                        color='blue',
+                        fontsize=16)
+    fig.tight_layout()
+    if return_figure:
+      return fig
+    return self.add_figure(
+        f"histogram_{'original' if original_factors else 'discretized'}", fig)
+
+  def plot_disentanglement(self,
+                           factor_names=None,
+                           n_bins_factors=15,
+                           n_bins_codes=80,
+                           corr_type='average',
+                           original_factors=True,
+                           show_all_codes=False,
+                           title='',
+                           return_figure=False):
+    r""" To illustrate the disentanglement of the codes, the codes' histogram
+    bars are colored by the value of factors.
+
+    Arguments:
+      factor_names : list of String or Integer.
+        Name or index of which factors will be used for visualization.
+      factor_bins : factor is discretized into bins, then a LogisticRegression
+        model will predict the bin (with color) given the code as input.
+      corr_type : {'spearman', 'pearson', 'lasso', 'average', 'mi', None, matrix}
+        Type of correlation, with special case 'mi' for mutual information.
+          - If None, no sorting by correlation provided.
+          - If an array, the array must have shape `[n_codes, n_factors]`
+      show_all_codes : a Boolean.
+        if False, only show most correlated codes-factors, otherwise,
+        all codes are shown for each factor.
+        This option only in effect when `corr_type` is not `None`.
+      original_factors : optional original factors before discretized by
+        `Criticizer`
+    """
+    ### prepare styled plot
+    styles = dict(fontsize=12,
+                  cbar_horizontal=False,
+                  bins_color=int(n_bins_factors),
+                  bins=int(n_bins_codes),
+                  color='bwr',
+                  alpha=0.8)
+    # get all relevant factors
+    factor_ids = self._check_factors(factor_names)
+    ### correlation
+    if isinstance(corr_type, string_types):
+      if corr_type == 'mi':
+        train_corr, test_corr = self.create_mutualinfo_matrix(mean=True)
+        score_type = 'mutual-info'
+      else:
+        train_corr, test_corr = self.create_correlation_matrix(mean=True,
+                                                               method=corr_type)
+        score_type = corr_type
+      # [n_factors, n_codes]
+      corr = ((train_corr + test_corr) / 2.).T
+      corr = corr[factor_ids]
+      code_ids = diagonal_linear_assignment(np.abs(corr), nan_policy=0)
+      if not show_all_codes:
+        code_ids = code_ids[:len(factor_ids)]
+    # directly give the correlation matrix
+    elif isinstance(corr_type, ndarray):
+      corr = corr_type
+      if self.n_codes != self.n_factors and corr.shape[0] == self.n_codes:
+        corr = corr.T
+      assert corr.shape == (self.n_factors, self.n_codes), \
+        (f"Correlation matrix expect shape (n_factors={self.n_factors}, "
+         f"n_codes={self.n_codes}) but given shape: {corr.shape}")
+      score_type = 'score'
+      corr = corr[factor_ids]
+      code_ids = diagonal_linear_assignment(np.abs(corr), nan_policy=0)
+      if not show_all_codes:
+        code_ids = code_ids[:len(factor_ids)]
+    # no correlation provided
+    elif corr_type is None:
+      train_corr, test_corr = self.create_correlation_matrix(mean=True,
+                                                             method='spearman')
+      score_type = 'spearman'
+      # [n_factors, n_codes]
+      corr = ((train_corr + test_corr) / 2.).T
+      code_ids = np.arange(self.n_codes, dtype=np.int32)
+    # exception
+    else:
+      raise ValueError(
+          f"corr_type could be string, None or a matrix but given: {type(corr_type)}"
+      )
+    # applying the indexing
+    corr = corr[:, code_ids]
+    ### prepare the data
+    # factors
+    F = np.concatenate(
+        self.original_factors if original_factors else self.factors,
+        axis=0,
+    )[:, factor_ids]
+    factor_names = self.factor_names[factor_ids]
+    # codes
+    Z = np.concatenate(self.representations_mean, axis=0)[:, code_ids]
+    code_names = self.code_names[code_ids]
+    ### create the figure
+    nrow = F.shape[1]
+    ncol = Z.shape[1] + 1
+    fig = vs.plot_figure(nrow=nrow * 3, ncol=ncol * 2.8, dpi=80)
+    count = 1
+    for fidx, (f, fname) in enumerate(zip(F.T, factor_names)):
+      # the first plot show how the factor clustered
+      ax = vs.plot_histogram(x=f,
+                             color_val=f,
+                             ax=(nrow, ncol, count),
+                             cbar=False,
+                             title=f"{fname}",
+                             **styles)
+      plt.gca().tick_params(axis='y', labelleft=False)
+      count += 1
+      # the rest of the row show how the codes align with the factor
+      for zidx, (score, z, zname) in enumerate(zip(corr[fidx], Z.T,
+                                                   code_names)):
+        text = "*" if fidx == zidx else ""
+        ax = vs.plot_histogram(x=z,
+                               color_val=f,
+                               ax=(nrow, ncol, count),
+                               cbar=False,
+                               title=f"{text}{fname}-{zname} (${score:.2f}$)",
+                               bold_title=True if fidx == zidx else False,
+                               **styles)
+        plt.gca().tick_params(axis='y', labelleft=False)
+        count += 1
+    ### fine tune the plot
+    fig.suptitle(f"[{score_type}]{title}", fontsize=12)
+    fig.tight_layout(rect=[0.0, 0.03, 1.0, 0.97])
+    if return_figure:
+      return fig
+    return self.add_figure(
+        f"disentanglement_{'original' if original_factors else 'discretized'}",
+        fig)
 
   @property
   def model(self) -> keras.layers.Layer:
     raise NotImplementedError
 
-  def copy(self) -> Posterior:
+  @property
+  def inputs(self) -> List[ndarray]:
+    raise NotImplementedError
+
+  @property
+  def latents(self) -> Distribution:
+    raise NotImplementedError
+
+  @property
+  def outputs(self) -> List[Distribution]:
+    raise NotImplementedError
+
+  @property
+  def factors(self) -> ndarray:
+    raise NotImplementedError
+
+  @property
+  def factors_original(self) -> ndarray:
+    raise NotImplementedError
+
+  @property
+  def factor_names(self) -> List[str]:
+    raise NotImplementedError
+
+  @property
+  def latent_names(self) -> List[str]:
+    raise NotImplementedError
+
+  @property
+  def n_factors(self) -> int:
+    return self.factors.shape[1]
+
+  @property
+  def n_latents(self) -> int:
+    return self.latents.event_shape[0]
+
+  @property
+  def n_samples(self) -> int:
+    return self.latents.batch_shape[0]
+
+  ############## Matrices
+  def correlation_matrix(
+      self,
+      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
+      method: Literal['spearman', 'pearson', 'lasso', 'average'] = 'spearman',
+      assignment: bool = False,
+      seed: int = 1,
+  ) -> ndarray:
+    """Correlation matrix of `latent codes` (row) and `groundtruth factors`
+    (column).
+
+    Parameters
+    ----------
+    convert_to_tensor : Callable[[Distribution], Tensor], optional
+        callable to convert a distribution to tensor, by default `lambdad:d.mean()`
+    method : {'spearman', 'pearson', 'lasso', 'average'}
+        method for calculating the correlation,
+        'spearman' - rank or monotonic correlation
+        'pearson' - linear correlation
+        'lasso' - lasso regression
+        'average' - compute all known method then taking average,
+        by default 'spearman'
+    assignment : bool, optional
+        If True, reorganize the row of correlation matrix
+        for the best match between code-factor (i.e. the largest diagonal sum).
+        Note: the decoding is performed on train matrix, then applied to test
+        matrix, by default False
+    seed : int, optional
+        random state seed, by default 1
+
+    Returns
+    -------
+    ndarray
+        correlation matrices `[n_latents, n_factors]`, all entries are in `[0, 1]`.
+    OrderedDict (optional)
+        mapping from decoded factor index to latent code index.
+    """
+    method = str(method).strip().lower()
+    all_corr = ['spearman', 'lasso', 'pearson', 'average']
+    assert method in all_corr, \
+      f"Support {all_corr} correlation but given method='{method}'"
+    ### average mode
+    if method == 'average':
+      corr_mat = sum(
+          self.correlation_matrix(convert_to_tensor=convert_to_tensor,
+                                  method=corr,
+                                  assignment=False,
+                                  seed=seed)
+          for corr in ['spearman', 'pearson', 'lasso']) / 3
+    ### specific mode
+    else:
+      # start form correlation matrix
+      z = convert_to_tensor(self.latents).numpy()
+      f = self.factors
+      # lasso
+      if method == 'lasso':
+        from sklearn.linear_model import Lasso
+        model = Lasso(random_state=seed, alpha=0.1)
+        model.fit(z, f)
+        # coef_ is [n_target, n_features], so we need transpose here
+        corr_mat = np.transpose(np.absolute(model.coef_))
+      # spearman and pearson
+      else:
+        corr_mat = np.empty(shape=(self.n_latents, self.n_factors),
+                            dtype=np.float64)
+        for code in range(self.n_latents):
+          for fact in range(self.n_factors):
+            x, y = z[:, code], f[:, fact]
+            if method == 'spearman':
+              corr = sp.stats.spearmanr(x, y, nan_policy="omit")[0]
+            elif method == 'pearson':
+              corr = sp.stats.pearsonr(x, y)[0]
+            corr_mat[code, fact] = corr
+    ## decoding and return
+    if assignment:
+      ids = diagonal_linear_assignment(corr_mat)
+      corr_mat = corr_mat[ids, :]
+      return corr_mat, OrderedDict(zip(range(self.n_factors), ids))
+    return corr_mat
+
+  def mutualinfo_matrix(
+      self,
+      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
+      n_neighbors: Union[int, List[int]] = [3, 4, 5],
+      n_cpu: int = 1,
+      seed: int = 1,
+  ) -> np.ndarray:
+    """Mutual Information estimated between each latents' dimension and factors'
+    dimension
+
+    Parameters
+    ----------
+    convert_to_tensor : Callable[[Distribution], Tensor], optional
+        callable to convert a distribution to tensor, by default `lambdad:d.mean()`
+    n_neighbors : Union[int, List[int]], optional
+        number of neighbors for estimating MI, by default [3, 4, 5]
+    n_cpu : int, optional
+        number of CPU for parallel, by default 1
+    seed : int, optional
+        random state seed, by default 1
+
+    Returns
+    -------
+    np.ndarray
+        matrix `[n_latents, n_factors]`, estimated mutual information between
+          each representation and each factors
+    """
+    n_neighbors = as_tuple(n_neighbors, t=int)
+    mi = sum(
+        mutual_info_estimate(
+            representations=convert_to_tensor(self.latents).numpy(),
+            factors=self.factors,
+            continuous_representations=True,
+            continuous_factors=False,
+            n_neighbors=i,
+            n_cpu=n_cpu,
+            seed=seed,
+        ) for i in n_neighbors)
+    return mi / len(n_neighbors)
+
+  def mutual_info_gap(
+      self,
+      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
+      n_bins: int = 10,
+      strategy: Literal['uniform', 'quantile', 'kmeans', 'gmm'] = 'uniform',
+  ) -> float:
+    """Mutual Information Gap
+
+    Parameters
+    ----------
+    convert_to_tensor : Callable[[Distribution], Tensor], optional
+        callable to convert a distribution to tensor, by default `lambdad:d.mean()`
+    n_bins : int, optional
+        number of bins for discretizing the latents, by default 10
+    strategy : {'uniform', 'quantile', 'kmeans', 'gmm'}
+        Strategy used to define the widths of the bins.
+        'uniform' - All bins in each feature have identical widths.
+        'quantile' - All bins in each feature have the same number of points.
+        'kmeans' - Values in each bin have the same nearest center of a 1D cluster.
+        , by default 'uniform'
+
+    Returns
+    -------
+    float
+        mutual information gap score
+    """
+    z = convert_to_tensor(self.latents).numpy()
+    if n_bins > 1:
+      z = discretizing(z, independent=True, n_bins=n_bins, strategy=strategy)
+    f = self.factors
+    return mutual_info_gap(z, f)
+
+  def copy(self, *args, **kwargs) -> Posterior:
     raise NotImplementedError
 
 
@@ -339,13 +694,13 @@ class VariationalPosterior(Posterior):
 
   def __init__(self,
                vae: VariationalAutoencoder,
-               inputs: Optional[Union[np.ndarray, tf.Tensor, DatasetV2]] = None,
-               latents: Optional[Union[np.ndarray, tf.Tensor,
+               inputs: Optional[Union[ndarray, Tensor, DatasetV2]] = None,
+               latents: Optional[Union[ndarray, Tensor,
                                        DatasetV2]] = None,
-               factors: Optional[Union[np.ndarray, tf.Tensor,
+               factors: Optional[Union[ndarray, Tensor,
                                        DatasetV2]] = None,
-               discretizer: Optional[Callable[[np.ndarray],
-                                              np.ndarray]] = partial(
+               discretizer: Optional[Callable[[ndarray],
+                                              ndarray]] = partial(
                                                   discretizing,
                                                   n_bins=5,
                                                   strategy='quantile'),
@@ -355,7 +710,7 @@ class VariationalPosterior(Posterior):
                reduce_latents: Callable[[List[Distribution]], List[Distribution]] = \
                  lambda x: x,
                verbose: bool = False,
-               seed: int = 1):
+               seed: int = 1,):
     super().__init__()
     assert isinstance(vae, VariationalAutoencoder), \
       ("vae must be instance of odin.bay.vi.VariationalAutoencoder, "
@@ -432,7 +787,7 @@ class VariationalPosterior(Posterior):
     return self._vae
 
   @property
-  def inputs(self) -> List[np.ndarray]:
+  def inputs(self) -> List[ndarray]:
     return self._inputs
 
   @property
@@ -448,71 +803,61 @@ class VariationalPosterior(Posterior):
     return self._outputs
 
   @property
-  def factors(self) -> np.ndarray:
+  def factors(self) -> ndarray:
     r""" Return the target variable (i.e. the factors of variation) for
     training and testing """
     return self._factors
 
   @property
-  def factors_original(self) -> np.ndarray:
+  def factors_original(self) -> ndarray:
     r"""Return the original factors, i.e. the factors before discretizing """
     # the original factors is the same for all samples set
     return self._factors_original
-
-  @property
-  def n_factors(self) -> int:
-    return self.factors[0].shape[1]
-
-  @property
-  def n_latents(self) -> int:
-    r""" return the number of latent codes """
-    return self.latents.event_shape[0]
-
-  @property
-  def n_samples(self) -> int:
-    r""" Return number of samples for testing """
-    return self.latents.batch_shape[0]
 
   @property
   def factor_names(self) -> List[str]:
     return self._factor_names
 
   @property
-  def code_names(self) -> List[str]:
+  def latent_names(self) -> List[str]:
     return [f"Z{i}" for i in range(self.n_latents)]
 
   ############## Experiment setup
-  def traverse(self,
-               min_val: int = -2.0,
-               max_val: int = 2.0,
-               num: int = 11,
-               n_samples: int = 1,
-               mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
-               convert_to_tensor: Callable[[Distribution],
-                                           tf.Tensor] = lambda d: d.mean(),
-               seed: int = 1) -> VariationalPosterior:
+  def traverse(
+      self,
+      min_val: int = -2.0,
+      max_val: int = 2.0,
+      num: int = 11,
+      n_samples: int = 1,
+      mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
+      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
+      seed: int = 1,
+  ) -> VariationalPosterior:
     """Create data for latents' traverse experiments
 
     Parameters
     ----------
     min_val : int, optional
-        [description], by default -2.0
+        minimum value of the traverse, by default -2.0
     max_val : int, optional
-        [description], by default 2.0
+        maximum value of the traverse, by default 2.0
     num : int, optional
-        [description], by default 11
+        number of points in the traverse, must be odd number, by default 11
     n_samples : int, optional
-        [description], by default 2
+        number of samples selected for the traverse, by default 2
     mode : {'linear', 'quantile', 'gaussian'}, optional
-        [description], by default 'linear'
-    convert_to_tensor : Callable[[Distribution], tf.Tensor], optional
-        [description], by default lambdad:d.mean()
+        'linear' mode take linear interpolation between the `min_val` and `max_val`.
+        'quantile' mode return `num` quantiles based on min and max values inferred
+        from the data. 'gaussian' mode takes `num` Gaussian quantiles,
+        by default 'linear'
+    convert_to_tensor : Callable[[Distribution], Tensor], optional
+        function to convert Distribution to tensor, by default `lambda:d.mean()`
 
     Returns
     -------
     VariationalPosterior
         a copy of VariationalPosterior with the new traversed latents,
-        the number of sample is: `n_samples * num * n_latents`
+        the total number of return samples is: `n_samples * num * n_latents`
 
     Example
     --------
@@ -595,23 +940,32 @@ class VariationalPosterior(Posterior):
                    logical_not: bool = False,
                    n_samples: Optional[int] = None,
                    seed: int = 1) -> VariationalPosterior:
-    r""" Conditioning the sampled dataset on known factors
+    """Conditioning the sampled dataset on known factors
 
-    Arguments:
-      known : a mapping from index or name of factor to a callable, the
+    Parameters
+    ----------
+    known : Dict[Union[str, int], Callable[[int], bool]]
+        a mapping from index or name of factor to a callable, the
         callable must return a list of boolean indices, which indicates
         the samples to be selected
-      logical_not : a Boolean, if True applying the opposed conditioning
-        of the known factors
-      n_samples : an Integer (Optional), maximum number of selected samples.
+    logical_not : bool, optional
+        if True applying the opposed conditioning of the known factors, by default False
+    n_samples : Optional[int], optional
+        maximum number of selected samples, by default None
+    seed : int, optional
+        random seed for deterministic results, by default 1
 
-    Return:
-      a new `Criticizer` with the conditioned data and representations
+    Returns
+    -------
+    VariationalPosterior
+        a new posterior with conditioned factors
 
-    Example:
+    Example
+    -------
     ```
     # conditioning on: (1st-factor > 2) and (2nd-factor == 3)
-    conditioning({1: lambda x: x > 2, 2: lambda x: x==3})
+    conditioning({1: lambda x: x > 2,
+                    2: lambda x: x==3})
     ```
     """
     known = {
@@ -672,7 +1026,6 @@ class VariationalPosterior(Posterior):
     # helper for slicing
     fslice = lambda x: x[indices] if indices is not None else x
     # copy the factors
-    print(self._factors_original)
     obj._factors_original = np.array(fslice(self._factors_original))
     obj._factors = np.array(fslice(self._factors))
     # copy the inputs
