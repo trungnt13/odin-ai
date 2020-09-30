@@ -21,9 +21,10 @@ from odin.backend.keras_helpers import layer2text
 from odin.exp import Callback, Trainer
 from odin.networks.util_layers import (Conv1DTranspose, ExpandDims, Identity,
                                        ReshapeMCMC)
-from odin.utils import MD5object, as_tuple
+from odin.utils import MD5object, as_tuple, classproperty
 from scipy import sparse
 from six import string_types
+from tensorflow import Tensor
 from tensorflow.python import keras
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.framework import tensor_shape
@@ -86,7 +87,7 @@ def _infer_rank_and_input_shape(rank, input_shape):
 # ===========================================================================
 # Networks
 # ===========================================================================
-TensorTypes = Union[sparse.spmatrix, np.ndarray, tf.Tensor]
+TensorTypes = Union[sparse.spmatrix, np.ndarray, Tensor]
 
 
 def _to_optimizer(optimizer, learning_rate, clipnorm):
@@ -144,13 +145,13 @@ class TrainStep:
   mask: Optional[TensorTypes]
   parameters: List[tf.Variable]
 
-  def call(self) -> Tuple[tf.Tensor, Dict[str, Union[tf.Tensor, str]]]:
+  def call(self) -> Tuple[Tensor, Dict[str, Any]]:
     return tf.constant(0., dtype=tf.float32), {}
 
-  def __call__(self) -> Tuple[tf.Tensor, Dict[str, Union[tf.Tensor, str]]]:
+  def __call__(self) -> Tuple[Tensor, Dict[str, Any]]:
     loss, metrics = self.call()
-    assert isinstance(loss, tf.Tensor), \
-      f"loss must be instance of tf.Tensor but given: {type(loss)}"
+    assert tf.is_tensor(loss), \
+      f"loss must be instance of Tensor but given: {type(loss)}"
     assert isinstance(metrics, dict), \
       f"metrics must be instance of dictionary but given: {type(metrics)}"
     return loss, metrics
@@ -205,6 +206,22 @@ class Networks(keras.Model, MD5object):
     """ Return the total number of trainable parameters (or variables) """
     return sum(np.prod(v.shape) for v in self.trainable_variables)
 
+  @classproperty
+  def default_args(cls) -> Dict[str, Any]:
+    """Return a dictionary of the default keyword arguments of all subclass start"""
+    kw = dict()
+    args = []
+    for c in type.mro(cls)[::-1]:
+      if not issubclass(c, Networks):
+        continue
+      spec = inspect.getfullargspec(c.__init__)
+      args += spec.args
+      if spec.defaults is not None:
+        for key, val in zip(spec.args[::-1], spec.defaults[::-1]):
+          kw[key] = val
+    args = [i for i in set(args) if i not in kw and i != 'self']
+    return kw
+
   def load_weights(self,
                    filepath: str,
                    raise_notfound: bool = False,
@@ -249,11 +266,12 @@ class Networks(keras.Model, MD5object):
     logging.get_logger().disabled = False
     return self
 
-  def train_steps(self,
-                  inputs: TensorTypes,
-                  training: bool = True,
-                  mask: Optional[TensorTypes] = None,
-                  **kwargs) -> Iterator[TrainStep]:
+  def train_steps(
+      self,
+      inputs: TensorTypes,
+      training: bool = True,
+      mask: Optional[TensorTypes] = None,
+      **kwargs) -> Iterator[Callable[[], Tuple[Tensor, Dict[str, Any]]]]:
     yield TrainStep(inputs=inputs,
                     training=training,
                     mask=mask,
@@ -268,7 +286,7 @@ class Networks(keras.Model, MD5object):
                                          OptimizerV2]] = None,
                allow_none_gradients: bool = False,
                track_gradients: bool = False,
-               **kwargs) -> Tuple[tf.Tensor, Dict[str, Any]]:
+               **kwargs) -> Tuple[Tensor, Dict[str, Any]]:
     """Optimization function, could be used for autograph
 
     Parameters
@@ -289,7 +307,7 @@ class Networks(keras.Model, MD5object):
 
     Returns
     -------
-    Tuple[tf.Tensor, Dict[str, Any]]
+    Tuple[Tensor, Dict[str, Any]]
         loss : a Scalar, the loss Tensor used for optimization
         metrics : a Dictionary, mapping from name to values
     """
@@ -305,15 +323,18 @@ class Networks(keras.Model, MD5object):
     total_loss = 0.
     optimizer = tf.nest.flatten(optimizer)
     n_optimizer = len(optimizer)
-    for i, step in enumerate(
-        self.train_steps(inputs=inputs, training=training, mask=mask,
-                         **kwargs)):
-      assert isinstance(step, TrainStep), \
-        ("method train_steps must return an Iterator of TrainStep, "
+    ## start optimizing step-by-step
+    iterator = enumerate(
+        self.train_steps(inputs=inputs, training=training, mask=mask, **kwargs))
+    for step_idx, step in iterator:
+      assert isinstance(step, TrainStep) or callable(step), \
+        ("method train_steps must return an Iterator of TrainStep or callable, "
          f"but return type: {type(step)}")
-      step: TrainStep
-      opt = optimizer[i % n_optimizer]
-      parameters = step.parameters
+      opt = optimizer[step_idx % n_optimizer]
+      if isinstance(step, TrainStep):
+        parameters = step.parameters
+      else:
+        parameters = self.trainable_variables
       ## for training
       if training:
         with tf.GradientTape(watch_accessed_variables=False) as tape:
@@ -337,7 +358,9 @@ class Networks(keras.Model, MD5object):
       ## update metrics and loss
       all_metrics.update(metrics)
       total_loss += loss
-    return total_loss, {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
+    ## return
+    all_metrics = {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
+    return total_loss, all_metrics
 
   def fit(self,
           train: Union[TensorTypes, DatasetV2],
@@ -971,14 +994,20 @@ class NetworkConfig(dict):
     )
     return decoder
 
-  def __call__(self,
-               input_shape: Optional[List[int]] = None,
-               name: Optional[str] = None) -> SequentialNetwork:
-    return self.create_network(input_shape=input_shape, name=name)
+  def __call__(
+      self,
+      input_shape: Optional[List[int]] = None,
+      sequential: bool = True,
+      name: Optional[str] = None) -> Union[SequentialNetwork, List[Layer]]:
+    return self.create_network(input_shape=input_shape,
+                               sequential=sequential,
+                               name=name)
 
-  def create_network(self,
-                     input_shape: Optional[List[int]] = None,
-                     name: Optional[str] = None) -> SequentialNetwork:
+  def create_network(
+      self,
+      input_shape: Optional[List[int]] = None,
+      sequential: bool = True,
+      name: Optional[str] = None) -> Union[SequentialNetwork, List[Layer]]:
     r"""
     Arguments:
       input_shape : a tuple of Integer. Shape of input without the batch
@@ -1058,10 +1087,11 @@ class NetworkConfig(dict):
       raise NotImplementedError("No implementation for network of type: '%s'" %
                                 self.network)
     # ====== return ====== #
-    network = SequentialNetwork(network, name=name)
-    network.copy = types.MethodType(
-        lambda s, name=None: self.create_network(input_shape=input_shape,
-                                                 name=name),
-        network,
-    )
+    if sequential:
+      network = SequentialNetwork(network, name=name)
+      network.copy = types.MethodType(
+          lambda s, name=None: self.create_network(input_shape=input_shape,
+                                                   name=name),
+          network,
+      )
     return network

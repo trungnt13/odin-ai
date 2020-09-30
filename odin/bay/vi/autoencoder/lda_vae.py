@@ -1,7 +1,7 @@
 from __future__ import absolute_import, annotations, division, print_function
 
 from functools import partial
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple, Union
 from warnings import warn
 
 import numpy as np
@@ -16,6 +16,7 @@ from odin.bay.layers import (BinomialLayer, DenseDistribution, DirichletLayer,
                              OneHotCategoricalLayer, PoissonLayer,
                              ZINegativeBinomialLayer)
 from odin.bay.random_variable import RandomVariable
+from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              TensorTypes,
@@ -26,12 +27,13 @@ from tensorflow import Tensor, Variable
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.keras import Input, Model, Sequential, activations
 from tensorflow.python.keras.layers import (Activation, BatchNormalization,
-                                            Dense, InputLayer, Layer)
+                                            Dense, InputLayer, Lambda, Layer)
+from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python.math import softplus_inverse
 from tqdm import tqdm
 from typing_extensions import Literal
 
-__all__ = ['LatentDirichletDecoder', 'AmortizedLDA', 'TwoStageLDA']
+# __all__ = ['LatentDirichletDecoder', 'AmortizedLDA', 'TwoStageLDA', 'VDA', ]
 
 
 # ===========================================================================
@@ -302,6 +304,46 @@ class LatentDirichletDecoder(Model):
                                                 training=training)
     return docs_words_dist, docs_topics_dist
 
+  def get_topics_string(self,
+                        vocabulary: Dict[int, str],
+                        n_topics: int = 10,
+                        n_words: int = 10,
+                        show_word_prob: bool = False) -> List[str]:
+    """Present the topics in readable format
+
+    Parameters
+    ----------
+    vocabulary : Dict[int, str]
+        mapping from features indices to word in dictionary
+    n_topics : int, optional
+        number of topics with the highest weights (alpha) be printed, by default 10
+    n_words : int, optional
+        number of words to be printed for each topic, by default 10
+    show_word_prob : bool, optional
+        show the probability value for each word, by default False
+
+    Returns
+    -------
+    List[str]
+        List of topics string
+    """
+    n_topics = min(int(n_topics), self.n_topics)
+    n_words = min(int(n_words), self.n_words)
+    topics = self.topics_words_probs
+    alpha = np.squeeze(self.topics_concentration, axis=0)
+    # Use a stable sorting algorithm so that when alpha is fixed
+    # we always get the same topics.
+    text = []
+    for idx, topic_idx in enumerate(
+        np.argsort(-alpha, kind="mergesort")[:int(n_topics)]):
+      words = topics[topic_idx]
+      desc = " ".join(f"{vocabulary[i]}_{words[i]:.2f}"
+                      if show_word_prob else f"{vocabulary[i]}"
+                      for i in np.argsort(-words)[:int(n_words)])
+      text.append(
+          f"[#{idx}]index:{topic_idx:3d} alpha={alpha[topic_idx]:.2f} {desc}")
+    return np.array(text)
+
   def __str__(self):
     if hasattr(self, 'input_shape'):
       shape = self.input_shape
@@ -319,7 +361,7 @@ class LatentDirichletDecoder(Model):
 # Main class
 # ===========================================================================
 class AmortizedLDA(BetaVAE):
-  r""" Amortized Latent Dirichlet Autoencoding """
+  """ Amortized Latent Dirichlet Autoencoding """
 
   def __init__(
       self,
@@ -405,27 +447,15 @@ class AmortizedLDA(BetaVAE):
 
   def get_topics_string(self,
                         vocabulary: Dict[int, str],
-                        n_words: int = 10,
                         n_topics: int = 10,
+                        n_words: int = 10,
                         show_word_prob: bool = False) -> List[str]:
     r""" Print most relevant topics and its most representative words
     distribution """
-    n_topics = min(int(n_topics), self.lda.n_topics)
-    n_words = min(int(n_words), self.lda.n_words)
-    topics = self.lda.topics_words_probs
-    alpha = np.squeeze(self.lda.topics_concentration, axis=0)
-    # Use a stable sorting algorithm so that when alpha is fixed
-    # we always get the same topics.
-    text = []
-    for idx, topic_idx in enumerate(
-        np.argsort(-alpha, kind="mergesort")[:int(n_topics)]):
-      words = topics[topic_idx]
-      desc = " ".join(f"{vocabulary[i]}_{words[i]:.2f}"
-                      if show_word_prob else f"{vocabulary[i]}"
-                      for i in np.argsort(-words)[:int(n_words)])
-      text.append(
-          f"[#{idx}]index:{topic_idx:3d} alpha={alpha[topic_idx]:.2f} {desc}")
-    return np.array(text)
+    return self.lda.get_topics_string(vocabulary=vocabulary,
+                                      n_words=n_words,
+                                      n_topics=n_topics,
+                                      show_word_prob=show_word_prob)
 
   def perplexity(self,
                  inputs: Union[TensorTypes, DatasetV2],
@@ -506,3 +536,111 @@ class TwoStageLDA(AmortizedLDA):
         analytic=kwargs.get('analytic', self.analytic))
     kl[f'kl_{self.lda.name}'] = kl_topics
     return llk, kl
+
+
+# ===========================================================================
+# VDA
+# ===========================================================================
+class ALDA(VariationalModel):
+  """Amortized Latent Dirichlet Allocation"""
+
+  def __init__(
+      self,
+      lda: LatentDirichletDecoder,
+      encoder: Layer,
+      warmup: Optional[int] = None,
+      beta: float = 1.0,
+      **kwargs,
+  ):
+    super().__init__(**kwargs)
+    self.lda = lda
+    lda.step = self.step
+    if warmup is not None:
+      lda.warmup = int(warmup)
+    self.encoder = encoder
+    self.beta = beta
+    self.build(input_shape=(None, lda.n_words))
+
+  def call(self, inputs, training=None, *args, **kwargs):
+    e = self.encoder(inputs, training=training)
+    px, qz = self.lda(e, training=training, sample_shape=self.sample_shape)
+    return px, qz
+
+  def elbo(self, inputs, training):
+    px, qz = self(inputs, training=training)
+    llk = px.log_prob(inputs)
+    kl = self.beta * qz.KL_divergence(analytic=self.analytic,
+                                      reverse=self.reverse)
+    elbo = llk - kl
+    return elbo, dict(llk=llk, kl=kl)
+
+  def train_steps(self, inputs, training, **kwargs):
+
+    def loss():
+      elbo, metrics = self.elbo(inputs, training)
+      return -tf.reduce_mean(elbo), metrics
+
+    yield loss
+
+
+class VDA(VariationalModel):
+  """Variational Dirichlet Autoencoder"""
+
+  def __init__(
+      self,
+      lda: LatentDirichletDecoder,
+      encoder: Layer,
+      decoder: Layer,
+      latents: RandomVariable = RandomVariable(10,
+                                               'diag',
+                                               projection=True,
+                                               name="Latents"),
+      warmup: Optional[int] = None,
+      beta: float = 1.0,
+      **kwargs,
+  ):
+    super().__init__(**kwargs)
+    self.lda = lda
+    self.lda.step = self.step
+    if warmup is not None:
+      self.lda.warmup = warmup
+    self.beta = beta
+    self.encoder = encoder
+    self.decoder = decoder
+    self.latents = latents.create_posterior()
+    if lda.distribution == 'onehot':
+      ...
+    else:
+      dist = RandomVariable((lda.n_words,),
+                            posterior=lda.distribution,
+                            projection=True,
+                            name="Outputs")
+    self.outputs_ = dist.create_posterior()
+
+  def call(self, inputs, training=None, mask=None):
+    e = self.encoder(inputs, training=training)
+    qz = self.latents(e, training=training)
+    px1, qt = self.lda(e, training=training)
+    d = self.decoder(tf.convert_to_tensor(qz), training=training)
+    px2 = self.outputs_(d, training=training)
+    return (px1, px2), (qz, qt)
+
+  def train_steps(
+      self,
+      inputs: TensorTypes,
+      training: bool = True,
+      mask: Optional[TensorTypes] = None,
+      **kwargs) -> Iterator[Callable[[], Tuple[Tensor, Dict[str, Any]]]]:
+    (px1, px2), (qz, qt) = self(inputs, training=training, mask=mask)
+    llk_z = px1.log_prob(inputs)
+    llk_t = px2.log_prob(inputs)
+    kl_z = qz.KL_divergence()
+    kl_t = qt.KL_divergence()
+    elbo = tf.cond(tf.convert_to_tensor(False),
+                   true_fn=lambda: llk_z - self.beta * kl_z,
+                   false_fn=lambda: llk_t - self.beta * kl_t)
+    yield lambda: (-tf.reduce_mean(elbo),
+                   dict(llk_z=tf.reduce_mean(llk_z),
+                        llk_t=tf.reduce_mean(llk_t),
+                        kl_z=tf.reduce_mean(kl_z),
+                        kl_t=tf.reduce_mean(kl_t)))

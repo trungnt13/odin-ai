@@ -241,24 +241,14 @@ class DenseDistribution(Dense):
                          self.__class__.__name__)
     return self.prior.sample(sample_shape=sample_shape, seed=seed)
 
-  def call(self,
-           inputs,
-           training=None,
-           mask=None,
-           sample_shape=(),
-           projection=None,
-           prior=None):
+  def call(self, inputs, training=None, sample_shape=()):
     # projection by Dense layer could be skipped by setting projection=False
     # NOTE: a 2D inputs is important here, but we don't want to flatten
     # automatically
     params = inputs
-    if projection is None:
-      projection = self.projection
-    else:
-      projection = self.projection and projection
     # do not use tf.cond here, it infer the wrong shape when trying to build
     # the layer in Graph mode.
-    if projection:
+    if self.projection:
       params = super().call(params)
     # applying dropout
     if self._dropout > 0:
@@ -268,12 +258,9 @@ class DenseDistribution(Dense):
     posterior = self.posterior_layer(params, training=training)
     self._most_recent_distribution = posterior
     # NOTE: all distribution has the method kl_divergence, so we cannot use it
-    prior = self.prior if prior is None else prior
     posterior.KL_divergence = KLdivergence(
-        posterior, prior=prior,
+        posterior, prior=self.prior,
         sample_shape=None)  # None mean reuse sampled data here
-    assert not hasattr(posterior, 'prior'), "Cannot assign prior to the output"
-    posterior.prior = prior
     return posterior
 
   def kl_divergence(self,

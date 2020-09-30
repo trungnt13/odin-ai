@@ -12,16 +12,19 @@ from matplotlib import pyplot as plt
 from odin import backend as bk
 from odin import visual as vs
 from odin.backend import interpolation
-from odin.bay.vi import (Criticizer, NetworkConfig, RandomVariable,
-                         VariationalAutoencoder, get_vae)
+from odin.bay.vi import (NetworkConfig, RandomVariable, VariationalAutoencoder,
+                         VariationalPosterior, get_vae)
 from odin.exp import get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import IterableDataset, get_dataset
 from odin.utils import ArgController, as_tuple, clear_folder
 from tensorflow.python import keras
 from tqdm import tqdm
 
-tf.config.experimental.set_memory_growth(
-    tf.config.list_physical_devices('GPU')[0], True)
+try:
+  tf.config.experimental.set_memory_growth(
+      tf.config.list_physical_devices('GPU')[0], True)
+except IndexError:
+  pass
 tf.debugging.set_log_device_placement(False)
 tf.autograph.set_verbosity(0)
 

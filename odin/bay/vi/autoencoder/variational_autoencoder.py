@@ -21,10 +21,10 @@ from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
 from odin.bay.layers.dense_distribution import DenseDistribution
 from odin.bay.random_variable import RandomVariable
+from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.autoencoder.networks import ImageNet
 from odin.exp.trainer import Trainer
-from odin.networks import (Identity, NetworkConfig, Networks, TensorTypes,
-                           TrainStep)
+from odin.networks import Identity, NetworkConfig, TensorTypes, TrainStep
 from odin.utils.python_utils import classproperty
 from scipy.sparse import spmatrix
 from six import string_types
@@ -35,7 +35,6 @@ from tensorflow.python.keras.layers import Layer
 from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
 from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
 from tensorflow.python.platform import tf_logging as logging
-from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
 from tensorflow_probability.python.distributions import Distribution
@@ -113,9 +112,7 @@ def _prepare_decode_latents(fn_reduce, latents, sample_shape):
 
 
 def _net2str(net):
-  if isinstance(net, keras.Sequential):
-    return layer2text(net)
-  elif isinstance(net, tfl.DistributionLambda):
+  if isinstance(net, (keras.Sequential, tfl.DistributionLambda)):
     return layer2text(net)
   return str(net)
 
@@ -220,7 +217,7 @@ class VAEStep(TrainStep):
   pX_Z: Optional[Distribution, List[Distribution]] = None
   qZ_X: Optional[Distribution, List[Distribution]] = None
 
-  def call(self) -> Tuple[tf.Tensor, Dict[str, Union[tf.Tensor, str]]]:
+  def call(self) -> Tuple[Tensor, Dict[str, Any]]:
     pX_Z, qZ_X = self.vae(self.inputs,
                           training=self.training,
                           mask=self.mask,
@@ -252,8 +249,8 @@ class VAEStep(TrainStep):
 # ===========================================================================
 # Model
 # ===========================================================================
-class VariationalAutoencoder(Networks):
-  r""" Base class for all variational autoencoder
+class VariationalAutoencoder(VariationalModel):
+  r"""Base class for all variational autoencoder
 
   Parameters
   ----------
@@ -267,7 +264,7 @@ class VariationalAutoencoder(Networks):
   latents : LayerCreator, optional
       a descriptor for the latents' distribution, by default
       `RandomVariable(10, 'diag', projection=True, name="Latent")`
-  reduce_latent : {'concat', 'mean', 'min', 'max', 'sum', 'none'}, optional
+  reduce_latents : {'concat', 'mean', 'min', 'max', 'sum', 'none'}, optional
       how multiple latents are handled when feeding to the decoder,
       by default 'concat'
   input_shape : Optional[List[int]], optional
@@ -318,17 +315,14 @@ class VariationalAutoencoder(Networks):
                                              'diag',
                                              projection=True,
                                              name="Latent"),
-      reduce_latent: Literal['concat', 'mean', 'min', 'max', 'sum',
-                             'none'] = 'concat',
+      reduce_latents: Literal['concat', 'mean', 'min', 'max', 'sum',
+                              'none'] = 'concat',
       input_shape: Optional[List[int]] = None,
-      analytic: bool = False,
-      reverse: bool = True,
       **kwargs,
   ):
     ### keras want this supports_masking on to enable support masking
     self.supports_masking = True
     super().__init__(**kwargs)
-    self._sample_shape = ()
     ### First, infer the right input_shape
     if not isinstance(outputs, (tuple, list)):
       outputs = [outputs]
@@ -361,16 +355,16 @@ class VariationalAutoencoder(Networks):
         z.event_shape if hasattr(z, 'event_shape') else z.output_shape[1:]
         for z in self.latent_layers
     ]
-    reduce_latent = str(reduce_latent).strip().lower()
-    if reduce_latent == 'none':
-      pass
-    elif reduce_latent == 'concat':
+    reduce_latents = str(reduce_latents).strip().lower()
+    if reduce_latents == 'none':
+      ...
+    elif reduce_latents == 'concat':
       latent_shape = sum(np.array(s) for s in latent_shape).tolist()
-    elif reduce_latent in ('mean', 'min', 'max', 'sum'):
+    elif reduce_latents in ('mean', 'min', 'max', 'sum'):
       latent_shape = latent_shape[0]
     else:
-      raise ValueError(f"No support for reduce_latent='{reduce_latent}'")
-    self.reduce_latent = reduce_latent
+      raise ValueError(f"No support for reduce_latents='{reduce_latents}'")
+    self.reduce_latents = reduce_latents
     ### Create the decoder
     all_decoder = _parse_layers(decoder,
                                 input_shape=latent_shape,
@@ -411,48 +405,6 @@ class VariationalAutoencoder(Networks):
         inspect.getfullargspec(i.call).args[1:]
         for i in tf.nest.flatten(self.decoder)
     ]
-    self.analytic = analytic
-    self.reverse = reverse
-
-  @property
-  def sample_shape(self) -> List[int]:
-    return self._sample_shape
-
-  def set_elbo_configs(
-      self,
-      analytic: Optional[bool] = None,
-      reverse: Optional[bool] = None,
-      sample_shape: Optional[Union[int, List[int]]] = None
-  ) -> VariationalAutoencoder:
-    """[summary]
-
-    Parameters
-    ----------
-    analytic : Optional[bool], optional
-        if True use close-form solution for KL, by default None
-    reverse : Optional[bool], optional
-        If `True`, calculating `KL(q||p)` which optimizes `q`
-        (or p_model) by greedily filling in the highest modes of data (or, in
-        other word, placing low probability to where data does not occur).
-        Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
-        propagation place high probability at anywhere data occur
-        (i.e. averagely fitting the data)., by default None
-    sample_shape : Optional[Union[int, List[int]]], optional
-        number of MCMC samples for MCMC estimation of KL-divergence,
-        by default None
-
-    Returns
-    -------
-    VariationalAutoencoder
-        the object itself for method chaining
-    """
-    if analytic is not None:
-      self.analytic = bool(analytic)
-    if reverse is not None:
-      self.reverse = bool(reverse)
-    if sample_shape is not None:
-      self._sample_shape = sample_shape
-    return self
 
   @property
   def encoder(self) -> Union[Layer, List[Layer]]:
@@ -469,29 +421,6 @@ class VariationalAutoencoder(Networks):
   @property
   def output_layers(self) -> Union[Layer, List[Layer]]:
     return self._output_layers
-
-  @property
-  def init_args(self) -> Dict[str, Any]:
-    r""" Return a dictionary of arguments used for initialized this class """
-    return self._init_args
-
-  @classproperty
-  def default_args(cls) -> Dict[str, Any]:
-    r""" Return a dictionary of the default keyword arguments of all subclass start
-          from VariationalAutoencoder.
-    """
-    kw = dict()
-    args = []
-    for c in type.mro(cls)[::-1]:
-      if not issubclass(c, VariationalAutoencoder):
-        continue
-      spec = inspect.getfullargspec(c.__init__)
-      args += spec.args
-      if spec.defaults is not None:
-        for key, val in zip(spec.args[::-1], spec.defaults[::-1]):
-          kw[key] = val
-    args = [i for i in set(args) if i not in kw and i != 'self']
-    return kw
 
   @property
   def posteriors(self) -> List[DenseDistribution]:
@@ -604,7 +533,7 @@ class VariationalAutoencoder(Networks):
              **kwargs) -> Union[Distribution, List[Distribution]]:
     r""" Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
-    latents = _prepare_decode_latents(self.reduce_latent, latents,
+    latents = _prepare_decode_latents(self.reduce_latents, latents,
                                       self.sample_shape)
     # apply the decoder and get back the sample shape
     outputs = []
@@ -666,12 +595,11 @@ class VariationalAutoencoder(Networks):
 
   @tf.function(autograph=False)
   def marginal_log_prob(self,
-                        inputs: TensorTypes,
+                        inputs: Union[TensorTypes, List[TensorTypes]],
                         training: Optional[bool] = None,
                         mask: Optional[Tensor] = None,
                         **kwargs) -> Tuple[Tensor, Tensor]:
-    r""" Marginal log likelihood `log(p(X))`, an biased estimation.
-
+    """Marginal log likelihood `log(p(X))`, an biased estimation.
     With sufficient amount of MCMC samples (-> inf), the value will converges
     to `log(p(X))`
 
@@ -685,11 +613,23 @@ class VariationalAutoencoder(Networks):
       - with proper prior injected into qZ_X and pZ_X using
         `qZ_X.KL_divergence.prior = ...` during `encode` or `decode` methods
 
-    Return:
+
+    Parameters
+    ----------
+    inputs : TensorTypes
+        [description]
+    training : Optional[bool], optional
+        [description], by default None
+    mask : Optional[Tensor], optional
+        [description], by default None
+
+    Returns
+    -------
+    Tuple[Tensor, Tensor]
       marginal log-likelihood : a Tensor of shape `[batch_size]`
         marginal log-likelihood of p(X)
-      distortion : a Dictionary mapping from distribution name to Tensor
-        of shape `[batch_size]`, the negative reconstruction cost.
+      distortion (a.k.a reconstruction): a Dictionary mapping from distribution
+        name to Tensor of shape `[batch_size]`, the negative reconstruction cost.
     """
     sample_shape = [tf.cast(tf.reduce_prod(self.sample_shape), tf.int32)]
     pX_Z, qZ_X = self.call(inputs, training=training, mask=mask, **kwargs)
@@ -762,24 +702,42 @@ class VariationalAutoencoder(Networks):
            qZ_X: Union[Distribution, List[Distribution]],
            mask: Optional[Tensor] = None,
            training: Optional[bool] = None,
-           return_components: bool = False):
-    r""" Calculate the distortion (log-likelihood) and rate (KL-divergence)
+           return_components: bool = False) -> Tensor:
+    """Calculate the distortion (log-likelihood) and rate (KL-divergence)
     for contruction the Evident Lower Bound (ELBO).
 
     The final ELBO is:
       `ELBO = E_{z~q(Z|X)}[log(p(X|Z))] - KL_{x~p(X)}[q(Z|X)||p(Z)]`
 
-    Arguments:
-      return_components : a Boolean. If True return the log-likelihood and the
-        KL-divergence instead of final ELBO.
+    Parameters
+    ----------
+    inputs : Union[Tensor, List[Tensor]]
+        [description]
+    pX_Z : Union[Distribution, List[Distribution]]
+        [description]
+    qZ_X : Union[Distribution, List[Distribution]]
+        [description]
+    mask : Optional[Tensor], optional
+        [description], by default None
+    training : Optional[bool], optional
+        [description], by default None
+    return_components : bool, optional
+        If True return the log-likelihood and the KL-divergence instead of
+        final ELBO, by default False
 
-    Return:
+    Returns
+    -------
       elbo : a Tensor shape `[sample_shape, batch_size]`.
       (optional) for `return_components=True`
         log-likelihood : dictionary of `Tensor` shape [sample_shape, batch_size].
           The log-likelihood or distortion
         divergence : dictionary of `Tensor` shape [sample_shape, batch_size].
           The reversed KL-divergence or rate
+
+    Raises
+    ------
+    RuntimeError
+        return reconstruction and KL-divergence must be in form of dictionary.
     """
     # organize all inputs to list
     inputs = [
@@ -820,26 +778,6 @@ class VariationalAutoencoder(Networks):
                    "probably because of numerical instability."))
       div_sum += x
     elbo = llk_sum - div_sum
-    return elbo
-
-  def importance_weighted(self, elbo: TensorTypes, axis: int = 0):
-    r""" VAE objective can lead to overly simplified representations which
-    fail to use the network’s entire modeling capacity.
-
-    Importance weighted autoencoder (IWAE) uses a strictly tighter
-    log-likelihood lower bound derived from importance weighting.
-
-    Using more samples can only improve the tightness of the bound, and
-    as our estimator is based on the log of the average importance weights,
-    it does not suffer from high variance.
-
-    Reference:
-      Yuri Burda, Roger Grosse, Ruslan Salakhutdinov. Importance Weighted
-        Autoencoders. In ICLR, 2015. https://arxiv.org/abs/1509.00519
-    """
-    dtype = elbo.dtype
-    iw_dim = tf.cast(elbo.shape[axis], dtype=dtype)
-    elbo = tf.reduce_logsumexp(elbo, axis=axis) - tf.math.log(iw_dim)
     return elbo
 
   ################## For training

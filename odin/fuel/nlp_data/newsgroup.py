@@ -1,11 +1,12 @@
-from typing import Union, Iterable
+from typing import Iterable, Union
 
+import numpy as np
 from numpy import ndarray
 from odin.fuel.nlp_data._base import NLPDataset
+from odin.utils import one_hot
 from scipy.sparse import spmatrix
 from sklearn.datasets import fetch_20newsgroups
 from sklearn.model_selection import train_test_split
-
 
 
 class Newsgroup20(NLPDataset):

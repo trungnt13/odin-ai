@@ -38,6 +38,7 @@ __all__ = [
 YAML_REGEX = re.compile(r"\w+: \w+")
 OVERRIDE_PATTERN = re.compile(r"\A[\+\~]?[\w\.\\\@]+=[\w\(\)\[\]\{\}\,\.\']+")
 JOBS_PATTERN = re.compile(r"\A-{1,2}j=?(\d+)\Z")
+LIST_PATTERN = re.compile(r"\A-{1,2}l(ist)?\Z")
 
 
 def _insert_argv(key, value, is_value_string=True):
@@ -284,6 +285,16 @@ def run_hydra(output_dir: str = '/tmp/outputs',
       ## dictionary, tuple, list, DictConfig
       else:
         config_path, config_name = _save_config_to_tempdir(config)
+      ### list all experiments command
+      for a in sys.argv:
+        if LIST_PATTERN.match(a):
+          print("Output dir:", output_dir)
+          for fname in sorted(os.listdir(output_dir)):
+            path = os.path.join(output_dir, fname)
+            print(
+                f" {fname}", f"({len(os.listdir(path))} files)"
+                if os.path.isdir(path) else "")
+          exit()
       ### check if overrides provided
       is_overrided = False
       for a in sys.argv:
