@@ -266,26 +266,26 @@ class Networks(keras.Model, MD5object):
     logging.get_logger().disabled = False
     return self
 
-  def train_steps(
-      self,
-      inputs: TensorTypes,
-      training: bool = True,
-      mask: Optional[TensorTypes] = None,
-      **kwargs) -> Iterator[Callable[[], Tuple[Tensor, Dict[str, Any]]]]:
+  def train_steps(self,
+                  inputs: TensorTypes,
+                  training: bool = True,
+                  *args,
+                  **kwargs
+                 ) -> Iterator[Callable[[], Tuple[Tensor, Dict[str, Any]]]]:
     yield TrainStep(inputs=inputs,
                     training=training,
-                    mask=mask,
                     parameters=self.trainable_variables,
+                    *args,
                     **kwargs)
 
   def optimize(self,
                inputs: Union[TensorTypes, List[TensorTypes]],
                training: bool = True,
-               mask: Optional[TensorTypes] = None,
                optimizer: Optional[Union[List[OptimizerV2],
                                          OptimizerV2]] = None,
                allow_none_gradients: bool = False,
                track_gradients: bool = False,
+               *args,
                **kwargs) -> Tuple[Tensor, Dict[str, Any]]:
     """Optimization function, could be used for autograph
 
@@ -295,8 +295,6 @@ class Networks(keras.Model, MD5object):
         a single or list of input tensors
     training : bool, optional
         indicating the training mode for call method, by default True
-    mask : Optional[TensorTypes], optional
-        mask tensor, by default None
     optimizer : Optional[OptimizerV2], optional
         optimizer, by default None
     allow_none_gradients : bool, optional
@@ -325,7 +323,7 @@ class Networks(keras.Model, MD5object):
     n_optimizer = len(optimizer)
     ## start optimizing step-by-step
     iterator = enumerate(
-        self.train_steps(inputs=inputs, training=training, mask=mask, **kwargs))
+        self.train_steps(inputs=inputs, training=training, *args, **kwargs))
     for step_idx, step in iterator:
       assert isinstance(step, TrainStep) or callable(step), \
         ("method train_steps must return an Iterator of TrainStep or callable, "

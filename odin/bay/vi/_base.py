@@ -213,3 +213,11 @@ class VariationalModel(Networks):
     log_perplexity_tensor = tf.reduce_mean(log_perplexity)
     perplexity_tensor = tf.exp(log_perplexity_tensor)
     return perplexity_tensor
+
+  def train_steps(self, inputs, training, *args, **kwargs):
+
+    def loss():
+      elbo, metrics = self.elbo(inputs, training, *args, **kwargs)
+      return -tf.reduce_mean(elbo), metrics
+
+    yield loss

@@ -561,26 +561,18 @@ class ALDA(VariationalModel):
     self.beta = beta
     self.build(input_shape=(None, lda.n_words))
 
-  def call(self, inputs, training=None, *args, **kwargs):
+  def call(self, inputs, training=None, **kwargs):
     e = self.encoder(inputs, training=training)
     px, qz = self.lda(e, training=training, sample_shape=self.sample_shape)
     return px, qz
 
-  def elbo(self, inputs, training):
+  def elbo(self, inputs, training, **kwargs):
     px, qz = self(inputs, training=training)
     llk = px.log_prob(inputs)
     kl = self.beta * qz.KL_divergence(analytic=self.analytic,
                                       reverse=self.reverse)
     elbo = llk - kl
     return elbo, dict(llk=llk, kl=kl)
-
-  def train_steps(self, inputs, training, **kwargs):
-
-    def loss():
-      elbo, metrics = self.elbo(inputs, training)
-      return -tf.reduce_mean(elbo), metrics
-
-    yield loss
 
 
 class VDA(VariationalModel):
@@ -609,38 +601,33 @@ class VDA(VariationalModel):
     self.decoder = decoder
     self.latents = latents.create_posterior()
     if lda.distribution == 'onehot':
-      ...
+      dist = RandomVariable((lda.n_words,),
+                            posterior='onehot',
+                            projection=True,
+                            preactivation='softmax',
+                            kwargs=dict(probs_input=True),
+                            name="Outputs")
     else:
       dist = RandomVariable((lda.n_words,),
                             posterior=lda.distribution,
                             projection=True,
                             name="Outputs")
     self.outputs_ = dist.create_posterior()
+    self.build(input_shape=(None, lda.n_words))
 
-  def call(self, inputs, training=None, mask=None):
+  def call(self, inputs, training=None, **kwargs):
     e = self.encoder(inputs, training=training)
-    qz = self.latents(e, training=training)
-    px1, qt = self.lda(e, training=training)
+    qz = self.latents(e, training=training, sample_shape=self.sample_shape)
+    px_t, qt = self.lda(e, training=training, sample_shape=self.sample_shape)
     d = self.decoder(tf.convert_to_tensor(qz), training=training)
-    px2 = self.outputs_(d, training=training)
-    return (px1, px2), (qz, qt)
+    px_z = self.outputs_(d, training=training)
+    return (px_z, px_t), (qz, qt)
 
-  def train_steps(
-      self,
-      inputs: TensorTypes,
-      training: bool = True,
-      mask: Optional[TensorTypes] = None,
-      **kwargs) -> Iterator[Callable[[], Tuple[Tensor, Dict[str, Any]]]]:
-    (px1, px2), (qz, qt) = self(inputs, training=training, mask=mask)
-    llk_z = px1.log_prob(inputs)
-    llk_t = px2.log_prob(inputs)
-    kl_z = qz.KL_divergence()
-    kl_t = qt.KL_divergence()
-    elbo = tf.cond(tf.convert_to_tensor(False),
-                   true_fn=lambda: llk_z - self.beta * kl_z,
-                   false_fn=lambda: llk_t - self.beta * kl_t)
-    yield lambda: (-tf.reduce_mean(elbo),
-                   dict(llk_z=tf.reduce_mean(llk_z),
-                        llk_t=tf.reduce_mean(llk_t),
-                        kl_z=tf.reduce_mean(kl_z),
-                        kl_t=tf.reduce_mean(kl_t)))
+  def elbo(self, inputs, training=None, **kwargs):
+    (px_z, px_t), (qz, qt) = self(inputs, training=training)
+    llk_z = 0.5 * px_z.log_prob(inputs)
+    llk_t = px_t.log_prob(inputs)
+    kl_z = qz.KL_divergence(analytic=self.analytic, reverse=self.reverse)
+    kl_t = qt.KL_divergence(analytic=self.analytic, reverse=self.reverse)
+    elbo = (llk_z + llk_t) - self.beta * (kl_z + kl_t)
+    return elbo, dict(llk_z=llk_z, llk_t=llk_t, kl_z=kl_z, kl_t=kl_t)
