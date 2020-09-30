@@ -1,3 +1,4 @@
+import inspect
 from typing import Optional, Union
 
 import numpy as np
@@ -49,26 +50,43 @@ def linear_classifier(X: np.ndarray,
   ValueError
       Unknown classifier algorithm
   """
+  max_iter = 1000
   if algo == 'svm':
     from sklearn.svm import LinearSVC
-    model = LinearSVC(random_state=seed, **kwargs)
+    max_iter = 3000
+    model = LinearSVC
   elif algo == 'lda':
     from sklearn.discriminant_analysis import LinearDiscriminantAnalysis
-    model = LinearDiscriminantAnalysis(**kwargs)
+    model = LinearDiscriminantAnalysis
   elif algo == 'knn':
     from sklearn.neighbors import KNeighborsClassifier
-    model = KNeighborsClassifier(**kwargs)
+    model = KNeighborsClassifier
   elif algo == 'tree':
     from sklearn.tree import DecisionTreeClassifier
-    model = DecisionTreeClassifier(random_state=seed, **kwargs)
+    model = DecisionTreeClassifier
   elif algo == 'logistic':
     from sklearn.linear_model import LogisticRegression
-    model = LogisticRegression(random_state=seed, **kwargs)
+    model = LogisticRegression
   elif algo == 'gbt':
     from sklearn.ensemble import GradientBoostingClassifier
-    model = GradientBoostingClassifier(random_state=seed, **kwargs)
+    model = GradientBoostingClassifier
   else:
     raise ValueError(f"No support for linear classifier with name='{algo}'")
+  ## select the right kwargs
+  f_init = model.__init__
+  if hasattr(f_init, '__wrapped__'):
+    f_init = f_init.__wrapped__
+  args = inspect.getfullargspec(f_init)
+  args = set(
+      list(args.args) +
+      (list(args.defaults) if args.defaults is not None else []) +
+      list(args.kwonlyargs))
+  ## update the kwargs
+  kwargs.update(random_state=seed)
+  kwargs.setdefault('max_iter', max_iter)
+  kwargs = {i: j for i, j in kwargs.items() if i in args}
+  model = model(**kwargs)
+  ## fit the model
   model.fit(X, y)
   return model
 
