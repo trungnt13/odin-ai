@@ -12,8 +12,8 @@ from odin import search
 from odin import visual as vs
 from odin.bay import RandomVariable
 from odin.bay.vi import Criticizer
-from odin.bay.vi.autoencoder import (Factor2VAE, FactorDiscriminator, FactorVAE,
-                                     SemiFactor2VAE, SemiFactorVAE)
+from odin.bay.vi.autoencoder import (Factor2VAE, FactorDiscriminator, factorVAE,
+                                     SemiFactor2VAE, SemifactorVAE)
 from odin.exp import Experimenter, pretty_config
 from odin.fuel import get_dataset
 from odin.utils import md5_folder
@@ -104,7 +104,7 @@ class Factor(Experimenter):
               path=os.path.join(model_dir, 'weight'))
     if cfg.vae == 'factor':
       del kw['alpha']
-      model = FactorVAE(
+      model = factorVAE(
           encoder=cfg.ds,
           outputs=RandomVariable(self.ds.shape, 'bern', name="Image"),
           latents=RandomVariable(20, 'diag', projection=True, name="Latents"),
@@ -120,7 +120,7 @@ class Factor(Experimenter):
           **kw,
       )
     elif cfg.vae == 'semi':
-      model = SemiFactorVAE(
+      model = SemifactorVAE(
           encoder=cfg.ds,
           outputs=RandomVariable(self.ds.shape, 'bern', name="Image"),
           latents=RandomVariable(20, 'diag', projection=True, name="Latents"),

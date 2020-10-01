@@ -9,7 +9,7 @@ from tensorflow import Tensor
 from tensorflow_probability.python.distributions import Distribution
 
 
-class BetaVAE(VariationalAutoencoder):
+class betaVAE(VariationalAutoencoder):
   r""" Implementation of beta-VAE
   Arguments:
     beta : a Scalar. A regularizer weight indicate the capacity of the latent.
@@ -52,7 +52,7 @@ class BetaVAE(VariationalAutoencoder):
     return llk, kl
 
 
-class BetaTCVAE(BetaVAE):
+class betatcVAE(betaVAE):
   r""" Extend the beta-VAE with total correlation loss added.
 
   Based on Equation (4) with alpha = gamma = 1
@@ -82,8 +82,8 @@ class BetaTCVAE(BetaVAE):
     return llk, kl
 
 
-class AnnealedVAE(VariationalAutoencoder):
-  r"""Creates an AnnealedVAE model.
+class annealedVAE(VariationalAutoencoder):
+  r"""Creates an annealedVAE model.
 
   Implementing Eq. 8 of (Burgess et al. 2018)
 
@@ -97,7 +97,7 @@ class AnnealedVAE(VariationalAutoencoder):
     interpolation : a String. Type of interpolation for increasing capacity.
 
   Example:
-    vae = AnnealedVAE()
+    vae = annealedVAE()
     elbo = vae.elbo(x, px, qz, n_iter=1)
 
   Reference:
@@ -136,7 +136,7 @@ class AnnealedVAE(VariationalAutoencoder):
     return llk, kl
 
 
-# class CyclicalAnnealingVAE(BetaVAE):
+# class CyclicalAnnealingVAE(betaVAE):
 #   r"""
 #   Reference:
 #     Fu, H., Li, C., Liu, X., Gao, J., Celikyilmaz, A., Carin, L., 2019.

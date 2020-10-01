@@ -11,7 +11,7 @@ from tensorflow_probability.python.layers import DistributionLambda
 
 from odin.bay.distributions import VectorQuantized
 from odin.bay.helpers import KLdivergence
-from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 
 
@@ -246,7 +246,7 @@ class VectorQuantizer(Layer):
 # ===========================================================================
 # Main
 # ===========================================================================
-class VQVAE(BetaVAE):
+class VQVAE(betaVAE):
   r"""
 
   Arguments:

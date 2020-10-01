@@ -196,7 +196,7 @@ class CriticizerMetrics(CriticizerBase):
                                                verbose=verbose))
 
   def cal_factorvae_score(self, n_samples=10000, verbose=True):
-    r""" FactorVAE based score
+    r""" factorVAE based score
 
     Returns:
       tuple of 2 scalars: accuracy for train and test data

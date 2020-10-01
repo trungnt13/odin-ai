@@ -91,7 +91,7 @@ def predictive_strength(representations: tfd.Distribution,
 
 
 # ===========================================================================
-# BetaVAE and FactorVAE scoring methods
+# betaVAE and factorVAE scoring methods
 # ===========================================================================
 def _sampling_helper(representations,
                      factors,
@@ -198,7 +198,7 @@ def beta_vae_score(representations: tfd.Distribution,
       Variational Framework (https://openreview.net/forum?id=Sy2fzU9gl).
 
   """
-  desc = "BetaVAE scoring"
+  desc = "betaVAE scoring"
   strategy = 'betavae'
   rand = random_state if isinstance(random_state, RandomState) else \
     RandomState(seed=random_state)
@@ -227,7 +227,7 @@ def factor_vae_score(representations: tfd.Distribution,
     Kim, H., Mnih, A., 2018. Disentangling by Factorising.
       arXiv:1802.05983 [cs, stat].
   """
-  desc = "FactorVAE scoring"
+  desc = "factorVAE scoring"
   strategy = 'factorvae'
   rand = random_state if isinstance(random_state, RandomState) else \
     RandomState(seed=random_state)

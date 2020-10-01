@@ -17,7 +17,7 @@ from odin.bay.layers import (BinomialLayer, DenseDistribution, DirichletLayer,
                              ZINegativeBinomialLayer)
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi._base import VariationalModel
-from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              TensorTypes,
                                                              VAEStep)
@@ -360,7 +360,7 @@ class LatentDirichletDecoder(Model):
 # ===========================================================================
 # Main class
 # ===========================================================================
-class AmortizedLDA(BetaVAE):
+class AmortizedLDA(betaVAE):
   """ Amortized Latent Dirichlet Autoencoding """
 
   def __init__(
@@ -496,7 +496,7 @@ class TwoStageLDA(AmortizedLDA):
       qZ_X: Union[Distribution, List[Distribution]],
       **kwargs,
   ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
-    llk, kl = super(BetaVAE, self)._elbo(inputs, pX_Z, qZ_X, **kwargs)
+    llk, kl = super(betaVAE, self)._elbo(inputs, pX_Z, qZ_X, **kwargs)
     # stop all the kl gradients just for sure
     kl = {k: tf.stop_gradient(v) for k, v in kl.items()}
     # add the topics KL

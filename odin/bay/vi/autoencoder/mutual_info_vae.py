@@ -2,7 +2,7 @@ from numbers import Number
 
 import tensorflow as tf
 from odin.bay.random_variable import RandomVariable
-from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.losses import get_divergence, maximum_mean_discrepancy
 
 
@@ -12,7 +12,7 @@ def _clip_binary(x, eps=1e-7):
   return tf.clip_by_value(x, eps, 1. - eps)
 
 
-class MutualInfoVAE(BetaVAE):
+class MutualInfoVAE(betaVAE):
   r""" Lambda is replaced as gamma in this implementation
 
   The algorithm of MI-VAE is as following:
@@ -106,7 +106,7 @@ class MutualInfoVAE(BetaVAE):
 
 
 class SemiInfoVAE(MutualInfoVAE):
-  r""" This idea combining FactorVAE (Kim et al. 2018) and
+  r""" This idea combining factorVAE (Kim et al. 2018) and
   MutualInfoVAE (Ducau et al. 2017)
 
   # TODO
@@ -184,8 +184,8 @@ class SemiInfoVAE(MutualInfoVAE):
     return llk, div
 
 
-# class FactorInfoVAE(BetaVAE):
-#   r""" This idea combining FactorVAE (Kim et al. 2018) and
+# class FactorInfoVAE(betaVAE):
+#   r""" This idea combining factorVAE (Kim et al. 2018) and
 #   MutualInfoVAE (Ducau et al. 2017)
 
 #   Reference:

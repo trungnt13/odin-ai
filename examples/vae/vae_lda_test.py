@@ -13,7 +13,7 @@ import scipy as sp
 import tensorflow as tf
 from odin.bay import concat_distributions
 from odin.bay.layers import DenseDistribution
-from odin.bay.vi import (AmortizedLDA, BetaVAE, FactorVAE,
+from odin.bay.vi import (AmortizedLDA, betaVAE, factorVAE,
                          LatentDirichletDecoder, MutualInfoVAE, NetworkConfig,
                          RandomVariable, TwoStageLDA, VariationalAutoencoder)
 from odin.exp import Trainer, get_current_trainer
@@ -203,7 +203,7 @@ def main(cfg):
             **fit_kw)
   ######## VDA - Variational Dirichlet Autoencoder
   elif cfg.model == 'vda':
-    vae = BetaVAE(
+    vae = betaVAE(
         beta=cfg.beta,
         encoder=NetworkConfig([300, 150], name='Encoder'),
         decoder=NetworkConfig([150, 300], name='Decoder'),
@@ -226,7 +226,7 @@ def main(cfg):
                    optimizer=tf.optimizers.Adam(learning_rate=1e-4)))
   ######## VAE
   elif cfg.model == 'vae':
-    vae = BetaVAE(beta=cfg.beta,
+    vae = betaVAE(beta=cfg.beta,
                   encoder=NetworkConfig([300, 300], name='Encoder'),
                   decoder=NetworkConfig([300], name='Decoder'),
                   latents=latent_dist,
@@ -241,9 +241,9 @@ def main(cfg):
             **dict(fit_kw,
                    valid_freq=1000,
                    optimizer=tf.optimizers.Adam(learning_rate=1e-4)))
-  ######## FactorVAE
+  ######## factorVAE
   elif cfg.model == 'fvae':
-    vae = FactorVAE(gamma=6.0,
+    vae = factorVAE(gamma=6.0,
                     beta=cfg.beta,
                     encoder=NetworkConfig([300, 150], name='Encoder'),
                     decoder=NetworkConfig([150, 300], name='Decoder'),
@@ -267,7 +267,7 @@ def main(cfg):
   ######## TwoStageLDA
   elif cfg.model == 'lda2':
     vae0_iter = 10000
-    vae0 = BetaVAE(beta=1.0,
+    vae0 = betaVAE(beta=1.0,
                    encoder=NetworkConfig(units=[300], name='Encoder'),
                    decoder=NetworkConfig(units=[300, 300], name='Decoder'),
                    outputs=DenseDistribution(

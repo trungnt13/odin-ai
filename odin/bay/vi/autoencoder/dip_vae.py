@@ -1,14 +1,14 @@
 from typing import Dict, List, Optional, Tuple, Union
 
 import tensorflow as tf
-from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TensorTypes
 from odin.bay.vi.losses import disentangled_inferred_prior_loss
 from tensorflow import Tensor
 from tensorflow_probability.python.distributions import Distribution
 
 
-class DIPVAE(BetaVAE):
+class dipVAE(betaVAE):
   r""" Implementation of disentangled infered prior VAE
 
   Arguments:

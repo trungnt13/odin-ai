@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 from odin.bay.vi import RandomVariable as RV
-from odin.bay.vi.autoencoder import BetaVAE, MultitaskVAE, SemiFactorVAE
+from odin.bay.vi.autoencoder import betaVAE, MultitaskVAE, SemifactorVAE
 from odin.fuel import MNIST, STL10, LegoFaces
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'

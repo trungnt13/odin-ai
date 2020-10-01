@@ -6,7 +6,7 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RandomVariable
-from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TensorTypes
 from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.bay.vi.utils import permute_dims
@@ -16,7 +16,7 @@ from tensorflow_probability.python.distributions import (Distribution,
 from typing_extensions import Literal
 
 
-class InfoVAE(BetaVAE):
+class infoVAE(betaVAE):
   r""" For MNIST, the authors used scaling coefficient `lambda(gamma)=1000`,
   and information preference `alpha=0`.
 
@@ -33,10 +33,10 @@ class InfoVAE(BetaVAE):
       i.e. maximum-mean discrepancy.
 
   Reference:
-    Zhao, S., Song, J., Ermon, S., et al. "InfoVAE: Balancing Learning and
+    Zhao, S., Song, J., Ermon, S., et al. "infoVAE: Balancing Learning and
       Inference in Variational Autoencoders".
     Shengjia Zhao. "A Tutorial on Information Maximizing Variational
-      Autoencoders (InfoVAE)".
+      Autoencoders (infoVAE)".
       https://ermongroup.github.io/blog/a-tutorial-on-mmd-variational-autoencoders
   """
 
@@ -80,7 +80,7 @@ class InfoVAE(BetaVAE):
     return llk, kl
 
 
-class InfoNCEVAE(BetaVAE):
+class InfoNCEVAE(betaVAE):
   r""" Mutual information bound based on Noise-Contrastive Estimation
 
   Reference:
@@ -91,7 +91,7 @@ class InfoNCEVAE(BetaVAE):
   """
 
 
-class IFVAE(BetaVAE):
+class IFVAE(betaVAE):
   r""" Adversarial information factorized VAE
 
   Reference:
@@ -101,7 +101,7 @@ class IFVAE(BetaVAE):
   pass
 
 
-class InfoMaxVAE(BetaVAE):
+class InfoMaxVAE(betaVAE):
   r"""
   Reference:
     Rezaabad, A.L., Vishwanath, S., 2020. "Learning Representations by

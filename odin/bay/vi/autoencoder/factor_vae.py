@@ -5,7 +5,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RandomVariable
-from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import (DatasetV2,
                                                              OptimizerV2,
@@ -112,13 +112,13 @@ class Factor2DiscriminatorStep(FactorDiscriminatorStep):
 
 
 # ===========================================================================
-# Main FactorVAE
+# Main factorVAE
 # ===========================================================================
-class FactorVAE(BetaVAE):
+class factorVAE(betaVAE):
   r""" The default encoder and decoder configuration is the same as proposed
   in (Kim et. al. 2018).
 
-  The training procedure of FactorVAE is as follows:
+  The training procedure of factorVAE is as follows:
 
   ```
   foreach iter:
@@ -254,7 +254,7 @@ class FactorVAE(BetaVAE):
 
     Example:
     ```
-    vae = FactorVAE()
+    vae = factorVAE()
     x = vae.sample_data()
     vae_step, discriminator_step = list(vae.train_steps(x))
     # optimizer VAE with total correlation loss
@@ -317,7 +317,7 @@ class FactorVAE(BetaVAE):
 # ===========================================================================
 # Same as Factor VAE but with multi-task semi-supervised extension
 # ===========================================================================
-class SemiFactorVAE(FactorVAE):
+class SemifactorVAE(factorVAE):
   r""" Semi-supervised Factor VAE
 
   Note:
@@ -397,8 +397,8 @@ class SemiFactorVAE(FactorVAE):
 # ===========================================================================
 # Separated latents for TC factorization
 # ===========================================================================
-class Factor2VAE(FactorVAE):
-  r""" The same architecture as `FactorVAE`, however, utilize two different
+class Factor2VAE(factorVAE):
+  r""" The same architecture as `factorVAE`, however, utilize two different
   latents `Z` for contents generalizability and `C` for disentangling of
   invariant factors.
 
@@ -427,7 +427,7 @@ class Factor2VAE(FactorVAE):
     self._factor_step = Factor2DiscriminatorStep
 
   def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
-    llk, div = super(BetaVAE, self)._elbo(
+    llk, div = super(betaVAE, self)._elbo(
         inputs,
         pX_Z,
         qZ_X,
@@ -442,7 +442,7 @@ class Factor2VAE(FactorVAE):
     return llk, div
 
 
-class SemiFactor2VAE(SemiFactorVAE, Factor2VAE):
+class SemiFactor2VAE(SemifactorVAE, Factor2VAE):
   r""" Combination of Semi-supervised VAE and Factor-2 VAE which leverages
   both labelled samples and the use of 2 latents space (1 for contents, and
   1 for factors)

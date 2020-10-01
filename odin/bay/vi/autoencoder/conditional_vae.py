@@ -11,7 +11,7 @@ from odin.backend.keras_helpers import layer2text
 from odin.bay.helpers import kl_divergence
 from odin.bay.layers.distribution_util_layers import ConditionalTensorLayer
 from odin.bay.random_variable import RandomVariable
-from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import LayerCreator
 from odin.bay.vi.utils import marginalize_categorical_labels
@@ -31,7 +31,7 @@ def _batch_size(x):
   return batch_size
 
 
-class ConditionalM2VAE(BetaVAE):
+class ConditionalM2VAE(betaVAE):
   r""" Implementation of M2 model (Kingma et al. 2014). The default
   configuration of this layer is optimized for MNIST.
 
@@ -313,7 +313,7 @@ class ConditionalM2VAE(BetaVAE):
     return text
 
 
-class StructuredSemiVAE(BetaVAE):
+class StructuredSemiVAE(betaVAE):
   r"""
   Reference:
     Siddharth, N., Paige, B., et al., 2017. "Learning Disentangled

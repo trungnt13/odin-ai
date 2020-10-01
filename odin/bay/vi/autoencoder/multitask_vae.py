@@ -4,10 +4,10 @@ from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
 
 from odin.bay.random_variable import RandomVariable as RV
-from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.beta_vae import betaVAE
 
 
-class MultitaskVAE(BetaVAE):
+class MultitaskVAE(betaVAE):
   r""" Multi-tasks VAE for semi-supervised learning
 
   Example:
