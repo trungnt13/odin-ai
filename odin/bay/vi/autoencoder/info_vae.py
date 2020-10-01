@@ -60,22 +60,24 @@ class InfoVAE(BetaVAE):
   def alpha(self):
     return 1 - self.beta
 
-  def _elbo(
-      self,
-      inputs: Union[TensorTypes, List[TensorTypes]],
-      pX_Z: Union[Distribution, List[Distribution]],
-      qZ_X: Union[Distribution, List[Distribution]],
-      mask: Optional[TensorTypes] = None,
-      training: Optional[bool] = None
-  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
-    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
+  def elbo_components(self,
+                      inputs,
+                      training=None,
+                      pX_Z=None,
+                      qZ_X=None,
+                      mask=None):
+    llk, kl = super().elbo_components(inputs,
+                                      pX_Z=pX_Z,
+                                      qZ_X=qZ_X,
+                                      mask=mask,
+                                      training=training)
     # repeat for each latent
-    for name, q in zip(self.latent_names, qZ_X):
+    for z, qz in zip(self.latents, tf.nest.flatten(qZ_X)):
       # div(qZ||pZ)
       info_div = (self.gamma - self.beta) * self.divergence(
-          q, q.KL_divergence.prior)
-      div[f'div_{name}'] = info_div
-    return llk, div
+          qz, qz.KL_divergence.prior)
+      kl[f'div_{z.name}'] = info_div
+    return llk, kl
 
 
 class InfoNCEVAE(BetaVAE):

@@ -7,6 +7,7 @@ from odin.bay.vi.losses import disentangled_inferred_prior_loss
 from tensorflow import Tensor
 from tensorflow_probability.python.distributions import Distribution
 
+
 class DIPVAE(BetaVAE):
   r""" Implementation of disentangled infered prior VAE
 
@@ -39,19 +40,21 @@ class DIPVAE(BetaVAE):
                                                dtype=self.dtype,
                                                name='lambda_offdiag')
 
-  def _elbo(
-      self,
-      inputs: Union[TensorTypes, List[TensorTypes]],
-      pX_Z: Union[Distribution, List[Distribution]],
-      qZ_X: Union[Distribution, List[Distribution]],
-      mask: Optional[TensorTypes] = None,
-      training: Optional[bool] = None
-  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
-    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
-    for name, q in zip(self.latent_names, qZ_X):
-      dip = disentangled_inferred_prior_loss(q,
+  def elbo_components(self,
+                      inputs,
+                      training=None,
+                      pX_Z=None,
+                      qZ_X=None,
+                      mask=None):
+    llk, kl = super().elbo_components(inputs,
+                                      pX_Z=pX_Z,
+                                      qZ_X=qZ_X,
+                                      mask=mask,
+                                      training=training)
+    for z, qz in zip(self.latents, tf.nest.flatten(qZ_X)):
+      dip = disentangled_inferred_prior_loss(qz,
                                              only_mean=self.only_mean,
                                              lambda_offdiag=self.lambda_offdiag,
                                              lambda_diag=self.lambda_diag)
-      div['dip_%s' % name] = dip
-    return llk, div
+      kl[f'dip_{z.name}'] = dip
+    return llk, kl
