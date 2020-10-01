@@ -6,7 +6,7 @@ import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.autoencoder.networks import FactorDiscriminator
+from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import (DatasetV2,
                                                              OptimizerV2,
                                                              TensorTypes,

@@ -457,37 +457,6 @@ class AmortizedLDA(BetaVAE):
                                       n_topics=n_topics,
                                       show_word_prob=show_word_prob)
 
-  def perplexity(self,
-                 inputs: Union[TensorTypes, DatasetV2],
-                 elbo: Optional[TensorTypes] = None,
-                 verbose: bool = True) -> Tensor:
-    r""" The perplexity is an exponent of the average negative ELBO per word. """
-    ### given an tensorflow interable dataset
-    if isinstance(inputs, DatasetV2):
-      log_perplexity = []
-      if verbose:
-        inputs = tqdm(inputs, desc="Calculating perplexity")
-      for x in inputs:
-        pX, qZ = self(x, training=False)
-        elbo = self.elbo(x, pX_Z=pX, qZ_X=qZ, training=False)
-        words_per_doc = tf.reduce_sum(x, axis=-1)
-        log_perplexity.append(-elbo / words_per_doc)
-      log_perplexity = tf.concat(log_perplexity, axis=-1)
-    ### just single calculation
-    else:
-      if isinstance(inputs, sparse.spmatrix):
-        inputs = inputs.toarray()
-      if elbo is None:
-        pX, qZ = self(inputs, training=False)
-        elbo = self.elbo(inputs, pX_Z=pX, qZ_X=qZ, training=False)
-      # calculate the perplexity
-      words_per_doc = tf.reduce_sum(inputs, axis=-1)
-      log_perplexity = -elbo / words_per_doc
-    ### final average
-    log_perplexity_tensor = tf.reduce_mean(log_perplexity)
-    perplexity_tensor = tf.exp(log_perplexity_tensor)
-    return perplexity_tensor
-
 
 # ===========================================================================
 # Two-stage VAE
@@ -625,7 +594,7 @@ class VDA(VariationalModel):
 
   def elbo(self, inputs, training=None, **kwargs):
     (px_z, px_t), (qz, qt) = self(inputs, training=training)
-    llk_z = 0.5 * px_z.log_prob(inputs)
+    llk_z = 0.2 * px_z.log_prob(inputs)
     llk_t = px_t.log_prob(inputs)
     kl_z = qz.KL_divergence(analytic=self.analytic, reverse=self.reverse)
     kl_t = qt.KL_divergence(analytic=self.analytic, reverse=self.reverse)

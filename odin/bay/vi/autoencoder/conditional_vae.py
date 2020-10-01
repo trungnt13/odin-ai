@@ -12,7 +12,7 @@ from odin.bay.helpers import kl_divergence
 from odin.bay.layers.distribution_util_layers import ConditionalTensorLayer
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.autoencoder.networks import FactorDiscriminator, ImageNet
+from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import LayerCreator
 from odin.bay.vi.utils import marginalize_categorical_labels
 from odin.networks import TensorTypes

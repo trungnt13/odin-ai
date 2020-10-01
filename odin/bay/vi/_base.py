@@ -7,6 +7,7 @@ import tensorflow as tf
 from odin.networks import Networks, TensorTypes
 from scipy import sparse
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
+from tensorflow_probability.python.distributions import Distribution
 from tqdm import tqdm
 
 __all__ = ['VariationalModel']
@@ -22,6 +23,7 @@ class VariationalModel(Networks):
       sample_shape: Union[int, List[int]] = (),
       **kwargs,
   ):
+    self.supports_masking = True
     super().__init__(**kwargs)
     self._sample_shape = sample_shape
     self.analytic = analytic
@@ -100,16 +102,13 @@ class VariationalModel(Networks):
     elbo = tf.reduce_logsumexp(elbo, axis=axis) - tf.math.log(iw_dim)
     return elbo
 
-  def elbo(self,
-           inputs: Union[TensorTypes, List[TensorTypes]],
-           training: Optional[bool] = None,
-           *args,
-           **kwargs) -> Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
+  def elbo_components(
+      inputs: Union[TensorTypes, List[TensorTypes]],
+      training: Optional[bool] = None,
+      *args,
+      **kwargs) -> Tuple[Dict[str, tf.Tensor], Dict[str, tf.Tensor]]:
     """Calculate the distortion (log-likelihood) and rate (KL-divergence)
-    for contruction the Evident Lower Bound (ELBO).
-
-    The final ELBO is:
-      `ELBO = E_{z~q(Z|X)}[log(p(X|Z))] - KL_{x~p(X)}[q(Z|X)||p(Z)]`
+    for the calculation of the "Evident Lower Bound" (ELBO).
 
     Parameters
     ----------
@@ -120,12 +119,54 @@ class VariationalModel(Networks):
 
     Returns
     -------
-    Tuple[tf.Tensor, Dict[str, tf.Tensor]]
+    Dict[str, tf.Tensor]
+        mapping from observation name to its log-likelihood values,
+        shape `[n_samples]`
+    Dict[str, tf.Tensor]]
+        mapping from latents name to its KL-divergence values,
+        shape `[sample_shape, n_samples]`
+    """
+    raise NotImplementedError
+
+  def elbo(
+      self,
+      llk: Optional[Dict[str, tf.Tensor]] = {},
+      kl: Optional[Dict[str, tf.Tensor]] = {},
+  ) -> tf.Tensor:
+    """Calculate the distortion (log-likelihood) and rate (KL-divergence)
+    for contruction the Evident Lower Bound (ELBO).
+
+    The final ELBO is:
+      `ELBO = E_{z~q(Z|X)}[log(p(X|Z))] - KL_{x~p(X)}[q(Z|X)||p(Z)]`
+
+    Parameters
+    ----------
+    llk : Dict[str, Tensor], optional
+        log-likelihood components, by default `{}`
+    kl : Dict[str, Tensor], optional
+        KL-divergence components, by default `{}`
+
+    Returns
+    -------
+    tf.Tensor
         the ELBO - a Tensor shape `[sample_shape, batch_size]`.
         dictionary mapping the components of the ELBO (e.g. rate, distortion) to
         their values.
     """
-    raise NotImplementedError
+    # sum all the components log-likelihood and KL-divergence
+    llk_sum = tf.constant(0., dtype=self.dtype)
+    kl_sum = tf.constant(0., dtype=self.dtype)
+    for x in llk.values():  # log-likelihood
+      llk_sum += x
+    for name, x in kl.items():  # kl-divergence
+      tf.debugging.assert_greater(
+          x,
+          -1e-3,
+          message=(f"Negative KL-divergence values for '{name}', "
+                   "probably because of numerical instability."))
+      kl_sum += x
+    elbo = llk_sum - kl_sum
+    return elbo
 
   def marginal_log_prob(self,
                         inputs: Union[TensorTypes, List[TensorTypes]],
@@ -217,7 +258,52 @@ class VariationalModel(Networks):
   def train_steps(self, inputs, training, *args, **kwargs):
 
     def loss():
-      elbo, metrics = self.elbo(inputs, training, *args, **kwargs)
+      llk, kl = self.elbo_components(inputs, training, *args, **kwargs)
+      elbo = self.elbo(llk, kl)
+      metrics = dict(**llk, **kl)
       return -tf.reduce_mean(elbo), metrics
 
     yield loss
+
+  def encode(self,
+             inputs: Union[TensorTypes, List[TensorTypes]],
+             training: Optional[bool] = None,
+             *args,
+             **kwargs) -> Union[Distribution, List[Distribution]]:
+    """Project data points into latents space
+
+    Parameters
+    ----------
+    inputs : Union[TensorTypes, List[TensorTypes]]
+        the inputs
+    training : Optional[bool], optional
+        training or evaluation mode, by default None
+
+    Returns
+    -------
+    Union[Distribution, List[Distribution]]
+        a single or list of latents distribution
+    """
+    raise NotImplementedError
+
+  def decode(self,
+             latents: Union[TensorTypes, Distribution, List[TensorTypes],
+                            List[Distribution]],
+             training: Optional[bool] = None,
+             *args,
+             **kwargs) -> Union[Distribution, List[Distribution]]:
+    """Project the latents vector back into the input space
+
+    Parameters
+    ----------
+    latents : Union[TensorTypes, Distribution, List[TensorTypes], List[Distribution]]
+        the distribution or single point in latents space
+    training : Optional[bool], optional
+        training or evaluation mode, by default None
+
+    Returns
+    -------
+    Union[Distribution, List[Distribution]]
+        a single or list of output distribution
+    """
+    raise NotImplementedError
