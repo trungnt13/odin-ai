@@ -1,7 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
-
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 from odin.utils import as_tuple
@@ -36,7 +35,7 @@ class LikelihoodStep(TrainStep):
     pX_Z = self.vae.decode(prior,
                            training=training,
                            sample_shape=self.sample_shape)
-    if len(self.vae.output_layers) == 1:
+    if len(self.vae.observation) == 1:
       pX_Z = [pX_Z]
     inputs = tf.nest.flatten(self.inputs)
     #
@@ -61,7 +60,7 @@ class StochasticVAE(betaVAE):
       kl_params += layer.trainable_variables
     #
     llk_params = self.decoder.trainable_variables
-    for layer in self.output_layers:
+    for layer in self.observation:
       llk_params += layer.trainable_variables
     #
     self.kl_params = kl_params

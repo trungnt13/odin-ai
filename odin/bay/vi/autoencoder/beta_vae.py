@@ -77,7 +77,7 @@ class betatcVAE(betaVAE):
                                       mask=mask,
                                       training=training)
     for z, qz in zip(self.latents, tf.nest.flatten(qZ_X)):
-      tc = total_correlation(qz.sample(), qz)
+      tc = total_correlation(tf.convert_to_tensor(qz), qz)
       kl[f'tc_{z.name}'] = (self.beta - 1.) * tc
     return llk, kl
 

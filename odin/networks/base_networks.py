@@ -201,6 +201,23 @@ class Networks(keras.Model, MD5object):
     self._save_path = path
     self.trainer = None
 
+  def build(self, input_shape: List[Union[None, int]]) -> Networks:
+    """Build the networks for given input or list of inputs
+
+    Parameters
+    ----------
+    input_shape : List[Union[None, int]]
+        the input shape include the batch dimension, this could be single shape
+        or list of shape (for multiple-inputs).
+
+    Returns
+    -------
+    Networks
+        return the network itself for method chaining
+    """
+    super().build(input_shape)
+    return self
+
   @property
   def n_parameters(self) -> int:
     """ Return the total number of trainable parameters (or variables) """
@@ -226,7 +243,12 @@ class Networks(keras.Model, MD5object):
                    filepath: str,
                    raise_notfound: bool = False,
                    verbose: bool = False) -> Networks:
-    r""" Load all the saved weights in tensorflow format at given path """
+    """Load all the saved weights in tensorflow format at given path
+
+    Note
+    -----
+    Remember to build the Networks before loading saved weights.
+    """
     if isinstance(filepath, string_types):
       files = glob.glob(filepath + '.*')
       # load weights
@@ -442,6 +464,10 @@ class Networks(keras.Model, MD5object):
     RuntimeError
         if the optimizer is not defined.
     """
+    if not self.built:
+      raise RuntimeError(
+          "build(input_shape) method must be called to initialize "
+          "the variables before calling fit")
     batch_size = int(batch_size)
     # validate the dataset
     train = _to_dataset(train, batch_size, self.dtype)

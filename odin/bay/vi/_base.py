@@ -159,11 +159,11 @@ class VariationalModel(Networks):
     for x in llk.values():  # log-likelihood
       llk_sum += x
     for name, x in kl.items():  # kl-divergence
-      tf.debugging.assert_greater(
-          x,
-          -1e-3,
-          message=(f"Negative KL-divergence values for '{name}', "
-                   "probably because of numerical instability."))
+      # tf.debugging.assert_greater(
+      #     x,
+      #     -1e-3,
+      #     message=(f"Negative KL-divergence values for '{name}', "
+      #              "probably because of numerical instability."))
       kl_sum += x
     elbo = llk_sum - kl_sum
     return elbo

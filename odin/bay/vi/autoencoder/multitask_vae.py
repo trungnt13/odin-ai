@@ -53,7 +53,7 @@ class MultitaskVAE(betaVAE):
     self._alpha = tf.convert_to_tensor(a, dtype=self.dtype, name='alpha')
 
   def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
-    n_outputs = len(self.output_layers)
+    n_outputs = len(self.observation)
     n_semi = len(self.labels)
     inputs = tf.nest.flatten(inputs)[:(n_outputs - n_semi)]
     if len(inputs) == 1:
@@ -78,14 +78,14 @@ class MultitaskVAE(betaVAE):
                              training=training,
                              **kwargs)
     # supervised log-likelihood
-    if len(inputs) > len(self.output_layers) - n_semi:
+    if len(inputs) > len(self.observation) - n_semi:
       Y = inputs[-n_semi:]
       pY_Z = pX_Z[-n_semi:]
       mask = tf.nest.flatten(mask)
       if len(mask) == 1:
         mask = mask * n_semi
       # iterate over each pair
-      for layer, y, py, m in zip(self.output_layers[-n_semi:], Y, pY_Z, mask):
+      for layer, y, py, m in zip(self.observation[-n_semi:], Y, pY_Z, mask):
         name = layer.name
         lk_y = py.log_prob(y)
         if m is not None:
@@ -138,7 +138,7 @@ class MultiheadVAE(MultitaskVAE):
     for layer in semi_layers:
       layer(z)
     # add to the main output layers
-    self.output_layers += semi_layers
+    self.observation += semi_layers
 
   @property
   def is_semi_supervised(self):
@@ -151,8 +151,8 @@ class MultiheadVAE(MultitaskVAE):
              sample_shape=(),
              **kwargs):
     n_semi = len(self.labels)
-    semi_layers = self.output_layers[-n_semi:]
-    self.output_layers = self.output_layers[:-n_semi]
+    semi_layers = self.observation[-n_semi:]
+    self.observation = self.observation[:-n_semi]
     # unsupervised outputs
     pX = super().decode(latents, training, mask, sample_shape, **kwargs)
     # semi outputs
@@ -160,5 +160,5 @@ class MultiheadVAE(MultitaskVAE):
     for p in pY:  # remember to store the keras mask in outputs
       p._keras_mask = mask
     # recover and return
-    self.output_layers = self.output_layers + semi_layers
+    self.observation = self.observation + semi_layers
     return tf.nest.flatten(pX) + pY

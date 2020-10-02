@@ -70,28 +70,31 @@ def _net2str(net):
 
 def _parse_layers(network, name=None) -> List[Layer]:
   is_decoding = 'decoder' in str(name).lower()
-  ## identity
-  if (network is None or (isinstance(network, string_types) and
-                          network in ('linear', 'identity'))):
-    network = Identity(name=name)
-  ## Callable or type
-  elif (inspect.isfunction(network) or isinstance(network, partial) or
-        isinstance(network, type)):
-    network = network()
-  ## RandomVariable
-  elif isinstance(network, RandomVariable):
-    network = network.create_posterior(
-        name=name if network.name is None else None)
   ## make sure is a list
   network = list(network) if isinstance(network, (tuple, list)) else [network]
   network = [i for i in network if i is not None]
   ## check different options
   layers = []
   for cfg in network:
-    # string type (for dataset name or network alias)
-    if isinstance(cfg, string_types):
+    ## identity
+    if cfg is None:
+      layers.append(Identity(name=name))
+    ## Callable or type
+    elif (inspect.isfunction(cfg) or isinstance(cfg, partial) or
+          isinstance(cfg, type)):
+      layers.append(cfg())
+    ## RandomVariable
+    elif isinstance(cfg, RandomVariable):
+      layers.append(
+          cfg.create_posterior(name=name if cfg.name is None else None))
+    ## string type (for dataset name or network alias)
+    elif isinstance(cfg, string_types):
       cfg = cfg.lower().strip()
-      if cfg in ('mnist', 'fashion_mnist'):
+      #
+      if cfg in ('linear', 'identity'):
+        layers.append(Identity(name=name))
+      #
+      elif cfg in ('mnist', 'fashion_mnist'):
         kw = dict(image_shape=(28, 28, 1),
                   projection_dim=128,
                   activation='relu',
@@ -102,6 +105,8 @@ def _parse_layers(network, name=None) -> List[Layer]:
                   convolution=True,
                   input_shape=None,
                   decoding=is_decoding)
+        layers.append(ImageNet(**kw))
+      #
       elif cfg in ('shapes3d', 'dsprites', 'dspritesc', 'celeba', 'stl10',
                    'legofaces', 'cifar10', 'cifar20', 'cifar100'):
         n_channels = 1 if cfg in ('dsprites', 'dspritesc') else 3
@@ -119,10 +124,11 @@ def _parse_layers(network, name=None) -> List[Layer]:
                   convolution=True,
                   input_shape=None,
                   decoding=is_decoding)
+        layers.append(ImageNet(**kw))
+      #
       else:
         raise NotImplementedError(
             f"No predefined network for dataset with name: {cfg}")
-      layers.append(ImageNet(**kw))
     # the NetworkConfig
     elif isinstance(cfg, NetworkConfig):
       layers.append(cfg.create_network(name=name))
@@ -227,7 +233,6 @@ class VariationalAutoencoder(VariationalModel):
                                              'diag',
                                              projection=True,
                                              name="Latents"),
-      input_shape: Optional[List[int]] = None,
       **kwargs,
   ):
     ### keras want this supports_masking on to enable support masking
@@ -241,16 +246,6 @@ class VariationalAutoencoder(VariationalModel):
     self._decoder_args = [_get_args(i) for i in self.decoder]
     self._observation = _parse_layers(network=observation, name="Observation")
     self._observation_args = [_get_args(i) for i in self.observation]
-    ### others
-    if self.save_path is not None:
-      self.load_weights(self.save_path, raise_notfound=False, verbose=True)
-    ### init
-    if input_shape is not None:
-      if None != input_shape[0]:
-        warnings.warn(
-            f"No batch dimension provided for input_shape={input_shape}")
-        input_shape = (None,) + tuple(input_shape)
-      self.build(input_shape)
 
   @property
   def encoder(self) -> List[Layer]:

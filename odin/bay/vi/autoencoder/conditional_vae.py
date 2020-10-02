@@ -106,7 +106,7 @@ class ConditionalM2VAE(betaVAE):
       classifier = dict(classifier)
       classifier['outputs'] = labels
       if 'input_shape' not in classifier:
-        input_shape = [i.event_shape for i in self.output_layers]
+        input_shape = [i.event_shape for i in self.observation]
         if len(input_shape) == 1:
           input_shape = input_shape[0]
         classifier['input_shape'] = input_shape
@@ -159,7 +159,7 @@ class ConditionalM2VAE(betaVAE):
     The `mask` is given as indicator, 1 for labeled sample and 0 for unlabeled samples
     """
     n_labels = self.n_labels
-    n_outputs = len(self.output_layers)
+    n_outputs = len(self.observation)
     inputs = tf.nest.flatten(inputs)
     batch_size = _batch_size(inputs[0])
     # no labels provided:
@@ -230,9 +230,9 @@ class ConditionalM2VAE(betaVAE):
 
   def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
     org_inputs = inputs
-    inputs = inputs[:len(self.output_layers)]
+    inputs = inputs[:len(self.observation)]
     if mask is None:
-      if len(org_inputs) == len(self.output_layers):  # no labelled
+      if len(org_inputs) == len(self.observation):  # no labelled
         X_unlabelled = inputs
       else:  # all data is labelled
         X_unlabelled = [tf.zeros(shape=(0,) + i.shape[1:]) for i in inputs]

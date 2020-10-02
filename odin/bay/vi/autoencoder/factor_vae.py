@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import collections
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -66,49 +68,39 @@ def _split_inputs(inputs, mask, call_kw):
 
 @dataclass
 class FactorDiscriminatorStep(VAEStep):
-  qZ_X: Distribution
+  vae: factorVAE
 
-  def optimize(self, inputs, mask, qZ_X, qZ_Xprime,
-               training) -> Tuple[tf.Tensor, Dict[str, Any]]:
-    dtc_loss = self.vae.dtc_loss(qZ_X,
-                                 qZ_Xprime,
-                                 training=training,
-                                 apply_lamda=True)
+  def call(self):
+    # if only inputs is provided without labels, error for ssl model,
+    # need to flatten the list here.
+    inputs = tf.nest.flatten(self.inputs)
+    qZ_Xprime = self.vae.encode(inputs,
+                                training=self.training,
+                                mask=self.mask,
+                                **self.call_kw)
+    # only select the last latent space in case of factor2VAE
+    if isinstance(self.qZ_X, (tuple, list)):
+      qZ_X = qZ_X[-1]
+      qZ_Xprime = qZ_Xprime[-1]
+    else:
+      qZ_X = self.qZ_X
+    # discriminator loss
+    dtc_loss = self.vae.dtc_loss(qZ_X=qZ_X,
+                                 qZ_Xprime=qZ_Xprime,
+                                 training=self.training)
     metrics = dict(dtc_loss=dtc_loss)
-    ## applying the classifier loss
+    ## applying the classifier loss,
+    # if model is semi-supervised and the labels is given
     supervised_loss = 0.
-    if hasattr(self.vae, 'supervised_loss'):
-      labels = inputs[len(self.vae.output_layers):]
+    if (self.vae.is_semi_supervised and
+        len(inputs) > len(self.vae.observation)):
+      labels = inputs[-1]
       supervised_loss = self.vae.supervised_loss(labels,
-                                                 qZ_X,
-                                                 mask=mask,
-                                                 training=training,
-                                                 apply_alpha=True)
-      metrics['supervised_loss'] = supervised_loss
+                                                 qZ_X=qZ_X,
+                                                 mask=self.mask,
+                                                 training=self.training)
+      metrics['supv_loss'] = supervised_loss
     return dtc_loss + supervised_loss, metrics
-
-  def call(self) -> Tuple[tf.Tensor, Dict[str, Any]]:
-    inputs = self.inputs
-    qZ_X = self.qZ_X
-    mask = self.mask
-    training = self.training
-    call_kw = self.call_kw
-    qZ_Xprime = self.vae.encode(inputs, training=training, mask=mask, **call_kw)
-    return self.optimize(inputs, mask, qZ_X, qZ_Xprime, training)
-
-
-@dataclass
-class Factor2DiscriminatorStep(FactorDiscriminatorStep):
-
-  def call(self) -> Tuple[tf.Tensor, Dict[str, Any]]:
-    inputs = self.inputs
-    qZ_X = self.qZ_X
-    mask = self.mask
-    training = self.training
-    call_kw = self.call_kw
-    qZ_Xprime = self.vae.encode(inputs, training=training, mask=mask, **call_kw)
-    # only select the last latent space
-    return self.optimize(inputs, mask, qZ_X[-1], qZ_Xprime[-1], training)
 
 
 # ===========================================================================
@@ -168,13 +160,12 @@ class factorVAE(betaVAE):
                lamda: float = 1.0,
                maximize_tc: bool = False,
                **kwargs):
-    super().__init__(beta=beta, reduce_latent='concat', **kwargs)
+    super().__init__(beta=beta, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     self.lamda = tf.convert_to_tensor(lamda, dtype=self.dtype, name='lamda')
-    # all latents will be concatenated (a bit spooky to customize latent_dim)
-    latent_dim = np.prod(
-        sum(np.array(layer.event_shape) for layer in self.latent_layers))
     ## init discriminator
+    latent_dim = np.prod(
+        sum(np.array(layer.event_shape) for layer in self.latents))
     if not isinstance(discriminator, FactorDiscriminator):
       discriminator = FactorDiscriminator(input_shape=(latent_dim,),
                                           **discriminator)
@@ -183,8 +174,7 @@ class factorVAE(betaVAE):
       hasattr(self.discriminator, 'dtc_loss'), \
         (f"discriminator of type: {type(self.discriminator)} "
          "must has method total_correlation and dtc_loss.")
-    # VAE and discriminator must be trained separated so we split
-    # their params here
+    # VAE and discriminator must be trained separated so we split their params here
     self.disc_params = self.discriminator.trainable_variables
     exclude = set(id(p) for p in self.disc_params)
     self.vae_params = [
@@ -194,7 +184,6 @@ class factorVAE(betaVAE):
     ## For training
     # store class for training factor discriminator, this allow later
     # modification without re-writing the train_steps method
-    self._factor_step = FactorDiscriminatorStep
     self._is_pretraining = False
 
   @property
@@ -210,40 +199,38 @@ class factorVAE(betaVAE):
     self._is_pretraining = False
     return self
 
-  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
-    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
+  def elbo_components(self,
+                      inputs,
+                      training=None,
+                      pX_Z=None,
+                      qZ_X=None,
+                      mask=None):
+    llk, kl = super().elbo_components(inputs,
+                                      pX_Z=pX_Z,
+                                      qZ_X=qZ_X,
+                                      mask=mask,
+                                      training=training)
     # by default, this support multiple latents by concatenating all latents
-    tc = self.total_correlation(qZ_X, apply_gamma=True, training=training)
+    tc = 0. if self.is_pretraining else self.total_correlation(
+        qZ_X=qZ_X, training=training)
     if self.maximize_tc:
       tc = -tc
-    div['total_corr'] = tc
-    return llk, div
+    kl['tc'] = tc
+    return llk, kl
 
   def total_correlation(self,
                         qZ_X: Distribution,
-                        training: Optional[bool] = None,
-                        apply_gamma: bool = False) -> tf.Tensor:
-    r""" Using the discriminator output to estimate total correlation of
-    the latents """
-    if self.is_pretraining:
-      return 0.
-    tc = self.discriminator.total_correlation(qZ_X, training=training)
-    if apply_gamma:
-      tc = self.gamma * tc
-    return tc
+                        training: Optional[bool] = None) -> tf.Tensor:
+    return self.gamma * self.discriminator.total_correlation(qZ_X,
+                                                             training=training)
 
   def dtc_loss(self,
                qZ_X: Distribution,
                qZ_Xprime: Optional[Distribution] = None,
-               training: Optional[bool] = None,
-               apply_lamda: bool = False) -> tf.Tensor:
+               training: Optional[bool] = None) -> tf.Tensor:
     r""" Discrimination loss between real and permuted codes Algorithm (2) """
-    loss = self.discriminator.dtc_loss(qZ_X,
-                                       qZ_Xprime=qZ_Xprime,
-                                       training=training)
-    if apply_lamda:
-      loss = self.lamda * loss
-    return loss
+    return self.lamda * self.discriminator.dtc_loss(
+        qZ_X, qZ_Xprime=qZ_Xprime, training=training)
 
   def train_steps(self,
                   inputs: Union[TensorTypes, List[TensorTypes]],
@@ -282,13 +269,13 @@ class factorVAE(betaVAE):
     # second step optimize the discriminator for discriminate permuted code
     # skip training Discriminator of pretraining
     if not self.is_pretraining:
-      step2 = self._factor_step(vae=self,
-                                inputs=x2,
-                                qZ_X=step1.qZ_X,
-                                training=training,
-                                mask=mask2,
-                                call_kw=call_kw2,
-                                parameters=self.disc_params)
+      step2 = FactorDiscriminatorStep(vae=self,
+                                      inputs=x2,
+                                      qZ_X=step1.qZ_X,
+                                      training=training,
+                                      mask=mask2,
+                                      call_kw=call_kw2,
+                                      parameters=self.disc_params)
       yield step2
 
   def fit(self,
@@ -317,7 +304,7 @@ class factorVAE(betaVAE):
 # ===========================================================================
 # Same as Factor VAE but with multi-task semi-supervised extension
 # ===========================================================================
-class SemifactorVAE(factorVAE):
+class ssfVAE(factorVAE):
   r""" Semi-supervised Factor VAE
 
   Note:
@@ -344,16 +331,11 @@ class SemifactorVAE(factorVAE):
       discriminator['ss_strategy'] = ss_strategy
     super().__init__(discriminator=discriminator, **kwargs)
     self.n_labels = self.discriminator.n_outputs
-    self.n_unsupervised = len(self.output_layers)
     self.labels = labels
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
 
-  def encode(self,
-             inputs: Union[TensorTypes, List[TensorTypes]],
-             training: Optional[bool] = None,
-             mask: Optional[TensorTypes] = None,
-             **kwargs) -> Union[Distribution, List[Distribution]]:
-    inputs = tf.nest.flatten(inputs)[:self.n_unsupervised]
+  def encode(self, inputs, training=None, mask=None, **kwargs):
+    inputs = tf.nest.flatten(inputs)[:len(self.observation)]
     if len(inputs) == 1:
       inputs = inputs[0]
     return super().encode(inputs, training=training, mask=mask, **kwargs)
@@ -367,27 +349,20 @@ class SemifactorVAE(factorVAE):
     else:
       z = qZ_X
     y = self.discriminator(z, training=training)
-    assert isinstance(
-        y, Distribution
-    ), f"Discriminator must return a Distribution, but returned: {y}"
+    assert isinstance(y, Distribution), \
+      f"Discriminator must return a Distribution, but returned: {y}"
     return y
 
   def supervised_loss(self,
                       labels: tf.Tensor,
                       qZ_X: Distribution,
                       mask: Optional[TensorTypes] = None,
-                      training: Optional[bool] = None,
-                      apply_alpha: bool = False):
+                      training: Optional[bool] = None) -> tf.Tensor:
     r""" The semi-supervised classifier loss, `mask` is given to indicate
     labelled examples (i.e. `mask=1`), and otherwise, unlabelled examples.
     """
-    loss = self.discriminator.supervised_loss(labels=labels,
-                                              qZ_X=qZ_X,
-                                              mask=mask,
-                                              training=training)
-    if apply_alpha:
-      loss = self.alpha * loss
-    return loss
+    return self.alpha * self.discriminator.supervised_loss(
+        labels=labels, qZ_X=qZ_X, mask=mask, training=training)
 
   @property
   def is_semi_supervised(self):
@@ -397,13 +372,10 @@ class SemifactorVAE(factorVAE):
 # ===========================================================================
 # Separated latents for TC factorization
 # ===========================================================================
-class Factor2VAE(factorVAE):
-  r""" The same architecture as `factorVAE`, however, utilize two different
+class factor2VAE(factorVAE):
+  r"""The same architecture as `factorVAE`, however, utilize two different
   latents `Z` for contents generalizability and `C` for disentangling of
-  invariant factors.
-
-  TODO:
-  """
+  invariant factors."""
 
   def __init__(self,
                latents: RandomVariable = RandomVariable(5,
@@ -424,7 +396,6 @@ class Factor2VAE(factorVAE):
                      latent_dim=int(np.prod(factors.event_shape)),
                      **kwargs)
     self.factors = factors
-    self._factor_step = Factor2DiscriminatorStep
 
   def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
     llk, div = super(betaVAE, self)._elbo(
@@ -442,7 +413,7 @@ class Factor2VAE(factorVAE):
     return llk, div
 
 
-class SemiFactor2VAE(SemifactorVAE, Factor2VAE):
+class ssf2VAE(ssfVAE, factor2VAE):
   r""" Combination of Semi-supervised VAE and Factor-2 VAE which leverages
   both labelled samples and the use of 2 latents space (1 for contents, and
   1 for factors)

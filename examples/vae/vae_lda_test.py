@@ -14,7 +14,7 @@ import tensorflow as tf
 from odin.bay import concat_distributions
 from odin.bay.layers import DenseDistribution
 from odin.bay.vi import (AmortizedLDA, betaVAE, factorVAE,
-                         LatentDirichletDecoder, MutualInfoVAE, NetworkConfig,
+                         LatentDirichletDecoder, miVAE, NetworkConfig,
                          RandomVariable, TwoStageLDA, VariationalAutoencoder)
 from odin.exp import Trainer, get_current_trainer
 from odin.exp.experimenter import get_output_dir, run_hydra, save_to_yaml

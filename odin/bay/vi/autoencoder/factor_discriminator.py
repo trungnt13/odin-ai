@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.utils import permute_dims
-from odin.networks import SequentialNetwork
+from odin.networks import SequentialNetwork, dense_network
 from tensorflow_probability.python.distributions import (Distribution,
                                                          Independent)
 from typing_extensions import Literal
@@ -218,7 +218,6 @@ class FactorDiscriminator(SequentialNetwork):
     ## calculate the loss
     loss = 0.
     for dist, y_true in zip(distributions, labels):
-      tf.assert_rank(y_true, 2)
       llk = dist.log_prob(y_true)
       # check the mask careful here
       # if no data for labels, just return 0

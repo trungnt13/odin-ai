@@ -12,8 +12,8 @@ def _clip_binary(x, eps=1e-7):
   return tf.clip_by_value(x, eps, 1. - eps)
 
 
-class MutualInfoVAE(betaVAE):
-  r""" Lambda is replaced as gamma in this implementation
+class miVAE(betaVAE):
+  r""" Mutual-information VAE
 
   The algorithm of MI-VAE is as following:
   ```
@@ -25,23 +25,30 @@ class MutualInfoVAE(betaVAE):
   6. Recompute the approximate posterior q(c|x_prime) and incur the loss for the MI lower bound.
   ```
 
-  Arguments:
-    resample_zprime : a Boolean. if True, use samples from q(z|x) for z_prime
-      instead of sampling z_prime from prior.
-    kl_factors : a Boolean (default: True).
-      If False, only maximize the mutual information of the factors code
-      `q(c|X)` and the input `p(X|z, c)`, this is the original configuration
-      in the paper.
-      If True, encourage factorized code by pushing the KL divergence to the
-      prior (multivariate diagonal normal).
+  Parameters
+  ----------
+  resample_zprime : a Boolean. if True, use samples from q(z|x) for z_prime
+    instead of sampling z_prime from prior.
+  kl_factors : a Boolean (default: True).
+    If False, only maximize the mutual information of the factors code
+    `q(c|X)` and the input `p(X|z, c)`, this is the original configuration
+    in the paper.
+    If True, encourage factorized code by pushing the KL divergence to the
+    prior (multivariate diagonal normal).
 
-  Reference:
-    Ducau, F.N., Trénous, S. "Mutual Information in Variational Autoencoders".
-      (2017) https://github.com/fducau/infoVAE.
-    Chen, X., Chen, X., Duan, Y., et al. (2016) "InfoGAN: Interpretable
-      Representation Learning by Information Maximizing Generative
-      Adversarial Nets". URL : http://arxiv.org/ abs/1606.03657.
-    Ducau, F.N. Code:  https://github.com/fducau/infoVAE
+  Note
+  -----
+  Lambda is replaced as gamma in this implementation
+
+
+  References
+  ----------
+  Ducau, F.N., Trénous, S. "Mutual Information in Variational Autoencoders".
+    (2017) https://github.com/fducau/infoVAE.
+  Chen, X., Chen, X., Duan, Y., et al. (2016) "InfoGAN: Interpretable
+    Representation Learning by Information Maximizing Generative
+    Adversarial Nets". URL : http://arxiv.org/ abs/1606.03657.
+  Ducau, F.N. Code:  https://github.com/fducau/infoVAE
   """
 
   def __init__(self,
@@ -61,23 +68,31 @@ class MutualInfoVAE(betaVAE):
     latents = tf.nest.flatten(latents)
     latents.append(factors)
     self.is_binary_factors = factors.is_binary
-    super().__init__(beta=beta,
-                     latents=latents,
-                     reduce_latent='concat',
-                     **kwargs)
-    self.factors = self.latent_layers[-1]
-    self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype)
+    super().__init__(beta=beta, latents=latents, **kwargs)
+    self.factors = self.latents[-1]
+    self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     self.resample_zprime = bool(resample_zprime)
     self.kl_factors = bool(kl_factors)
 
-  def _elbo(self, inputs, pX_Z, qZ_X, mask, training):
-    # NOTE: the original implementation does not take KL of qC_X,
+  def decode(self, latents, training=None, mask=None, **kwargs):
+    if isinstance(latents, (tuple, list)) and len(latents) > 1:
+      latents = tf.concat(latents, axis=-1)
+    return super().decode(latents, training=training, mask=mask, **kwargs)
+
+  def elbo_components(self,
+                      inputs,
+                      training=None,
+                      pX_Z=None,
+                      qZ_X=None,
+                      mask=None):
+    # NOTE: the original implementation does not take KL(qC_X||pC),
     # only maximize the mutual information of q(c|X)
-    llk, div = super()._elbo(inputs,
-                             pX_Z,
-                             qZ_X[:-1] if not self.kl_factors else qZ_X,
-                             mask=mask,
-                             training=training)
+    llk, kl = super().elbo_components(
+        inputs,
+        pX_Z=pX_Z,
+        qZ_X=qZ_X[:-1] if not self.kl_factors else qZ_X,
+        mask=mask,
+        training=training)
     # the latents, in the implementation, the author reuse z samples here,
     # but in the algorithm, z_prime is re-sampled from the prior.
     # But, reasonably, we want to hold z_prime fix to z, and c_prime is the
@@ -102,12 +117,12 @@ class MutualInfoVAE(betaVAE):
     # mutual information (we want to maximize this, hence, add it to the llk)
     mi = qC_Xprime.log_prob(c_prime)
     llk['mi'] = self.gamma * mi
-    return llk, div
+    return llk, kl
 
 
-class SemiInfoVAE(MutualInfoVAE):
+class SemiInfoVAE(miVAE):
   r""" This idea combining factorVAE (Kim et al. 2018) and
-  MutualInfoVAE (Ducau et al. 2017)
+  miVAE (Ducau et al. 2017)
 
   # TODO
   """
@@ -122,8 +137,8 @@ class SemiInfoVAE(MutualInfoVAE):
 
   def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
     inputs = tf.nest.flatten(inputs)
-    if len(inputs) > len(self.output_layers):
-      inputs = inputs[:len(self.output_layers)]
+    if len(inputs) > len(self.observation):
+      inputs = inputs[:len(self.observation)]
     return super().encode(inputs[0] if len(inputs) == 1 else inputs,
                           training=training,
                           mask=mask,
@@ -136,7 +151,7 @@ class SemiInfoVAE(MutualInfoVAE):
     if len(inputs) > len(pX_Z):
       y = inputs[-1]
     # don't take KL of qC_X
-    llk, div = super(MutualInfoVAE,
+    llk, div = super(miVAE,
                      self)._elbo(inputs,
                                  pX_Z,
                                  qZ_X[:-1] if not self.kl_factors else qZ_X,
@@ -182,15 +197,3 @@ class SemiInfoVAE(MutualInfoVAE):
       mi = self.gamma * qC_Xprime.log_prob(c_prime)
     llk['mi'] = mi
     return llk, div
-
-
-# class FactorInfoVAE(betaVAE):
-#   r""" This idea combining factorVAE (Kim et al. 2018) and
-#   MutualInfoVAE (Ducau et al. 2017)
-
-#   Reference:
-#     Kim, H., Mnih, A., 2018. Disentangling by Factorising.
-#       arXiv:1802.05983 [cs, stat].
-#     Ducau, F.N., Trénous, S., 2017."Mutual Information in Variational
-#       Autoencoders". https://github.com/fducau/infoVAE.
-#   """
