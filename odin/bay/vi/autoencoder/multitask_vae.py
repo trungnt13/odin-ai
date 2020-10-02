@@ -1,10 +1,9 @@
 import numpy as np
 import tensorflow as tf
+from odin.bay.random_variable import RandomVariable
+from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
-
-from odin.bay.random_variable import RandomVariable as RV
-from odin.bay.vi.autoencoder.beta_vae import betaVAE
 
 
 class MultitaskVAE(betaVAE):
@@ -22,18 +21,24 @@ class MultitaskVAE(betaVAE):
 
   # create and train the model
   vae = MultitaskVAE(encoder='mnist',
-                     outputs=RV((28, 28, 1),
+                     outputs=RandomVariable((28, 28, 1),
                                 'bern',
                                 projection=False,
                                 name="Image"),
-                     labels=RV(10, 'onehot', projection=True, name="Digit"))
+                     labels=RandomVariable(10, 'onehot', projection=True, name="Digit"))
   vae.fit(train, epochs=-1, max_iter=8000, compile_graph=True, sample_shape=1)
   ```
   """
 
   def __init__(self,
-               outputs=RV(64, 'gaussian', projection=True, name="Input"),
-               labels=RV(10, 'onehot', projection=True, name="Label"),
+               outputs=RandomVariable(64,
+                                      'gaussian',
+                                      projection=True,
+                                      name="Input"),
+               labels=RandomVariable(10,
+                                     'onehot',
+                                     projection=True,
+                                     name="Label"),
                alpha=10.,
                beta=1.,
                **kwargs):
@@ -119,8 +124,14 @@ class MultiheadVAE(MultitaskVAE):
   exert influences. """
 
   def __init__(self,
-               outputs=RV(64, 'gaussian', projection=True, name="Input"),
-               labels=RV(10, 'onehot', projection=True, name="Label"),
+               outputs=RandomVariable(64,
+                                      'gaussian',
+                                      projection=True,
+                                      name="Input"),
+               labels=RandomVariable(10,
+                                     'onehot',
+                                     projection=True,
+                                     name="Label"),
                alpha=10.,
                beta=1.,
                **kwargs):

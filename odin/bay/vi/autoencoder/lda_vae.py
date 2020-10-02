@@ -360,31 +360,27 @@ class LatentDirichletDecoder(Model):
 # ===========================================================================
 # Main class
 # ===========================================================================
-class AmortizedLDA(betaVAE):
-  """ Amortized Latent Dirichlet Autoencoding """
+class amortizedLDA(betaVAE):
+  """Amortized Latent Dirichlet Autoencoding"""
 
   def __init__(
       self,
       lda: LatentDirichletDecoder,
-      encoder: LayerCreator = NetworkConfig(name="Encoder"),
-      decoder: LayerCreator = NetworkConfig(name="Decoder"),
-      latents: LayerCreator = RandomVariable(10,
-                                             'diag',
-                                             projection=True,
-                                             name="Latents"),
+      encoder: LayerCreator = NetworkConfig([300, 300, 300], name="Encoder"),
+      decoder: LayerCreator = 'identity',
+      latents: LayerCreator = 'identity',
       warmup: Optional[int] = None,
       beta: float = 1.0,
       **kwargs,
   ):
     if warmup is not None:
       lda.warmup = int(warmup)
-    super().__init__(input_shape=kwargs.pop('input_shape', (lda.n_words,)),
-                     latents=latents,
+    super().__init__(latents=latents,
                      encoder=encoder,
                      decoder=decoder,
-                     outputs=lda,
+                     observation=lda,
                      beta=beta,
-                     analytic=kwargs.pop('analytic', True),
+                     analytic=True,
                      **kwargs)
     lda.step = self.step
     self._lda_layer = lda
@@ -393,18 +389,26 @@ class AmortizedLDA(betaVAE):
   def lda(self) -> LatentDirichletDecoder:
     return self._lda_layer
 
-  def _elbo(
-      self,
-      inputs: Union[Tensor, List[Tensor]],
-      pX_Z: Union[Distribution, List[Distribution]],
-      qZ_X: Union[Distribution, List[Distribution]],
-      mask: Optional[Tensor] = None,
-      training: Optional[bool] = None
-  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
-    llk, kl = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
-    topics = pX_Z[-1]
-    kl_topics = topics.KL_divergence(analytic=self.analytic)
-    kl[f'kl_{self.lda.name}'] = kl_topics
+  def elbo_components(self,
+                      inputs,
+                      training=None,
+                      pX_Z=None,
+                      qZ_X=None,
+                      mask=None,
+                      **kwargs):
+    pX_Z, qZ_X = self.call(inputs,
+                           training=training,
+                           pX_Z=pX_Z,
+                           qZ_X=qZ_X,
+                           mask=mask,
+                           **kwargs)
+    llk, kl = super().elbo_components(inputs=inputs,
+                                      pX_Z=pX_Z,
+                                      qZ_X=qZ_X,
+                                      mask=mask,
+                                      training=training)
+    p_topics = tf.nest.flatten(pX_Z)[-1]
+    kl[f'kl_{self.lda.name}'] = p_topics.KL_divergence(analytic=self.analytic)
     return llk, kl
 
   ######## Utilities methods
@@ -461,11 +465,11 @@ class AmortizedLDA(betaVAE):
 # ===========================================================================
 # Two-stage VAE
 # ===========================================================================
-class ConditionalLDA(AmortizedLDA):
-  pass
+# class conditionalLDA(amortizedLDA):
+#   pass
 
 
-class TwoStageLDA(AmortizedLDA):
+class TwoStageLDA(amortizedLDA):
   r""" Two-stage latent dirichlet allocation """
 
   def __init__(

@@ -400,26 +400,54 @@ class VariationalAutoencoder(VariationalModel):
       inputs: TensorTypes,
       training: Optional[bool] = None,
       mask: Optional[Tensor] = None,
+      pX_Z: Optional[Union[Distribution, List[Distribution]]] = None,
+      qZ_X: Optional[Union[Distribution, List[Distribution]]] = None,
       **kwargs
   ) -> Tuple[Union[Distribution, List[Distribution], Union[
       Distribution, List[Distribution]]]]:
-    qZ_X = self.encode(
-        inputs,
-        training=training,
-        mask=mask,
-        **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
-    )
+    """Applying the encode-decode process for VAE
+
+    Parameters
+    ----------
+    inputs : TensorTypes
+        inputs' Tensors
+    training : Optional[bool], optional
+        training or evaluation mode, by default None
+    mask : Optional[Tensor], optional
+        mask, by default None
+    pX_Z : Optional[Union[Distribution, List[Distribution]]], optional
+        the precalculated `p_{theta}(x||z)`, by default None
+    qZ_X : Optional[Union[Distribution, List[Distribution]]], optional
+        the precalculated `q_{\phi}(z||x)`, by default None
+
+    Returns
+    -------
+    Union[Distribution, List[Distribution]]
+        `p_{theta}(x||z)` the output distribution(s)
+    Union[Distribution, List[Distribution]]
+        `q_{\phi}(z||x)` the latent distribution(s)
+    """
+    # encode
+    if qZ_X is None:
+      qZ_X = self.encode(
+          inputs,
+          training=training,
+          mask=mask,
+          **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
+      )
     # transfer the mask from encoder to decoder here
     for q in tf.nest.flatten(qZ_X):
       if hasattr(q, '_keras_mask') and q._keras_mask is not None:
         mask = q._keras_mask
         break
-    pX_Z = self.decode(
-        qZ_X,
-        training=training,
-        mask=mask,
-        **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
-    )
+    # decode
+    if pX_Z is None:
+      pX_Z = self.decode(
+          qZ_X,
+          training=training,
+          mask=mask,
+          **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
+      )
     return pX_Z, qZ_X
 
   @tf.function(autograph=False)
@@ -446,11 +474,11 @@ class VariationalAutoencoder(VariationalModel):
     Parameters
     ----------
     inputs : TensorTypes
-        [description]
+        inputs' Tensors
     training : Optional[bool], optional
-        [description], by default None
+        training or evaluation mode, by default None
     mask : Optional[Tensor], optional
-        [description], by default None
+        mask Tensor, by default None
 
     Returns
     -------
@@ -507,16 +535,17 @@ class VariationalAutoencoder(VariationalModel):
       pX_Z: Optional[Union[Distribution, List[Distribution]]] = None,
       qZ_X: Optional[Union[Distribution, List[Distribution]]] = None,
       mask: Optional[Tensor] = None,
-      *args,
       **kwargs,
   ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     """Calculate the distortion (log-likelihood) and rate (KL-divergence)
     for contruction the Evident Lower Bound (ELBO)"""
     # organize all inputs to list
-    if qZ_X is None:
-      qZ_X = self.encode(inputs, training=training, mask=mask, *args, **kwargs)
-    if pX_Z is None:
-      pX_Z = self.decode(qZ_X, training=training, mask=mask, *args, **kwargs)
+    pX_Z, qZ_X = self.call(inputs,
+                           training=training,
+                           mask=mask,
+                           pX_Z=pX_Z,
+                           qZ_X=qZ_X,
+                           **kwargs)
     pX_Z = tf.nest.flatten(pX_Z)
     qZ_X = tf.nest.flatten(qZ_X)
     # override the default mask

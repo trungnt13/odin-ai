@@ -4,8 +4,7 @@ from numbers import Number
 import numpy as np
 import tensorflow as tf
 from odin.backend.keras_helpers import layer2text
-from odin.networks.base_networks import (NetworkConfig, SequentialNetwork,
-                                         dense_network)
+from odin.networks.base_networks import (NetworkConfig, SequentialNetwork)
 from odin.networks.skip_connection import SkipConnection
 from tensorflow.python import keras
 

@@ -75,7 +75,8 @@ class FactorDiscriminator(SequentialNetwork):
                            flatten_inputs=True,
                            input_dropout=input_dropout,
                            activation=activation,
-                           input_shape=tf.nest.flatten(input_shape))
+                           input_shape=tf.nest.flatten(input_shape),
+                           prefix=name)
     super().__init__(layers, name=name)
     shape = self.output_shape[1:]
     self.distributions = [o.create_posterior(shape) for o in outputs]

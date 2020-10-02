@@ -236,7 +236,8 @@ class VariationalModel(Networks):
       if verbose:
         inputs = tqdm(inputs, desc="Calculating perplexity")
       for x in inputs:
-        elbo, _ = self.elbo(x, training=training, *args, **kwargs)
+        llk, kl = self.elbo_components(x, training=training, *args, **kwargs)
+        elbo = self.elbo(llk=llk, kl=kl)
         words_per_doc = tf.reduce_sum(x, axis=-1)
         log_perplexity.append(-elbo / words_per_doc)
       log_perplexity = tf.concat(log_perplexity, axis=-1)
@@ -246,7 +247,11 @@ class VariationalModel(Networks):
         inputs = inputs.toarray()
       inputs = tf.convert_to_tensor(inputs, dtype_hint=self.dtype)
       if elbo is None:
-        elbo = self.elbo(inputs, training=training, *args, **kwargs)
+        llk, kl = self.elbo_components(inputs,
+                                       training=training,
+                                       *args,
+                                       **kwargs)
+        elbo = self.elbo(llk=llk, kl=kl)
       # calculate the perplexity
       words_per_doc = tf.reduce_sum(inputs, axis=-1)
       log_perplexity = -elbo / words_per_doc

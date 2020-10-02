@@ -84,9 +84,18 @@ class miVAE(betaVAE):
                       training=None,
                       pX_Z=None,
                       qZ_X=None,
-                      mask=None):
+                      mask=None,
+                      **kwargs):
     # NOTE: the original implementation does not take KL(qC_X||pC),
     # only maximize the mutual information of q(c|X)
+    pX_Z, qZ_X = self.call(inputs,
+                           training=training,
+                           pX_Z=pX_Z,
+                           qZ_X=qZ_X,
+                           mask=mask,
+                           **kwargs)
+    pX_Z = tf.nest.flatten(pX_Z)
+    qZ_X = tf.nest.flatten(qZ_X)
     llk, kl = super().elbo_components(
         inputs,
         pX_Z=pX_Z,

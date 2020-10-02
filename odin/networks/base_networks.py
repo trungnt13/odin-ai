@@ -597,22 +597,25 @@ class SequentialNetwork(keras.Sequential):
 # ===========================================================================
 # Networks
 # ===========================================================================
-def dense_network(units,
-                  activation='relu',
-                  use_bias=True,
-                  kernel_initializer='glorot_uniform',
-                  bias_initializer='zeros',
-                  kernel_regularizer=None,
-                  bias_regularizer=None,
-                  activity_regularizer=None,
-                  kernel_constraint=None,
-                  bias_constraint=None,
-                  flatten_inputs=True,
-                  batchnorm=True,
-                  input_dropout=0.,
-                  dropout=0.,
-                  input_shape=None):
+def dense_network(units: List[int],
+                  activation: str = 'relu',
+                  use_bias: bool = True,
+                  kernel_initializer: str = 'glorot_uniform',
+                  bias_initializer: str = 'zeros',
+                  kernel_regularizer: Optional[str] = None,
+                  bias_regularizer: Optional[str] = None,
+                  activity_regularizer: Optional[str] = None,
+                  kernel_constraint: Optional[str] = None,
+                  bias_constraint: Optional[str] = None,
+                  flatten_inputs: bool = True,
+                  batchnorm: bool = True,
+                  input_dropout: float = 0.,
+                  dropout: float = 0.,
+                  input_shape: Optional[List[int]] = None,
+                  prefix: Optional[str] = 'Layer') -> List[Layer]:
   r""" Multi-layers dense feed-forward neural network """
+  if prefix is None:
+    prefix = 'Layer'
   (units, activation, use_bias, kernel_initializer, bias_initializer,
    kernel_regularizer, bias_regularizer, activity_regularizer,
    kernel_constraint, bias_constraint, batchnorm,
@@ -641,7 +644,7 @@ def dense_network(units,
           activity_regularizer=activity_regularizer[i],
           kernel_constraint=kernel_constraint[i],
           bias_constraint=bias_constraint[i],
-          name="Layer%d" % i))
+          name=f"{prefix}{i}"))
     if batchnorm[i]:
       layers.append(keras.layers.BatchNormalization())
     layers.append(keras.layers.Activation(activation[i]))
@@ -650,27 +653,27 @@ def dense_network(units,
   return layers
 
 
-def conv_network(units,
-                 rank=2,
-                 kernel=3,
-                 strides=1,
-                 padding='same',
-                 dilation=1,
-                 activation='relu',
-                 use_bias=True,
-                 kernel_initializer='glorot_uniform',
-                 bias_initializer='zeros',
-                 kernel_regularizer=None,
-                 bias_regularizer=None,
-                 activity_regularizer=None,
-                 kernel_constraint=None,
-                 bias_constraint=None,
-                 batchnorm=True,
-                 input_dropout=0.,
-                 dropout=0.,
-                 projection=False,
-                 input_shape=None,
-                 name=None):
+def conv_network(units: List[int],
+                 rank: int = 2,
+                 kernel: int = 3,
+                 strides: int = 1,
+                 padding: Literal['valid', 'causal', 'same'] = 'same',
+                 dilation: int = 1,
+                 activation: str = 'relu',
+                 use_bias: bool = True,
+                 kernel_initializer: str = 'glorot_uniform',
+                 bias_initializer: str = 'zeros',
+                 kernel_regularizer: Optional[str] = None,
+                 bias_regularizer: Optional[str] = None,
+                 activity_regularizer: Optional[str] = None,
+                 kernel_constraint: Optional[str] = None,
+                 bias_constraint: Optional[str] = None,
+                 batchnorm: bool = True,
+                 input_dropout: float = 0.,
+                 dropout: float = 0.,
+                 projection: bool = False,
+                 input_shape: Optional[List[int]] = None,
+                 prefix: Optional[str] = 'Layer') -> List[Layer]:
   r""" Multi-layers convolutional neural network
 
   Arguments:
@@ -679,6 +682,8 @@ def conv_network(units,
       If an Integer, use a `Dense` layer with linear activation to project
       the output in to 2-D
   """
+  if prefix is None:
+    prefix = 'Layer'
   rank, input_shape = _infer_rank_and_input_shape(rank, input_shape)
   (units, kernel, strides, padding, dilation, activation, use_bias,
    kernel_initializer, bias_initializer, kernel_regularizer, bias_regularizer,
@@ -720,7 +725,7 @@ def conv_network(units,
           activity_regularizer=activity_regularizer[i],
           kernel_constraint=kernel_constraint[i],
           bias_constraint=bias_constraint[i],
-          name="Layer%d" % i))
+          name=f"{prefix}{i}"))
     if batchnorm[i]:
       layers.append(keras.layers.BatchNormalization())
     layers.append(keras.layers.Activation(activation[i]))
@@ -733,32 +738,38 @@ def conv_network(units,
   elif isinstance(projection, Number):
     layers.append(keras.layers.Flatten())
     layers.append(
-        keras.layers.Dense(int(projection), activation='linear', use_bias=True))
+        keras.layers.Dense(int(projection),
+                           activation='linear',
+                           use_bias=True,
+                           name=f'{prefix}proj'))
   return layers
 
 
-def deconv_network(units,
-                   rank=2,
-                   kernel=3,
-                   strides=1,
-                   padding='same',
-                   output_padding=None,
-                   dilation=1,
-                   activation='relu',
-                   use_bias=True,
-                   kernel_initializer='glorot_uniform',
-                   bias_initializer='zeros',
-                   kernel_regularizer=None,
-                   bias_regularizer=None,
-                   activity_regularizer=None,
-                   kernel_constraint=None,
-                   bias_constraint=None,
-                   batchnorm=True,
-                   input_dropout=0.,
-                   dropout=0.,
-                   projection=None,
-                   input_shape=None):
+def deconv_network(units: List[int],
+                   rank: int = 2,
+                   kernel: int = 3,
+                   strides: int = 1,
+                   padding: Literal['same', 'valid', 'causal'] = 'same',
+                   output_padding: Optional[List[int]] = None,
+                   dilation: int = 1,
+                   activation: str = 'relu',
+                   use_bias: bool = True,
+                   kernel_initializer: str = 'glorot_uniform',
+                   bias_initializer: str = 'zeros',
+                   kernel_regularizer: Optional[str] = None,
+                   bias_regularizer: Optional[str] = None,
+                   activity_regularizer: Optional[str] = None,
+                   kernel_constraint: Optional[str] = None,
+                   bias_constraint: Optional[str] = None,
+                   batchnorm: bool = True,
+                   input_dropout: float = 0.,
+                   dropout: float = 0.,
+                   projection: Optional[int] = None,
+                   input_shape: Optional[List[int]] = None,
+                   prefix: Optional[str] = 'Layer') -> List[Layer]:
   r""" Multi-layers transposed convolutional neural network """
+  if prefix is None:
+    prefix = 'Layer'
   rank, input_shape = _infer_rank_and_input_shape(rank, input_shape)
   (units, kernel, strides, padding, output_padding, dilation, activation,
    use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
@@ -800,7 +811,7 @@ def deconv_network(units,
           activity_regularizer=activity_regularizer[i],
           kernel_constraint=kernel_constraint[i],
           bias_constraint=bias_constraint[i],
-          name="Layer%d" % i))
+          name=f"{prefix}{i}"))
     if batchnorm[i]:
       layers.append(keras.layers.BatchNormalization())
     layers.append(keras.layers.Activation(activation[i]))
@@ -813,7 +824,10 @@ def deconv_network(units,
   elif isinstance(projection, Number):
     layers.append(keras.layers.Flatten())
     layers.append(
-        keras.layers.Dense(int(projection), activation='linear', use_bias=True))
+        keras.layers.Dense(int(projection),
+                           activation='linear',
+                           use_bias=True,
+                           name=f'{prefix}proj'))
   return layers
 
 
@@ -980,6 +994,7 @@ class NetworkConfig(dict):
           activity_regularizer=self.activity_regularizer,
           kernel_constraint=self.kernel_constraint,
           bias_constraint=self.bias_constraint,
+          prefix=name,
       )
       decoder = start_layers + decoder
       decoder.append(keras.layers.Reshape(input_shape))
@@ -1001,6 +1016,7 @@ class NetworkConfig(dict):
           bias_constraint=self.bias_constraint,
           flatten_inputs=self.flatten_inputs,
           input_shape=latent_shape,
+          prefix=name,
       )
     ### deconv
     else:
@@ -1049,63 +1065,72 @@ class NetworkConfig(dict):
     ### convolution network
     if self.network == 'conv':
       # create the encoder
-      network = conv_network(self.units,
-                             kernel=self.kernel,
-                             strides=self.strides,
-                             padding=self.padding,
-                             dilation=self.dilation,
-                             activation=self.activation,
-                             use_bias=self.use_bias,
-                             batchnorm=self.batchnorm,
-                             input_dropout=self.input_dropout,
-                             dropout=self.dropout,
-                             kernel_initializer=self.kernel_initializer,
-                             bias_initializer=self.bias_initializer,
-                             kernel_regularizer=self.kernel_regularizer,
-                             bias_regularizer=self.bias_regularizer,
-                             activity_regularizer=self.activity_regularizer,
-                             kernel_constraint=self.kernel_constraint,
-                             bias_constraint=self.bias_constraint,
-                             projection=self.projection,
-                             input_shape=input_shape)
+      network = conv_network(
+          self.units,
+          kernel=self.kernel,
+          strides=self.strides,
+          padding=self.padding,
+          dilation=self.dilation,
+          activation=self.activation,
+          use_bias=self.use_bias,
+          batchnorm=self.batchnorm,
+          input_dropout=self.input_dropout,
+          dropout=self.dropout,
+          kernel_initializer=self.kernel_initializer,
+          bias_initializer=self.bias_initializer,
+          kernel_regularizer=self.kernel_regularizer,
+          bias_regularizer=self.bias_regularizer,
+          activity_regularizer=self.activity_regularizer,
+          kernel_constraint=self.kernel_constraint,
+          bias_constraint=self.bias_constraint,
+          projection=self.projection,
+          input_shape=input_shape,
+          prefix=name,
+      )
     ### dense network
     elif self.network == 'dense':
-      network = dense_network(self.units,
-                              activation=self.activation,
-                              use_bias=self.use_bias,
-                              batchnorm=self.batchnorm,
-                              input_dropout=self.input_dropout,
-                              dropout=self.dropout,
-                              kernel_initializer=self.kernel_initializer,
-                              bias_initializer=self.bias_initializer,
-                              kernel_regularizer=self.kernel_regularizer,
-                              bias_regularizer=self.bias_regularizer,
-                              activity_regularizer=self.activity_regularizer,
-                              kernel_constraint=self.kernel_constraint,
-                              bias_constraint=self.bias_constraint,
-                              flatten_inputs=self.flatten_inputs,
-                              input_shape=input_shape)
+      network = dense_network(
+          self.units,
+          activation=self.activation,
+          use_bias=self.use_bias,
+          batchnorm=self.batchnorm,
+          input_dropout=self.input_dropout,
+          dropout=self.dropout,
+          kernel_initializer=self.kernel_initializer,
+          bias_initializer=self.bias_initializer,
+          kernel_regularizer=self.kernel_regularizer,
+          bias_regularizer=self.bias_regularizer,
+          activity_regularizer=self.activity_regularizer,
+          kernel_constraint=self.kernel_constraint,
+          bias_constraint=self.bias_constraint,
+          flatten_inputs=self.flatten_inputs,
+          input_shape=input_shape,
+          prefix=name,
+      )
     ### deconv
     elif self.network == 'deconv':
-      network = deconv_network(self.units,
-                               kernel=self.kernel,
-                               strides=self.strides,
-                               padding=self.padding,
-                               dilation=self.dilation,
-                               activation=self.activation,
-                               use_bias=self.use_bias,
-                               batchnorm=self.batchnorm,
-                               input_dropout=self.input_dropout,
-                               dropout=self.dropout,
-                               kernel_initializer=self.kernel_initializer,
-                               bias_initializer=self.bias_initializer,
-                               kernel_regularizer=self.kernel_regularizer,
-                               bias_regularizer=self.bias_regularizer,
-                               activity_regularizer=self.activity_regularizer,
-                               kernel_constraint=self.kernel_constraint,
-                               bias_constraint=self.bias_constraint,
-                               projection=self.projection,
-                               input_shape=input_shape)
+      network = deconv_network(
+          self.units,
+          kernel=self.kernel,
+          strides=self.strides,
+          padding=self.padding,
+          dilation=self.dilation,
+          activation=self.activation,
+          use_bias=self.use_bias,
+          batchnorm=self.batchnorm,
+          input_dropout=self.input_dropout,
+          dropout=self.dropout,
+          kernel_initializer=self.kernel_initializer,
+          bias_initializer=self.bias_initializer,
+          kernel_regularizer=self.kernel_regularizer,
+          bias_regularizer=self.bias_regularizer,
+          activity_regularizer=self.activity_regularizer,
+          kernel_constraint=self.kernel_constraint,
+          bias_constraint=self.bias_constraint,
+          projection=self.projection,
+          input_shape=input_shape,
+          prefix=name,
+      )
     ### others
     else:
       raise NotImplementedError("No implementation for network of type: '%s'" %
