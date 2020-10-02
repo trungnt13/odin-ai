@@ -465,11 +465,7 @@ class amortizedLDA(betaVAE):
 # ===========================================================================
 # Two-stage VAE
 # ===========================================================================
-# class conditionalLDA(amortizedLDA):
-#   pass
-
-
-class TwoStageLDA(amortizedLDA):
+class nonlinearLDA(amortizedLDA):
   r""" Two-stage latent dirichlet allocation """
 
   def __init__(
@@ -532,75 +528,14 @@ class ALDA(VariationalModel):
       lda.warmup = int(warmup)
     self.encoder = encoder
     self.beta = beta
-    self.build(input_shape=(None, lda.n_words))
 
   def call(self, inputs, training=None, **kwargs):
     e = self.encoder(inputs, training=training)
     px, qz = self.lda(e, training=training, sample_shape=self.sample_shape)
     return px, qz
 
-  def elbo(self, inputs, training, **kwargs):
+  def elbo_components(self, inputs, training, **kwargs):
     px, qz = self(inputs, training=training)
     llk = px.log_prob(inputs)
-    kl = self.beta * qz.KL_divergence(analytic=self.analytic,
-                                      reverse=self.reverse)
-    elbo = llk - kl
-    return elbo, dict(llk=llk, kl=kl)
-
-
-class VDA(VariationalModel):
-  """Variational Dirichlet Autoencoder"""
-
-  def __init__(
-      self,
-      lda: LatentDirichletDecoder,
-      encoder: Layer,
-      decoder: Layer,
-      latents: RandomVariable = RandomVariable(10,
-                                               'diag',
-                                               projection=True,
-                                               name="Latents"),
-      warmup: Optional[int] = None,
-      beta: float = 1.0,
-      **kwargs,
-  ):
-    super().__init__(**kwargs)
-    self.lda = lda
-    self.lda.step = self.step
-    if warmup is not None:
-      self.lda.warmup = warmup
-    self.beta = beta
-    self.encoder = encoder
-    self.decoder = decoder
-    self.latents = latents.create_posterior()
-    if lda.distribution == 'onehot':
-      dist = RandomVariable((lda.n_words,),
-                            posterior='onehot',
-                            projection=True,
-                            preactivation='softmax',
-                            kwargs=dict(probs_input=True),
-                            name="Outputs")
-    else:
-      dist = RandomVariable((lda.n_words,),
-                            posterior=lda.distribution,
-                            projection=True,
-                            name="Outputs")
-    self.outputs_ = dist.create_posterior()
-    self.build(input_shape=(None, lda.n_words))
-
-  def call(self, inputs, training=None, **kwargs):
-    e = self.encoder(inputs, training=training)
-    qz = self.latents(e, training=training, sample_shape=self.sample_shape)
-    px_t, qt = self.lda(e, training=training, sample_shape=self.sample_shape)
-    d = self.decoder(tf.convert_to_tensor(qz), training=training)
-    px_z = self.outputs_(d, training=training)
-    return (px_z, px_t), (qz, qt)
-
-  def elbo(self, inputs, training=None, **kwargs):
-    (px_z, px_t), (qz, qt) = self(inputs, training=training)
-    llk_z = 0.2 * px_z.log_prob(inputs)
-    llk_t = px_t.log_prob(inputs)
-    kl_z = qz.KL_divergence(analytic=self.analytic, reverse=self.reverse)
-    kl_t = qt.KL_divergence(analytic=self.analytic, reverse=self.reverse)
-    elbo = (llk_z + llk_t) - self.beta * (kl_z + kl_t)
-    return elbo, dict(llk_z=llk_z, llk_t=llk_t, kl_z=kl_z, kl_t=kl_t)
+    kl = self.beta * qz.KL_divergence(analytic=self.analytic)
+    return dict(llk=llk), dict(kl=kl)

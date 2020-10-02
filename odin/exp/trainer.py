@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import glob
 import inspect
 import os
@@ -741,6 +743,7 @@ class Trainer(object):
           last_valid_time = progress._time()
         #########
       # Final callback to signal train ended
+      self._is_training = False
       _process_callback_returns(progress, log_tag, self.n_iter, callback())
       # end the progress
       progress.clear()

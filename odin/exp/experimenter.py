@@ -264,11 +264,13 @@ def run_hydra(output_dir: str = '/tmp/outputs',
     @functools.wraps(task_function)
     def decorated_main(
         config: Union[str, dict, list, tuple, DictConfig]) -> Any:
-      ## string
+      ### string
       if isinstance(config, string_types):
+        # path to a config file
         if os.path.isfile(config):
           config_name = os.path.basename(config).replace(".yaml", "")
           config_path = os.path.dirname(config)
+        # path to a directory
         elif os.path.isdir(config):
           config_path = config
           if not os.path.exists(os.path.join(config_path, 'base.yaml')):
@@ -277,12 +279,10 @@ def run_hydra(output_dir: str = '/tmp/outputs',
             config_name = sorted([
                 i for i in os.listdir(config_path) if '.yaml' in i
             ])[0].replace(".yaml", "")
-        elif len(YAML_REGEX.findall(config)) > 1:
-          config_path, config_name = _save_config_to_tempdir(config)
+        # YAML string
         else:
-          raise ValueError(
-              f"No support for string config with format: {config}")
-      ## dictionary, tuple, list, DictConfig
+          config_path, config_name = _save_config_to_tempdir(config)
+      ### dictionary, tuple, list, DictConfig
       else:
         config_path, config_name = _save_config_to_tempdir(config)
       ### list all experiments command
