@@ -254,20 +254,21 @@ class LatentDirichletDecoder(Model):
                                      name="TopicsPrior")
     return prior
 
-  def call(self,
-           inputs: Union[TensorTypes, List[TensorTypes]],
-           training: Optional[bool] = None,
-           mask: Optional[TensorTypes] = None,
-           sample_shape=(),
-           **kwargs) -> Tuple[Distribution, Distribution]:
-    r"""
-    Return:
-      The documents words distribution `p(x|z)`
-      The topics posterior distribution `q(z|x)`
-    """
+  def encode(
+      self,
+      inputs: Union[TensorTypes, List[TensorTypes]],
+      training: Optional[bool] = None,
+      mask: Optional[TensorTypes] = None,
+      sample_shape: List[int] = ()
+  ) -> Distribution:
     docs_topics_dist = self.posterior_layer(inputs,
                                             training=training,
                                             sample_shape=sample_shape)
+    return docs_topics_dist
+
+  def decode(self,
+             docs_topics_dist: Union[Distribution, TensorTypes],
+             training: Optional[bool] = None) -> Distribution:
     if self.posterior == 'dirichlet':
       docs_topics_probs = docs_topics_dist
     elif self.posterior == 'gaussian':
@@ -302,6 +303,24 @@ class LatentDirichletDecoder(Model):
     else:
       docs_words_dist = self.distribution_layer(docs_words_logits,
                                                 training=training)
+    return docs_words_dist
+
+  def call(self,
+           inputs: Union[TensorTypes, List[TensorTypes]],
+           training: Optional[bool] = None,
+           mask: Optional[TensorTypes] = None,
+           sample_shape: List[int] = (),
+           **kwargs) -> Tuple[Distribution, Distribution]:
+    r"""
+    Return:
+      The documents words distribution `p(x|z)`
+      The topics posterior distribution `q(z|x)`
+    """
+    docs_topics_dist = self.encode(inputs,
+                                   training=training,
+                                   sample_shape=sample_shape,
+                                   mask=mask)
+    docs_words_dist = self.decode(docs_topics_dist, training=training)
     return docs_words_dist, docs_topics_dist
 
   def get_topics_string(self,
@@ -528,6 +547,13 @@ class ALDA(VariationalModel):
       lda.warmup = int(warmup)
     self.encoder = encoder
     self.beta = beta
+
+  def encode(self, inputs, training=None, **kwargs):
+    e = self.encoder(inputs, training=training)
+    return self.lda.encode(e, training=training, sample_shape=self.sample_shape)
+
+  def decode(self, latents, training=None, **kwargs):
+    return self.lda.decode(latents, training=training)
 
   def call(self, inputs, training=None, **kwargs):
     e = self.encoder(inputs, training=training)

@@ -13,8 +13,7 @@ import tensorflow as tf
 from numpy import ndarray
 from odin import visual as vs
 from odin.bay.distributions import CombinedDistribution
-from odin.bay.vi.autoencoder.variational_autoencoder import \
-    VariationalAutoencoder
+from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.metrics import (mutual_info_estimate, mutual_info_gap,
                                  representative_importance_matrix)
 from odin.bay.vi.utils import discretizing
@@ -119,12 +118,16 @@ def prepare_inputs_factors(inputs, latents, factors, verbose):
   return inputs, latents, factors
 
 
-def _boostrap_sampling(vae: VariationalAutoencoder, inputs: List[ndarray],
-                       factors: Factor,
-                       reduce_latents: Callable[[List[Distribution]],
-                                                List[Distribution]],
-                       n_samples: int, batch_size: int, verbose: bool,
-                       seed: int):
+def _boostrap_sampling(
+    model: VariationalModel,
+    inputs: List[ndarray],
+    factors: Factor,
+    reduce_latents: Callable[[List[Distribution]], List[Distribution]],
+    n_samples: int,
+    batch_size: int,
+    verbose: bool,
+    seed: int,
+):
   from odin.bay.helpers import concat_distributions
   inputs = as_tuple(inputs)
   Xs = [list() for _ in range(len(inputs))]  # inputs
@@ -152,8 +155,8 @@ def _boostrap_sampling(vae: VariationalAutoencoder, inputs: List[ndarray],
       xi.append(inp)
       inps.append(inp)
     # latents representation
-    z = vae.encode(inps, training=False)
-    o = tf.nest.flatten(as_tuple(vae.decode(z, training=False)))
+    z = model.encode(inps[0] if len(inps) == 1 else inps, training=False)
+    o = tf.nest.flatten(as_tuple(model.decode(z, training=False)))
     # post-process latents
     z = reduce_latents(as_tuple(z))
     if len(z) == 1:
@@ -803,17 +806,13 @@ class VariationalPosterior(Posterior):
   """Posterior class for variational inference using Variational Autoencoder"""
 
   def __init__(self,
-               vae: VariationalAutoencoder,
+               model: VariationalModel,
                inputs: Optional[Union[ndarray, Tensor, DatasetV2]] = None,
                latents: Optional[Union[ndarray, Tensor,
                                        DatasetV2]] = None,
                factors: Optional[Union[ndarray, Tensor,
                                        DatasetV2]] = None,
-               discretizer: Optional[Callable[[ndarray],
-                                              ndarray]] = partial(
-                                                  discretizing,
-                                                  n_bins=5,
-                                                  strategy='quantile'),
+               discretizer: Optional[Callable[[ndarray], ndarray]] = None,
                factor_names: Optional[List[str]] = None,
                n_samples: int = 5000,
                batch_size: int = 32,
@@ -822,12 +821,12 @@ class VariationalPosterior(Posterior):
                verbose: bool = False,
                seed: int = 1,):
     super().__init__()
-    assert isinstance(vae, VariationalAutoencoder), \
-      ("vae must be instance of odin.bay.vi.VariationalAutoencoder, "
-       f"given: {type(vae)}")
+    assert isinstance(model, VariationalModel), \
+      ("model must be instance of odin.bay.vi.VariationalModel, "
+       f"given: {type(model)}")
     assert callable(reduce_latents), 'reduce_latents function must be callable'
     ### Assign basic attributes
-    self._vae = vae
+    self._model = model
     self.reduce_latents = reduce_latents
     self.verbose = bool(verbose)
     #### prepare the sampling
@@ -835,6 +834,10 @@ class VariationalPosterior(Posterior):
                                                       latents,
                                                       factors,
                                                       verbose=verbose)
+    ## check factors is one-hot encoded
+    if np.all(np.sum(factors, axis=-1) == 1):
+      factors = np.argmax(factors, axis=1)[:, np.newaxis]
+    ## factor names
     n_inputs = factors.shape[0]
     n_factors = factors.shape[1]
     if factor_names is None:
@@ -893,8 +896,8 @@ class VariationalPosterior(Posterior):
     self._factor_names = factors_set.factor_names
 
   @property
-  def model(self) -> VariationalAutoencoder:
-    return self._vae
+  def model(self) -> VariationalModel:
+    return self._model
 
   @property
   def inputs(self) -> List[ndarray]:
@@ -1102,7 +1105,7 @@ class VariationalPosterior(Posterior):
                                 replace=n_samples > len(ids))
     # copy the posterior
     obj = VariationalPosterior.__new__(VariationalPosterior)
-    obj._vae = self._vae
+    obj._model = self._model
     obj._factor_names = list(self.factor_names)
     obj.reduce_latents = self.reduce_latents
     obj.verbose = self.verbose
@@ -1129,7 +1132,7 @@ class VariationalPosterior(Posterior):
       outputs: Optional[List[Distribution]] = None) -> VariationalPosterior:
     """Return the deepcopy"""
     obj = VariationalPosterior.__new__(VariationalPosterior)
-    obj._vae = self._vae
+    obj._model = self._model
     obj._factor_names = list(self.factor_names)
     obj.reduce_latents = self.reduce_latents
     obj.verbose = self.verbose
@@ -1162,7 +1165,7 @@ class VariationalPosterior(Posterior):
       if isinstance(d, Independent) else str(d)
     return \
 f"""Variational Posterior:
-  model  : {self._vae.__class__}
+  model  : {self._model.__class__}
   reduce : {self.reduce_latents}
   verbose: {self.verbose}
   factors: {self.factors.shape} - {', '.join(self.factor_names)}
