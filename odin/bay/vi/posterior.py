@@ -3,13 +3,14 @@ from __future__ import absolute_import, annotations, division, print_function
 import random
 import warnings
 from collections import Counter, OrderedDict
-from functools import partial
+from contextlib import contextmanager
 from numbers import Number
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import scipy as sp
 import tensorflow as tf
+from matplotlib import pyplot as plt
 from numpy import ndarray
 from odin import visual as vs
 from odin.bay.distributions import CombinedDistribution
@@ -30,7 +31,7 @@ from tensorflow_probability.python.distributions import (Distribution,
 from tqdm import tqdm
 from typing_extensions import Literal
 
-__all__ = ['Factor', 'VariationalPosterior']
+__all__ = ['GroundTruth', 'VariationalPosterior']
 
 
 # ===========================================================================
@@ -63,88 +64,36 @@ except ImportError:
   pass
 
 
-def prepare_inputs_factors(inputs, latents, factors, verbose):
-  if inputs is None:
-    if latents is None:
-      raise ValueError("Either inputs or latents must be provided")
-    assert factors is not None, \
-      "If latents is provided directly, factors must not be None."
-    latents = tf.nest.flatten(latents)
-    assert all(isinstance(z, Distribution) for z in latents), \
-      ("All latents must be instance of Distribution but given: "
-       f"{[type(z).__name__ for z in latents]}")
-  ### inputs is a tensorflow Dataset, convert everything to numpy
-  elif isinstance(inputs, tf.data.Dataset):
-    struct = tf.data.experimental.get_structure(inputs)
-    if isinstance(struct, dict):
-      struct = struct['inputs']
-    struct = tf.nest.flatten(struct)
-    n_inputs = len(struct)
-    if verbose:
-      inputs = tqdm(inputs, desc="Reading data")
-    if factors is None:  # include factors
-      assert n_inputs >= 2, f"factors are not included in the dataset: {inputs}"
-      x, y = [list() for _ in range((n_inputs - 1))], []
-      for data in inputs:
-        if isinstance(data, dict):  # this is an ad-hoc hack
-          data = data['inputs']
-        for i, j in enumerate(data[:-1]):
-          x[i].append(j)
-        y.append(data[-1])
-      inputs = [tf.concat(i, axis=0).numpy() for i in x]
-      if n_inputs == 2:
-        inputs = inputs[0]
-      factors = tf.concat(y, axis=0).numpy()
-    else:  # factors separated
-      x = [list() for _ in range(n_inputs)]
-      for data in inputs:
-        for i, j in enumerate(tf.nest.flatten(data)):
-          x[i].append(j)
-      inputs = [tf.concat(i, axis=0).numpy() for i in x]
-      if n_inputs == 1:
-        inputs = inputs[0]
-      if isinstance(factors, tf.data.Dataset):
-        if verbose:
-          factors = tqdm(factors, desc="Reading factors")
-        factors = tf.concat([i for i in factors], axis=0)
-    # end the progress
-    if isinstance(inputs, tqdm):
-      inputs.clear()
-      inputs.close()
-  # post-processing
-  else:
-    inputs = tf.nest.flatten(inputs)
-  assert len(factors.shape) == 2, "factors must be a matrix"
-  return inputs, latents, factors
-
-
 def _boostrap_sampling(
     model: VariationalModel,
     inputs: List[ndarray],
-    factors: Factor,
-    reduce_latents: Callable[[List[Distribution]], List[Distribution]],
+    groundtruth: GroundTruth,
     n_samples: int,
     batch_size: int,
     verbose: bool,
     seed: int,
 ):
   from odin.bay.helpers import concat_distributions
+  assert inputs.shape[0] == groundtruth.shape[0], \
+    ('Number of samples mismatch between inputs and ground-truth, '
+     f'{inputs.shape[0]} != {groundtruth.shape[0]}')
   inputs = as_tuple(inputs)
   Xs = [list() for _ in range(len(inputs))]  # inputs
-  Ys = []  # factors
   Zs = []  # latents
   Os = []  # outputs
   indices = []
   n = 0
+  random_state = np.random.RandomState(seed=seed)
   prog = tqdm(desc=f'Sampling', total=n_samples, disable=not verbose)
   while n < n_samples:
-    batch = min(batch_size, n_samples - n, factors.shape[0])
+    batch = min(batch_size, n_samples - n, groundtruth.shape[0])
     if verbose:
       prog.update(batch)
     # factors
-    y, ids = factors.sample_factors(num=batch, return_indices=True, seed=seed)
+    _, ids = groundtruth.sample_factors(num=batch,
+                                        return_indices=True,
+                                        seed=random_state.randint(0, 1e8))
     indices.append(ids)
-    Ys.append(y)
     # inputs
     inps = []
     for xi, inp in zip(Xs, inputs):
@@ -158,19 +107,18 @@ def _boostrap_sampling(
     z = model.encode(inps[0] if len(inps) == 1 else inps, training=False)
     o = tf.nest.flatten(as_tuple(model.decode(z, training=False)))
     # post-process latents
-    z = reduce_latents(as_tuple(z))
+    z = as_tuple(z)
     if len(z) == 1:
       z = z[0]
     Os.append(o)
     Zs.append(z)
     # update the counter
-    n += len(y)
+    n += len(ids)
   # end progress
   prog.clear()
   prog.close()
   # aggregate all data
   Xs = [np.concatenate(x, axis=0) for x in Xs]
-  Ys = np.concatenate(Ys, axis=0)
   if isinstance(Zs[0], Distribution):
     Zs = concat_distributions(Zs, name="Latents")
   else:
@@ -185,13 +133,15 @@ def _boostrap_sampling(
                             for j in Os], name=f"Output{i}")
       for i in range(len(Os[0]))
   ]
-  return Xs, Ys, Zs, Os, np.concatenate(indices, axis=0)
+  indices = np.concatenate(indices, axis=0)
+  groundtruth = groundtruth[indices]
+  return Xs, groundtruth, Zs, Os, indices
 
 
 # ===========================================================================
-# Factor
+# GroundTruth
 # ===========================================================================
-class Factor:
+class GroundTruth:
   """Discrete factor for disentanglement analysis. If the factors is continuous,
   the values are casted to `int64` For discretizing continuous factor
   `odin.bay.vi.discretizing`
@@ -199,9 +149,13 @@ class Factor:
   Parameters
   ----------
   factors : [type]
-      `[num_samples, num_factors]`, an Integer array
+      `[num_samples, n_factors]`, an Integer array
   factor_names : [type], optional
-      None or `[num_factors]`, list of name for each factor, by default None
+      None or `[n_factors]`, list of name for each factor, by default None
+  categorical : Union[bool, List[bool]], optional
+      list of boolean indicator if the given factor is categorical values or
+      continuous values, this gives significant meaning when trying to visualize
+      the factors, by default False
 
   Attributes
   ---------
@@ -218,53 +172,86 @@ class Factor:
       factors must be a matrix
   """
 
-  def __init__(self,
-               factors: ndarray,
-               factor_names: Optional[List[str]] = None):
+  def __init__(
+      self,
+      factors: Union[tf.Tensor, np.ndarray, DatasetV2],
+      factor_names: Optional[List[str]] = None,
+      categorical: Union[bool, List[bool]] = False,
+      n_bins: Optional[Union[int, List[int]]] = None,
+      strategy: Literal['uniform', 'quantile', 'kmeans', 'gmm'] = 'uniform',
+  ):
     if isinstance(factors, tf.data.Dataset):
       factors = tf.stack([x for x in factors])
     if tf.is_tensor(factors):
       factors = factors.numpy()
-    factors = np.atleast_2d(factors).astype(np.int64)
-    if factors.ndim > 2:
+    factors = np.atleast_2d(factors)
+    if factors.ndim != 2:
       raise ValueError("factors must be a matrix [n_observations, n_factor], "
                        f"but given shape:{factors.shape}")
-    num_factors = factors.shape[1]
+    # check factors is one-hot encoded
+    if np.all(np.sum(factors, axis=-1) == 1):
+      factors = np.argmax(factors, axis=1)[:, np.newaxis]
+      categorical = True
+    n_factors = factors.shape[1]
+    # discretizing
+    factors_original = np.array(factors)
+    n_bins = as_tuple(n_bins, N=n_factors)
+    strategy = as_tuple(strategy, N=n_factors, t=str)
+    for i, (b, s) in enumerate(zip(n_bins, strategy)):
+      if b is not None:
+        factors[:, i] = discretizing(factors[:, i][:, np.newaxis],
+                                     n_bins=b,
+                                     strategy=s).ravel()
+    factors = factors.astype(np.int64)
     # factor_names
     if factor_names is None:
-      factor_names = [f'F{i}' for i in range(num_factors)]
+      factor_names = [f'F{i}' for i in range(n_factors)]
     else:
-      if hasattr(factor_names, 'numpy'):
-        factor_names = factor_names.numpy()
-      if hasattr(factor_names, 'tolist'):
-        factor_names = factor_names.tolist()
-      factor_names = tf.nest.flatten(factor_names)
-      assert all(isinstance(i, string_types) for i in factor_names), \
-        "All factors' name must be string types, but given: %s" % \
-          str(factor_names)
+      factor_names = [str(i) for i in tf.nest.flatten(factor_names)]
+    assert len(factor_names) == n_factors, \
+      f'Given {n_factors} but only {len(factor_names)} names'
     # store the attributes
     self.factors = factors
-    self.factor_names = [str(i) for i in factor_names]
-    self.factor_labels = [np.unique(x) for x in factors.T]
-    self.factor_sizes = [len(lab) for lab in self.factor_labels]
+    self.factors_original = factors_original
+    self.discretizer = list(zip(n_bins, strategy))
+    self.categorical = as_tuple(categorical, N=n_factors, t=bool)
+    self.names = factor_names
+    self.labels = [np.unique(x) for x in factors.T]
+    self.sizes = [len(lab) for lab in self.labels]
 
-  def __str__(self):
-    text = f'Factor: {self.factors.shape}\n'
-    for name, labels in zip(self.factor_names, self.factor_labels):
-      text += " [%d]'%s': %s\n" % (len(labels), name, ', '.join(
-          [str(i) for i in labels]))
-    return text[:-1]
+  def is_categorical(self, factor_index: Union[int, str]) -> bool:
+    if isinstance(factor_index, string_types):
+      factor_index = self.names.index(factor_index)
+    return self.categorical[factor_index]
 
-  def __repr__(self):
-    return self.__str__()
+  def copy(self) -> GroundTruth:
+    obj = GroundTruth.__new__(GroundTruth)
+    obj.factors = self.factors
+    obj.factors_original = self.factors_original
+    obj.discretizer = self.discretizer
+    obj.categorical = self.categorical
+    obj.names = self.names
+    obj.labels = self.labels
+    obj.sizes = self.sizes
+    return obj
+
+  def __getitem__(self, key):
+    obj = self.copy()
+    obj.factors = obj.factors[key]
+    obj.factors_original = obj.factors_original[key]
+    return obj
 
   @property
   def shape(self) -> List[int]:
     return self.factors.shape
 
   @property
-  def num_factors(self) -> int:
-    return len(self.factor_sizes)
+  def dtype(self) -> np.dtype:
+    return self.factors.dtype
+
+  @property
+  def n_factors(self) -> int:
+    return self.factors.shape[1]
 
   def sample_factors(self,
                      known: Dict[str, int] = {},
@@ -283,20 +270,20 @@ class Factor:
       return_indices : A Boolean
 
     Returns:
-      factors : `[num, num_factors]`
+      factors : `[num, n_factors]`
       indices (optional) : list of Integer
     """
     random_state = np.random.RandomState(seed=seed)
     if not isinstance(known, dict):
       known = dict(known)
     known = {
-        self.factor_names.index(k)
+        self.names.index(k)
         if isinstance(k, string_types) else int(k): v \
           for k, v in known.items()
     }
     # make sure value of known factor is the actual label
     for idx, val in list(known.items()):
-      labels = self.factor_labels[idx]
+      labels = self.labels[idx]
       if val not in labels:
         val = labels[val]
       known[idx] = val
@@ -318,7 +305,7 @@ class Factor:
       in given batch, then return the indices of those samples.
 
     Arguments:
-      factors : `[num_samples, num_factors]`
+      factors : `[num_samples, n_factors]`
       random_state : None or `np.random.RandomState`
 
     Returns:
@@ -331,126 +318,162 @@ class Factor:
     assert factors.ndim == 2, "Only support matrix as factors."
     return np.array(_fast_samples_indices(factors, self.factors))
 
+  def __str__(self):
+    text = f'GroundTruth: {self.factors.shape}\n'
+    for i, (discretizer, name,
+            labels) in enumerate(zip(self.discretizer, self.names,
+                                     self.labels)):
+      text += (f" [n={len(labels)}]'{name}'-"
+               f"{discretizer}-"
+               f"{'categorical' if self.categorical[i] else 'continuous'}: "
+               f"{','.join([str(i) for i in labels])}\n")
+    return text[:-1]
+
 
 # ===========================================================================
 # Sampler
 # ===========================================================================
+_CACHE_LATENTS = {}
+
+
 class Posterior(vs.Visualizer):
+
+  def __init__(self,
+               model: keras.layers.Layer,
+               groundtruth: GroundTruth,
+               verbose: bool = False,
+               name: str = 'Posterior',
+               *args,
+               **kwargs):
+    super().__init__()
+    assert isinstance(model, keras.layers.Layer), \
+      f'model must be instance of keras.layers.Layer, but given:{type(model)}'
+    assert isinstance(groundtruth, GroundTruth), \
+      f'groundtruth must be instance of GroundTruth, but given:{type(groundtruth)}'
+    self._name = str(name)
+    self._model = model
+    self._groundtruth = groundtruth
+    self._dist_to_tensor = lambda d: d.sample()
+    self._verbose = verbose
+
+  @contextmanager
+  def configure(
+      self,
+      dist_to_tensor: Optional[Callable[[Distribution], Tensor]] = None
+  ) -> Posterior:
+    d2t = self._dist_to_tensor
+    if dist_to_tensor is not None:
+      assert callable(dist_to_tensor), \
+        ('fn must be a callable input a Distribution and return a Tensor, '
+         f'given type:{dist_to_tensor}')
+      self._dist_to_tensor = dist_to_tensor
+    yield self
+    self._dist_to_tensor = d2t
 
   def plot_scatter(
       self,
-      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
+      factor_index: Union[int, str],
       classifier: Optional[Literal['svm', 'tree', 'logistic', 'knn', 'lda',
                                    'gbt']] = None,
       classifier_kw: Dict[str, Any] = {},
       dimension_reduction: Literal['pca', 'umap', 'tsne', 'knn',
                                    'kmean'] = 'tsne',
-      factor_indices: Optional[Union[int, str, List[Union[int, str]]]] = None,
-      n_samples: Optional[int] = None,
+      max_samples: Optional[int] = 2000,
       return_figure: bool = False,
+      ax: Optional['Axes'] = None,
       seed: int = 1,
-  ):
-    cmap = 'bwr'
+  ) -> Union['Figure', Posterior]:
+    """Plot dimension reduced scatter points of the sample set.
+
+    Parameters
+    ----------
+    classifier : {'svm', 'tree', 'logistic', 'knn', 'lda', 'gbt'}, optional
+        classifier for ploting decision contour of each factor, by default None
+    classifier_kw : Dict[str, Any], optional
+        keyword arguments for the classifier, by default {}
+    dimension_reduction : {'pca', 'umap', 'tsne', 'knn', 'kmean'}, optional
+        method for dimension reduction, by default 'tsne'
+    factor_indices : Optional[Union[int, str, List[Union[int, str]]]], optional
+        indicator of which factor will be plotted, by default None
+    max_samples : Optional[int], optional
+        maximum number of samples to be plotted, by default 2000
+    return_figure : bool, optional
+        return the figure or add it to the Visualizer for later processing,
+        by default False
+    seed : int, optional
+        seed for random state, by default 1
+
+    Returns
+    -------
+    Figure or Posterior
+        return a `matplotlib.pyplot.Figure` if `return_figure=True` else return
+        self for method chaining.
+    """
     ## get all relevant factors
-    if factor_indices is None:
-      factor_indices = list(range(self.n_factors))
-    factor_indices = [
-        int(i) if isinstance(i, Number) else self.factor_names.index(i)
-        for i in as_tuple(factor_indices)
-    ]
-    f = self.factors[:, factor_indices]
-    if f.ndim == 1:
-      f = np.expand_dims(f, axis=1)
-    names = np.asarray(self.factor_names)[factor_indices]
+    if isinstance(factor_index, string_types):
+      factor_index = self.factor_names.index(factor_index)
+    factor_indices = int(factor_index)
+    f = self.factors[:, factor_index]
+    name = self.factor_names[factor_index]
+    categorical = self.is_categorical(factor_index)
+    f_norm = (f - np.mean(f, axis=0)) / np.std(f, axis=0)
     ## reduce latents dimension
-    z = convert_to_tensor(self.latents).numpy()
-    z = dimension_reduce(z,
-                         algo=dimension_reduction,
-                         n_components=2,
-                         random_state=seed)
+    z = self.dimension_reduce(algorithm=dimension_reduction, seed=seed)
     x_min, x_max = np.min(z[:, 0]), np.max(z[:, 0])
     y_min, y_max = np.min(z[:, 1]), np.max(z[:, 1])
-    # standardlize the factors
-    f_norm = (f - np.mean(f, axis=0, keepdims=True)) / np.std(
-        f, axis=0, keepdims=True)
     ## downsample
-    if isinstance(n_samples, Number):
-      n_samples = int(n_samples)
-      if n_samples < z.shape[0]:
+    if isinstance(max_samples, Number):
+      max_samples = int(max_samples)
+      if max_samples < z.shape[0]:
         rand = np.random.RandomState(seed=seed)
         ids = rand.choice(np.arange(z.shape[0], dtype=np.int32),
-                          size=n_samples,
+                          size=max_samples,
                           replace=False)
         z = z[ids]
         f = f[ids]
+    ## train classifier if provided
     n_samples = z.shape[0]
     if classifier is not None:
       xx, yy = np.meshgrid(np.linspace(x_min, x_max, n_samples),
                            np.linspace(y_min, y_max, n_samples))
       xy = np.c_[xx.ravel(), yy.ravel()]
     ## plotting
-    from matplotlib import pyplot as plt
-    n_cols = 4
-    n_rows = int(np.ceil(f.shape[1] / n_cols))
-    fig = plt.figure(figsize=(n_cols * 2, n_rows * 2),
-                     constrained_layout=False,
-                     dpi=120)
-    grids = fig.add_gridspec(n_rows, n_cols, wspace=0, hspace=0)
-    for c in range(n_cols):
-      for r in range(n_rows):
-        idx = r * n_cols + c
-        if idx >= f.shape[1]:
-          continue
-        ax = fig.add_subplot(grids[r, c])
-        # scatter plot
-        vs.plot_scatter(x=z,
-                        val=f_norm[:, idx],
-                        color=cmap,
-                        ax=ax,
-                        size=10.,
-                        alpha=0.5)
-        ax.grid(False)
-        ax.tick_params(axis='both',
-                       bottom=False,
-                       top=False,
-                       left=False,
-                       right=False)
-        ax.text(x_min,
-                y_max,
-                names[idx],
-                horizontalalignment='left',
-                verticalalignment='top',
-                fontdict=dict(size=10,
-                              color='Green',
-                              alpha=0.5,
-                              weight='normal'))
-        # classifier boundary
-        if classifier is not None:
-          model = linear_classifier(z,
-                                    f[:, idx],
-                                    algo=classifier,
-                                    seed=seed,
-                                    **classifier_kw)
-          ax.contourf(xx,
-                      yy,
-                      model.predict(xy).reshape(xx.shape),
-                      cmap=cmap,
-                      alpha=0.4)
-    ## return or save
+    ax = vs.to_axis(ax, is_3D=False)
+    cmap = 'bwr'
+    # scatter plot
+    vs.plot_scatter(x=z, val=f, color=cmap, ax=ax, size=10., alpha=0.5)
+    ax.grid(False)
+    ax.tick_params(axis='both',
+                   bottom=False,
+                   top=False,
+                   left=False,
+                   right=False)
+    ax.set_title(name)
+    # classifier boundary
+    if classifier is not None:
+      model = linear_classifier(z,
+                                f,
+                                algo=classifier,
+                                seed=seed,
+                                **classifier_kw)
+      ax.contourf(xx,
+                  yy,
+                  model.predict(xy).reshape(xx.shape),
+                  cmap=cmap,
+                  alpha=0.4)
     if return_figure:
-      return fig
+      return plt.gcf()
     return self.add_figure(
         name=f'scatter_{dimension_reduction}_{str(classifier).lower()}',
-        fig=fig)
+        fig=plt.gcf())
 
   def plot_histogram(
       self,
-      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
       histogram_bins: int = 120,
       original_factors: bool = True,
       return_figure: bool = False,
   ):
-    Z = convert_to_tensor(self.latents).numpy()
+    Z = self.dist_to_tensor(self.latents).numpy()
     F = self.factors_original if original_factors else self.factors
     X = [i for i in F.T] + [i for i in Z.T]
     labels = self.factor_names + self.latent_names
@@ -475,7 +498,6 @@ class Posterior(vs.Visualizer):
   def plot_disentanglement(
       self,
       factor_indices: Optional[Union[int, str, List[Union[int, str]]]] = None,
-      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
       n_bins_factors: int = 15,
       n_bins_codes: int = 80,
       corr_type: Union[Literal['spearman', 'pearson', 'lasso', 'average', 'mi'],
@@ -523,11 +545,11 @@ class Posterior(vs.Visualizer):
     ### correlation
     if isinstance(corr_type, string_types):
       if corr_type == 'mi':
-        corr = self.mutualinfo_matrix(convert_to_tensor=convert_to_tensor,
+        corr = self.mutualinfo_matrix(convert_to_tensor=self.dist_to_tensor,
                                       seed=seed)
         score_type = 'mutual-info'
       else:
-        corr = self.correlation_matrix(convert_to_tensor=convert_to_tensor,
+        corr = self.correlation_matrix(convert_to_tensor=self.dist_to_tensor,
                                        method=corr_type,
                                        seed=seed)
         score_type = corr_type
@@ -562,7 +584,7 @@ class Posterior(vs.Visualizer):
          if original_factors else self.factors)[:, factor_indices]
     factor_names = np.asarray(self.factor_names)[factor_indices]
     # codes
-    Z = convert_to_tensor(self.latents).numpy()[:, latent_indices]
+    Z = self.dist_to_tensor(self.latents).numpy()[:, latent_indices]
     latent_names = np.asarray(self.latent_names)[latent_indices]
     ### create the figure
     nrow = F.shape[1]
@@ -603,8 +625,12 @@ class Posterior(vs.Visualizer):
         fig)
 
   @property
+  def name(self) -> str:
+    return self._name
+
+  @property
   def model(self) -> keras.layers.Layer:
-    raise NotImplementedError
+    return self._model
 
   @property
   def inputs(self) -> List[ndarray]:
@@ -620,36 +646,61 @@ class Posterior(vs.Visualizer):
 
   @property
   def factors(self) -> ndarray:
-    raise NotImplementedError
+    return self._groundtruth.factors
 
   @property
   def factors_original(self) -> ndarray:
-    raise NotImplementedError
+    return self._groundtruth.factors_original
 
   @property
   def factor_names(self) -> List[str]:
-    raise NotImplementedError
-
-  @property
-  def latent_names(self) -> List[str]:
-    raise NotImplementedError
+    return self._groundtruth.names
 
   @property
   def n_factors(self) -> int:
     return self.factors.shape[1]
 
   @property
+  def n_samples(self) -> int:
+    return self.factors.shape[0]
+
+  def is_categorical(self, factor_index: Union[int, str]) -> bool:
+    return self._groundtruth.is_categorical(factor_index)
+
+  @property
+  def latent_names(self) -> List[str]:
+    raise NotImplementedError
+
+  @property
   def n_latents(self) -> int:
     return self.latents.event_shape[0]
 
   @property
-  def n_samples(self) -> int:
-    return self.latents.batch_shape[0]
+  def dist_to_tensor(self) -> Callable[[Distribution], Tensor]:
+    return self._dist_to_tensor
+
+  @property
+  def verbose(self) -> bool:
+    return self._verbose
 
   ############## Matrices
+  def dimension_reduce(
+      self,
+      algorithm: Literal['pca', 'umap', 'tsne', 'knn', 'kmean'] = 'tsne',
+      seed: int = 1,
+  ) -> np.ndarray:
+    """Applying dimension reduction on latents space, this method will cache the
+    returns to lower computational cost."""
+    key = f'{id(self)}_{id(self.dist_to_tensor)}_{algorithm}_{int(seed)}'
+    if key in _CACHE_LATENTS:
+      return _CACHE_LATENTS[key]
+    x = self.dist_to_tensor(self.latents).numpy()
+    x = dimension_reduce(x, algo=algorithm, random_state=seed)
+    _CACHE_LATENTS[key] = x
+    return x
+
   def correlation_matrix(
       self,
-      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
       method: Literal['spearman', 'pearson', 'lasso', 'average'] = 'spearman',
       sort_pairs: bool = False,
       seed: int = 1,
@@ -659,8 +710,6 @@ class Posterior(vs.Visualizer):
 
     Parameters
     ----------
-    convert_to_tensor : Callable[[Distribution], Tensor], optional
-        callable to convert a distribution to tensor, by default `lambdad:d.mean()`
     method : {'spearman', 'pearson', 'lasso', 'average'}
         method for calculating the correlation,
         'spearman' - rank or monotonic correlation
@@ -690,7 +739,7 @@ class Posterior(vs.Visualizer):
     ### average mode
     if method == 'average':
       corr_mat = sum(
-          self.correlation_matrix(convert_to_tensor=convert_to_tensor,
+          self.correlation_matrix(convert_to_tensor=self.dist_to_tensor,
                                   method=corr,
                                   sort_pairs=False,
                                   seed=seed)
@@ -698,7 +747,7 @@ class Posterior(vs.Visualizer):
     ### specific mode
     else:
       # start form correlation matrix
-      z = convert_to_tensor(self.latents).numpy()
+      z = self.dist_to_tensor(self.latents).numpy()
       f = self.factors
       # lasso
       if method == 'lasso':
@@ -728,7 +777,6 @@ class Posterior(vs.Visualizer):
 
   def mutualinfo_matrix(
       self,
-      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
       n_neighbors: Union[int, List[int]] = [3, 4, 5],
       n_cpu: int = 1,
       seed: int = 1,
@@ -738,8 +786,6 @@ class Posterior(vs.Visualizer):
 
     Parameters
     ----------
-    convert_to_tensor : Callable[[Distribution], Tensor], optional
-        callable to convert a distribution to tensor, by default `lambdad:d.mean()`
     n_neighbors : Union[int, List[int]], optional
         number of neighbors for estimating MI, by default [3, 4, 5]
     n_cpu : int, optional
@@ -756,7 +802,7 @@ class Posterior(vs.Visualizer):
     n_neighbors = as_tuple(n_neighbors, t=int)
     mi = sum(
         mutual_info_estimate(
-            representations=convert_to_tensor(self.latents).numpy(),
+            representations=self.dist_to_tensor(self.latents).numpy(),
             factors=self.factors,
             continuous_representations=True,
             continuous_factors=False,
@@ -768,7 +814,6 @@ class Posterior(vs.Visualizer):
 
   def mutual_info_gap(
       self,
-      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
       n_bins: int = 10,
       strategy: Literal['uniform', 'quantile', 'kmeans', 'gmm'] = 'uniform',
   ) -> float:
@@ -776,8 +821,6 @@ class Posterior(vs.Visualizer):
 
     Parameters
     ----------
-    convert_to_tensor : Callable[[Distribution], Tensor], optional
-        callable to convert a distribution to tensor, by default `lambdad:d.mean()`
     n_bins : int, optional
         number of bins for discretizing the latents, by default 10
     strategy : {'uniform', 'quantile', 'kmeans', 'gmm'}
@@ -792,108 +835,72 @@ class Posterior(vs.Visualizer):
     float
         mutual information gap score
     """
-    z = convert_to_tensor(self.latents).numpy()
+    z = self.dist_to_tensor(self.latents).numpy()
     if n_bins > 1:
       z = discretizing(z, independent=True, n_bins=n_bins, strategy=strategy)
     f = self.factors
     return mutual_info_gap(z, f)
 
-  def copy(self, *args, **kwargs) -> Posterior:
-    raise NotImplementedError
+  def copy(self, suffix='copy') -> Posterior:
+    obj = self.__class__.__new__(self.__class__)
+    obj._name = f'{self.name}_{suffix}'
+    obj._verbose = self._verbose
+    obj._model = self._model
+    obj._groundtruth = self._groundtruth
+    obj._dist_to_tensor = self._dist_to_tensor
+    return obj
 
 
+# ===========================================================================
+# Variational Posterior
+# ===========================================================================
 class VariationalPosterior(Posterior):
   """Posterior class for variational inference using Variational Autoencoder"""
 
   def __init__(self,
                model: VariationalModel,
-               inputs: Optional[Union[ndarray, Tensor, DatasetV2]] = None,
-               latents: Optional[Union[ndarray, Tensor,
-                                       DatasetV2]] = None,
-               factors: Optional[Union[ndarray, Tensor,
-                                       DatasetV2]] = None,
-               discretizer: Optional[Callable[[ndarray], ndarray]] = None,
-               factor_names: Optional[List[str]] = None,
+               groundtruth: GroundTruth,
+               inputs: Optional[Union[ndarray, Tensor]] = None,
+               latents: Optional[Union[ndarray, Tensor, Distribution]] = None,
                n_samples: int = 5000,
                batch_size: int = 32,
-               reduce_latents: Callable[[List[Distribution]], List[Distribution]] = \
-                 lambda x: x,
-               verbose: bool = False,
-               seed: int = 1,):
-    super().__init__()
+               seed: int = 1,
+               **kwargs):
+    super().__init__(model=model, groundtruth=groundtruth, **kwargs)
     assert isinstance(model, VariationalModel), \
       ("model must be instance of odin.bay.vi.VariationalModel, "
        f"given: {type(model)}")
-    assert callable(reduce_latents), 'reduce_latents function must be callable'
-    ### Assign basic attributes
-    self._model = model
-    self.reduce_latents = reduce_latents
-    self.verbose = bool(verbose)
-    #### prepare the sampling
-    inputs, latents, factors = prepare_inputs_factors(inputs,
-                                                      latents,
-                                                      factors,
-                                                      verbose=verbose)
-    ## check factors is one-hot encoded
-    if np.all(np.sum(factors, axis=-1) == 1):
-      factors = np.argmax(factors, axis=1)[:, np.newaxis]
-    ## factor names
-    n_inputs = factors.shape[0]
-    n_factors = factors.shape[1]
-    if factor_names is None:
-      factor_names = np.asarray([f'F{i}' for i in range(n_factors)])
-    else:
-      assert len(factor_names) == n_factors, \
-        f"There are {n_factors} factors, but only given {len(factor_names)} names"
-    ## discretized factors
-    factors_original = factors
-    if discretizer is not None:
-      if verbose:
-        print("Discretizing factors ...")
-      factors = discretizer(factors)
-    # check for singular factor and ignore it
-    ids = []
-    for i, (name, f) in enumerate(zip(factor_names, factors.T)):
-      c = Counter(f)
-      if len(c) < 2:
-        warnings.warn(f"Ignore factor with name '{name}', singular data: {f}")
-      else:
-        ids.append(i)
-    if len(ids) != len(factor_names):
-      factors_original = factors_original[:, ids]
-      factor_names = factor_names[ids]
-      factors = factors[:, ids]
-    # create the factor class for sampling
-    factors_set = Factor(factors, factor_names=factor_names)
+    ### prepare the inputs - latents
+    if inputs is None and latents is None:
+      raise ValueError("Either inputs or latents must be provided")
     ## latents are given directly
     if inputs is None:
-      latents = self.reduce_latents(as_tuple(latents))
-      if len(latents) == 1:
-        latents = latents[0]
-      else:
-        latents = CombinedDistribution(latents, name="Latents")
-      outputs = None
+      if isinstance(latents, (np.ndarray, tf.Tensor)):
+        latents = VectorDeterministic(loc=latents, name='Latents')
+      latents = as_tuple(latents)
+      latents = latents[0] if len(latents) == 1 else \
+        CombinedDistribution(latents, name="Latents")
+      assert latents.batch_shape[0] == self.n_samples, \
+        ('Number of samples mismatch between latents distribution and '
+         f'ground-truth factors, {latents.batch_shape[0]} != {self.n_samples}')
+      outputs = self.model.decode(latents, training=False)
       indices = None
     ## sampling the latents
     else:
-      inputs, factors, latents, outputs, indices = \
+      inputs, groundtruth, latents, outputs, indices = \
           _boostrap_sampling(self.model,
                          inputs=inputs,
-                         factors=factors_set,
+                         groundtruth=self._groundtruth,
                          batch_size=batch_size,
                          n_samples=n_samples,
-                         reduce_latents=reduce_latents,
-                         verbose=verbose,
+                         verbose=self.verbose,
                          seed=seed)
     ## assign the attributes
-    self._factors_original = factors_original.numpy() if tf.is_tensor(
-        factors_original) else factors_original
     self._inputs = inputs
-    self._factors = factors
+    self._groundtruth = groundtruth
     self._latents = latents
     self._outputs = outputs
     self._indices = indices
-    self._factor_names = factors_set.factor_names
 
   @property
   def model(self) -> VariationalModel:
@@ -916,40 +923,25 @@ class VariationalPosterior(Posterior):
     return self._outputs
 
   @property
-  def factors(self) -> ndarray:
-    r""" Return the target variable (i.e. the factors of variation) for
-    training and testing """
-    return self._factors
-
-  @property
-  def factors_original(self) -> ndarray:
-    r"""Return the original factors, i.e. the factors before discretizing """
-    # the original factors is the same for all samples set
-    return self._factors_original
-
-  @property
-  def factor_names(self) -> List[str]:
-    return self._factor_names
-
-  @property
   def latent_names(self) -> List[str]:
     return [f"Z{i}" for i in range(self.n_latents)]
 
   ############## Experiment setup
   def traverse(
       self,
+      latent_index: Union[int, str],
       min_val: int = -2.0,
       max_val: int = 2.0,
       num: int = 11,
       n_samples: int = 1,
       mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
-      convert_to_tensor: Callable[[Distribution], Tensor] = lambda d: d.mean(),
       seed: int = 1,
   ) -> VariationalPosterior:
     """Create data for latents' traverse experiments
 
     Parameters
     ----------
+    latent_index : Union[int, str]
     min_val : int, optional
         minimum value of the traverse, by default -2.0
     max_val : int, optional
@@ -963,14 +955,12 @@ class VariationalPosterior(Posterior):
         'quantile' mode return `num` quantiles based on min and max values inferred
         from the data. 'gaussian' mode takes `num` Gaussian quantiles,
         by default 'linear'
-    convert_to_tensor : Callable[[Distribution], Tensor], optional
-        function to convert Distribution to tensor, by default `lambda:d.mean()`
 
     Returns
     -------
     VariationalPosterior
         a copy of VariationalPosterior with the new traversed latents,
-        the total number of return samples is: `n_samples * num * n_latents`
+        the total number of return samples is: `n_samples * num`
 
     Example
     --------
@@ -981,13 +971,7 @@ class VariationalPosterior(Posterior):
      [ 2., 0.47],
      [-2., 0.31],
      [ 0., 0.31],
-     [ 2., 0.31],
-     [0.14, -2.],
-     [0.14,  0.],
-     [0.14,  2.],
-     [0.91, -2.],
-     [0.91,  0.],
-     [0.91,  2.]]
+     [ 2., 0.31]]
     ```
     """
     num = int(num)
@@ -996,7 +980,11 @@ class VariationalPosterior(Posterior):
     assert num > 1 and n_samples > 0, \
       ("num > 1 and n_samples > 0, "
        f"but given: num={num} n_samples={n_samples}")
-    # ====== check the mode ====== #
+    ### factor index
+    if isinstance(latent_index, string_types):
+      latent_index = self.latent_names.index(latent_index)
+    latent_index = int(latent_index)
+    ### check the mode
     all_mode = ('quantile', 'linear', 'gaussian')
     mode = str(mode).strip().lower()
     assert mode in all_mode, \
@@ -1004,48 +992,43 @@ class VariationalPosterior(Posterior):
     ### sample
     random_state = np.random.RandomState(seed=seed)
     indices = random_state.choice(self.n_samples, size=n_samples, replace=False)
-    Z_org = convert_to_tensor(self.latents).numpy()
+    Z_org = self.dist_to_tensor(self.latents).numpy()
     Z = Z_org[indices]
     ### ranges
     # z_range is a matrix [n_latents, num]
     # linear range
     if mode == 'linear':
-      x = np.expand_dims(np.linspace(min_val, max_val, num), axis=0)
-      z_range = np.repeat(x, self.n_latents, axis=0)
+      z_range = np.linspace(min_val, max_val, num=num)
     # min-max quantile
     elif mode == 'quantile':
-      z_range = []
-      for vmin, vmax in zip(np.min(Z_org, axis=0), np.max(Z_org, axis=0)):
-        z_range.append(np.expand_dims(np.linspace(vmin, vmax, num=num), axis=0))
-      z_range = np.concatenate(z_range, axis=0)
+      z_range = np.linspace(min(Z_org[:, latent_index]),
+                            max(Z_org[:, latent_index]),
+                            num=num)
     # gaussian quantile
     elif mode == 'gaussian':
-      dist = Normal(loc=tf.reduce_mean(self.latents.mean(), 0),
-                    scale=tf.reduce_mean(self.latents.stddev(), 0))
+      dist = Normal(
+          loc=tf.reduce_mean(self.latents.mean()[:, latent_index]),
+          scale=tf.reduce_mean(self.latents.stddev()[:, latent_index]),
+      )
       z_range = []
       for i in np.linspace(1e-5, 1.0 - 1e-5, num=num, dtype=np.float32):
-        z_range.append(np.expand_dims(dist.quantile(i), axis=1))
-      z_range = np.concatenate(z_range, axis=1)
+        z_range.append(dist.quantile(i))
+      z_range = np.array(z_range)
     ### traverse
-    Zs = []
-    Z_indices = []
-    for i, zr in enumerate(z_range):
-      z_i = np.repeat(np.array(Z), len(zr), axis=0)
-      Z_indices.append(np.repeat(indices, len(zr), axis=0))
-      # repeat for each sample
-      for j in range(n_samples):
-        s = j * len(zr)
-        e = (j + 1) * len(zr)
-        z_i[s:e, i] = zr
-      Zs.append(z_i)
-    Zs = np.concatenate(Zs, axis=0)
-    Z_indices = np.concatenate(Z_indices, axis=0)
+    Z = np.repeat(np.array(Z), len(z_range), axis=0)
+    Z_indices = np.repeat(indices, len(z_range), axis=0)
+    # repeat for each sample
+    for j in range(n_samples):
+      s = j * len(z_range)
+      e = (j + 1) * len(z_range)
+      Z[s:e, latent_index] = z_range
     ### create the new posterior
     # NOTE: this might not work for multi-latents
-    outputs = list(as_tuple(self.model.decode(Zs, training=False)))
+    outputs = list(as_tuple(self.model.decode(Z, training=False)))
     obj = self.copy(Z_indices,
-                    latents=VectorDeterministic(Zs, name="Latents"),
-                    outputs=outputs)
+                    latents=VectorDeterministic(Z, name="Latents"),
+                    outputs=outputs,
+                    suffix='traverse')
     return obj
 
   def conditioning(self,
@@ -1103,57 +1086,35 @@ class VariationalPosterior(Posterior):
       ids = random_state.choice(ids,
                                 size=n_samples,
                                 replace=n_samples > len(ids))
-    # copy the posterior
-    obj = VariationalPosterior.__new__(VariationalPosterior)
-    obj._model = self._model
-    obj._factor_names = list(self.factor_names)
-    obj.reduce_latents = self.reduce_latents
-    obj.verbose = self.verbose
-    # slice the data
-    obj._factors_original = self.factors_original[ids]
-    obj._factors = self.factors[ids]
-    obj._inputs = [x[ids] for x in self.inputs]
-    obj._indices = self._indices[ids]
-    # convert boolean indices to integer
-    z = as_tuple(self.model.encode(obj.inputs, training=False))
-    z = self.reduce_latents(z)
-    if len(z) > 1:
-      z = CombinedDistribution(z, name='Latents')
-    else:
-      z = z[0]
-    obj._latents = z
-    obj._outputs = list(as_tuple(self.model.decode(z, training=False)))
-    return obj
+    return self.copy(ids, suffix='conditioning')
 
-  def copy(
-      self,
-      indices: Optional[Union[slice, List[int]]] = None,
-      latents: Optional[Distribution] = None,
-      outputs: Optional[List[Distribution]] = None) -> VariationalPosterior:
+  def copy(self,
+           indices: Optional[Union[slice, List[int]]] = None,
+           latents: Optional[Distribution] = None,
+           outputs: Optional[List[Distribution]] = None,
+           suffix: str = 'copy') -> VariationalPosterior:
     """Return the deepcopy"""
-    obj = VariationalPosterior.__new__(VariationalPosterior)
-    obj._model = self._model
-    obj._factor_names = list(self.factor_names)
-    obj.reduce_latents = self.reduce_latents
-    obj.verbose = self.verbose
+    obj = super().copy(suffix=suffix)
     # helper for slicing
     fslice = lambda x: x[indices] if indices is not None else x
     # copy the factors
-    obj._factors_original = np.array(fslice(self._factors_original))
-    obj._factors = np.array(fslice(self._factors))
+    obj._groundtruth = fslice(self._groundtruth.copy())
     # copy the inputs
     obj._inputs = [np.array(fslice(i)) for i in self._inputs]
     obj._indices = np.array(fslice(self._indices))
-    # copy the latents and outputs
+    ## inference for the latents and outputs
     if indices is not None:
-      assert latents is not None and isinstance(latents, Distribution), \
-        f"Invalid latents type {type(latents)}"
-      obj._latents = latents
+      if latents is None:
+        inputs = obj.inputs
+        latents = self.model.encode(inputs[0] if len(inputs) == 1 else inputs,
+                                    training=False)
       if outputs is None:
-        obj._outputs = list(as_tuple(self.model.decode(latents,
-                                                       training=False)))
-      else:
-        obj._outputs = list(as_tuple(outputs))
+        outputs = self.model.decode(latents, training=False)
+      latents = as_tuple(latents)
+      obj._latents = CombinedDistribution(latents, name='Latents') \
+        if len(latents) > 1 else latents[0]
+      obj._outputs = list(as_tuple(outputs))
+    ## just copy paste
     else:
       obj._latents = self._latents.copy()
       obj._outputs = [o.copy() for o in self._outputs]
@@ -1164,10 +1125,10 @@ class VariationalPosterior(Posterior):
                                      d.distribution.__class__.__name__) \
       if isinstance(d, Independent) else str(d)
     return \
-f"""Variational Posterior:
+f"""{self.name}:
   model  : {self._model.__class__}
-  reduce : {self.reduce_latents}
-  verbose: {self.verbose}
+  dist2tensor: {self.dist_to_tensor}
+  verbose: {self._verbose}
   factors: {self.factors.shape} - {', '.join(self.factor_names)}
   inputs : {', '.join(str((i.shape, i.dtype)) for i in self.inputs)}
   outputs: {', '.join(dname(o).replace('tfp.distributions.', '') for o in self.outputs)}

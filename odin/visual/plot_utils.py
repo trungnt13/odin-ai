@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import colorsys
 from collections import OrderedDict
 from numbers import Number
+from typing import Optional, Tuple, Union
 
 import numpy as np
 
@@ -34,6 +35,7 @@ def generate_palette_colors(n,
                             return_hsl=False,
                             return_hex=True):
   import seaborn as sns
+
   # six variations of the default theme: deep, muted, pastel, bright, dark,
   # and colorblind.
   colors = sns.color_palette(n_colors=int(n))  # RGB values
@@ -124,6 +126,7 @@ def to_axis(ax, is_3D=False):
   to proper matplotlib Axes (2D and 3D)
   """
   from matplotlib import pyplot as plt
+
   # 3D plot
   if is_3D:
     from mpl_toolkits.mplot3d import Axes3D
@@ -183,61 +186,81 @@ def resize_images(x, shape):
   return imgs
 
 
-def tile_raster_images(X,
-                       tile_shape=None,
-                       tile_spacing=(2, 2),
-                       spacing_value=0.):
-  r''' This function create tile of images
+def tile_raster_images(X: np.ndarray,
+                       grids: Optional[Tuple[int, int]] = None,
+                       image_shape: Optional[Tuple[int, int]] = None,
+                       image_spacing: Optional[Tuple[int, int]] = None,
+                       spacing_value=0.) -> np.ndarray:
+  """This function create tile of images
+  X : 3D-gray or 4D-color images
+      for color images, the color channel must be the second dimension
 
   Parameters
   ----------
-  X : 3D-gray or 4D-color images
-      for color images, the color channel must be the second dimension
-  tile_shape : tuple
-      resized shape of images
-  tile_spacing : tuple
-      space betwen rows and columns of images
-  spacing_value : int, float
-      value used for spacing
+  X : np.ndarray
+      2D-gray images with shape `[batch_dim, height, width]`
+      or 3D-color images `[batch_dim, color, height, width]`
+  grids : Optional[Tuple[int, int]], optional
+      number of rows and columns, by default None
+  image_shape : Optional[Tuple[int, int]], optional
+      resized shape of images, by default None
+  image_spacing : Optional[Tuple[int, int]], optional
+      space betwen rows and columns of images, by default None
+  spacing_value : [type], optional
+      value used for spacing, by default 0.
 
-  '''
+  Returns
+  -------
+  np.ndarray
+      single image
+
+  Raises
+  ------
+  ValueError
+      Invalid number of dimension for input image
+  """
+  ## prepare the images
+  if X.ndim == 2:
+    X = np.expand_dims(X, axis=0)
   if X.ndim == 3:
-    img_shape = X.shape[1:]
+    shape = X.shape[1:]
   elif X.ndim == 4:
-    img_shape = X.shape[2:]
+    shape = X.shape[2:]
   else:
-    raise ValueError('Unsupport %d dimension images' % X.ndim)
-  if tile_shape is None:
-    tile_shape = img_shape
-  if tile_spacing is None:
-    tile_spacing = (2, 2)
-
-  if img_shape != tile_shape:
-    X = resize_images(X, tile_shape)
+    raise ValueError(f'No support for images with shape {X.shape}')
+  ## prepare the image shape
+  if image_shape is None:
+    image_shape = shape
+  if image_spacing is None:
+    image_spacing = (2, 2)
+  ## resize images
+  if shape != image_shape:
+    X = resize_images(X, image_shape)
   else:
     X = [np.swapaxes(x.T, 0, 1) for x in X]
-
-  n = len(X)
-  n = int(np.ceil(np.sqrt(n)))
-
-  # create spacing
-  rows_spacing = np.zeros_like(X[0])[:tile_spacing[0], :] + spacing_value
-  nothing = np.vstack((np.zeros_like(X[0]), rows_spacing))
-  cols_spacing = np.zeros_like(nothing)[:, :tile_spacing[1]] + spacing_value
-
+  ## prepare the grids
+  if grids is None:
+    n = int(np.ceil(np.sqrt(len(X))))
+    grids = (n, n)
+  ## create spacing
+  rows_spacing = np.zeros_like(X[0])[:image_spacing[0], :] + spacing_value
+  empty_image = np.vstack((np.zeros_like(X[0]), rows_spacing))
+  cols_spacing = np.zeros_like(
+      empty_image)[:, :image_spacing[1]] + spacing_value
   # ====== Append columns ====== #
   rows = []
-  for i in range(n):  # each rows
+  nrows, ncols = grids
+  for i in range(nrows):  # each rows
     r = []
-    for j in range(n):  # all columns
-      idx = i * n + j
+    for j in range(ncols):  # all columns
+      idx = i * ncols + j
       if idx < len(X):
-        r.append(np.vstack((X[i * n + j], rows_spacing)))
+        r.append(np.vstack((X[idx], rows_spacing)))
       else:
-        r.append(nothing)
-      if j != n - 1:  # cols spacing
+        r.append(empty_image)
+      if j != ncols - 1:  # cols spacing
         r.append(cols_spacing)
     rows.append(np.hstack(r))
   # ====== Append rows ====== #
-  img = np.vstack(rows)[:-tile_spacing[0]]
+  img = np.vstack(rows)[:-image_spacing[0]]
   return img

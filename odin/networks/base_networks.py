@@ -240,7 +240,7 @@ class Networks(keras.Model, MD5object):
     return kw
 
   def load_weights(self,
-                   filepath: str,
+                   filepath: Optional[str] = None,
                    raise_notfound: bool = False,
                    verbose: bool = False) -> Networks:
     """Load all the saved weights in tensorflow format at given path
@@ -249,6 +249,10 @@ class Networks(keras.Model, MD5object):
     -----
     Remember to build the Networks before loading saved weights.
     """
+    if filepath is None:
+      if self.save_path is None:
+        raise ValueError('No path is given for loading weights')
+      filepath = self.save_path
     if isinstance(filepath, string_types):
       files = glob.glob(filepath + '.*')
       # load weights

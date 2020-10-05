@@ -17,6 +17,7 @@ import warnings
 from collections import Mapping, OrderedDict, defaultdict
 from contextlib import contextmanager
 from numbers import Number
+from typing import List, Optional, Tuple, Union
 
 import numpy as np
 from odin.utils import as_tuple
@@ -250,8 +251,8 @@ def data2fig(data):
   return fig
 
 
-def plot_figure(nrow=8, ncol=8, dpi=180):
-  fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
+def plot_figure(nrows=8, ncols=8, dpi=180):
+  fig = plt.figure(figsize=(ncols, nrows), dpi=dpi)
   return fig
 
 
@@ -812,43 +813,41 @@ def plot_spectrogram(x,
   return ax
 
 
-def plot_images(X, tile_shape=None, tile_spacing=None, fig=None, title=None):
-  r"""
+def plot_images(X: np.ndarray,
+                grids: Optional[Tuple[int, int]] = None,
+                image_shape: Optional[Tuple[int, int]] = None,
+                image_spacing: Optional[Tuple[int, int]] = None,
+                ax: Optional['Axes'] = None,
+                fontsize: int = 12,
+                title: Optional[str] = None):
+  r"""Tile images in X together into a single image for plotting
+
   Parameters
   ----------
-  x : 2D-gray or 3D-color images, or list of (2D, 3D images)
-      for color image the color channel is the first dimension
-  tile_shape : tuple
-      resized shape of images
-  tile_spacing : tuple
-      space betwen rows and columns of images
+  X : np.ndarray
+      2D-gray images with shape `[batch_dim, height, width]`
+      or 3D-color images `[batch_dim, color, height, width]`
+  grids : Optional[Tuple[int, int]], optional
+      number of rows and columns, by default None
+  image_shape : Optional[Tuple[int, int]], optional
+      resized shape of images, by default None
+  image_spacing : Optional[Tuple[int, int]], optional
+      space betwen rows and columns of images, by default None
   """
-  if not isinstance(X, (tuple, list)):
-    X = [X]
-  X = [np.asarray(x) for x in X]
-  if not isinstance(title, (tuple, list)):
-    title = [title]
-
-  n = int(np.ceil(np.sqrt(len(X))))
-  for i, (x, t) in enumerate(zip(X, title)):
-    if x.ndim == 3 or x.ndim == 2:
-      cmap = plt.cm.Greys_r
-    elif x.ndim == 4:
-      cmap = None
-    else:
-      raise ValueError('NO support for %d dimensions image!' % x.ndim)
-
-    x = tile_raster_images(x, tile_shape, tile_spacing)
-    if fig is None:
-      fig = plt.figure()
-    subplot = fig.add_subplot(n, n, i + 1)
-    subplot.imshow(x, cmap=cmap)
-    if t is not None:
-      subplot.set_title(str(t), fontsize=12, fontweight='bold')
-    subplot.axis('off')
-
-  fig.tight_layout()
-  return fig
+  if X.ndim == 3 or X.ndim == 2:
+    cmap = plt.cm.Greys_r
+  elif X.ndim == 4:
+    cmap = None
+  X = tile_raster_images(X,
+                         grids=grids,
+                         image_shape=image_shape,
+                         image_spacing=image_spacing)
+  ax = to_axis2D(ax)
+  ax.imshow(X, cmap=cmap)
+  if title is not None:
+    ax.set_title(str(title), fontsize=fontsize, fontweight='regular')
+  ax.axis('off')
+  return ax
 
 
 def plot_images_old(x, fig=None, titles=None, show=False):

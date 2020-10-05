@@ -12,8 +12,8 @@ from matplotlib import pyplot as plt
 from odin import backend as bk
 from odin import visual as vs
 from odin.backend import interpolation
-from odin.bay.vi import (NetworkConfig, RandomVariable, VariationalAutoencoder,
-                         VariationalPosterior, get_vae)
+from odin.bay.vi import (GroundTruth, NetworkConfig, RandomVariable,
+                         VariationalAutoencoder, VariationalPosterior, get_vae)
 from odin.exp import get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import IterableDataset, get_dataset
 from odin.utils import ArgController, as_tuple, clear_folder
@@ -59,6 +59,7 @@ override: False
 # ===========================================================================
 def load_data(name: str, batch_size: int):
   dataset = get_dataset(name)()
+  assert dataset.has_labels, f'No labels for given dataset {name}'
   kw = dict(batch_size=batch_size, drop_remainder=True)
   test_l = dataset.create_dataset(partition='test', inc_labels=1.0, **kw)
   sample_images, y = [(x[:16], y[:16]) for x, y in test_l.take(1)][0]
@@ -69,13 +70,14 @@ def load_data(name: str, batch_size: int):
   return dataset, (sample_images, y), (images_shape, labels_shape)
 
 
-def to_image(X):
+def to_image(X, grids):
   if X.shape[-1] == 1:  # grayscale image
     X = np.squeeze(X, axis=-1)
   else:  # color image
     X = np.transpose(X, (0, 3, 1, 2))
-  fig = vs.plot_figure(nrow=8, ncol=8, dpi=100)
-  vs.plot_images(X, fig=fig)
+  nrows, ncols = grids
+  fig = vs.plot_figure(nrows=nrows, ncols=ncols, dpi=100)
+  vs.plot_images(X, grids=grids)
   image = vs.plot_to_image(fig)
   return image
 
@@ -116,7 +118,7 @@ def main(cfg: dict):
   ### the variables
   labels = RandomVariable(y_shape, cfg.py, projection=True, name="Labels")
   latents = RandomVariable(cfg.zdim, cfg.qz, projection=True, name="Latents"),
-  inputs = RandomVariable(x_shape, cfg.px, projection=True, name="Inputs")
+  observation = RandomVariable(x_shape, cfg.px, projection=True, name="Inputs")
   ### create the model
   model = get_vae(cfg.vae)
   model_kw = inspect.getfullargspec(model.__init__).args[1:]
@@ -125,11 +127,13 @@ def main(cfg: dict):
     kw['labels'] = labels
   vae = model(encoder=NetworkConfig([256, 256, 256], name='Encoder'),
               decoder=NetworkConfig([256, 256, 256], name='Decoder'),
-              outputs=inputs,
+              observation=observation,
               latents=latents,
-              input_shape=x_shape,
               path=model_path,
               **kw)
+  vae.build((None,) + x_shape)
+  vae.load_weights(raise_notfound=False, verbose=True)
+  ### prepare evaluation data
   z_samples = vae.sample_prior(sample_shape=16, seed=1)
   if vae.is_semi_supervised:
     train = ds.create_dataset(partition='train', inc_labels=0.1, **ds_kw)
@@ -143,27 +147,36 @@ def main(cfg: dict):
     losses = get_current_trainer().valid_loss
     if losses[-1] <= np.min(losses):
       vae.save_weights(overwrite=True)
-    px, qz = vae(x_samples, training=False)
-    px = as_tuple(px)
-    qz = as_tuple(qz)
+    # posterior
+    vp = VariationalPosterior(model=vae,
+                              inputs=x_samples,
+                              groundtruth=GroundTruth(y_samples),
+                              n_samples=1000)
+    px = as_tuple(vp.outputs)
+    qz = as_tuple(vp.latents)
     # store the histogram
     mean = tf.reduce_mean(qz[0].mean(), axis=0)
     std = tf.reduce_mean(qz[0].stddev(), axis=0)
-    # show reconstructed image
-    image_reconstructed = to_image(px[0].mean().numpy())
+    # show traverse image
+    images = np.concatenate([
+        vp.traverse(i, min_val=-3, max_val=3, num=21,
+                    mode='linear').outputs[0].mean().numpy()
+        for i in np.argsort(std)[:20]
+    ])
+    image_traverse = to_image(images, grids=(20, int(images.shape[0] / 20)))
     # show sampled image
     px = as_tuple(vae.decode(z_samples, training=False))
-    image_sampled = to_image(px[0].mean().numpy())
+    image_sampled = to_image(px[0].mean().numpy(), grids=(4, 4))
     return dict(mean=mean,
                 std=std,
-                reconstructed=image_reconstructed,
+                traverse=image_traverse,
                 sampled=image_sampled)
 
   vae.fit(train,
           valid=valid,
           epochs=-1,
           max_iter=int(cfg.max_iter),
-          valid_interval=10,
+          valid_interval=5,
           logging_interval=2,
           skip_fitted=True,
           callback=callback,

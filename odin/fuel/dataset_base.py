@@ -35,6 +35,34 @@ def get_partition(part,
   return ret
 
 
+def _merge_list(data):
+  return [
+      np.concatenate([x[i].numpy()
+                      for x in data], axis=0)
+      for i in range(len(data[0]))
+  ]
+
+
+def _merge_dict(data):
+  data = {k: [x[k] for x in data] for k in data[0].keys()}
+  ret = {}
+  for k, v in data.items():
+    if tf.is_tensor(v[0]):
+      ret[k] = _merge_tensor(v)
+    elif isinstance(v[0], (tuple, list)):
+      ret[k] = _merge_list(v)
+    else:
+      ret[k] = _merge_dict(v)
+  return ret
+
+
+def _merge_tensor(data):
+  return np.concatenate(data, axis=0)
+
+
+# ===========================================================================
+# Main
+# ===========================================================================
 class IterableDataset:
 
   @property
@@ -83,3 +111,35 @@ class IterableDataset:
                      inc_labels: bool = False,
                      seed: int = 1) -> tf.data.Dataset:
     raise NotImplementedError()
+
+  def numpy(self,
+            batch_size: int = 64,
+            drop_remainder: bool = False,
+            shuffle: int = 1000,
+            prefetch: int = tf.data.experimental.AUTOTUNE,
+            cache: str = '',
+            parallel: Optional[int] = None,
+            partition: Literal['train', 'valid', 'test',
+                               'unlabelled'] = 'train',
+            inc_labels: bool = False,
+            seed: int = 1,
+            verbose: bool = False):
+    kw = dict(locals())
+    kw.pop('self', None)
+    verbose = kw.pop('verbose')
+    ds = self.create_dataset(**kw)
+    # load the data
+    if verbose:
+      from tqdm import tqdm
+      ds = tqdm(ds, desc='Converting dataset to numpy')
+    data = [x for x in ds]
+    # post-process the data
+    if isinstance(data[0], (tuple, list)):
+      data = _merge_list(data)
+    elif tf.is_tensor(data[0]):
+      data = _merge_tensor(data)
+    elif isinstance(data[0], dict):
+      data = _merge_dict(data)
+    else:
+      raise NotImplementedError(f'{type(data[0])}')
+    return data
