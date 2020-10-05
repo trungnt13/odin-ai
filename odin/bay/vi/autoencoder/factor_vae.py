@@ -175,11 +175,6 @@ class factorVAE(betaVAE):
         (f"discriminator of type: {type(self.discriminator)} "
          "must has method total_correlation and dtc_loss.")
     # VAE and discriminator must be trained separated so we split their params here
-    self.disc_params = self.discriminator.trainable_variables
-    exclude = set(id(p) for p in self.disc_params)
-    self.vae_params = [
-        p for p in self.trainable_variables if id(p) not in exclude
-    ]
     self.maximize_tc = bool(maximize_tc)
     ## For training
     # store class for training factor discriminator, this allow later
@@ -256,15 +251,22 @@ class factorVAE(betaVAE):
       tape.gradient(loss, discriminator_step.parameters)
     ```
     """
+    # split the data
     (x1, mask1, call_kw1), \
       (x2, mask2, call_kw2) = _split_inputs(inputs, mask, call_kw)
+    # split the parameters
+    disc_params = self.discriminator.trainable_variables
+    exclude = set(id(p) for p in disc_params)
+    vae_params = [
+        p for p in self.trainable_variables if id(p) not in exclude
+    ]
     # first step optimize VAE with total correlation loss
     step1 = VAEStep(vae=self,
                     inputs=x1,
                     training=training,
                     mask=mask1,
                     call_kw=call_kw1,
-                    parameters=self.vae_params)
+                    parameters=vae_params)
     yield step1
     # second step optimize the discriminator for discriminate permuted code
     # skip training Discriminator of pretraining
@@ -275,7 +277,7 @@ class factorVAE(betaVAE):
                                       training=training,
                                       mask=mask2,
                                       call_kw=call_kw2,
-                                      parameters=self.disc_params)
+                                      parameters=disc_params)
       yield step2
 
   def fit(self,

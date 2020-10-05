@@ -147,21 +147,26 @@ def main(cfg: dict):
     losses = get_current_trainer().valid_loss
     if losses[-1] <= np.min(losses):
       vae.save_weights(overwrite=True)
-    # posterior
+    # reconstruction
+    px, _ = vae(x_samples, training=True)
+    image_reconstructed = to_image(as_tuple(px)[0].mean().numpy(), grids=(4, 4))
+    # latent traverse
     vp = VariationalPosterior(model=vae,
                               inputs=x_samples,
                               groundtruth=GroundTruth(y_samples),
                               n_samples=1000)
-    px = as_tuple(vp.outputs)
-    qz = as_tuple(vp.latents)
-    # store the histogram
-    mean = tf.reduce_mean(qz[0].mean(), axis=0)
-    std = tf.reduce_mean(qz[0].stddev(), axis=0)
+    # stats
+    mean = tf.reduce_mean(vp.latents.mean(), axis=0)
+    std = tf.reduce_mean(vp.latents.stddev(), axis=0)
     # show traverse image
     images = np.concatenate([
-        vp.traverse(i, min_val=-3, max_val=3, num=21,
+        vp.traverse(i,
+                    min_val=-4,
+                    max_val=4,
+                    num=21,
+                    n_samples=2,
                     mode='linear').outputs[0].mean().numpy()
-        for i in np.argsort(std)[:20]
+        for i in np.argsort(std)[:10]
     ])
     image_traverse = to_image(images, grids=(20, int(images.shape[0] / 20)))
     # show sampled image
@@ -169,6 +174,7 @@ def main(cfg: dict):
     image_sampled = to_image(px[0].mean().numpy(), grids=(4, 4))
     return dict(mean=mean,
                 std=std,
+                reconstructed=image_reconstructed,
                 traverse=image_traverse,
                 sampled=image_sampled)
 
@@ -176,7 +182,7 @@ def main(cfg: dict):
           valid=valid,
           epochs=-1,
           max_iter=int(cfg.max_iter),
-          valid_interval=5,
+          valid_freq=500,
           logging_interval=2,
           skip_fitted=True,
           callback=callback,
