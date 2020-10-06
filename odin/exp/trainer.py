@@ -64,6 +64,8 @@ def _save_summary(loss, metrics, prefix="", flush=False):
   tf.summary.scalar(f"{prefix}loss", loss)
   for k, v in metrics.items():
     k = f"{prefix}{k}"
+    if isinstance(v, (tuple, list)):
+      v = tf.convert_to_tensor(v)
     # text
     if _is_text(v):
       tf.summary.text(k, v)
@@ -102,6 +104,8 @@ def _process_callback_returns(progress: tqdm,
   if metrics is not None and isinstance(metrics, dict) and len(metrics) > 0:
     progress.write(f"{log_tag} [Callback#{int(n_iter)}]:")
     for k, v in metrics.items():
+      if isinstance(v, (tuple, list)):
+        v = tf.convert_to_tensor(v)
       # text
       if _is_text(v):
         tf.summary.text(k, v)
@@ -491,6 +495,11 @@ class Trainer(object):
     self._current_train_progress = None
     self._cached_tensorboard = None
     self._is_training = False
+    self._last_metrics = {}
+
+  @property
+  def last_metrics(self) -> Dict[str, Any]:
+    return self._last_metrics
 
   @property
   def tensorboard(self) -> Dict[Text, Tuple[float, int, float]]:
@@ -701,6 +710,9 @@ class Trainer(object):
         self._cached_tensorboard = None
         # ====== train ====== #
         loss, metrics = fn_step(self.n_iter, inputs, training=True)
+        self._last_metrics = dict(metrics)
+        # metric could be hiden by add '_' to the beginning
+        metrics = {k: v for k, v in metrics.items() if '_' != k[0]}
         # do not record the loss and metrics at every iteration, the
         # performance will drop about 40%
         if terminate_on_nan and np.isnan(loss) or np.isinf(loss):

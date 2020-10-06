@@ -2,25 +2,26 @@ import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.utils import as_tuple
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
 
 
-class MultitaskVAE(betaVAE):
+class multitaskVAE(betaVAE):
   r""" Multi-tasks VAE for semi-supervised learning
 
   Example:
 
   ```
   from odin.fuel import MNIST
-  from odin.bay.vi.autoencoder import MultitaskVAE
+  from odin.bay.vi.autoencoder import multitaskVAE
 
   # load the dataset, include 50% of the labels for semi-supervised objective
   ds = MNIST()
   train = ds.create_dataset(partition='train', inc_labels=0.5)
 
   # create and train the model
-  vae = MultitaskVAE(encoder='mnist',
+  vae = multitaskVAE(encoder='mnist',
                      outputs=RandomVariable((28, 28, 1),
                                 'bern',
                                 projection=False,
@@ -31,21 +32,21 @@ class MultitaskVAE(betaVAE):
   """
 
   def __init__(self,
-               outputs=RandomVariable(64,
-                                      'gaussian',
-                                      projection=True,
-                                      name="Input"),
+               observation=RandomVariable(64,
+                                          'gaussian',
+                                          projection=True,
+                                          name="Observation"),
                labels=RandomVariable(10,
                                      'onehot',
                                      projection=True,
-                                     name="Label"),
+                                     name="Labels"),
                alpha=10.,
                beta=1.,
                **kwargs):
     labels = tf.nest.flatten(labels)
-    outputs = tf.nest.flatten(outputs)
-    outputs += labels
-    super().__init__(beta=beta, outputs=outputs, **kwargs)
+    observation = tf.nest.flatten(observation)
+    observation += labels
+    super().__init__(beta=beta, observation=observation, **kwargs)
     self.labels = labels
     self.alpha = alpha
 
@@ -57,69 +58,66 @@ class MultitaskVAE(betaVAE):
   def alpha(self, a):
     self._alpha = tf.convert_to_tensor(a, dtype=self.dtype, name='alpha')
 
-  def encode(self, inputs, training=None, mask=None, sample_shape=(), **kwargs):
+  def encode(self, inputs, training=None, mask=None, **kwargs):
+    # don't condition on the labels, only accept inputs
     n_outputs = len(self.observation)
     n_semi = len(self.labels)
     inputs = tf.nest.flatten(inputs)[:(n_outputs - n_semi)]
     if len(inputs) == 1:
       inputs = inputs[0]
-    return super().encode(inputs,
-                          training=training,
-                          mask=mask,
-                          sample_shape=sample_shape,
-                          **kwargs)
+    return super().encode(inputs, training=training, mask=mask, **kwargs)
 
-  def _elbo(self, inputs, pX_Z, qZ_X, analytic, reverse, sample_shape, mask,
-            training, **kwargs):
+  def elbo_components(self,
+                      inputs,
+                      training=None,
+                      pX_Z=None,
+                      qZ_X=None,
+                      mask=None,
+                      **kwargs):
     n_semi = len(self.labels)
     # unsupervised ELBO
-    llk, div = super()._elbo(inputs,
-                             pX_Z[:-n_semi],
-                             qZ_X,
-                             analytic=analytic,
-                             reverse=reverse,
-                             sample_shape=sample_shape,
-                             mask=mask,
-                             training=training,
-                             **kwargs)
+    llk, kl = super().elbo_components(inputs,
+                                      pX_Z=pX_Z[:-n_semi],
+                                      qZ_X=qZ_X,
+                                      mask=mask,
+                                      training=training,
+                                      **kwargs)
+    inputs = tf.nest.flatten(inputs)
     # supervised log-likelihood
     if len(inputs) > len(self.observation) - n_semi:
+      obs = self.observation[-n_semi:]
       Y = inputs[-n_semi:]
       pY_Z = pX_Z[-n_semi:]
-      mask = tf.nest.flatten(mask)
-      if len(mask) == 1:
-        mask = mask * n_semi
       # iterate over each pair
-      for layer, y, py, m in zip(self.observation[-n_semi:], Y, pY_Z, mask):
+      for layer, y, py, m in zip(obs, Y, pY_Z, as_tuple(mask, N=n_semi)):
         name = layer.name
-        lk_y = py.log_prob(y)
+        llk_y = py.log_prob(y)
         if m is not None:
           m = tf.reshape(m, (-1,))
           # take into account the sample_shape by transpose the batch dim to
           # the first dimension
           # need to check the mask here, otherwise the loss can be NaN
-          lk_y = tf.cond(
+          llk_y = tf.cond(
               tf.reduce_all(tf.logical_not(m)),
               lambda: 0.,
               lambda: tf.transpose(
-                  tf.boolean_mask(tf.transpose(lk_y), m, axis=0)),
+                  tf.boolean_mask(tf.transpose(llk_y), m, axis=0)),
           )
         # this is important, if loss=0 when using one-hot log_prob,
         # the gradient is NaN
-        loss = tf.reduce_mean(self.alpha * lk_y)
+        loss = tf.reduce_mean(self.alpha * llk_y)
         loss = tf.cond(
             tf.abs(loss) < 1e-8, lambda: tf.stop_gradient(loss), lambda: loss)
-        llk["llk_%s" % name] = loss
-    # print(llk, div)
-    return llk, div
+        llk[f"llk_{name}"] = loss
+    return llk, kl
 
   @property
   def is_semi_supervised(self):
     return True
 
 
-class MultiheadVAE(MultitaskVAE):
-  r""" A same multi-outputs design as `MultitaskVAE`, however, the
+class MultiheadVAE(multitaskVAE):
+  r""" A same multi-outputs design as `multitaskVAE`, however, the
   semi-supervised heads are directly connected to the latent layers to
   exert influences. """
 

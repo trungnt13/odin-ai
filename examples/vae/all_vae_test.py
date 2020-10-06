@@ -49,7 +49,7 @@ zdim: 64
 py: onehot
 qz: diag
 batch_size: 128
-max_iter: 25000
+max_iter: 30000
 override: False
 """
 
@@ -118,7 +118,10 @@ def main(cfg: dict):
   ### the variables
   labels = RandomVariable(y_shape, cfg.py, projection=True, name="Labels")
   latents = RandomVariable(cfg.zdim, cfg.qz, projection=True, name="Latents"),
-  observation = RandomVariable(x_shape, cfg.px, projection=True, name="Inputs")
+  observation = RandomVariable(x_shape,
+                               cfg.px,
+                               projection=True,
+                               name="Observation")
   ### create the model
   model = get_vae(cfg.vae)
   model_kw = inspect.getfullargspec(model.__init__).args[1:]
@@ -161,22 +164,44 @@ def main(cfg: dict):
     # show traverse image
     images = np.concatenate([
         vp.traverse(i,
-                    min_val=-4,
-                    max_val=4,
+                    min_val=-2,
+                    max_val=2,
                     num=21,
-                    n_samples=2,
+                    n_samples=1,
                     mode='linear').outputs[0].mean().numpy()
-        for i in np.argsort(std)[:10]
+        for i in np.argsort(std)[:20]
     ])
     image_traverse = to_image(images, grids=(20, int(images.shape[0] / 20)))
     # show sampled image
     px = as_tuple(vae.decode(z_samples, training=False))
     image_sampled = to_image(px[0].mean().numpy(), grids=(4, 4))
+    # decoder weight
+    w_d = tf.reduce_sum(vae.decoder.trainable_variables[0], axis=-1)
+    fig = plt.figure(figsize=(6, 4), dpi=150)
+    plt.plot(std, label='std', linewidth=1.0, marker='o', markersize=2)
+    plt.plot(w_d, label='weight', linewidth=1.0, marker='o', markersize=2)
+    plt.legend()
+    plt.grid(True)
+    image_latents = vs.plot_to_image(fig)
+    # gradients
+    all_grads = [(k, v) for k, v in vae.last_metrics.items() if 'grad/' in k]
+    if len(all_grads) > 0:
+      encoder_grad = sum(v for k, v in all_grads if 'Encoder' in k)
+      decoder_grad = sum(v for k, v in all_grads if 'Decoder' in k)
+    else:
+      encoder_grad = 0
+      decoder_grad = 0
+    # return
     return dict(mean=mean,
                 std=std,
+                w_decode=w_d,
+                encoder_grad=encoder_grad,
+                decoder_grad=decoder_grad,
+                noise_units=np.sum(std > 0.9),
                 reconstructed=image_reconstructed,
                 traverse=image_traverse,
-                sampled=image_sampled)
+                sampled=image_sampled,
+                latents=image_latents)
 
   vae.fit(train,
           valid=valid,
@@ -187,7 +212,8 @@ def main(cfg: dict):
           skip_fitted=True,
           callback=callback,
           logdir=output_dir,
-          compile_graph=True)
+          compile_graph=True,
+          track_gradients=True)
 
   ### evaluation
   evaluate(vae, ds)

@@ -228,7 +228,7 @@ class VariationalAutoencoder(VariationalModel):
       observation: LayerCreator = RandomVariable(64,
                                                  'gaus',
                                                  projection=True,
-                                                 name="Outputs"),
+                                                 name="Observation"),
       latents: LayerCreator = RandomVariable(10,
                                              'diag',
                                              projection=True,

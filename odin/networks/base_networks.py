@@ -543,6 +543,12 @@ class Networks(keras.Model, MD5object):
     return False
 
   @property
+  def last_metrics(self) -> Dict[str, Any]:
+    if self.trainer is None:
+      return {}
+    return self.trainer.last_metrics
+
+  @property
   def summary_writer(self) -> SummaryWriter:
     if self.trainer is not None:
       return self.trainer.summary_writer
