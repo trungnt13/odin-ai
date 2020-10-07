@@ -42,11 +42,11 @@ r"""
 vae:
 ds:
 px:
+py:
 beta: 1
 gamma: 6
 alpha: 10
 zdim: 64
-py: onehot
 qz: diag
 batch_size: 128
 max_iter: 30000
@@ -96,7 +96,8 @@ def evaluate(vae: VariationalAutoencoder, ds: IterableDataset):
 # ===========================================================================
 # Main
 # ===========================================================================
-@run_hydra(output_dir='/tmp/all_vae', exclude_keys=['max_iter', 'override'])
+@run_hydra(output_dir='/tmp/all_vae',
+           exclude_keys=['max_iter', 'override', 'py'])
 def main(cfg: dict):
   assert cfg.px is not None, "Output distribution 'px=...' must be given."
   assert cfg.vae is not None, \
@@ -116,18 +117,21 @@ def main(cfg: dict):
   assert ds.has_labels, f"Dataset with name={cfg.ds} has no labels"
   ds_kw = dict(batch_size=int(cfg.batch_size), drop_remainder=True)
   ### the variables
-  labels = RandomVariable(y_shape, cfg.py, projection=True, name="Labels")
   latents = RandomVariable(cfg.zdim, cfg.qz, projection=True, name="Latents"),
   observation = RandomVariable(x_shape,
                                cfg.px,
                                projection=True,
                                name="Observation")
-  ### create the model
+  ### prepare model init
   model = get_vae(cfg.vae)
   model_kw = inspect.getfullargspec(model.__init__).args[1:]
   kw = {k: v for k, v in cfg.items() if k in model_kw}
   if 'labels' in model_kw:
+    if cfg.py is None:
+      raise ValueError("Semi-supervised model but 'py' is not provided")
+    labels = RandomVariable(y_shape, cfg.py, projection=True, name="Labels")
     kw['labels'] = labels
+  ### create the model
   vae = model(encoder=NetworkConfig([256, 256, 256], name='Encoder'),
               decoder=NetworkConfig([256, 256, 256], name='Decoder'),
               observation=observation,
@@ -185,18 +189,20 @@ def main(cfg: dict):
     image_latents = vs.plot_to_image(fig)
     # gradients
     all_grads = [(k, v) for k, v in vae.last_metrics.items() if 'grad/' in k]
+    encoder_grad = 0
+    decoder_grad = 0
+    latents_grad = 0
     if len(all_grads) > 0:
       encoder_grad = sum(v for k, v in all_grads if 'Encoder' in k)
       decoder_grad = sum(v for k, v in all_grads if 'Decoder' in k)
-    else:
-      encoder_grad = 0
-      decoder_grad = 0
+      latents_grad = sum(v for k, v in all_grads if 'Latents' in k)
     # return
     return dict(mean=mean,
                 std=std,
                 w_decode=w_d,
                 encoder_grad=encoder_grad,
                 decoder_grad=decoder_grad,
+                latents_grad=latents_grad,
                 noise_units=np.sum(std > 0.9),
                 reconstructed=image_reconstructed,
                 traverse=image_traverse,
@@ -213,7 +219,7 @@ def main(cfg: dict):
           callback=callback,
           logdir=output_dir,
           compile_graph=True,
-          track_gradients=True)
+          track_gradients=2)
 
   ### evaluation
   evaluate(vae, ds)

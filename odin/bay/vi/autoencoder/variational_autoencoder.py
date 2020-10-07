@@ -19,7 +19,7 @@ import tensorflow as tf
 from numpy import ndarray
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
-from odin.bay.layers.dense_distribution import DenseDistribution
+from odin.bay.layers import DenseDistribution, VectorDeterministicLayer
 from odin.bay.random_variable import RandomVariable
 from odin.bay.vi._base import VariationalModel
 from odin.exp.trainer import Trainer
@@ -44,6 +44,8 @@ __all__ = [
     'LayerCreator',
     'VAEStep',
     'VariationalAutoencoder',
+    'VAE',
+    'Autoencoder',
 ]
 
 # ===========================================================================
@@ -621,3 +623,47 @@ class VariationalAutoencoder(VariationalModel):
           text += "\n  ".join(
               ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
     return text
+
+
+VAE = VariationalAutoencoder
+
+
+# ===========================================================================
+# Simple implementation of Autoencoder
+# ===========================================================================
+class Autoencoder(VariationalAutoencoder):
+  """The vanilla autoencoder could be interpreted as a Variational Autoencoder with
+  `vector deterministic` distribution for latent codes."""
+
+  def __init__(
+      self,
+      latents: LayerCreator = RandomVariable(10,
+                                             'vdeterministic',
+                                             projection=True,
+                                             name="Latents"),
+      **kwargs,
+  ):
+    for qz in tf.nest.flatten(latents):
+      if isinstance(qz, RandomVariable):
+        qz.posterior = 'vdeterministic'
+      elif isinstance(qz, DenseDistribution):
+        assert qz.posterior == VectorDeterministicLayer, \
+          ('Autoencoder only support VectorDeterministic posterior, '
+          f'but given:{qz.posterior}')
+    super().__init__(latents=latents, **kwargs)
+
+  def elbo_components(self,
+                      inputs,
+                      training=None,
+                      pX_Z=None,
+                      qZ_X=None,
+                      mask=None,
+                      **kwargs):
+    llk, kl = super().elbo_components(inputs=inputs,
+                                      training=training,
+                                      pX_Z=pX_Z,
+                                      qZ_X=qZ_X,
+                                      mask=mask,
+                                      **kwargs)
+    kl = {k: 0. for k, v in kl.items()}
+    return llk, kl

@@ -373,8 +373,10 @@ class Networks(keras.Model, MD5object):
         opt.apply_gradients(grads_params)
         # tracking the gradient norms for debugging
         if track_gradients:
+          track_gradients = int(track_gradients)
+          prefix = '' if track_gradients == 1 else '_'
           for g, p in grads_params:
-            metrics[f'grad/{p.name}'] = tf.linalg.norm(g)
+            metrics[f"{prefix}grad/{p.name}"] = tf.linalg.norm(g)
       ## for validation
       else:
         tape = None
@@ -454,9 +456,10 @@ class Networks(keras.Model, MD5object):
         tensorboard logging directory, by default None
     allow_none_gradients : bool, optional
         allow variables with None gradients during training, by default False
-    track_gradients : bool, optional
+    track_gradients : bool or int, optional
         track and return the metrics includes the gradients' L2-norm for each
-        trainable variable, by default False
+        trainable variable. If the value is greater than 1, hide the gradient norm
+        values from the logging by prepending '_', by default False
 
     Returns
     -------
@@ -544,6 +547,7 @@ class Networks(keras.Model, MD5object):
 
   @property
   def last_metrics(self) -> Dict[str, Any]:
+    """Return the cached metrics from last training iteration"""
     if self.trainer is None:
       return {}
     return self.trainer.last_metrics
