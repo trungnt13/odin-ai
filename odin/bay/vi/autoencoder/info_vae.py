@@ -5,16 +5,16 @@ from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
-from odin.bay.random_variable import RandomVariable
+from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TensorTypes
 from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.bay.vi.utils import permute_dims
+from odin.utils import as_tuple
 from tensorflow import Tensor
 from tensorflow_probability.python.distributions import (Distribution,
                                                          OneHotCategorical)
 from typing_extensions import Literal
-
 
 class infoVAE(betaVAE):
   r""" For MNIST, the authors used scaling coefficient `lambda(gamma)=1000`,
@@ -60,19 +60,11 @@ class infoVAE(betaVAE):
   def alpha(self):
     return 1 - self.beta
 
-  def elbo_components(self,
-                      inputs,
-                      training=None,
-                      pX_Z=None,
-                      qZ_X=None,
-                      mask=None):
-    llk, kl = super().elbo_components(inputs,
-                                      pX_Z=pX_Z,
-                                      qZ_X=qZ_X,
-                                      mask=mask,
-                                      training=training)
+  def elbo_components(self, inputs, training=None, mask=None):
+    llk, kl = super().elbo_components(inputs, mask=mask, training=training)
+    px_z, qz_x = self.last_outputs
     # repeat for each latent
-    for z, qz in zip(self.latents, tf.nest.flatten(qZ_X)):
+    for z, qz in zip(self.latents, as_tuple(qz_x)):
       # div(qZ||pZ)
       info_div = (self.gamma - self.beta) * self.divergence(
           qz, qz.KL_divergence.prior)

@@ -22,9 +22,10 @@ from six import string_types
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
 from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.experimental.nn.util import RandomVariable
 from tensorflow_probability.python.layers import DistributionLambda
 
-__all__ = ['RandomVariable']
+__all__ = ['RVmeta', 'RandomVariable']
 
 
 # ===========================================================================
@@ -59,7 +60,7 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
     kw = {}
   event_size = int(np.prod(event_shape))
 
-  ## helper function
+  ## helper function, no duplicate keyword arguments
   def _kwargs(**args):
     for k, v in args.items():
       if k not in kw:
@@ -76,12 +77,13 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   ## Multivariate Normal
   elif issubclass(layer, obl.MultivariateNormalLayer):
     cov = layer._partial_kwargs['covariance']
-    if cov == 'diag':  # diagonal covariance
+    if cov == 'mvndiag':  # diagonal covariance
       loc = tf.zeros(shape=event_shape)
       if tf.rank(loc) == 0:
         loc = tf.expand_dims(loc, axis=-1)
       prior = obd.MultivariateNormalDiag(
           **_kwargs(loc=loc, scale_identity_multiplier=1.))
+    # TODO: another choice for prior here
     else:  # low-triangle covariance
       bijector = tfp.bijectors.FillScaleTriL(
           diag_bijector=tfp.bijectors.Identity(), diag_shift=1e-5)
@@ -156,25 +158,26 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
                        order=False,
                        unsafe_hash=False,
                        frozen=False)
-class RandomVariable:
+class RVmeta:
   r""" Description of a random variable for the Bayesian model.
 
   Arguments:
     event_shape : a tuple of Integer. The shape tuple of distribution
       event shape
     posterior : a String. Alias for a distribution, for examples:
-      - 'bern' : `Bernoulli` distribution
-      - ('pois', 'poisson'): `Poisson` distribution
-      - ('norm', 'gaus') : `IndependentGaussian` distribution
-      - 'diag' : diagonal multivariate Gaussian distribution
-      - 'tril' : full (or lower triangle) multivariate Gaussian distribution
+      - 'bernoulli' : `Bernoulli` distribution
+      - ('poisson'): `Poisson` distribution
+      - ('normal', 'gaussian') : `IndependentGaussian` distribution
+      - 'mvndiag' : diagonal multivariate Gaussian distribution
+      - 'mvntril' : lower triangle multivariate Gaussian distribution
+      - 'mvnfull' : full covariance MVN
       - 'lognorm' : LogNormal distribution
       - 'nb' : negative binomial
       - 'nbd' : negative binomial using mean-dispersion parameterization
       - 'zinb' or 'zinbd' : zero-inflated negative binomial
-      - 'mdn' : mixture density network (`IndependentNormal` components)
-      - 'mixdiag' : mixture of multivariate diagonal normals
-      - 'mixtril' : mixture of multivariate full or triL (lower-triangle) normals
+      - 'gmm' : mixture density network (`IndependentNormal` components)
+      - 'gmmdiag' : mixture of multivariate diagonal normals
+      - 'gmmtril' : mixture of multivariate full or triL (lower-triangle) normals
       - 'vdeterministic' : vectorized deterministic distribution
       or loss function named in `tensorflow.losses` or `keras.activations`,
       then a VectorDeterministic distribution is created and the `log_prob`
@@ -197,7 +200,7 @@ class RandomVariable:
       `DistributionLambda` of the posterior.
 
   Example:
-    x = RandomVariable(event_shape=12, posterior='gaus')
+    x = RVmeta(event_shape=12, posterior='gaus')
     dist = x.create_posterior()
   """
   event_shape: List[int] = ()
@@ -339,8 +342,13 @@ class RandomVariable:
                        input_shape: Optional[List[int]] = None,
                        name: Optional[str] = None) -> obl.DenseDistribution:
     r""" Initiate a Distribution for the random variable """
+    # use Gaussian noise as prior distribution for  deterministic case
     if self.is_deterministic:
-      prior = None
+      prior = obd.Independent(
+          obd.Normal(loc=tf.zeros(shape=self.event_shape),
+                     scale=tf.ones(shape=self.event_shape)),
+          reinterpreted_batch_ndims=1,
+      )
     else:
       prior = _default_prior(self.event_shape, self.posterior, self.prior,
                              self.kwargs)
@@ -378,9 +386,9 @@ class RandomVariable:
                                         scale_activation='softplus1',
                                         covariance=dict(
                                             mdn='none',
-                                            mixdiag='diag',
-                                            mixfull='tril',
-                                            mixtril='tril')[posterior],
+                                            mdndiag='diag',
+                                            mdnfull='tril',
+                                            mdntril='tril')[posterior],
                                         name=name,
                                         prior=prior,
                                         dropout=self.dropout,

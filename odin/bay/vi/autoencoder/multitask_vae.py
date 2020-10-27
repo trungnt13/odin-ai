@@ -1,6 +1,6 @@
 import numpy as np
 import tensorflow as tf
-from odin.bay.random_variable import RandomVariable
+from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.utils import as_tuple
 from tensorflow.python import keras
@@ -22,21 +22,21 @@ class multitaskVAE(betaVAE):
 
   # create and train the model
   vae = multitaskVAE(encoder='mnist',
-                     outputs=RandomVariable((28, 28, 1),
+                     outputs=RVmeta((28, 28, 1),
                                 'bern',
                                 projection=False,
                                 name="Image"),
-                     labels=RandomVariable(10, 'onehot', projection=True, name="Digit"))
+                     labels=RVmeta(10, 'onehot', projection=True, name="Digit"))
   vae.fit(train, epochs=-1, max_iter=8000, compile_graph=True, sample_shape=1)
   ```
   """
 
   def __init__(self,
-               observation=RandomVariable(64,
+               observation=RVmeta(64,
                                           'gaussian',
                                           projection=True,
                                           name="Observation"),
-               labels=RandomVariable(10,
+               labels=RVmeta(10,
                                      'onehot',
                                      projection=True,
                                      name="Labels"),
@@ -122,11 +122,11 @@ class MultiheadVAE(multitaskVAE):
   exert influences. """
 
   def __init__(self,
-               outputs=RandomVariable(64,
+               outputs=RVmeta(64,
                                       'gaussian',
                                       projection=True,
                                       name="Input"),
-               labels=RandomVariable(10,
+               labels=RVmeta(10,
                                      'onehot',
                                      projection=True,
                                      name="Label"),

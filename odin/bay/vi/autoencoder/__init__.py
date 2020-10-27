@@ -1,12 +1,13 @@
 import inspect
 from typing import Optional, Type
 
-from odin.bay.random_variable import RandomVariable
+from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import *
 from odin.bay.vi.autoencoder.conditional_vae import *
 from odin.bay.vi.autoencoder.dip_vae import *
 from odin.bay.vi.autoencoder.factor_vae import *
 from odin.bay.vi.autoencoder.info_vae import *
+from odin.bay.vi.autoencoder.irm_vae import *
 from odin.bay.vi.autoencoder.lda_vae import *
 from odin.bay.vi.autoencoder.multitask_vae import *
 from odin.bay.vi.autoencoder.mutual_info_vae import *
@@ -15,7 +16,6 @@ from odin.bay.vi.autoencoder.stochastic_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.bay.vi.autoencoder.vq_vae import *
 from odin.networks import NetworkConfig
-from odin.bay.vi.autoencoder.irm_vae import *
 from six import string_types
 
 
@@ -30,7 +30,7 @@ def get_vae(name: Optional[str] = None) -> Type[VariationalAutoencoder]:
   vae = None
   for key, val in globals().items():
     if inspect.isclass(val) and issubclass(val, VariationalAutoencoder):
-      if name in key.lower():
+      if name == key.lower():
         vae = val
         break
       else:

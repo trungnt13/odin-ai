@@ -26,6 +26,7 @@ from odin.utils import catch_warnings_ignore
 from odin.utils.mpi import MPI, get_cpu_count
 from sklearn.cluster import KMeans
 from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.linear_model import Lasso
 from sklearn.metrics import adjusted_mutual_info_score, adjusted_rand_score
 from sklearn.metrics import completeness_score as _cluster_completeness_score
 from sklearn.metrics import (homogeneity_score, mutual_info_score,
@@ -33,8 +34,10 @@ from sklearn.metrics import (homogeneity_score, mutual_info_score,
 from sklearn.metrics.cluster import entropy as entropy1D
 from sklearn.mixture import GaussianMixture
 from tqdm import tqdm
+from typing_extensions import Literal
 
 __all__ = [
+    'correlation_matrix',
     'discrete_mutual_info',
     'discrete_entropy',
     'mutual_info_score',
@@ -49,6 +52,78 @@ __all__ = [
     'beta_vae_score',
     'factor_vae_score',
 ]
+
+# ===========================================================================
+# Correlation
+# ===========================================================================
+_corr_methods = ['spearman', 'lasso', 'pearson', 'average']
+
+
+def correlation_matrix(
+    x1: np.ndarray,
+    x2: np.ndarray,
+    method: Literal['spearman', 'pearson', 'lasso', 'average'] = 'spearman',
+    seed: int = 1,
+) -> np.ndarray:
+  """Correlation matrix of each column in `x1` to each column in `x2`
+
+  Parameters
+  ----------
+  x1 : np.ndarray
+    a matrix
+  x2 : np.ndarray
+    a matrix, satisfying `x1.shape[0] == x2.shape[0]`
+  method : {'spearman', 'pearson', 'lasso', 'average'}
+      method for calculating the correlation,
+      'spearman' - rank or monotonic correlation
+      'pearson' - linear correlation
+      'lasso' - lasso regression
+      'average' - compute all known method then taking average,
+      by default 'spearman'
+  seed : int, optional
+      random state seed, by default 1
+
+  Returns
+  -------
+  ndarray
+      correlation matrices `[x1.shape[1], x2.shape[1]]`, all entries are
+      in `[0, 1]`.
+  """
+  x1 = np.asarray(x1)
+  x2 = np.asarray(x2)
+  d1 = x1.shape[-1]
+  d2 = x2.shape[-1]
+  method = str(method).strip().lower()
+  assert x1.shape[0] == x2.shape[0], \
+    f'Number of samples in x1 and x2 mismatch, {x1.shape[0]} and {x2.shape[0]}'
+  assert method in _corr_methods, \
+    f"Support {_corr_methods} correlation but given method='{method}'"
+  ### average mode
+  if method == 'average':
+    corr_mat = sum(
+        correlation_matrix(x1=x1, x2=x2, method=corr, seed=seed)
+        for corr in ['spearman', 'pearson', 'lasso']) / 3
+  ### specific mode
+  else:
+    # lasso
+    if method == 'lasso':
+      model = Lasso(random_state=seed, alpha=0.1)
+      model.fit(x1, x2)
+      # coef_ is [n_target, n_features], so we need transpose here
+      corr_mat = np.transpose(np.absolute(model.coef_))
+    # spearman and pearson
+    else:
+      corr_mat = np.empty(shape=(d1, d2), dtype=np.float64)
+      for i1 in range(d1):
+        for i2 in range(d2):
+          j1, j2 = x1[:, i1], x2[:, i2]
+          if method == 'spearman':
+            corr = sp.stats.spearmanr(j1, j2, nan_policy="omit")[0]
+          elif method == 'pearson':
+            corr = sp.stats.pearsonr(j1, j2)[0]
+          corr_mat[i1, i2] = corr
+  ## decoding and return
+  return corr_mat
 
 
 # ===========================================================================
@@ -265,27 +340,33 @@ def discrete_entropy(labels):
   return h
 
 
-def mutual_info_estimate(representations,
-                         factors,
-                         continuous_representations=True,
-                         continuous_factors=False,
-                         n_neighbors=3,
-                         n_cpu=1,
-                         seed=1):
+def mutual_info_estimate(representations: np.ndarray,
+                         factors: np.ndarray,
+                         continuous_representations: bool = True,
+                         continuous_factors: bool = False,
+                         n_neighbors: int = 3,
+                         n_cpu: int = 1,
+                         seed: int = 1,
+                         verbose: bool = False):
   r""" Nonparametric method for estimating entropy from k-nearest neighbors
   distances (note: this implementation use multi-processing)
 
-  Return:
-    matrix `[num_latents, num_factors]`, estimated mutual information between
-      each representation and each factors
+  Parameters
+  -----------
 
-  References:
-    A. Kraskov, H. Stogbauer and P. Grassberger, “Estimating mutual information”.
-      Phys. Rev. E 69, 2004.
-    B. C. Ross “Mutual Information between Discrete and Continuous Data Sets”.
-      PLoS ONE 9(2), 2014.
-    L. F. Kozachenko, N. N. Leonenko, “Sample Estimate of the Entropy of a
-      Random Vector:, Probl. Peredachi Inf., 23:2 (1987), 9-16
+  Return
+  --------
+  matrix `[num_latents, num_factors]`, estimated mutual information between
+    each representation and each factors
+
+  References
+  ------------
+  A. Kraskov, H. Stogbauer and P. Grassberger, “Estimating mutual information”.
+    Phys. Rev. E 69, 2004.
+  B. C. Ross “Mutual Information between Discrete and Continuous Data Sets”.
+    PLoS ONE 9(2), 2014.
+  L. F. Kozachenko, N. N. Leonenko, “Sample Estimate of the Entropy of a
+    Random Vector:, Probl. Peredachi Inf., 23:2 (1987), 9-16
   """
   from sklearn.feature_selection import (mutual_info_classif,
                                          mutual_info_regression)
@@ -310,6 +391,9 @@ def mutual_info_estimate(representations,
     it = (func(i) for i in jobs)
   else:
     it = MPI(jobs=jobs, func=func, ncpu=n_cpu, batch=1)
+  if verbose:
+    from tqdm import tqdm
+    it = tqdm(it, desc='Estimating mutual information', total=len(jobs))
   for i, mi in it:
     mi_matrix[:, i] = mi
   return mi_matrix

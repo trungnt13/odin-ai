@@ -22,15 +22,14 @@ import numpy as np
 import scipy as sp
 import tensorflow as tf
 import torch
+from odin.utils import as_tuple, is_number, is_same_shape, is_string
+from odin.utils import one_hot as _one_hot
+from odin.utils import uuid
 from scipy.sparse import spmatrix
 from six import string_types
 from six.moves import builtins
 from tensorflow import nest
 from tensorflow.python.ops import init_ops
-
-from odin.utils import as_tuple, is_number, is_same_shape, is_string
-from odin.utils import one_hot as _one_hot
-from odin.utils import uuid
 
 # TODO: add stack for setting framework context
 _FRAMEWORK_STACK = ['numpy']
@@ -732,7 +731,7 @@ def transpose(x, pattern):
   return x
 
 
-def flatten(x, outdim=1):
+def flatten(x, n_outdim=1):
   """ Keep all the original dimension until `outdim - 1`
   """
   if tf.is_tensor(x):
@@ -742,17 +741,15 @@ def flatten(x, outdim=1):
     ]
   else:
     input_shape = x.shape
-
-  if outdim == 1:
+  if n_outdim == 1:
     output_shape = [-1]
   else:
-    other_shape = tuple([input_shape[i] for i in range(outdim - 1)])
+    other_shape = tuple([input_shape[i] for i in range(n_outdim - 1)])
     if tf.is_tensor(x):
-      n = tf.reduce_prod(input_shape[(outdim - 1):])
+      n = tf.reduce_prod(input_shape[(n_outdim - 1):])
     else:
-      n = np.prod(input_shape[(outdim - 1):])
+      n = np.prod(input_shape[(n_outdim - 1):])
     output_shape = other_shape + (n,)
-
   return reshape(x, output_shape)
 
 

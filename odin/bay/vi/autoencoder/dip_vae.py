@@ -4,6 +4,7 @@ import tensorflow as tf
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TensorTypes
 from odin.bay.vi.losses import disentangled_inferred_prior_loss
+from odin.utils import as_tuple
 from tensorflow import Tensor
 from tensorflow_probability.python.distributions import Distribution
 
@@ -40,18 +41,10 @@ class dipVAE(betaVAE):
                                                dtype=self.dtype,
                                                name='lambda_offdiag')
 
-  def elbo_components(self,
-                      inputs,
-                      training=None,
-                      pX_Z=None,
-                      qZ_X=None,
-                      mask=None):
-    llk, kl = super().elbo_components(inputs,
-                                      pX_Z=pX_Z,
-                                      qZ_X=qZ_X,
-                                      mask=mask,
-                                      training=training)
-    for z, qz in zip(self.latents, tf.nest.flatten(qZ_X)):
+  def elbo_components(self, inputs, training=None, mask=None):
+    llk, kl = super().elbo_components(inputs, mask=mask, training=training)
+    px_z, qz_x = self.last_outputs
+    for z, qz in zip(self.latents, as_tuple(qz_x)):
       dip = disentangled_inferred_prior_loss(qz,
                                              only_mean=self.only_mean,
                                              lambda_offdiag=self.lambda_offdiag,

@@ -429,7 +429,7 @@ class NLPDataset(IterableDataset):
       ds = ds.cache(str(cache))
     # shuffle must be called after cache
     if shuffle is not None and shuffle > 0:
-      ds = ds.shuffle(int(shuffle))
+      ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
     ds = ds.batch(batch_size, drop_remainder)
     if prefetch is not None:
       ds = ds.prefetch(prefetch)

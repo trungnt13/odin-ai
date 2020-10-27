@@ -3,17 +3,20 @@ from __future__ import absolute_import, division, print_function
 import types
 import warnings
 from numbers import Number
-from typing import List
+from typing import List, Union
 
 import numpy as np
 import tensorflow as tf
+from odin.utils import as_tuple
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import KBinsDiscretizer
+from tensorflow_probability.python.distributions import Distribution, Normal
 from typing_extensions import Literal
 
 __all__ = [
     'discretizing',
     'permute_dims',
+    'traverse_dims',
     'marginalize_categorical_labels',
 ]
 
@@ -106,8 +109,10 @@ def discretizing(
   return factors
 
 
-def marginalize_categorical_labels(batch_size, num_classes, dtype=tf.float32):
-  r"""
+def marginalize_categorical_labels(X: tf.Tensor,
+                                   n_classes: int,
+                                   dtype: tf.DType = tf.float32):
+  """
   Example:
   ```
   # shape: [batch_size * n_labels, n_labels]
@@ -118,10 +123,14 @@ def marginalize_categorical_labels(batch_size, num_classes, dtype=tf.float32):
   X = [tf.repeat(i, n_labels, axis=0) for i in inputs]
   ```
   """
-  y = tf.expand_dims(tf.eye(num_classes, dtype=dtype), axis=0)
-  y = tf.repeat(y, batch_size, axis=0)
-  y = tf.reshape(y, (-1, num_classes))
-  return y
+  n = X.shape[0]
+  if n is None:
+    n = tf.shape(X)[0]
+  y = tf.expand_dims(tf.eye(n_classes, dtype=dtype), axis=0)
+  y = tf.repeat(y, n, axis=0)
+  y = tf.reshape(y, (-1, n_classes))
+  X = tf.repeat(X, n_classes, axis=0)
+  return X, y
 
 
 @tf.function(autograph=True)
@@ -159,3 +168,129 @@ def permute_dims(z):
     perm = perm.write(i, z_i)
   return tf.transpose(perm.stack(),
                       perm=tf.concat([tf.range(1, tf.rank(z)), (0,)], axis=0))
+
+
+def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
+                  axis: Union[int, List[int]],
+                  min_val: int = -2.0,
+                  max_val: int = 2.0,
+                  num: int = 11,
+                  n_samples: int = 1,
+                  mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
+                  return_indices: bool = False,
+                  seed: int = 1) -> np.ndarray:
+  """Traversing a dimension of a matrix between given range
+
+  Parameters
+  ----------
+  x : Union[np.ndarray, tf.Tensor, Distribution]
+      the array for performing dimension traverse
+  axis : Union[int, List[int]]
+      a single axis or list of axes for traverse (i.e. which columns of the
+      last dimension are for traverse)
+  min_val : int, optional
+      minimum value of the traverse, by default -2.0
+  max_val : int, optional
+      maximum value of the traverse, by default 2.0
+  num : int, optional
+      number of points in the traverse, must be odd number, by default 11
+  n_samples : int, optional
+      number of samples selected for the traverse, by default 2
+  mode : {'linear', 'quantile', 'gaussian'}, optional
+      'linear' mode take linear interpolation between the `min_val` and `max_val`.
+      'quantile' mode return `num` quantiles based on min and max values inferred
+      from the data. 'gaussian' mode takes `num` Gaussian quantiles,
+      by default 'linear'
+
+  Returns
+  -------
+  np.ndarray
+      the ndarray with traversed axes
+
+  Example
+  --------
+  For `n_samples=2`, `num=2`, and `n_latents=2`, the return latents are:
+  ```
+  [[-2., 0.47],
+   [ 0., 0.47],
+   [ 2., 0.47],
+   [-2., 0.31],
+   [ 0., 0.31],
+   [ 2., 0.31]]
+  ```
+  """
+  if axis is None:
+    axis = list(
+        range(
+            x.event_shape[-1] if isinstance(x, Distribution) else x.shape[-1]))
+  axis = [int(i) for i in tf.nest.flatten(axis)]
+  if len(axis) > 1:
+    arr = [
+        traverse_dims(x,
+                      ax,
+                      min_val=min_val,
+                      max_val=max_val,
+                      num=num,
+                      n_samples=n_samples,
+                      mode=mode,
+                      return_indices=return_indices,
+                      seed=seed) for ax in axis
+    ]
+    if return_indices:
+      return np.concatenate([a[0] for a in arr], axis=0), \
+        np.concatenate([a[1] for a in arr], axis=0)
+    return np.concatenate(arr, axis=0)
+  axis = axis[0]
+  num = int(num)
+  assert num % 2 == 1, \
+    f'num must be odd number, i.e. centerred at 0, given {num}'
+  n_samples = int(n_samples)
+  assert num > 1 and n_samples > 0, \
+    ("num > 1 and n_samples > 0, "
+     f"but given: num={num} n_samples={n_samples}")
+  ### check the mode
+  all_mode = ('quantile', 'linear', 'gaussian')
+  mode = str(mode).strip().lower()
+  assert mode in all_mode, \
+    f"Only support traverse mode:{all_mode}, but given '{mode}'"
+  px = None
+  if isinstance(x, Distribution):
+    px = x
+    x = px.mean()
+  elif mode == 'gaussian':
+    raise ValueError('A distribution must be provided for mean and stddev '
+                     'in Gaussian mode.')
+  ### sample
+  random_state = np.random.RandomState(seed=seed)
+  x_org = np.asarray(x)
+  indices = random_state.choice(x.shape[0], size=n_samples, replace=False)
+  x = x_org[indices]
+  ### ranges
+  # z_range is a matrix [n_latents, num]
+  # linear range
+  if mode == 'linear':
+    x_range = np.linspace(min_val, max_val, num=num)
+  # min-max quantile
+  elif mode == 'quantile':
+    x_range = np.linspace(min(x_org[:, axis]), max(x_org[:, axis]), num=num)
+  # gaussian quantile
+  elif mode == 'gaussian':
+    dist = Normal(
+        loc=tf.reduce_mean(px.mean()[:, axis]),
+        scale=tf.reduce_mean(px.stddev()[:, axis]),
+    )
+    x_range = []
+    for i in np.linspace(1e-5, 1.0 - 1e-5, num=num, dtype=np.float32):
+      x_range.append(dist.quantile(i))
+    x_range = np.array(x_range)
+  ### traverse
+  X = np.repeat(x, len(x_range), axis=0)
+  indices = np.repeat(indices, len(x_range), axis=0)
+  # repeat for each sample
+  for i in range(n_samples):
+    s = i * len(x_range)
+    e = (i + 1) * len(x_range)
+    X[s:e, axis] = x_range
+  if return_indices:
+    return X, indices
+  return X

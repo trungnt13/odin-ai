@@ -15,7 +15,7 @@ from odin.bay.layers import (BinomialLayer, DenseDistribution, DirichletLayer,
                              MultivariateNormalLayer, NegativeBinomialLayer,
                              OneHotCategoricalLayer, PoissonLayer,
                              ZINegativeBinomialLayer)
-from odin.bay.random_variable import RandomVariable
+from odin.bay.random_variable import RVmeta
 from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
@@ -197,7 +197,7 @@ class LatentDirichletDecoder(Model):
         trainable=True)
     # initialize the Model if input_shape given
     if input_shape is not None:
-      self(Input(shape=input_shape, dtype=self.dtype))
+      self.build((None,) + tuple(input_shape))
 
   @property
   def topics_words_logits(self) -> Union[Tensor, Variable]:
@@ -365,10 +365,10 @@ class LatentDirichletDecoder(Model):
 
   def __str__(self):
     if hasattr(self, 'input_shape'):
-      shape = self.input_shape
+      shape = self.input_shape[1:]
     else:
       shape = None
-    return (f"<LatentDirichletDecoder inputs:{shape[1:]} "
+    return (f"<LatentDirichletDecoder inputs:{shape} "
             f"step:{int(self.step.numpy())} warmup:{self.warmup} "
             f"posterior:{self.posterior} distribution:{self.distribution} "
             f"topics:{self.n_topics} vocab:{self.n_words} "
@@ -384,7 +384,7 @@ class amortizedLDA(betaVAE):
 
   def __init__(
       self,
-      lda: LatentDirichletDecoder,
+      ldd: LatentDirichletDecoder,
       encoder: LayerCreator = NetworkConfig([300, 300, 300], name="Encoder"),
       decoder: LayerCreator = 'identity',
       latents: LayerCreator = 'identity',
@@ -393,41 +393,28 @@ class amortizedLDA(betaVAE):
       **kwargs,
   ):
     if warmup is not None:
-      lda.warmup = int(warmup)
+      ldd.warmup = int(warmup)
     super().__init__(latents=latents,
                      encoder=encoder,
                      decoder=decoder,
-                     observation=lda,
+                     observation=ldd,
                      beta=beta,
                      analytic=True,
                      **kwargs)
-    lda.step = self.step
-    self._lda_layer = lda
+    ldd.step = self.step
+    self._ldd_layer = ldd
 
   @property
-  def lda(self) -> LatentDirichletDecoder:
-    return self._lda_layer
+  def ldd(self) -> LatentDirichletDecoder:
+    return self._ldd_layer
 
-  def elbo_components(self,
-                      inputs,
-                      training=None,
-                      pX_Z=None,
-                      qZ_X=None,
-                      mask=None,
-                      **kwargs):
-    pX_Z, qZ_X = self.call(inputs,
-                           training=training,
-                           pX_Z=pX_Z,
-                           qZ_X=qZ_X,
-                           mask=mask,
-                           **kwargs)
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     llk, kl = super().elbo_components(inputs=inputs,
-                                      pX_Z=pX_Z,
-                                      qZ_X=qZ_X,
                                       mask=mask,
                                       training=training)
-    p_topics = tf.nest.flatten(pX_Z)[-1]
-    kl[f'kl_{self.lda.name}'] = p_topics.KL_divergence(analytic=self.analytic)
+    px_z, qz_x = self.last_outputs
+    p_topics = tf.nest.flatten(px_z)[-1]
+    kl[f'kl_{self.ldd.name}'] = p_topics.KL_divergence(analytic=self.analytic)
     return llk, kl
 
   ######## Utilities methods
@@ -445,19 +432,19 @@ class amortizedLDA(betaVAE):
     loc, scale_diag = [], []
     for x in inputs:
       (_, qZ_X), _ = self(x, training=False)
-      if self.lda.posterior == 'dirichlet':
+      if self.ldd.posterior == 'dirichlet':
         concentration.append(qZ_X.concentration)
-      elif self.lda.posterior == 'gaussian':
+      elif self.ldd.posterior == 'gaussian':
         loc.append(qZ_X.loc)
         scale_diag.append(qZ_X.scale._diag)
     # final distribution
-    if self.lda.posterior == 'dirichlet':
+    if self.ldd.posterior == 'dirichlet':
       concentration = tf.concat(concentration, axis=0)
       dist = Dirichlet(concentration=concentration, name="TopicsDistribution")
       if hard_topics:
         return tf.argmax(dist.mean(), axis=-1)
       return dist
-    elif self.lda.posterior == 'gaussian':
+    elif self.ldd.posterior == 'gaussian':
       loc = tf.concat(loc, axis=0)
       scale_diag = tf.concat(scale_diag, axis=0)
       dist = MultivariateNormalDiag(loc=loc,
@@ -475,10 +462,27 @@ class amortizedLDA(betaVAE):
                         show_word_prob: bool = False) -> List[str]:
     r""" Print most relevant topics and its most representative words
     distribution """
-    return self.lda.get_topics_string(vocabulary=vocabulary,
+    return self.ldd.get_topics_string(vocabulary=vocabulary,
                                       n_words=n_words,
                                       n_topics=n_topics,
                                       show_word_prob=show_word_prob)
+
+
+class auxiliaryLDA(amortizedLDA):
+  """Amortized LDA as auxiliary loss"""
+
+  def __init__(
+      self,
+      ldd: LatentDirichletDecoder,
+      encoder: LayerCreator = NetworkConfig([300, 300, 300], name="Encoder"),
+      decoder: LayerCreator = NetworkConfig([300, 300, 300], name="Decoder"),
+      latents: LayerCreator = RVmeta(10, 'mvndiag', True, name='Latents'),
+      warmup: Optional[int] = None,
+      beta: float = 1.0,
+      alpha: float = 1.0,
+      **kwargs,
+  ):
+    ...
 
 
 # ===========================================================================
@@ -489,16 +493,16 @@ class nonlinearLDA(amortizedLDA):
 
   def __init__(
       self,
-      lda: LatentDirichletDecoder,
+      ldd: LatentDirichletDecoder,
       encoder: LayerCreator = NetworkConfig(name="Encoder"),
       decoder: LayerCreator = NetworkConfig(name="Decoder"),
-      latents: LayerCreator = RandomVariable(10,
-                                             posterior='diag',
-                                             projection=True,
-                                             name="Latents"),
+      latents: LayerCreator = RVmeta(10,
+                                     posterior='mvndiag',
+                                     projection=True,
+                                     name="Latents"),
       **kwargs,
   ):
-    super().__init__(lda=lda,
+    super().__init__(ldd=ldd,
                      latents=latents,
                      encoder=encoder,
                      decoder=decoder,
@@ -522,7 +526,7 @@ class nonlinearLDA(amortizedLDA):
     topics = pX_Z[-1]
     kl_topics = topics.KL_divergence(
         analytic=kwargs.get('analytic', self.analytic))
-    kl[f'kl_{self.lda.name}'] = kl_topics
+    kl[f'kl_{self.ldd.name}'] = kl_topics
     return llk, kl
 
 
@@ -534,30 +538,30 @@ class ALDA(VariationalModel):
 
   def __init__(
       self,
-      lda: LatentDirichletDecoder,
+      ldd: LatentDirichletDecoder,
       encoder: Layer,
       warmup: Optional[int] = None,
       beta: float = 1.0,
       **kwargs,
   ):
     super().__init__(**kwargs)
-    self.lda = lda
-    lda.step = self.step
+    self.ldd = ldd
+    ldd.step = self.step
     if warmup is not None:
-      lda.warmup = int(warmup)
+      ldd.warmup = int(warmup)
     self.encoder = encoder
     self.beta = beta
 
   def encode(self, inputs, training=None, **kwargs):
     e = self.encoder(inputs, training=training)
-    return self.lda.encode(e, training=training, sample_shape=self.sample_shape)
+    return self.ldd.encode(e, training=training, sample_shape=self.sample_shape)
 
   def decode(self, latents, training=None, **kwargs):
-    return self.lda.decode(latents, training=training)
+    return self.ldd.decode(latents, training=training)
 
   def call(self, inputs, training=None, **kwargs):
     e = self.encoder(inputs, training=training)
-    px, qz = self.lda(e, training=training, sample_shape=self.sample_shape)
+    px, qz = self.ldd(e, training=training, sample_shape=self.sample_shape)
     return px, qz
 
   def elbo_components(self, inputs, training, **kwargs):

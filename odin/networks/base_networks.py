@@ -194,11 +194,9 @@ class Networks(keras.Model, MD5object):
                                      type(self).__name__),
                      *args,
                      **kwargs)
-    self.step = tf.Variable(step,
-                            dtype=self.dtype,
-                            trainable=False,
-                            name="Step")
+    self.step = tf.Variable(step, dtype=tf.int64, trainable=False, name="Step")
     self._save_path = path
+    self._last_outputs = None
     self.trainer = None
 
   def build(self, input_shape: List[Union[None, int]]) -> Networks:
@@ -217,6 +215,16 @@ class Networks(keras.Model, MD5object):
     """
     super().build(input_shape)
     return self
+
+  @property
+  def last_outputs(self):
+    """Return the last outputs from call method"""
+    return self._last_outputs
+
+  def __call__(self, *args, **kwargs):
+    outputs = super().__call__(*args, **kwargs)
+    self._last_outputs = outputs
+    return outputs
 
   @property
   def n_parameters(self) -> int:
@@ -374,7 +382,7 @@ class Networks(keras.Model, MD5object):
         # tracking the gradient norms for debugging
         if track_gradients:
           track_gradients = int(track_gradients)
-          prefix = '' if track_gradients == 1 else '_'
+          prefix = '' if track_gradients > 1 else '_'
           for g, p in grads_params:
             metrics[f"{prefix}grad/{p.name}"] = tf.linalg.norm(g)
       ## for validation
@@ -458,8 +466,9 @@ class Networks(keras.Model, MD5object):
         allow variables with None gradients during training, by default False
     track_gradients : bool or int, optional
         track and return the metrics includes the gradients' L2-norm for each
-        trainable variable. If the value is greater than 1, hide the gradient norm
-        values from the logging by prepending '_', by default False
+        trainable variable.
+        If the value is `True` or 1, hide the gradient norm values from the
+        logging by prepending '_', by default False
 
     Returns
     -------

@@ -1,8 +1,10 @@
+import warnings
 from typing import Any, Callable, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
-from odin.bay.random_variable import RandomVariable
+from odin.bay.layers import DenseDistribution
+from odin.bay.random_variable import RVmeta
 from odin.bay.vi.utils import permute_dims
 from odin.networks import SequentialNetwork, dense_network
 from tensorflow_probability.python.distributions import (Distribution,
@@ -27,46 +29,64 @@ class FactorDiscriminator(SequentialNetwork):
     - 0 to K: is the classes' logits for real sample from q(z)
     - K + 1: fake sample from q(z-)
 
+  This class is also extended to handle supervised loss for semi-supervised
+  systems.
+
   Paramters
-  --------
+  -----------
   units : a list of Integer, the number of hidden units for each hidden layer.
-  n_outputs : an Integer or instance of `RandomVariable`,
+  n_outputs : an Integer or instance of `RVmeta`,
     the number of output units and its distribution
   ss_strategy : {'sum', 'logsumexp', 'mean', 'max', 'min'}.
     Strategy for combining the outputs semi-supervised learning into the
     logit for real sample from q(z):
     - 'logsumexp' : used for semi-supervised GAN in (Salimans T. 2016)
 
+  Example
+  --------
+  ```
+  # for FactorVAE
+  FactorDiscriminator(
+    observation=RVmeta(1, 'bernoulli', projection=True, name="ind_factors"))
+
+  # for classifier of ConditionalVAE
+  FactorDiscriminator(
+    observation=RVmeta(ds.shape, 'bernoulli', projection=True, name='image'))
+  ```
+
   References
-  ----------
+  ------------
   Kim, H., Mnih, A., 2018. "Disentangling by Factorising".
     arXiv:1802.05983 [cs, stat].
   Salimans, T., Goodfellow, I., Zaremba, W., et al 2016.
     "Improved Techniques for Training GANs". arXiv:1606.03498 [cs.LG].
   """
 
-  def __init__(self,
-               input_shape: List[int],
-               batchnorm: bool = False,
-               input_dropout: float = 0.,
-               dropout: float = 0.,
-               units: List[int] = [1000, 1000, 1000, 1000, 1000],
-               outputs: RandomVariable = RandomVariable(1,
+  def __init__(
+      self,
+      input_shape: Optional[List[int]] = None,
+      batchnorm: bool = False,
+      input_dropout: float = 0.,
+      dropout: float = 0.,
+      units: List[int] = [1000, 1000, 1000, 1000, 1000],
+      observation: Union[RVmeta, List[RVmeta]] = RVmeta(1,
                                                         'bernoulli',
+                                                        projection=True,
                                                         name="Discriminator"),
-               activation: Union[str, Callable[[], Any]] = tf.nn.leaky_relu,
-               ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
-                                    'min'] = 'logsumexp',
-               name: str = "FactorDiscriminator"):
-    if not isinstance(outputs, (tuple, list)):
-      outputs = [outputs]
-    outputs = tf.nest.flatten(outputs)
-    assert len(outputs) > 0, "No output is given for FactorDiscriminator"
-    assert all(isinstance(o, RandomVariable) for o in outputs), \
-      (f"outputs must be instance of RandomVariable, but given:{outputs}")
+      activation: Union[str, Callable[[], Any]] = tf.nn.leaky_relu,
+      ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
+                           'min'] = 'logsumexp',
+      name: str = "FactorDiscriminator",
+  ):
+    if not isinstance(observation, (tuple, list)):
+      observation = [observation]
+    assert len(observation) > 0, "No output is given for FactorDiscriminator"
+    assert all(isinstance(o, RVmeta) for o in observation), \
+      (f"outputs must be instance of RVmeta, but given:{observation}")
     n_outputs = 0
-    for o in outputs:
-      o.projection = True
+    for o in observation:
+      if not o.projection:
+        warnings.warn(f'Projection turn off for observation {o}!')
       o.event_shape = (int(np.prod(o.event_shape)),)
       n_outputs += o.event_shape[0]
     layers = dense_network(units=units,
@@ -75,17 +95,39 @@ class FactorDiscriminator(SequentialNetwork):
                            flatten_inputs=True,
                            input_dropout=input_dropout,
                            activation=activation,
-                           input_shape=tf.nest.flatten(input_shape),
+                           input_shape=input_shape,
                            prefix=name)
     super().__init__(layers, name=name)
-    shape = self.output_shape[1:]
-    self.distributions = [o.create_posterior(shape) for o in outputs]
-    self.n_outputs = sum(d.output_shape[-1] for d in self.distributions)
-    self.input_ndim = len(self.input_shape) - 1
     self.ss_strategy = str(ss_strategy)
+    self.observation = observation
+    self.n_outputs = n_outputs
+    self._distributions = []
     assert self.ss_strategy in {'sum', 'logsumexp', 'mean', 'max', 'min'}
+    if input_shape is not None:
+      self.build(input_shape)
+
+  @property
+  def n_observation(self) -> int:
+    return len(self.observation)
+
+  @property
+  def distributions(self) -> List[DenseDistribution]:
+    return self._distributions
+
+  @property
+  def prior(self) -> List[Distribution]:
+    return [d.prior for d in self._distributions]
+
+  def build(self, input_shape):
+    super().build(input_shape)
+    shape = self.output_shape[1:]
+    self._distributions = [o.create_posterior(shape) for o in self.observation]
+    self.input_ndim = len(self.input_shape) - 1
+    return self
 
   def call(self, inputs, **kwargs):
+    if isinstance(inputs, (tuple, list)) and len(inputs) == 1:
+      inputs = inputs[0]
     outputs = super().call(inputs, **kwargs)
     # project into different output distributions
     distributions = [d(outputs, **kwargs) for d in self.distributions]
@@ -232,3 +274,10 @@ class FactorDiscriminator(SequentialNetwork):
     loss = tf.cond(
         tf.abs(loss) < 1e-8, lambda: tf.stop_gradient(loss), lambda: loss)
     return loss
+
+  def __str__(self):
+    s = super().__str__()
+    s1 = ['\n Outputs:']
+    for i, d in enumerate(self.distributions):
+      s1.append(f'  [{i}]{d}')
+    return s + '\n'.join(s1)

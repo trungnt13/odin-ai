@@ -37,9 +37,9 @@ class VAETest(unittest.TestCase):
     all_vae = autoencoder.get_vae()
     for vae_cls in all_vae:
       for latents in [
-          (autoencoder.RandomVariable(10, name="Latent1"),
-           autoencoder.RandomVariable(10, name="Latent2")),
-          autoencoder.RandomVariable(10, name="Latent1"),
+          (autoencoder.RVmeta(10, name="Latent1"),
+           autoencoder.RVmeta(10, name="Latent2")),
+          autoencoder.RVmeta(10, name="Latent1"),
       ]:
         for sample_shape in [
             (),

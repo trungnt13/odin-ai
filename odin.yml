@@ -19,10 +19,10 @@ dependencies:
   - rapids==0.15
 
   - pip:
-      - tensorflow==2.3.0
+      - tensorflow>=2.3.1
       - tensorflow-probability==0.11.0
-      - tensorflow-datasets>=3.2.1
-      - tensorflow-addons>=0.8.3
+      - tensorflow-datasets>=4.0.0
+      - tensorflow-addons>=0.11.2
       - torch==1.6.0
       - torchvision==1.6.0
       - pyro-ppl==1.4.0
@@ -36,6 +36,8 @@ dependencies:
       - hydra-joblib-launcher>=1.1.0
       - spacy
       - umap-learn
+      - arviz # bayesian analysis
+      - statsmodels # hypothesis testing and frequentist statistic analysis
 
 # Other helpful library:
 # pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git

@@ -2,6 +2,7 @@ from typing import Dict, List, Optional
 
 import numpy as np
 import tensorflow as tf
+from odin.bay.random_variable import RVmeta
 from typing_extensions import Literal
 
 
@@ -66,6 +67,10 @@ def _merge_tensor(data):
 class IterableDataset:
 
   @property
+  def rvs(self) -> List[RVmeta]:
+    raise NotImplementedError
+
+  @property
   def data_type(self) -> Literal['image', 'audio', 'text', 'gene']:
     raise NotImplementedError
 
@@ -124,6 +129,7 @@ class IterableDataset:
             inc_labels: bool = False,
             seed: int = 1,
             verbose: bool = False):
+    """Return the numpy data returned when iterate the partition"""
     kw = dict(locals())
     kw.pop('self', None)
     verbose = kw.pop('verbose')

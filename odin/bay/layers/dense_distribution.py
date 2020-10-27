@@ -1,4 +1,4 @@
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import, annotations, division, print_function
 
 import inspect
 from functools import partial
@@ -22,13 +22,9 @@ from tensorflow.python.keras.initializers.initializers_v2 import Initializer
 from tensorflow.python.keras.layers import Dense, Lambda
 from tensorflow.python.keras.regularizers import Regularizer
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -134,8 +130,7 @@ class DenseDistribution(Dense):
     # set more descriptive name
     name = kwargs.pop('name', None)
     if name is None:
-      name = 'dense_%s' % (posterior if isinstance(posterior, string_types) else
-                           posterior.__class__.__name__)
+      name = f'dense_{posterior if isinstance(posterior, string_types) else posterior.__class__.__name__}'
     kwargs['name'] = name
     # params_size could be static function or method
     if not projection:
@@ -162,10 +157,11 @@ class DenseDistribution(Dense):
     if 'input_shape' in kwargs and not self.built:
       pass
 
-  def build(self, input_shape):
+  def build(self, input_shape) -> DenseDistribution:
     if self.projection and not self.built:
       super().build(input_shape)
     self.built = True
+    return self
 
   @property
   def params_size(self) -> int:
@@ -321,10 +317,15 @@ class DenseDistribution(Dense):
     else:
       prior = str(self.prior)
     posterior = self._posterior_class.__name__
-    shape = None if not hasattr(self, 'input_shape') else self.input_shape[1:]
-    return (f"<'{self.name}' proj:{self.projection} inputs:{shape} "
-            f"event:{self.event_shape} #params:{self.units} "
-            f"post:{posterior} prior:{prior} "
+    if not hasattr(self, 'input_shape'):
+      inshape = None
+      outshape = None
+    else:
+      inshape = self.input_shape
+      outshape = self.output_shape
+    return (f"<'{self.name}' proj:{self.projection} "
+            f"in:{inshape} out:{outshape} event:{self.event_shape} "
+            f"#params:{self.units} post:{posterior} prior:{prior} "
             f"dropout:{self._dropout:.2f} kw:{self._posterior_kwargs}>")
 
   def get_config(self):

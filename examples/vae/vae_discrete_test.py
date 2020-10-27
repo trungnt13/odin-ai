@@ -11,7 +11,7 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
-from odin.bay.vi.autoencoder import VQVAE, RandomVariable, VectorQuantizer
+from odin.bay.vi.autoencoder import VQVAE, RVmeta, VectorQuantizer
 from odin.fuel import BinarizedMNIST
 from odin.utils import ArgController
 
@@ -107,7 +107,7 @@ vae = VQVAE(encoder=encoder,
             decoder=decoder,
             n_codes=n_codes,
             commitment_weight=commitment,
-            outputs=RandomVariable((28, 28, 1),
+            outputs=RVmeta((28, 28, 1),
                                    posterior="bernoulli",
                                    projection=False,
                                    name="Image"),

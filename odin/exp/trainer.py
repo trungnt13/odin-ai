@@ -40,21 +40,6 @@ _CHECKPOINT_MANAGER = {}
 _CURRENT_TRAINER = None
 
 
-def _validate_optimize(func):
-  assert callable(func), "optimize must be callable."
-  if isinstance(func, Function):
-    args = func.function_spec.arg_names
-  else:
-    spec = inspect.getfullargspec(func)
-    args = spec.args + spec.kwonlyargs
-  template = ['training', 'n_iter']
-  args = args[2:] if 'self' == args[0] else args[1:]
-  # assert all(a in args for a in template), \
-  #   "optimize function must has the following arguments: %s; but given: %s"\
-  #     % (template, args)
-  return args
-
-
 def _is_text(x):
   return isinstance(x, string_types) or \
       (isinstance(x, np.ndarray) and isinstance(x[0], string_types))
@@ -167,7 +152,7 @@ def read_tensorboard(logdir: str) -> Dict[Text, Tuple[float, int, float]]:
 # Main
 # ===========================================================================
 class Trainer(object):
-  r""" Simple training procedure """
+  """Simple training procedure"""
 
   @staticmethod
   def save_weights(models, optimizers=None):
@@ -488,7 +473,7 @@ class Trainer(object):
     logdir = os.path.abspath(os.path.expanduser(logdir))
     self.logdir = logdir
     self.trace_on = bool(trace_on)
-    self.n_iter = 0
+    self._n_iter = 0
     # default attributes
     self._summary_writer = None
     self._current_valid_loss = []
@@ -496,6 +481,10 @@ class Trainer(object):
     self._cached_tensorboard = None
     self._is_training = False
     self._last_metrics = {}
+
+  @property
+  def n_iter(self) -> int:
+    return self._n_iter
 
   @property
   def last_metrics(self) -> Dict[str, Any]:
@@ -564,7 +553,7 @@ class Trainer(object):
     return (self.logdir, self.trace_on, self.n_iter)
 
   def __setstate__(self, states):
-    (self.logdir, self.trace_on, self.n_iter) = states
+    (self.logdir, self.trace_on, self._n_iter) = states
     # default attributes
     self._summary_writer = None
     self._current_valid_loss = []
@@ -574,12 +563,13 @@ class Trainer(object):
 
   def fit(self,
           train_ds: DatasetV2,
-          optimize: Callable[..., Tuple[Tensor, Dict[str, Tensor]]],
+          optimize: Callable[..., Tuple[Tensor, Dict[str, Any]]],
           valid_ds: Optional[DatasetV2] = None,
           valid_freq: int = 1000,
           valid_interval: float = 0,
           compile_graph: bool = True,
-          autograph: bool = True,
+          autograph: bool = False,
+          experimental: bool = False,
           logging_interval: float = 3,
           log_tag: str = '',
           max_iter: int = -1,
@@ -587,29 +577,33 @@ class Trainer(object):
           callback: Union[Callback, List[Callback]] = lambda: None):
     r""" A simplified fitting API
 
-    Arguments:
-      train_ds : tf.data.Dataset. Training dataset.
-      optimize : Callable. Optimization function, return loss and a list of
-        metrics. The input arguments must be:
-          - ('inputs', 'tape', 'training', 'n_iter');
-        and the function must returns:
-          - ('loss': `tf.Tensor`, 'metrics': `dict(str, tf.Tensor)`)
-      valid_ds : tf.data.Dataset. Validation dataset
-      valid_freq : an Integer. The frequency of validation task, based on
-        the current number of iteration.
-      valid_interval : a Scalar. The number of second until next validation.
-      autograph : Boolean. Enable static graph for the `optimize` function.
-      logging_interval : Scalar. Interval for print out log information
-        (in second).
-      max_iter : An Interger or `None`. Maximum number of iteration for
-        training. If `max_iter <= 0`, iterate the training data until the end.
-      callback : Callable take no input arguments.
-        The callback will be called after every fixed number of iteration
-        according to `valid_freq`, or fixed duration defined by `valid_interval`
+    Parameters
+    ----------
+    train_ds : tf.data.Dataset. Training dataset.
+    optimize : Callable. Optimization function, return loss and a list of
+      metrics. The input arguments must be:
+        - ('inputs', 'training');
+      and the function must returns:
+        - ('loss': `tf.Tensor`, 'metrics': `dict(str, tf.Tensor)`)
+    valid_ds : tf.data.Dataset. Validation dataset
+    valid_freq : an Integer. The frequency of validation task, based on
+      the current number of iteration.
+    valid_interval : a Scalar. The number of second until next validation.
+    autograph : Boolean. Enable static graph for the `optimize` function.
+    logging_interval : Scalar. Interval for print out log information
+      (in second).
+    max_iter : An Interger or `None`. Maximum number of iteration for
+      training. If `max_iter <= 0`, iterate the training data until the end.
+    callback : Callable take no input arguments.
+      The callback will be called after every fixed number of iteration
+      according to `valid_freq`, or fixed duration defined by `valid_interval`
 
-    Example:
-      def optimize(inputs, tape, n_iter, training):
-        return loss, dict(llk=0, div=0, elbo=0)
+    Example
+    -------
+    ```
+    def optimize(inputs, tape, n_iter, training):
+      return loss, dict(llk=0, div=0, elbo=0)
+    ```
     """
     if isinstance(optimize, partial):
       func_name = optimize.func
@@ -639,25 +633,22 @@ class Trainer(object):
     if valid_interval > 0:  # prefer the interval
       valid_freq = 1
     ### create autograph version of optimize
-    optimize_args = _validate_optimize(optimize)
+    assert callable(optimize), \
+      'optimize function must be callable with input arguments (inputs, training)'
     if compile_graph and not isinstance(optimize, Function):
       optimize = tf.function(optimize,
                              autograph=bool(autograph),
-                             experimental_compile=None)
+                             experimental_compile=experimental)
 
     ### helper function for training iteration
-    def fn_step(n_iter, inputs, training):
-      kw = dict()
-      if 'n_iter' in optimize_args:
-        kw['n_iter'] = n_iter
-      if 'training' in optimize_args:
-        kw['training'] = training
+    def fn_step(inputs, training):
       if isinstance(inputs, dict):
-        kw.update(inputs)
-        loss, metrics = optimize(**kw)
+        loss, metrics = optimize(training=training, **inputs)
       else:
-        loss, metrics = optimize(inputs, **kw)
-      assert isinstance(metrics, dict), "Metrics must be instance of dictionary"
+        loss, metrics = optimize(inputs, training=training)
+      if not isinstance(metrics, dict):
+        raise RuntimeError(
+            f"Metrics must be instance of dictionary, but return: {metrics}")
       return loss, metrics
 
     ### callback function
@@ -679,7 +670,7 @@ class Trainer(object):
           enumerate(valid_ds.repeat(1)),
           desc=f"Validating {valid_freq}(it) or {valid_interval:.1f}(s)")
       for it, inputs in valid_progress:
-        _loss, _metrics = fn_step(it, inputs, training=False)
+        _loss, _metrics = fn_step(inputs, training=False)
         # store for calculating average
         epoch_loss.append(_loss)
         for k, v in _metrics.items():
@@ -701,15 +692,15 @@ class Trainer(object):
       last_print_time = 0
       last_valid_time = start_time
       for cur_iter, inputs in enumerate(progress):
-        self.n_iter += 1
+        self._n_iter += 1
+        tf.summary.experimental.set_step(self.n_iter)
         # ====== check maximum iteration ====== #
         if max_iter > 0 and cur_iter >= max_iter:
           break
-        tf.summary.experimental.set_step(self.n_iter)
         # the tensorboard will change after each iteration
         self._cached_tensorboard = None
         # ====== train ====== #
-        loss, metrics = fn_step(self.n_iter, inputs, training=True)
+        loss, metrics = fn_step(inputs, training=True)
         self._last_metrics = dict(metrics)
         # metric could be hiden by add '_' to the beginning
         metrics = {k: v for k, v in metrics.items() if '_' != k[0]}

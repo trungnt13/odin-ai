@@ -8,7 +8,7 @@ from copy import deepcopy
 from typing import Any, Callable, List, Optional, Union
 
 import numpy as np
-from odin.utils import as_tuple
+from odin.utils import as_tuple, clean_folder
 from odin.utils.crypto import md5_checksum
 from six import string_types
 
@@ -39,6 +39,7 @@ YAML_REGEX = re.compile(r"\w+: \w+")
 OVERRIDE_PATTERN = re.compile(r"\A[\+\~]?[\w\.\\\@]+=[\w\(\)\[\]\{\}\,\.\']+")
 JOBS_PATTERN = re.compile(r"\A-{1,2}j=?(\d+)\Z")
 LIST_PATTERN = re.compile(r"\A-{1,2}l(ist)?\Z")
+RESET_PATTERN = re.compile(r"\A-+r(eset)?\Z")
 
 
 def _insert_argv(key, value, is_value_string=True):
@@ -255,6 +256,14 @@ def run_hydra(output_dir: str = '/tmp/outputs',
   ```
   """
   output_dir = _abspath(output_dir)
+  ### check if reset all the experiments
+  for i, a in enumerate(list(sys.argv)):
+    if RESET_PATTERN.match(a):
+      print('*Reset all experiments:')
+      clean_folder(output_dir, verbose=True)
+      sys.argv.pop(i)
+      break
+  ### create the log dir
   log_dir = os.path.join(output_dir, 'logs')
   if not os.path.exists(log_dir):
     os.makedirs(log_dir)

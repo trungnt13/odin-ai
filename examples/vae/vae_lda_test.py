@@ -13,9 +13,9 @@ import scipy as sp
 import tensorflow as tf
 from odin.bay import concat_distributions
 from odin.bay.layers import DenseDistribution
-from odin.bay.vi import (AmortizedLDA, betaVAE, factorVAE,
-                         LatentDirichletDecoder, miVAE, NetworkConfig,
-                         RandomVariable, TwoStageLDA, VariationalAutoencoder)
+from odin.bay.vi import (AmortizedLDA, LatentDirichletDecoder, NetworkConfig,
+                         RVmeta, TwoStageLDA, VariationalAutoencoder,
+                         betaVAE, factorVAE, miVAE)
 from odin.exp import Trainer, get_current_trainer
 from odin.exp.experimenter import get_output_dir, run_hydra, save_to_yaml
 from odin.fuel import (Cortex, LeukemiaATAC, Newsgroup5, Newsgroup20,
@@ -178,15 +178,15 @@ def main(cfg):
                 compile_graph=True,
                 logdir=output_dir,
                 skip_fitted=True)
-  output_dist = RandomVariable(
+  output_dist = RVmeta(
       n_words,
       cfg.distribution,
       projection=True,
       preactivation='softmax' if cfg.distribution == 'onehot' else 'linear',
       kwargs=dict(probs_input=True) if cfg.distribution == 'onehot' else {},
       name="Words")
-  latent_dist = RandomVariable(cfg.n_topics,
-                               'diag',
+  latent_dist = RVmeta(cfg.n_topics,
+                               'mvndiag',
                                projection=True,
                                name="Latents")
   ######## AmortizedLDA
@@ -207,7 +207,7 @@ def main(cfg):
         beta=cfg.beta,
         encoder=NetworkConfig([300, 150], name='Encoder'),
         decoder=NetworkConfig([150, 300], name='Decoder'),
-        latents=RandomVariable(cfg.n_topics,
+        latents=RVmeta(cfg.n_topics,
                                'dirichlet',
                                projection=True,
                                prior=None,
@@ -276,8 +276,8 @@ def main(cfg):
                        posterior_kwargs=dict(probs_input=True),
                        activation='softmax',
                        name="Words"),
-                   latents=RandomVariable(cfg.n_topics,
-                                          'diag',
+                   latents=RVmeta(cfg.n_topics,
+                                          'mvndiag',
                                           projection=True,
                                           name="Latents"),
                    input_shape=(n_words,),

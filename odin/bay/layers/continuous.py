@@ -7,6 +7,9 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.compat.v1 as tf1
 import tensorflow_probability as tfp
+from odin.backend import parse_activation
+from odin.backend.maths import softplus1
+from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
 from six import string_types
 from tensorflow.python.keras.utils import tf_utils as keras_tf_utils
 # By importing `distributions` as `tfd`, docstrings will show
@@ -19,10 +22,6 @@ from tensorflow_probability.python.internal import \
 from tensorflow_probability.python.layers.distribution_layer import _event_size
 from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible as dtc
-
-from odin.backend import parse_activation
-from odin.backend.maths import softplus1
-from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
 
 __all__ = [
     'DistributionLambda', 'MultivariateNormalLayer', 'GammaLayer', 'BetaLayer',
@@ -91,8 +90,8 @@ class BetaLayer(DistributionLambda):
                **kwargs):
     super(BetaLayer, self).__init__(
         lambda t: type(self).
-        new(t, event_shape, concentration_activation, beta_activation, clip_for_stable,
-            validate_args), convert_to_tensor_fn, **kwargs)
+        new(t, event_shape, concentration_activation, beta_activation,
+            clip_for_stable, validate_args), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -159,8 +158,9 @@ class DirichletLayer(DistributionLambda):
                validate_args=False,
                **kwargs):
     super(DirichletLayer, self).__init__(
-        lambda t: type(self).new(t, event_shape, concentration_activation, concentration_clip,
-                                 validate_args), convert_to_tensor_fn, **kwargs)
+        lambda t: type(self).new(t, event_shape, concentration_activation,
+                                 concentration_clip, validate_args),
+        convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -424,7 +424,7 @@ class MultivariateNormalLayer(DistributionLambda):
                event_shape,
                covariance='diag',
                loc_activation='identity',
-               scale_activation='softplus1',
+               scale_activation=None,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
@@ -439,23 +439,24 @@ class MultivariateNormalLayer(DistributionLambda):
           event_shape,
           covariance,
           loc_activation=tf.identity,
-          scale_activation=softplus1,
+          scale_activation=None,
           validate_args=False,
           name=None):
     r"""Create the distribution instance from a `params` vector."""
     covariance = str(covariance).lower().strip()
     event_size = tf.reduce_prod(event_shape)
     assert covariance in ('full', 'tril', 'diag'), \
-    "No support for given covariance: '%s'" % covariance
+      f"No support for given covariance: '{covariance}'"
     if name is None:
-      name = "MultivariateNormal%s" % covariance.capitalize()
+      name = f"MultivariateNormal{covariance.capitalize()}"
     # parameters
     params = tf.convert_to_tensor(value=params, name='params')
     loc = loc_activation(params[..., :event_size])
-    scale = scale_activation(params[..., event_size:])
+    scale = params[..., event_size:]
     ### the distribution
     if covariance == 'tril':
       scale_tril = tfb.FillScaleTriL(
+          diag_bijector=scale_activation,
           diag_shift=np.array(1e-5, params.dtype.as_numpy_dtype()),
           validate_args=validate_args,
       )
@@ -464,17 +465,16 @@ class MultivariateNormalLayer(DistributionLambda):
                                         validate_args=validate_args,
                                         name=name)
     elif covariance == 'diag':
+      if scale_activation is None:
+        scale = tf.nn.softplus(scale)
       return tfd.MultivariateNormalDiag(loc=loc,
                                         scale_diag=scale,
                                         validate_args=validate_args,
                                         name=name)
     elif covariance == 'full':
-      return tfd.MultivariateNormalFullCovariance(loc=loc,
-                                                  covariance_matrix=tf.reshape(
-                                                      scale,
-                                                      (event_size, event_size)),
-                                                  validate_args=validate_args,
-                                                  name=name)
+      raise NotImplementedError(
+          'MVN full covariance is deprecated, '
+          'use `scale_tril=tf.linalg.cholesky(covariance_matrix)` instead')
 
   @staticmethod
   def params_size(event_size, covariance='diag', name=None):
@@ -487,7 +487,9 @@ class MultivariateNormalLayer(DistributionLambda):
     elif covariance == 'diag':
       return event_size + event_size
     elif covariance == 'full':
-      return event_size + event_size * event_size
+      raise NotImplementedError(
+          'MVN full covariance is deprecated, '
+          'use `scale_tril=tf.linalg.cholesky(covariance_matrix)` instead')
 
 
 # ===========================================================================

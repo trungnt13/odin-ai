@@ -20,11 +20,12 @@ from numpy import ndarray
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
 from odin.bay.layers import DenseDistribution, VectorDeterministicLayer
-from odin.bay.random_variable import RandomVariable
+from odin.bay.random_variable import RVmeta
 from odin.bay.vi._base import VariationalModel
 from odin.exp.trainer import Trainer
 from odin.networks import (Identity, ImageNet, NetworkConfig, TensorTypes,
                            TrainStep)
+from odin.utils import as_tuple
 from odin.utils.python_utils import classproperty
 from scipy.sparse import spmatrix
 from six import string_types
@@ -52,7 +53,7 @@ __all__ = [
 # Types
 # ===========================================================================
 LayerCreator = Union[str, Layer, Type[Layer], \
-                     NetworkConfig, RandomVariable, \
+                     NetworkConfig, RVmeta, \
                      Callable[[Optional[List[int]]], Layer]]
 
 
@@ -85,8 +86,8 @@ def _parse_layers(network, name=None) -> List[Layer]:
     elif (inspect.isfunction(cfg) or isinstance(cfg, partial) or
           isinstance(cfg, type)):
       layers.append(cfg())
-    ## RandomVariable
-    elif isinstance(cfg, RandomVariable):
+    ## RVmeta
+    elif isinstance(cfg, RVmeta):
       layers.append(
           cfg.create_posterior(name=name if cfg.name is None else None))
     ## string type (for dataset name or network alias)
@@ -166,16 +167,7 @@ class VAEStep(TrainStep):
   qZ_X: Optional[Distribution, List[Distribution]] = None
 
   def call(self) -> Tuple[Tensor, Dict[str, Any]]:
-    pX_Z, qZ_X = self.vae(self.inputs,
-                          training=self.training,
-                          mask=self.mask,
-                          **self.call_kw)
-    # store so it could be reused
-    self.pX_Z = pX_Z
-    self.qZ_X = qZ_X
     llk, kl = self.vae.elbo_components(self.inputs,
-                                       pX_Z=pX_Z,
-                                       qZ_X=qZ_X,
                                        training=self.training,
                                        mask=self.mask)
     elbo = self.vae.elbo(llk, kl)
@@ -197,10 +189,10 @@ class VariationalAutoencoder(VariationalModel):
       the decoder network, by default NetworkConfig()
   outputs : LayerCreator, optional
       a descriptor for the input/output, by default
-      `RandomVariable(64, 'gaus', projection=True, name="Input")`
+      `RVmeta(64, 'gaus', projection=True, name="Input")`
   latents : LayerCreator, optional
       a descriptor for the latents' distribution, by default
-      `RandomVariable(10, 'diag', projection=True, name="Latent")`
+      `RVmeta(10, 'mvndiag', projection=True, name="Latent")`
   input_shape : Optional[List[int]], optional
       specific input_shape for the network, if not given, use the given `outputs`,
       by default None
@@ -227,14 +219,14 @@ class VariationalAutoencoder(VariationalModel):
       self,
       encoder: LayerCreator = NetworkConfig(name="Encoder"),
       decoder: LayerCreator = NetworkConfig(name="Decoder"),
-      observation: LayerCreator = RandomVariable(64,
-                                                 'gaus',
-                                                 projection=True,
-                                                 name="Observation"),
-      latents: LayerCreator = RandomVariable(10,
-                                             'diag',
-                                             projection=True,
-                                             name="Latents"),
+      observation: LayerCreator = RVmeta(64,
+                                         'gaussian',
+                                         projection=True,
+                                         name="Observation"),
+      latents: LayerCreator = RVmeta(10,
+                                     'mvndiag',
+                                     projection=True,
+                                     name="Latents"),
       **kwargs,
   ):
     ### keras want this supports_masking on to enable support masking
@@ -297,7 +289,7 @@ class VariationalAutoencoder(VariationalModel):
                   sample_shape: Union[int, List[int]] = (),
                   seed: int = 1) -> Union[Tensor, List[Tensor]]:
     r""" Sample from p(X) given that the prior of X is known, this could be
-    wrong since `RandomVariable` often has a default prior. """
+    wrong since `RVmeta` often has a default prior. """
     samples = []
     for output in self.observation:
       s = bk.atleast_2d(output.sample(sample_shape=sample_shape, seed=seed))
@@ -402,8 +394,6 @@ class VariationalAutoencoder(VariationalModel):
       inputs: TensorTypes,
       training: Optional[bool] = None,
       mask: Optional[Tensor] = None,
-      pX_Z: Optional[Union[Distribution, List[Distribution]]] = None,
-      qZ_X: Optional[Union[Distribution, List[Distribution]]] = None,
       **kwargs
   ) -> Tuple[Union[Distribution, List[Distribution], Union[
       Distribution, List[Distribution]]]]:
@@ -417,10 +407,6 @@ class VariationalAutoencoder(VariationalModel):
         training or evaluation mode, by default None
     mask : Optional[Tensor], optional
         mask, by default None
-    pX_Z : Optional[Union[Distribution, List[Distribution]]], optional
-        the precalculated `p_{theta}(x||z)`, by default None
-    qZ_X : Optional[Union[Distribution, List[Distribution]]], optional
-        the precalculated `q_{\phi}(z||x)`, by default None
 
     Returns
     -------
@@ -430,27 +416,27 @@ class VariationalAutoencoder(VariationalModel):
         `q_{\phi}(z||x)` the latent distribution(s)
     """
     # encode
-    if qZ_X is None:
-      qZ_X = self.encode(
-          inputs,
-          training=training,
-          mask=mask,
-          **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
-      )
+    qZ_X = self.encode(
+        inputs,
+        training=training,
+        mask=mask,
+        **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
+    )
     # transfer the mask from encoder to decoder here
     for q in tf.nest.flatten(qZ_X):
       if hasattr(q, '_keras_mask') and q._keras_mask is not None:
         mask = q._keras_mask
         break
     # decode
-    if pX_Z is None:
-      pX_Z = self.decode(
-          qZ_X,
-          training=training,
-          mask=mask,
-          **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
-      )
-    return pX_Z, qZ_X
+    pX_Z = self.decode(
+        qZ_X,
+        training=training,
+        mask=mask,
+        **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
+    )
+    outputs = (pX_Z, qZ_X)
+    self._last_outputs = outputs
+    return outputs
 
   @tf.function(autograph=False)
   def marginal_log_prob(self,
@@ -491,7 +477,7 @@ class VariationalAutoencoder(VariationalModel):
         name to Tensor of shape `[batch_size]`, the negative reconstruction cost.
     """
     sample_shape = [tf.cast(tf.reduce_prod(self.sample_shape), tf.int32)]
-    pX_Z, qZ_X = self.call(inputs, training=training, mask=mask, **kwargs)
+    pX_Z, qZ_X = self(inputs, training=training, mask=mask, **kwargs)
     ## Marginal LLK
     llk = []
     distortion = {}
@@ -534,42 +520,27 @@ class VariationalAutoencoder(VariationalModel):
       self,
       inputs: Union[Tensor, List[Tensor]],
       training: Optional[bool] = None,
-      pX_Z: Optional[Union[Distribution, List[Distribution]]] = None,
-      qZ_X: Optional[Union[Distribution, List[Distribution]]] = None,
       mask: Optional[Tensor] = None,
       **kwargs,
   ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     """Calculate the distortion (log-likelihood) and rate (KL-divergence)
     for contruction the Evident Lower Bound (ELBO)"""
     # organize all inputs to list
-    pX_Z, qZ_X = self.call(inputs,
-                           training=training,
-                           mask=mask,
-                           pX_Z=pX_Z,
-                           qZ_X=qZ_X,
-                           **kwargs)
-    pX_Z = tf.nest.flatten(pX_Z)
-    qZ_X = tf.nest.flatten(qZ_X)
-    # override the default mask
-    # if the processed mask from decoder is available
-    # but, it still unclear should we use the original mask or the processed
-    # mask here
-    # if hasattr(pX_Z[0], '_keras_mask') and pX_Z[0]._keras_mask is not None:
-    # mask = pX_Z[0]._keras_mask
+    pX_Z, qZ_X = self(inputs, training=training, mask=mask, **kwargs)
     ### llk
     llk = {}
-    for obs, x, pX in zip(self.observation, tf.nest.flatten(inputs), pX_Z):
+    for obs, x, pX in zip(self.observation, as_tuple(inputs), as_tuple(pX_Z)):
       llk[f'llk_{obs.name}'] = pX.log_prob(x)
     ### kl
     kl = {}
-    for lat, qZ in zip(self.latents, qZ_X):
+    for z, qZ in zip(self.latents, as_tuple(qZ_X)):
       if hasattr(qZ, "KL_divergence"):
-        kl[f'kl_{lat.name}'] = qZ.KL_divergence(analytic=self.analytic,
-                                                reverse=self.reverse,
-                                                sample_shape=None,
-                                                keepdims=True)
+        kl[f'kl_{z.name}'] = qZ.KL_divergence(analytic=self.analytic,
+                                              reverse=self.reverse,
+                                              sample_shape=None,
+                                              keepdims=True)
       else:
-        kl[f'kl_{lat.name}'] = tf.constant(0., dtype=self.dtype)
+        kl[f'kl_{z.name}'] = tf.constant(0., dtype=self.dtype)
     return llk, kl
 
   ################## For training
@@ -637,20 +608,21 @@ class Autoencoder(VariationalAutoencoder):
 
   def __init__(
       self,
-      latents: LayerCreator = RandomVariable(10,
-                                             'vdeterministic',
-                                             projection=True,
-                                             name="Latents"),
+      latents: LayerCreator = RVmeta(10,
+                                     'vdeterministic',
+                                     projection=True,
+                                     name="Latents"),
+      name='Autoencoder',
       **kwargs,
   ):
     for qz in tf.nest.flatten(latents):
-      if isinstance(qz, RandomVariable):
+      if isinstance(qz, RVmeta):
         qz.posterior = 'vdeterministic'
       elif isinstance(qz, DenseDistribution):
         assert qz.posterior == VectorDeterministicLayer, \
           ('Autoencoder only support VectorDeterministic posterior, '
           f'but given:{qz.posterior}')
-    super().__init__(latents=latents, **kwargs)
+    super().__init__(latents=latents, name=name, **kwargs)
 
   def elbo_components(self,
                       inputs,
@@ -665,5 +637,6 @@ class Autoencoder(VariationalAutoencoder):
                                       qZ_X=qZ_X,
                                       mask=mask,
                                       **kwargs)
+    # this make sure no KL is leaking
     kl = {k: 0. for k, v in kl.items()}
     return llk, kl

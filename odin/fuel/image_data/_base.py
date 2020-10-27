@@ -183,7 +183,7 @@ class BinarizedMNIST(ImageDataset):
       ds = ds.cache(str(cache))
     # shuffle must be called after cache
     if shuffle is not None and shuffle > 0:
-      ds = ds.shuffle(int(shuffle))
+      ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
     ds = ds.batch(batch_size, drop_remainder)
     if prefetch is not None:
       ds = ds.prefetch(prefetch)
@@ -306,3 +306,31 @@ class BinarizedAlphaDigits(BinarizedMNIST):
   @property
   def shape(self):
     return (20, 16, 1)
+
+
+class FashionMNIST(BinarizedMNIST):
+
+  def __init__(self):
+    import tensorflow_datasets as tfds
+    self.train, self.valid, self.test = tfds.load(
+        name='fashion_mnist',
+        split=['train[:70%]', 'train[70%:80%]', 'train[80%:]'],
+        as_supervised=True,
+        shuffle_files=True,
+        with_info=False,
+    )
+
+  @property
+  def labels(self):
+    return np.array([
+        'T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal',
+        'Shirt', 'Sneaker', 'Bag', 'Ankle boot'
+    ])
+
+  @property
+  def is_binary(self):
+    return False
+
+  @property
+  def shape(self):
+    return (28, 28, 1)

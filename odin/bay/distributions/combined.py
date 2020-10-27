@@ -2,14 +2,13 @@ from typing import List
 
 import numpy as np
 import tensorflow as tf
-from tensorflow_probability.python.distributions import kullback_leibler
-
-from odin.bay import distributions as tfd
+from tensorflow_probability.python.distributions import (Distribution,
+                                                         kullback_leibler)
 
 __all__ = ['CombinedDistribution']
 
 
-class CombinedDistribution(tfd.Distribution):
+class CombinedDistribution(Distribution):
   r""" Convert a list of homogeneous distributions into a single distribution
   by concatenating their output along event shape
 
@@ -42,7 +41,7 @@ class CombinedDistribution(tfd.Distribution):
         name=name)
 
   @property
-  def distributions(self) -> List[tfd.Distribution]:
+  def distributions(self) -> List[Distribution]:
     return self._distributions
 
   def _batch_shape_tensor(self):

@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 from odin import backend as bk
 from odin import visual as vs
 from odin.backend import interpolation
-from odin.bay.vi import (GroundTruth, NetworkConfig, RandomVariable,
+from odin.bay.vi import (GroundTruth, NetworkConfig, RVmeta,
                          VariationalAutoencoder, VariationalPosterior, get_vae)
 from odin.exp import get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import IterableDataset, get_dataset
@@ -35,7 +35,7 @@ sns.set()
 # ===========================================================================
 # Configuration
 # Example:
-# python all_vae_test.py vae=betavae ds=dsprites beta=1,10,20 max_iter=100000 -m -j4
+# python all_vae_test.py vae=betavae ds=dsprites beta=1,10,20 px=bernoulli py=onehot max_iter=100000 -m -j4
 # ===========================================================================
 CONFIG = \
 r"""
@@ -47,9 +47,9 @@ beta: 1
 gamma: 6
 alpha: 10
 zdim: 64
-qz: diag
-batch_size: 128
-max_iter: 30000
+qz: mvndiag
+batch_size: 32
+max_iter: 50000
 override: False
 """
 
@@ -93,10 +93,44 @@ def evaluate(vae: VariationalAutoencoder, ds: IterableDataset):
                              inc_labels=1.0)
 
 
+def plot_latent_units(mean, std, w):
+  # plot the latents and its weights
+  fig = plt.figure(figsize=(6, 4), dpi=200)
+  ax = plt.gca()
+  l1 = ax.plot(mean,
+               label='mean',
+               linewidth=1.0,
+               marker='o',
+               markersize=6,
+               color='r',
+               alpha=0.5)
+  l2 = ax.plot(std,
+               label='std',
+               linewidth=1.0,
+               marker='o',
+               markersize=6,
+               color='g',
+               alpha=0.5)
+  ax1 = ax.twinx()
+  l3 = ax1.plot(w,
+                label='weight',
+                linewidth=1.0,
+                linestyle='--',
+                marker='s',
+                markersize=6,
+                color='b',
+                alpha=0.5)
+  lines = l1 + l2 + l3
+  labs = [l.get_label() for l in lines]
+  ax.grid(True)
+  ax.legend(lines, labs)
+  return vs.plot_to_image(fig)
+
+
 # ===========================================================================
 # Main
 # ===========================================================================
-@run_hydra(output_dir='/tmp/all_vae',
+@run_hydra(output_dir='/tmp/vae_all',
            exclude_keys=['max_iter', 'override', 'py'])
 def main(cfg: dict):
   assert cfg.px is not None, "Output distribution 'px=...' must be given."
@@ -117,11 +151,8 @@ def main(cfg: dict):
   assert ds.has_labels, f"Dataset with name={cfg.ds} has no labels"
   ds_kw = dict(batch_size=int(cfg.batch_size), drop_remainder=True)
   ### the variables
-  latents = RandomVariable(cfg.zdim, cfg.qz, projection=True, name="Latents"),
-  observation = RandomVariable(x_shape,
-                               cfg.px,
-                               projection=True,
-                               name="Observation")
+  latents = RVmeta(cfg.zdim, cfg.qz, projection=True, name="Latents"),
+  observation = RVmeta(x_shape, cfg.px, projection=True, name="Data")
   ### prepare model init
   model = get_vae(cfg.vae)
   model_kw = inspect.getfullargspec(model.__init__).args[1:]
@@ -129,7 +160,7 @@ def main(cfg: dict):
   if 'labels' in model_kw:
     if cfg.py is None:
       raise ValueError("Semi-supervised model but 'py' is not provided")
-    labels = RandomVariable(y_shape, cfg.py, projection=True, name="Labels")
+    labels = RVmeta(y_shape, cfg.py, projection=True, name="Labels")
     kw['labels'] = labels
   ### create the model
   vae = model(encoder=NetworkConfig([256, 256, 256], name='Encoder'),
@@ -165,6 +196,8 @@ def main(cfg: dict):
     # stats
     mean = tf.reduce_mean(vp.latents.mean(), axis=0)
     std = tf.reduce_mean(vp.latents.stddev(), axis=0)
+    w_d = tf.reduce_sum(vae.decoder.trainable_variables[0], axis=-1)
+    image_latents = plot_latent_units(mean, std, w_d)
     # show traverse image
     images = np.concatenate([
         vp.traverse(i,
@@ -179,14 +212,6 @@ def main(cfg: dict):
     # show sampled image
     px = as_tuple(vae.decode(z_samples, training=False))
     image_sampled = to_image(px[0].mean().numpy(), grids=(4, 4))
-    # decoder weight
-    w_d = tf.reduce_sum(vae.decoder.trainable_variables[0], axis=-1)
-    fig = plt.figure(figsize=(6, 4), dpi=150)
-    plt.plot(std, label='std', linewidth=1.0, marker='o', markersize=2)
-    plt.plot(w_d, label='weight', linewidth=1.0, marker='o', markersize=2)
-    plt.legend()
-    plt.grid(True)
-    image_latents = vs.plot_to_image(fig)
     # gradients
     all_grads = [(k, v) for k, v in vae.last_metrics.items() if 'grad/' in k]
     encoder_grad = 0
@@ -213,13 +238,13 @@ def main(cfg: dict):
           valid=valid,
           epochs=-1,
           max_iter=int(cfg.max_iter),
-          valid_freq=500,
+          valid_freq=1000,
           logging_interval=2,
           skip_fitted=True,
           callback=callback,
           logdir=output_dir,
           compile_graph=True,
-          track_gradients=2)
+          track_gradients=True)
 
   ### evaluation
   evaluate(vae, ds)

@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
-from odin.bay.random_variable import RandomVariable
+from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import (DatasetV2,
@@ -194,20 +194,14 @@ class factorVAE(betaVAE):
     self._is_pretraining = False
     return self
 
-  def elbo_components(self,
-                      inputs,
-                      training=None,
-                      pX_Z=None,
-                      qZ_X=None,
-                      mask=None):
-    llk, kl = super().elbo_components(inputs,
-                                      pX_Z=pX_Z,
-                                      qZ_X=qZ_X,
-                                      mask=mask,
-                                      training=training)
+  def elbo_components(self, inputs, training=None, mask=None):
+    llk, kl = super().elbo_components(inputs, mask=mask, training=training)
+    px_z, qz_x = self.last_outputs
     # by default, this support multiple latents by concatenating all latents
-    tc = 0. if self.is_pretraining else self.total_correlation(
-        qZ_X=qZ_X, training=training)
+    if self.is_pretraining:
+      tc = 0.
+    else:
+      tc = self.total_correlation(qZ_X=qz_x, training=training)
     if self.maximize_tc:
       tc = -tc
     kl['tc'] = tc
@@ -257,9 +251,7 @@ class factorVAE(betaVAE):
     # split the parameters
     disc_params = self.discriminator.trainable_variables
     exclude = set(id(p) for p in disc_params)
-    vae_params = [
-        p for p in self.trainable_variables if id(p) not in exclude
-    ]
+    vae_params = [p for p in self.trainable_variables if id(p) not in exclude]
     # first step optimize VAE with total correlation loss
     step1 = VAEStep(vae=self,
                     inputs=x1,
@@ -318,10 +310,10 @@ class ssfVAE(factorVAE):
   """
 
   def __init__(self,
-               labels: RandomVariable = RandomVariable(10,
-                                                       'onehot',
-                                                       projection=True,
-                                                       name="Labels"),
+               labels: RVmeta = RVmeta(10,
+                                       'onehot',
+                                       projection=True,
+                                       name="Labels"),
                discriminator: Union[FactorDiscriminator, Dict[str, Any]] = dict(
                    units=[1000, 1000, 1000, 1000, 1000]),
                alpha: float = 10.,
@@ -380,18 +372,18 @@ class factor2VAE(factorVAE):
   invariant factors."""
 
   def __init__(self,
-               latents: RandomVariable = RandomVariable(5,
-                                                        'diag',
-                                                        projection=True,
-                                                        name='Latents'),
-               factors: RandomVariable = RandomVariable(5,
-                                                        'diag',
-                                                        projection=True,
-                                                        name="Factors"),
+               latents: RVmeta = RVmeta(5,
+                                        'mvndiag',
+                                        projection=True,
+                                        name='Latents'),
+               factors: RVmeta = RVmeta(5,
+                                        'mvndiag',
+                                        projection=True,
+                                        name="Factors"),
                **kwargs):
     latents = tf.nest.flatten(latents)
-    assert isinstance(factors, RandomVariable), \
-      "factors must be instance of RandomVariable, but given: %s" % \
+    assert isinstance(factors, RVmeta), \
+      "factors must be instance of RVmeta, but given: %s" % \
         str(type(factors))
     latents.append(factors)
     super().__init__(latents=latents,
@@ -432,9 +424,9 @@ class ssf2VAE(ssfVAE, factor2VAE):
 
   # construction of SemiFactor2VAE for MNIST dataset
   vae = SemiFactor2VAE(encoder='mnist',
-                       outputs=RandomVariable((28, 28, 1), 'bern', name="Image"),
-                       latents=RandomVariable(10, 'diag', projection=True, name='Latents'),
-                       factors=RandomVariable(10, 'diag', projection=True, name='Factors'),
+                       outputs=RVmeta((28, 28, 1), 'bern', name="Image"),
+                       latents=RVmeta(10, 'mvndiag', projection=True, name='Latents'),
+                       factors=RVmeta(10, 'mvndiag', projection=True, name='Factors'),
                        alpha=10.,
                        n_labels=10,
                        ss_strategy='logsumexp')
@@ -450,13 +442,7 @@ class ssf2VAE(ssfVAE, factor2VAE):
   """
 
   def __init__(self,
-               latents=RandomVariable(5,
-                                      'diag',
-                                      projection=True,
-                                      name='Latents'),
-               factors=RandomVariable(5,
-                                      'diag',
-                                      projection=True,
-                                      name='Factors'),
+               latents=RVmeta(5, 'mvndiag', projection=True, name='Latents'),
+               factors=RVmeta(5, 'mvndiag', projection=True, name='Factors'),
                **kwargs):
     super().__init__(latents=latents, factors=factors, **kwargs)

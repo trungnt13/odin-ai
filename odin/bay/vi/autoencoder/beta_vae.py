@@ -5,6 +5,7 @@ from odin.backend import interpolation as interp
 from odin.bay.vi.autoencoder.variational_autoencoder import (
     TensorTypes, VariationalAutoencoder)
 from odin.bay.vi.losses import total_correlation
+from odin.utils import as_tuple
 from tensorflow import Tensor
 from tensorflow_probability.python.distributions import Distribution
 
@@ -37,17 +38,11 @@ class betaVAE(VariationalAutoencoder):
     else:
       self._beta = tf.convert_to_tensor(b, dtype=self.dtype, name='beta')
 
-  def elbo_components(self,
-                      inputs,
-                      training=None,
-                      pX_Z=None,
-                      qZ_X=None,
-                      mask=None):
+  def elbo_components(self, inputs, training=None, mask=None):
     llk, kl = super().elbo_components(inputs=inputs,
-                                      pX_Z=pX_Z,
-                                      qZ_X=qZ_X,
                                       mask=mask,
                                       training=training)
+
     kl = {key: self.beta * val for key, val in kl.items()}
     return llk, kl
 
@@ -65,18 +60,10 @@ class betatcVAE(betaVAE):
       arXiv:1802.04942 [cs, stat].
   """
 
-  def elbo_components(self,
-                      inputs,
-                      training=None,
-                      pX_Z=None,
-                      qZ_X=None,
-                      mask=None):
-    llk, kl = super().elbo_components(inputs,
-                                      pX_Z=pX_Z,
-                                      qZ_X=qZ_X,
-                                      mask=mask,
-                                      training=training)
-    for z, qz in zip(self.latents, tf.nest.flatten(qZ_X)):
+  def elbo_components(self, inputs, training=None, mask=None):
+    llk, kl = super().elbo_components(inputs, mask=mask, training=training)
+    px_z, qz_x = self.last_outputs
+    for z, qz in zip(self.latents, as_tuple(qz_x)):
       tc = total_correlation(tf.convert_to_tensor(qz), qz)
       kl[f'tc_{z.name}'] = (self.beta - 1.) * tc
     return llk, kl
@@ -119,17 +106,8 @@ class annealedVAE(VariationalAutoencoder):
         vmax=tf.constant(c_max, self.dtype),
         norm=int(iter_max))
 
-  def elbo_components(self,
-                      inputs,
-                      training=None,
-                      pX_Z=None,
-                      qZ_X=None,
-                      mask=None):
-    llk, kl = super().elbo_components(inputs,
-                                      pX_Z=pX_Z,
-                                      qZ_X=qZ_X,
-                                      mask=mask,
-                                      training=training)
+  def elbo_components(self, inputs, training=None, mask=None):
+    llk, kl = super().elbo_components(inputs, mask=mask, training=training)
     # step : training step, updated when call `.train_steps()`
     c = self.interpolation(self.step)
     kl = {key: self.gamma * tf.math.abs(val - c) for key, val in kl.items()}

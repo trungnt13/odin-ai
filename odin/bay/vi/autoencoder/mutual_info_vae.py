@@ -1,7 +1,7 @@
 from numbers import Number
 
 import tensorflow as tf
-from odin.bay.random_variable import RandomVariable
+from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.losses import get_divergence, maximum_mean_discrepancy
 
@@ -54,12 +54,12 @@ class miVAE(betaVAE):
   def __init__(self,
                beta: float = 1.0,
                gamma: float = 1.0,
-               latents: RandomVariable = RandomVariable(5,
-                                                        'diag',
+               latents: RVmeta = RVmeta(5,
+                                                        'mvndiag',
                                                         projection=True,
                                                         name="Latents"),
-               factors: RandomVariable = RandomVariable(5,
-                                                        'diag',
+               factors: RVmeta = RVmeta(5,
+                                                        'mvndiag',
                                                         projection=True,
                                                         name='Factors'),
                resample_zprime: bool = False,

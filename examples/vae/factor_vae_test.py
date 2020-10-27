@@ -10,10 +10,10 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from odin import search
 from odin import visual as vs
-from odin.bay import RandomVariable
+from odin.bay import RVmeta
 from odin.bay.vi import Criticizer
-from odin.bay.vi.autoencoder import (Factor2VAE, FactorDiscriminator, factorVAE,
-                                     SemiFactor2VAE, SemifactorVAE)
+from odin.bay.vi.autoencoder import (Factor2VAE, FactorDiscriminator,
+                                     SemiFactor2VAE, SemifactorVAE, factorVAE)
 from odin.exp import Experimenter, pretty_config
 from odin.fuel import get_dataset
 from odin.utils import md5_folder
@@ -106,24 +106,24 @@ class Factor(Experimenter):
       del kw['alpha']
       model = factorVAE(
           encoder=cfg.ds,
-          outputs=RandomVariable(self.ds.shape, 'bern', name="Image"),
-          latents=RandomVariable(20, 'diag', projection=True, name="Latents"),
+          outputs=RVmeta(self.ds.shape, 'bern', name="Image"),
+          latents=RVmeta(20, 'mvndiag', projection=True, name="Latents"),
           **kw,
       )
     elif cfg.vae == 'factor2':
       del kw['alpha']
       model = Factor2VAE(
           encoder=cfg.ds,
-          outputs=RandomVariable(self.ds.shape, 'bern', name="Image"),
-          latents=RandomVariable(10, 'diag', projection=True, name='Latents'),
-          factors=RandomVariable(10, 'diag', projection=True, name='Factors'),
+          outputs=RVmeta(self.ds.shape, 'bern', name="Image"),
+          latents=RVmeta(10, 'mvndiag', projection=True, name='Latents'),
+          factors=RVmeta(10, 'mvndiag', projection=True, name='Factors'),
           **kw,
       )
     elif cfg.vae == 'semi':
       model = SemifactorVAE(
           encoder=cfg.ds,
-          outputs=RandomVariable(self.ds.shape, 'bern', name="Image"),
-          latents=RandomVariable(20, 'diag', projection=True, name="Latents"),
+          outputs=RVmeta(self.ds.shape, 'bern', name="Image"),
+          latents=RVmeta(20, 'mvndiag', projection=True, name="Latents"),
           n_labels=self.ds.n_labels,
           ss_strategy=cfg.strategy,
           **kw,
@@ -132,8 +132,8 @@ class Factor(Experimenter):
       model = SemiFactor2VAE(
           encoder=cfg.ds,
           outputs=RV(self.ds.shape, 'bern', name="Image"),
-          latents=RV(10, 'diag', projection=True, name='Latents'),
-          factors=RV(10, 'diag', projection=True, name='Factors'),
+          latents=RV(10, 'mvndiag', projection=True, name='Latents'),
+          factors=RV(10, 'mvndiag', projection=True, name='Factors'),
           n_labels=self.ds.n_labels,
           ss_strategy=cfg.strategy,
           **kw,

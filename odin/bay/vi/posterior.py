@@ -15,9 +15,10 @@ from numpy import ndarray
 from odin import visual as vs
 from odin.bay.distributions import CombinedDistribution
 from odin.bay.vi._base import VariationalModel
-from odin.bay.vi.metrics import (mutual_info_estimate, mutual_info_gap,
+from odin.bay.vi.metrics import (correlation_matrix, mutual_info_estimate,
+                                 mutual_info_gap,
                                  representative_importance_matrix)
-from odin.bay.vi.utils import discretizing
+from odin.bay.vi.utils import discretizing, traverse_dims
 from odin.ml import dimension_reduce, linear_classifier
 from odin.search import diagonal_linear_assignment
 from odin.utils import as_tuple
@@ -732,42 +733,10 @@ class Posterior(vs.Visualizer):
     OrderedDict (optional)
         mapping from decoded factor index to latent code index.
     """
-    method = str(method).strip().lower()
-    all_corr = ['spearman', 'lasso', 'pearson', 'average']
-    assert method in all_corr, \
-      f"Support {all_corr} correlation but given method='{method}'"
-    ### average mode
-    if method == 'average':
-      corr_mat = sum(
-          self.correlation_matrix(convert_to_tensor=self.dist_to_tensor,
-                                  method=corr,
-                                  sort_pairs=False,
+    corr_mat = correlation_matrix(x1=self.dist_to_tensor(self.latents),
+                                  x2=self.factors,
+                                  method=method,
                                   seed=seed)
-          for corr in ['spearman', 'pearson', 'lasso']) / 3
-    ### specific mode
-    else:
-      # start form correlation matrix
-      z = self.dist_to_tensor(self.latents).numpy()
-      f = self.factors
-      # lasso
-      if method == 'lasso':
-        from sklearn.linear_model import Lasso
-        model = Lasso(random_state=seed, alpha=0.1)
-        model.fit(z, f)
-        # coef_ is [n_target, n_features], so we need transpose here
-        corr_mat = np.transpose(np.absolute(model.coef_))
-      # spearman and pearson
-      else:
-        corr_mat = np.empty(shape=(self.n_latents, self.n_factors),
-                            dtype=np.float64)
-        for code in range(self.n_latents):
-          for fact in range(self.n_factors):
-            x, y = z[:, code], f[:, fact]
-            if method == 'spearman':
-              corr = sp.stats.spearmanr(x, y, nan_policy="omit")[0]
-            elif method == 'pearson':
-              corr = sp.stats.pearsonr(x, y)[0]
-            corr_mat[code, fact] = corr
     ## decoding and return
     if sort_pairs:
       ids = diagonal_linear_assignment(corr_mat)
@@ -929,7 +898,7 @@ class VariationalPosterior(Posterior):
   ############## Experiment setup
   def traverse(
       self,
-      latent_index: Union[int, str],
+      axis: Union[int, List[int]],
       min_val: int = -2.0,
       max_val: int = 2.0,
       num: int = 11,
@@ -941,7 +910,7 @@ class VariationalPosterior(Posterior):
 
     Parameters
     ----------
-    latent_index : Union[int, str]
+    axis : Union[int, List[int]]
     min_val : int, optional
         minimum value of the traverse, by default -2.0
     max_val : int, optional
@@ -974,58 +943,19 @@ class VariationalPosterior(Posterior):
      [ 2., 0.31]]
     ```
     """
-    num = int(num)
-    assert num % 2 == 1, f'num must be odd number, i.e. centerred at 0, given {num}'
-    n_samples = int(n_samples)
-    assert num > 1 and n_samples > 0, \
-      ("num > 1 and n_samples > 0, "
-       f"but given: num={num} n_samples={n_samples}")
-    ### factor index
-    if isinstance(latent_index, string_types):
-      latent_index = self.latent_names.index(latent_index)
-    latent_index = int(latent_index)
-    ### check the mode
-    all_mode = ('quantile', 'linear', 'gaussian')
-    mode = str(mode).strip().lower()
-    assert mode in all_mode, \
-      f"Only support mode:{all_mode}, but given mode='{mode}'"
-    ### sample
-    random_state = np.random.RandomState(seed=seed)
-    indices = random_state.choice(self.n_samples, size=n_samples, replace=False)
-    Z_org = self.dist_to_tensor(self.latents).numpy()
-    Z = Z_org[indices]
-    ### ranges
-    # z_range is a matrix [n_latents, num]
-    # linear range
-    if mode == 'linear':
-      z_range = np.linspace(min_val, max_val, num=num)
-    # min-max quantile
-    elif mode == 'quantile':
-      z_range = np.linspace(min(Z_org[:, latent_index]),
-                            max(Z_org[:, latent_index]),
-                            num=num)
-    # gaussian quantile
-    elif mode == 'gaussian':
-      dist = Normal(
-          loc=tf.reduce_mean(self.latents.mean()[:, latent_index]),
-          scale=tf.reduce_mean(self.latents.stddev()[:, latent_index]),
-      )
-      z_range = []
-      for i in np.linspace(1e-5, 1.0 - 1e-5, num=num, dtype=np.float32):
-        z_range.append(dist.quantile(i))
-      z_range = np.array(z_range)
-    ### traverse
-    Z = np.repeat(np.array(Z), len(z_range), axis=0)
-    Z_indices = np.repeat(indices, len(z_range), axis=0)
-    # repeat for each sample
-    for j in range(n_samples):
-      s = j * len(z_range)
-      e = (j + 1) * len(z_range)
-      Z[s:e, latent_index] = z_range
+    Z, indices = traverse_dims(x=self.latents.sample(seed=seed),
+                               axis=axis,
+                               min_val=min_val,
+                               max_val=max_val,
+                               num=num,
+                               n_samples=n_samples,
+                               mode=mode,
+                               return_indices=True,
+                               seed=seed)
     ### create the new posterior
     # NOTE: this might not work for multi-latents
     outputs = list(as_tuple(self.model.decode(Z, training=False)))
-    obj = self.copy(Z_indices,
+    obj = self.copy(indices,
                     latents=VectorDeterministic(Z, name="Latents"),
                     outputs=outputs,
                     suffix='traverse')

@@ -4,12 +4,14 @@ from typing import Optional
 
 import numpy as np
 import tensorflow as tf
+from odin.bay.layers import DenseDistribution, VectorDeterministicLayer
 from odin.bay.vi.autoencoder.variational_autoencoder import (
-    LayerCreator, RandomVariable, VariationalAutoencoder, _iter_lists)
+    LayerCreator, RVmeta, VariationalAutoencoder, _iter_lists)
 from odin.networks import SequentialNetwork
 from odin.utils import as_tuple
 from tensorflow.python import keras
 from tensorflow.python.eager import context
+from tensorflow.python.training.tracking import base as trackable
 
 
 class ImplicitRankMinimizer(keras.layers.Layer):
@@ -118,23 +120,64 @@ class irmVAE(VariationalAutoencoder):
   """
 
   def __init__(self,
-               latents: LayerCreator = RandomVariable(64,
-                                                      'vdeterministic',
+               latents: LayerCreator = RVmeta(64,
+                                                      'mvndiag',
                                                       projection=True,
                                                       name='Latents'),
                n_layers: int = 3,
                share_weights: bool = False,
+               name: str = 'irmVAE',
                **kwargs):
-    super().__init__(latents=latents, **kwargs)
+    super().__init__(latents=latents, name=name, **kwargs)
+    new_encoder = []
     for i, layer in enumerate(self.encoder):
+      # with trackable.no_automatic_dependency_tracking_scope(self):
+      layer_list = [
+          layer,
+          ImplicitRankMinimizer(units=64,
+                                n_layers=n_layers,
+                                share_weights=share_weights,
+                                name='IRM')
+      ]
       layer = SequentialNetwork(
-          layers=[
-              layer,
-              ImplicitRankMinimizer(units=64,
-                                    n_layers=n_layers,
-                                    share_weights=share_weights,
-                                    name='IRM')
-          ],
+          layers=layer_list,
           name=f'{layer.name}_irm',
       )
-      self.encoder[i] = layer
+      new_encoder.append(layer)
+    self._encoder = new_encoder
+
+
+class irmAE(irmVAE):
+
+  def __init__(self,
+               latents: LayerCreator = RVmeta(64,
+                                                      'vdeterministic',
+                                                      projection=True,
+                                                      name='Latents'),
+               name: str = 'irmAE',
+               **kwargs):
+    for qz in tf.nest.flatten(latents):
+      if isinstance(qz, RVmeta):
+        qz.posterior = 'vdeterministic'
+      elif isinstance(qz, DenseDistribution):
+        assert qz.posterior == VectorDeterministicLayer, \
+          ('irmAE only support VectorDeterministic posterior, '
+          f'but given:{qz.posterior}')
+    super().__init__(latents=latents, name=name, **kwargs)
+
+  def elbo_components(self,
+                      inputs,
+                      training=None,
+                      pX_Z=None,
+                      qZ_X=None,
+                      mask=None,
+                      **kwargs):
+    llk, kl = super().elbo_components(inputs=inputs,
+                                      training=training,
+                                      pX_Z=pX_Z,
+                                      qZ_X=qZ_X,
+                                      mask=mask,
+                                      **kwargs)
+    # this make sure no KL is leaking
+    kl = {k: 0. for k, v in kl.items()}
+    return llk, kl
