@@ -5,6 +5,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import tensorflow as tf
 from odin.networks import Networks, TensorTypes
+from odin.utils import as_tuple
 from scipy import sparse
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow_probability.python.distributions import Distribution
@@ -31,7 +32,11 @@ class VariationalModel(Networks):
 
   @property
   def sample_shape(self) -> List[int]:
-    return self._sample_shape
+    return as_tuple(self._sample_shape, t=int)
+
+  @property
+  def sample_ndim(self) -> int:
+    return len(as_tuple(self.sample_shape))
 
   def set_elbo_configs(
       self,

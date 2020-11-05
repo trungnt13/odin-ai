@@ -906,7 +906,7 @@ class NetworkConfig(dict):
   dropout: Union[float, List[float]] = 0.
   linear_decoder: bool = False
   network: Literal['conv', 'deconv', 'dense'] = 'dense'
-  flatten_inputs: bool = True
+  flatten_inputs: bool = False
   projection: Optional[int] = None
   input_shape: List[int] = None
   name: Optional[str] = None

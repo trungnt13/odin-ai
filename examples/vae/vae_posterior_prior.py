@@ -28,8 +28,8 @@ output_dir = '/tmp/vae_pp'
 # network configuration
 batch_size = 32
 max_iter = 50000
-encoder = vi.NetworkConfig([256, 256, 256], name='Encoder')
-decoder = vi.NetworkConfig([256, 256, 256], name='Decoder')
+encoder = vi.NetworkConfig([256, 256, 256], flatten_inputs=True, name='Encoder')
+decoder = vi.NetworkConfig([256, 256, 256], flatten_inputs=True, name='Decoder')
 encoded_size = 16
 posteriors_info = [
     ('gaussian', 'mvndiag', 'mvntril'),
@@ -155,16 +155,15 @@ def main(cfg: dict):
     vae = vae_class(encoder=encoder.create_network(),
                     decoder=decoder.create_network(),
                     observation=vi.RVmeta(shape,
-                                                  'bernoulli',
-                                                  projection=True,
-                                                  name='Image'),
-                    latents=vi.RVmeta(
-                        encoded_size,
-                        posterior,
-                        projection=True,
-                        prior=prior,
-                        kwargs=dict(scale_activation=activation),
-                        name='Latents'),
+                                          'bernoulli',
+                                          projection=True,
+                                          name='Image'),
+                    latents=vi.RVmeta(encoded_size,
+                                      posterior,
+                                      projection=True,
+                                      prior=prior,
+                                      kwargs=dict(scale_activation=activation),
+                                      name='Latents'),
                     analytic=False,
                     path=model_path,
                     name=name)

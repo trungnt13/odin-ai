@@ -71,78 +71,79 @@ def _net2str(net):
   return str(net)
 
 
-def _parse_layers(network, name=None) -> List[Layer]:
-  is_decoding = 'decoder' in str(name).lower()
+def _parse_layers(network, is_decoding=False, name=None) -> Layer:
   ## make sure is a list
-  network = list(network) if isinstance(network, (tuple, list)) else [network]
-  network = [i for i in network if i is not None]
-  ## check different options
-  layers = []
-  for cfg in network:
-    ## identity
-    if cfg is None:
-      layers.append(Identity(name=name))
-    ## Callable or type
-    elif (inspect.isfunction(cfg) or isinstance(cfg, partial) or
-          isinstance(cfg, type)):
-      layers.append(cfg())
-    ## RVmeta
-    elif isinstance(cfg, RVmeta):
-      layers.append(
-          cfg.create_posterior(name=name if cfg.name is None else None))
-    ## string type (for dataset name or network alias)
-    elif isinstance(cfg, string_types):
-      cfg = cfg.lower().strip()
-      #
-      if cfg in ('linear', 'identity'):
-        layers.append(Identity(name=name))
-      #
-      elif cfg in ('mnist', 'fashion_mnist'):
-        kw = dict(image_shape=(28, 28, 1),
-                  projection_dim=128,
-                  activation='relu',
-                  center0=True,
-                  distribution='bernoulli',
-                  distribution_kw=dict(),
-                  skip_connect=False,
-                  convolution=True,
-                  input_shape=None,
-                  decoding=is_decoding)
-        layers.append(ImageNet(**kw))
-      #
-      elif cfg in ('shapes3d', 'dsprites', 'dspritesc', 'celeba', 'stl10',
-                   'legofaces', 'cifar10', 'cifar20', 'cifar100'):
-        n_channels = 1 if cfg in ('dsprites', 'dspritesc') else 3
-        if cfg in ('cifar10', 'cifar100', 'cifar20'):
-          image_shape = (32, 32, 3)
-        else:
-          image_shape = (64, 64, n_channels)
-        kw = dict(image_shape=image_shape,
-                  projection_dim=256,
-                  activation='relu',
-                  center0=True,
-                  distribution='bernoulli',
-                  distribution_kw=dict(),
-                  skip_connect=False,
-                  convolution=True,
-                  input_shape=None,
-                  decoding=is_decoding)
-        layers.append(ImageNet(**kw))
-      #
-      else:
-        raise NotImplementedError(
-            f"No predefined network for dataset with name: {cfg}")
-    # the NetworkConfig
-    elif isinstance(cfg, NetworkConfig):
-      layers.append(cfg.create_network(name=name))
-    # Layer
-    elif isinstance(cfg, Layer):
-      layers.append(cfg)
-    # no support
-    else:
+  if isinstance(network, (tuple, list)):
+    if len(network) != 1:
       raise ValueError(
-          f"No support for network configuration of type: {type(cfg)}")
-  return layers
+          f'Only support single neural network but provide {network}')
+    network = network[0]
+  assert network is not None, 'network cannot be None'
+  ## check different options
+  cfg = network
+  ## identity
+  if cfg is None:
+    layer = Identity(name=name)
+  ## Callable or type
+  elif (inspect.isfunction(cfg) or isinstance(cfg, partial) or
+        isinstance(cfg, type)):
+    layer = cfg()
+  ## RVmeta
+  elif isinstance(cfg, RVmeta):
+    layer = cfg.create_posterior(name=name if cfg.name is None else None)
+  ## string type (for dataset name or network alias)
+  elif isinstance(cfg, string_types):
+    cfg = cfg.lower().strip()
+    #
+    if cfg in ('linear', 'identity'):
+      layer = Identity(name=name)
+    #
+    elif cfg in ('mnist', 'fashion_mnist'):
+      kw = dict(image_shape=(28, 28, 1),
+                projection_dim=128,
+                activation='relu',
+                center0=True,
+                distribution='bernoulli',
+                distribution_kw=dict(),
+                skip_connect=False,
+                convolution=True,
+                input_shape=None,
+                decoding=is_decoding)
+      layer = ImageNet(**kw)
+    #
+    elif cfg in ('shapes3d', 'dsprites', 'dspritesc', 'celeba', 'stl10',
+                 'legofaces', 'cifar10', 'cifar20', 'cifar100'):
+      n_channels = 1 if cfg in ('dsprites', 'dspritesc') else 3
+      if cfg in ('cifar10', 'cifar100', 'cifar20'):
+        image_shape = (32, 32, 3)
+      else:
+        image_shape = (64, 64, n_channels)
+      kw = dict(image_shape=image_shape,
+                projection_dim=256,
+                activation='relu',
+                center0=True,
+                distribution='bernoulli',
+                distribution_kw=dict(),
+                skip_connect=False,
+                convolution=True,
+                input_shape=None,
+                decoding=is_decoding)
+      layer = ImageNet(**kw)
+    #
+    else:
+      raise NotImplementedError(
+          f"No predefined network for dataset with name: {cfg}")
+  # the NetworkConfig
+  elif isinstance(cfg, NetworkConfig):
+    layer = cfg.create_network(name=name)
+  # Layer
+  elif isinstance(cfg, Layer):
+    layer = cfg
+  # no support
+  else:
+    raise ValueError(
+        f"No support for network configuration of type: {type(cfg)}")
+  return layer
 
 
 def _iter_lists(X, Y):
@@ -171,8 +172,9 @@ class VAEStep(TrainStep):
                                        training=self.training,
                                        mask=self.mask)
     elbo = self.vae.elbo(llk, kl)
+    loss = -tf.reduce_mean(elbo)
     metrics = dict(**llk, **kl)
-    return -tf.reduce_mean(elbo), metrics
+    return loss, metrics
 
 
 # ===========================================================================
@@ -197,13 +199,13 @@ class VariationalAutoencoder(VariationalModel):
       specific input_shape for the network, if not given, use the given `outputs`,
       by default None
 
-  Call return
-  ----------
+  Returns
+  ---------
     p(X|Z) : a single or a list of `tensorflow_probability.Distribution`
     q(Z|X) : a single or a list of `tensorflow_probability.Distribution`
 
   Layers
-  ------
+  --------
     encoder : list of `keras.layers.Layer`.
       Encoding inputs to latents
     decoder : list of `keras.layers.Layer`.
@@ -217,44 +219,48 @@ class VariationalAutoencoder(VariationalModel):
 
   def __init__(
       self,
-      encoder: LayerCreator = NetworkConfig(name="Encoder"),
-      decoder: LayerCreator = NetworkConfig(name="Decoder"),
-      observation: LayerCreator = RVmeta(64,
-                                         'gaussian',
+      observation: LayerCreator = RVmeta((28, 28, 1),
+                                         'bernoulli',
                                          projection=True,
-                                         name="Observation"),
-      latents: LayerCreator = RVmeta(10,
+                                         name='image'),
+      encoder: LayerCreator = NetworkConfig([512, 512],
+                                            flatten_inputs=True,
+                                            name="encoder"),
+      decoder: LayerCreator = NetworkConfig([512, 512],
+                                            flatten_inputs=True,
+                                            name="decoder"),
+      latents: LayerCreator = RVmeta(64,
                                      'mvndiag',
                                      projection=True,
-                                     name="Latents"),
+                                     name="latents"),
       **kwargs,
   ):
     ### keras want this supports_masking on to enable support masking
     super().__init__(**kwargs)
     ### create layers
-    self._encoder = _parse_layers(network=encoder, name="Encoder")
-    self._encoder_args = [_get_args(i) for i in self.encoder]
-    self._latents = _parse_layers(network=latents, name="Latents")
-    self._latents_args = [_get_args(i) for i in self.latents]
-    self._decoder = _parse_layers(network=decoder, name="Decoder")
-    self._decoder_args = [_get_args(i) for i in self.decoder]
-    self._observation = _parse_layers(network=observation, name="Observation")
-    self._observation_args = [_get_args(i) for i in self.observation]
+    self._encoder = _parse_layers(network=encoder, name="encoder")
+    self._encoder_args = _get_args(self.encoder)
+    self._latents = _parse_layers(network=latents, name="latents")
+    self._latents_args = _get_args(self.latents)
+    self._decoder = _parse_layers(network=decoder, name="decoder")
+    self._decoder_args = _get_args(self.decoder)
+    self._observation = _parse_layers(network=observation, name="observation")
+    self._observation_args = _get_args(self.observation)
 
   @property
-  def encoder(self) -> List[Layer]:
+  def encoder(self) -> Layer:
     return self._encoder
 
   @property
-  def decoder(self) -> List[Layer]:
+  def decoder(self) -> Layer:
     return self._decoder
 
   @property
-  def latents(self) -> List[Layer]:
+  def latents(self) -> Layer:
     return self._latents
 
   @property
-  def observation(self) -> List[Layer]:
+  def observation(self) -> Layer:
     return self._observation
 
   @property
@@ -266,41 +272,33 @@ class VariationalAutoencoder(VariationalModel):
     return len(self.observation)
 
   @property
-  def input_shape(self) -> Union[List[int], List[List[int]]]:
-    shape = [e.input_shape for e in self.encoder]
-    return shape[0] if len(shape) == 1 else shape
+  def input_shape(self) -> List[int]:
+    return self.encoder.input_shape
 
   @property
-  def latent_shape(self) -> Union[List[int], List[List[int]]]:
-    shape = [d.input_shape for d in self.decoder]
-    return shape[0] if len(shape) == 1 else shape
+  def latent_shape(self) -> List[int]:
+    return self.decoder.input_shape
 
   def sample_prior(self,
                    sample_shape: Union[int, List[int]] = (),
-                   seed: int = 1) -> Union[Tensor, List[Tensor]]:
+                   seed: int = 1) -> Tensor:
     r""" Sampling from prior distribution """
-    samples = []
-    for latent in self.latents:
-      s = bk.atleast_2d(latent.sample(sample_shape=sample_shape, seed=seed))
-      samples.append(s)
-    return samples[0] if len(samples) == 1 else tuple(samples)
+    return bk.atleast_2d(
+        self.latents.sample(sample_shape=sample_shape, seed=seed))
 
   def sample_data(self,
                   sample_shape: Union[int, List[int]] = (),
-                  seed: int = 1) -> Union[Tensor, List[Tensor]]:
+                  seed: int = 1) -> Tensor:
     r""" Sample from p(X) given that the prior of X is known, this could be
     wrong since `RVmeta` often has a default prior. """
-    samples = []
-    for output in self.observation:
-      s = bk.atleast_2d(output.sample(sample_shape=sample_shape, seed=seed))
-      samples.append(s)
-    return samples[0] if len(samples) == 1 else tuple(samples)
+    return bk.atleast_2d(
+        self.observation.sample(sample_shape=sample_shape, seed=seed))
 
   def generate(self,
                sample_shape: List[int] = (),
                training: Optional[bool] = None,
                seed: int = 1,
-               **kwargs) -> Union[Distribution, List[Distribution]]:
+               **kwargs) -> Distribution:
     r"""Randomly generate outputs by sampling from prior distribution then
     decode it.
 
@@ -325,78 +323,74 @@ class VariationalAutoencoder(VariationalModel):
              inputs: Union[TensorTypes, List[TensorTypes]],
              training: Optional[bool] = None,
              mask: Optional[TensorTypes] = None,
-             **kwargs) -> Union[Distribution, List[Distribution]]:
+             **kwargs) -> Distribution:
     r""" Encoding inputs to latent codes """
-    states = []
-    for encoder, args in zip(self.encoder, self._encoder_args):
-      copy_kw = dict(kwargs)
-      if 'mask' in args:
-        copy_kw['mask'] = mask
-      if 'training' in args:
-        copy_kw['training'] = training
-      e = encoder(inputs, **copy_kw)
-      states.append(e)
+    kw = dict(kwargs)
+    if 'mask' in self._encoder_args:
+      kw['mask'] = mask
+    if 'training' in self._encoder_args:
+      kw['training'] = training
+    h_e = self.encoder(inputs, **kw)
     # create the latents distribution
-    qZ_X = []
-    for args, (_, latent, code) in zip(self._latents_args,
-                                       _iter_lists(self.latents, states)):
-      kw = {}
-      if 'training' in args:
-        kw['training'] = training
-      if 'sample_shape' in args:
-        kw['sample_shape'] = self.sample_shape
-      qZ_X.append(latent(code, **kw))
-    qZ_X = tf.nest.flatten(qZ_X)
-    # remember to store the keras mask in outputs
-    for q in qZ_X:
-      q._keras_mask = mask
-    return qZ_X[0] if len(qZ_X) == 1 else tuple(qZ_X)
+    kw = {}
+    if 'training' in self._latents_args:
+      kw['training'] = training
+    if 'mask' in self._latents_args:
+      kw['mask'] = mask
+    if 'sample_shape' in self._latents_args:
+      kw['sample_shape'] = self.sample_shape
+    qz_x = self.latents(h_e, **kw)
+    # need to keep the keras mask
+    qz_x._keras_mask = mask
+    return qz_x
 
   def decode(self,
-             latents: Union[TensorTypes, Distribution, List[TensorTypes],
-                            List[Distribution]],
+             latents: Union[TensorTypes, List[TensorTypes]],
              training: Optional[bool] = None,
              mask: Optional[Tensor] = None,
-             **kwargs) -> Union[Distribution, List[Distribution]]:
+             **kwargs) -> Distribution:
     r""" Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
     # stop tensorflow complaining about tensor inputs for Sequential
     c = tf.constant(0., dtype=self.dtype)
-    latents = [z + c for z in latents] \
-      if isinstance(latents, (tuple, list)) else latents + c
+    if isinstance(latents, (tuple, list)):
+      latents = [qz + c for qz in latents]
+    else:
+      latents = latents + c
+    # flatten the sample shapes
+    if self.sample_ndim > 0:
+      ndim = (latents.shape.ndims - self.sample_ndim - 1)
+      flat_shape = tf.shape(latents)[-ndim:]
+      flat_shape = tf.concat([[-1], flat_shape], axis=0)
+      latents = tf.reshape(latents, flat_shape)
     # apply the decoder and get back the sample shape
-    states = []
-    for decoder, args in zip(self.decoder, self._decoder_args):
-      copy_kw = dict(kwargs)
-      if 'mask' in args:
-        copy_kw['mask'] = mask
-      if 'training' in args:
-        copy_kw['training'] = training
-      states.append(decoder(latents, **copy_kw))
+    kw = dict(kwargs)
+    if 'mask' in self._decoder_args:
+      kw['mask'] = mask
+    if 'training' in self._decoder_args:
+      kw['training'] = training
+    h_d = self.decoder(latents, **kw)
+    # recover the sample shape
+    if self.sample_ndim > 0:
+      org_shape = tf.concat(
+          [self.sample_shape, [-1], tf.shape(h_d)[1:]], axis=0)
+      h_d = tf.reshape(h_d, org_shape)
     # create the output distribution
-    pX_Z = []
-    for args, (_, layer, o) in zip(self._observation_args,
-                                   _iter_lists(self.observation, states)):
-      kw = {}
-      if 'training' in args:
-        kw['training'] = training
-      if 'mask' in args:
-        kw['mask'] = mask
-      pX_Z.append(layer(o, **kw))
-    pX_Z = tf.nest.flatten(pX_Z)
+    kw = {}
+    if 'training' in self._observation_args:
+      kw['training'] = training
+    if 'mask' in self._observation_args:
+      kw['mask'] = mask
+    px_z = self.observation(h_d, **kw)
     # remember to store the keras mask in outputs
-    for p in pX_Z:
-      p._keras_mask = mask
-    return pX_Z[0] if len(pX_Z) == 1 else tuple(pX_Z)
+    px_z._keras_mask = mask
+    return px_z
 
-  def call(
-      self,
-      inputs: TensorTypes,
-      training: Optional[bool] = None,
-      mask: Optional[Tensor] = None,
-      **kwargs
-  ) -> Tuple[Union[Distribution, List[Distribution], Union[
-      Distribution, List[Distribution]]]]:
+  def call(self,
+           inputs: TensorTypes,
+           training: Optional[bool] = None,
+           mask: Optional[Tensor] = None,
+           **kwargs) -> Tuple[Distribution, Distribution]:
     """Applying the encode-decode process for VAE
 
     Parameters
@@ -416,27 +410,26 @@ class VariationalAutoencoder(VariationalModel):
         `q_{\phi}(z||x)` the latent distribution(s)
     """
     # encode
-    qZ_X = self.encode(
+    qz_x = self.encode(
         inputs,
         training=training,
         mask=mask,
         **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
     )
     # transfer the mask from encoder to decoder here
-    for q in tf.nest.flatten(qZ_X):
-      if hasattr(q, '_keras_mask') and q._keras_mask is not None:
-        mask = q._keras_mask
+    for qz in as_tuple(qz_x):
+      if hasattr(qz, '_keras_mask') and qz._keras_mask is not None:
+        mask = qz._keras_mask
         break
     # decode
-    pX_Z = self.decode(
-        qZ_X,
+    px_z = self.decode(
+        qz_x,
         training=training,
         mask=mask,
         **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
     )
-    outputs = (pX_Z, qZ_X)
-    self._last_outputs = outputs
-    return outputs
+    self._last_outputs = (px_z, qz_x)
+    return self.last_outputs
 
   @tf.function(autograph=False)
   def marginal_log_prob(self,
@@ -477,29 +470,27 @@ class VariationalAutoencoder(VariationalModel):
         name to Tensor of shape `[batch_size]`, the negative reconstruction cost.
     """
     sample_shape = [tf.cast(tf.reduce_prod(self.sample_shape), tf.int32)]
-    pX_Z, qZ_X = self(inputs, training=training, mask=mask, **kwargs)
+    px_z, qz_x = self(inputs, training=training, mask=mask, **kwargs)
     ## Marginal LLK
     llk = []
     distortion = {}
     # reconstruction (a.k.a distortion)
-    for i, (pX,
-            x) in enumerate(zip(tf.nest.flatten(pX_Z),
-                                tf.nest.flatten(inputs))):
-      x_llk = pX.log_prob(x)
+    for i, (px, x) in enumerate(zip(as_tuple(px_z), as_tuple(inputs))):
+      x_llk = px.log_prob(x)
       llk.append(x_llk)
-      distortion[pX.name.split('_')[0]] = x_llk
+      distortion[px.name.split('_')[0]] = x_llk
     # kl-divergence (a.k.a rate)
-    for qZ in tf.nest.flatten(qZ_X):
-      if isinstance(qZ, (tfd.Deterministic, tfd.VectorDeterministic)):
+    for qz in tf.nest.flatten(qz_x):
+      if isinstance(qz, (tfd.Deterministic, tfd.VectorDeterministic)):
         continue
-      z = tf.convert_to_tensor(qZ)
+      z = tf.convert_to_tensor(qz)
       # the prior is injected into the distribution during the call method of
       # DenseDistribution, or modified during the encode method by setting
       # qZ_X.KL_divergence.prior = ...
-      pZ = qZ.KL_divergence.prior
-      if pZ is None:
-        pZ = tfd.Normal(loc=tf.zeros(qZ.event_shape, dtype=z.dtype),
-                        scale=tf.ones(qZ.event_shape, dtype=z.dtype))
+      pz = qz.KL_divergence.prior
+      if pz is None:
+        pz = tfd.Normal(loc=tf.zeros(qz.event_shape, dtype=z.dtype),
+                        scale=tf.ones(qz.event_shape, dtype=z.dtype))
       llk_pz = pZ.log_prob(z)
       llk_qz_x = qZ.log_prob(z)
       llk.append(llk_pz)
@@ -518,7 +509,7 @@ class VariationalAutoencoder(VariationalModel):
 
   def elbo_components(
       self,
-      inputs: Union[Tensor, List[Tensor]],
+      inputs: Union[TensorTypes, List[TensorTypes]],
       training: Optional[bool] = None,
       mask: Optional[Tensor] = None,
       **kwargs,
@@ -526,16 +517,17 @@ class VariationalAutoencoder(VariationalModel):
     """Calculate the distortion (log-likelihood) and rate (KL-divergence)
     for contruction the Evident Lower Bound (ELBO)"""
     # organize all inputs to list
-    pX_Z, qZ_X = self(inputs, training=training, mask=mask, **kwargs)
+    px_z, qz_x = self(inputs, training=training, mask=mask, **kwargs)
     ### llk
     llk = {}
-    for obs, x, pX in zip(self.observation, as_tuple(inputs), as_tuple(pX_Z)):
-      llk[f'llk_{obs.name}'] = pX.log_prob(x)
+    for o, x, px in zip(as_tuple(self.observation), as_tuple(inputs),
+                        as_tuple(px_z)):
+      llk[f'llk_{o.name}'] = px.log_prob(x)
     ### kl
     kl = {}
-    for z, qZ in zip(self.latents, as_tuple(qZ_X)):
-      if hasattr(qZ, "KL_divergence"):
-        kl[f'kl_{z.name}'] = qZ.KL_divergence(analytic=self.analytic,
+    for z, qz in zip(as_tuple(self.latents), as_tuple(qz_x)):
+      if hasattr(qz, "KL_divergence"):
+        kl[f'kl_{z.name}'] = qz.KL_divergence(analytic=self.analytic,
                                               reverse=self.reverse,
                                               sample_shape=None,
                                               keepdims=True)
@@ -571,24 +563,24 @@ class VariationalAutoencoder(VariationalModel):
     text += f'\n Fitted        : {int(self.step.numpy())}(iters)'
     text += f'\n MD5 checksum: {self.md5_checksum}'
     ## encoder
-    for i, encoder in enumerate(tf.nest.flatten(self.encoder)):
+    for i, encoder in enumerate(as_tuple(self.encoder)):
       text += f"\n Encoder#{i}:\n  "
       text += "\n  ".join(_net2str(encoder).split('\n'))
     ## Decoder
-    for i, decoder in enumerate(tf.nest.flatten(self.decoder)):
+    for i, decoder in enumerate(as_tuple(self.decoder)):
       text += f"\n Decoder#{i}:\n  "
       text += "\n  ".join(_net2str(decoder).split('\n'))
     ## Latent
-    for i, latent in enumerate(self.latents):
+    for i, latent in enumerate(as_tuple(self.latents)):
       text += f"\n Latent#{i}:\n  "
       text += "\n  ".join(_net2str(latent).split('\n'))
     ## Output
-    for i, output in enumerate(self.observation):
+    for i, output in enumerate(as_tuple(self.observation)):
       text += f"\n Output#{i}:\n  "
       text += "\n  ".join(_net2str(output).split('\n'))
     ## Optimizer
     if hasattr(self, 'optimizer'):
-      for i, opt in enumerate(tf.nest.flatten(self.optimizer)):
+      for i, opt in enumerate(as_tuple(self.optimizer)):
         if isinstance(opt, tf.optimizers.Optimizer):
           text += f"\n Optimizer#{i}:\n  "
           text += "\n  ".join(
@@ -615,7 +607,7 @@ class Autoencoder(VariationalAutoencoder):
       name='Autoencoder',
       **kwargs,
   ):
-    for qz in tf.nest.flatten(latents):
+    for qz in as_tuple(latents):
       if isinstance(qz, RVmeta):
         qz.posterior = 'vdeterministic'
       elif isinstance(qz, DenseDistribution):
@@ -624,17 +616,9 @@ class Autoencoder(VariationalAutoencoder):
           f'but given:{qz.posterior}')
     super().__init__(latents=latents, name=name, **kwargs)
 
-  def elbo_components(self,
-                      inputs,
-                      training=None,
-                      pX_Z=None,
-                      qZ_X=None,
-                      mask=None,
-                      **kwargs):
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     llk, kl = super().elbo_components(inputs=inputs,
                                       training=training,
-                                      pX_Z=pX_Z,
-                                      qZ_X=qZ_X,
                                       mask=mask,
                                       **kwargs)
     # this make sure no KL is leaking

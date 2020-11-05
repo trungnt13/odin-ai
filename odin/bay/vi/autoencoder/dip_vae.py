@@ -44,7 +44,7 @@ class dipVAE(betaVAE):
   def elbo_components(self, inputs, training=None, mask=None):
     llk, kl = super().elbo_components(inputs, mask=mask, training=training)
     px_z, qz_x = self.last_outputs
-    for z, qz in zip(self.latents, as_tuple(qz_x)):
+    for z, qz in zip(as_tuple(self.latents), as_tuple(qz_x)):
       dip = disentangled_inferred_prior_loss(qz,
                                              only_mean=self.only_mean,
                                              lambda_offdiag=self.lambda_offdiag,

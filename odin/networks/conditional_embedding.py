@@ -9,7 +9,7 @@ from tensorflow.python.keras.layers import Dense, Embedding, Lambda, Layer
 from typing_extensions import Literal
 
 __all__ = [
-    'get_conditional_embedding',
+    'get_embedding',
     'RepetitionEmbedding',
     'DictionaryEmbedding',
     'ProjectionEmbedding',
@@ -160,7 +160,7 @@ class SequentialEmbedding(SequentialNetwork, Embedder):
   def __init__(self,
                n_classes,
                event_shape,
-               embedding_dim=50,
+               embedding_dim=100,
                activation='linear',
                use_bias=True,
                embeddings_initializer='uniform',
@@ -217,14 +217,16 @@ all_embedder = dict(repetition=RepetitionEmbedding,
                     identity=IdentityEmbedding)
 
 
-def get_conditional_embedding(
-    method: Literal['repetition', 'projection', 'dictionary', 'identity']
+def get_embedding(
+    method: Literal['repetition', 'projection', 'dictionary', 'sequential',
+                    'identity']
 ) -> Embedder:
   r""" Three support method for conditional embedding:
 
       - 'repetition': repeat the labels to match the input image
       - 'projection': embed then project (using Dense layer)
       - 'dictionary': only embed to the given output shape
+      - 'sequential': combination of 'projection' then 'dictionary'
       - 'identity': keep the original labels
   """
   method = str(method).strip().lower()

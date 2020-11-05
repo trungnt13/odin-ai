@@ -13,18 +13,23 @@ from odin.bay.helpers import (KLdivergence, is_binary_distribution,
                               is_zeroinflated_distribution, kl_divergence)
 from odin.bay.layers.deterministic_layers import VectorDeterministicLayer
 from odin.bay.layers.distribution_util_layers import Moments, Sampling
+from odin.networks import NetworkConfig
+from odin.utils import as_tuple
 from six import string_types
 from tensorflow import Tensor
 from tensorflow.python.keras import Model, Sequential
-from tensorflow.python.keras import layers as layer_module
 from tensorflow.python.keras.constraints import Constraint
 from tensorflow.python.keras.initializers.initializers_v2 import Initializer
-from tensorflow.python.keras.layers import Dense, Lambda
+from tensorflow.python.keras.layers import Dense, Lambda, Layer
 from tensorflow.python.keras.regularizers import Regularizer
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -34,11 +39,17 @@ from tensorflow_probability.python.layers.distribution_layer import (
 from typing_extensions import Literal
 
 __all__ = [
-    'DenseDeterministic', 'DenseDistribution', 'MixtureDensityNetwork',
-    'MixtureMassNetwork'
+    'DenseDeterministic',
+    'DenseDistribution',
+    'MixtureDensityNetwork',
+    'MixtureMassNetwork',
+    'DistributionNetwork',
 ]
 
 
+# ===========================================================================
+# Helpers
+# ===========================================================================
 def _params_size(layer, event_shape, **kwargs):
   spec = inspect.getfullargspec(layer.params_size)
   args = spec.args + spec.kwonlyargs
@@ -59,6 +70,14 @@ def _params_size(layer, event_shape, **kwargs):
   return layer.params_size(event_shape, **kw)
 
 
+def _get_all_args(fn):
+  spec = inspect.getfullargspec(fn)
+  return spec.args + spec.kwonlyargs
+
+
+# ===========================================================================
+# Main classes
+# ===========================================================================
 class DenseDistribution(Dense):
   r""" Using `Dense` layer to parameterize the tensorflow_probability
   `Distribution`
@@ -237,7 +256,7 @@ class DenseDistribution(Dense):
                          self.__class__.__name__)
     return self.prior.sample(sample_shape=sample_shape, seed=seed)
 
-  def call(self, inputs, training=None, sample_shape=()):
+  def call(self, inputs, training=None, sample_shape=(), **kwargs):
     # projection by Dense layer could be skipped by setting projection=False
     # NOTE: a 2D inputs is important here, but we don't want to flatten
     # automatically
@@ -541,3 +560,60 @@ class DenseDeterministic(DenseDistribution):
                      kernel_constraint=kernel_constraint,
                      bias_constraint=bias_constraint,
                      **kwargs)
+
+
+class DistributionNetwork(Model):
+
+  def __init__(
+      self,
+      distributions: List[Layer],
+      network: Union[Layer, NetworkConfig] = NetworkConfig([128, 128],
+                                                           flatten_inputs=True),
+      input_shape: Optional[List[int]] = None,
+      name: str = 'DistributionNetwork',
+  ):
+    super().__init__(name=name)
+    if isinstance(network, NetworkConfig):
+      network = network.create_network()
+    assert isinstance(network, Layer), \
+      f'network must be instance of keras.layers.Layer but given {network}'
+    self.network = network
+    from odin.bay.random_variable import RVmeta
+    self.distributions = []
+    for d in as_tuple(distributions):
+      if isinstance(d, RVmeta):
+        d = d.create_posterior()
+      assert isinstance(d, Layer), \
+        ('distributions must be a list of Layer that return Distribution '
+         f'in call(), but given {d}')
+      self.distributions.append(d)
+    # others
+    self.network_kws = _get_all_args(self.network.call)
+    self.distributions_kws = [_get_all_args(d.call) for d in self.distributions]
+    if input_shape is not None:
+      self.build(input_shape)
+
+  def build(self, input_shape) -> DistributionNetwork:
+    super().build(input_shape)
+    return self
+
+  def call(self, inputs, **kwargs):
+    h = self.network(
+        inputs, **{k: v for k, v in kwargs.items() if k in self.network_kws})
+    # applying the distribution transformation
+    outputs = []
+    for d, args in zip(self.distributions, self.distributions_kws):
+      outputs.append(d(h, **{k: v for k, v in kwargs.items() if k in args}))
+    return outputs[0] if len(outputs) == 1 else tuple(outputs)
+
+  def __str__(self):
+    from odin.backend.keras_helpers import layer2text
+    shape = (self.network.input_shape
+             if hasattr(self.network, 'input_shape') else None)
+    s = f'[DistributionNetwork]{self.name}'
+    s += f'\n input_shape:{shape}\n '
+    s += '\n '.join(layer2text(self.network).split('\n'))
+    s += '\n Distribution:'
+    for d in self.distributions:
+      s += f'\n  {d}'
+    return s

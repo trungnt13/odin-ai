@@ -63,7 +63,7 @@ class betatcVAE(betaVAE):
   def elbo_components(self, inputs, training=None, mask=None):
     llk, kl = super().elbo_components(inputs, mask=mask, training=training)
     px_z, qz_x = self.last_outputs
-    for z, qz in zip(self.latents, as_tuple(qz_x)):
+    for z, qz in zip(as_tuple(self.latents), as_tuple(qz_x)):
       tc = total_correlation(tf.convert_to_tensor(qz), qz)
       kl[f'tc_{z.name}'] = (self.beta - 1.) * tc
     return llk, kl
