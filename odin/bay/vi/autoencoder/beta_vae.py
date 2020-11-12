@@ -42,7 +42,6 @@ class betaVAE(VariationalAutoencoder):
     llk, kl = super().elbo_components(inputs=inputs,
                                       mask=mask,
                                       training=training)
-
     kl = {key: self.beta * val for key, val in kl.items()}
     return llk, kl
 

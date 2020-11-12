@@ -563,21 +563,34 @@ class DenseDeterministic(DenseDistribution):
 
 
 class DistributionNetwork(Model):
+  """A simple sequential network that will output a Distribution
+  or multiple Distrubtions
+
+  Parameters
+  ----------
+  distributions : List[Layer]
+      List of output Layers that parameterize the Distrubtions
+  network : Union[Layer, NetworkConfig], optional
+      a network
+  name : str, optional
+      by default 'DistributionNetwork'
+  """
 
   def __init__(
       self,
       distributions: List[Layer],
       network: Union[Layer, NetworkConfig] = NetworkConfig([128, 128],
                                                            flatten_inputs=True),
-      input_shape: Optional[List[int]] = None,
       name: str = 'DistributionNetwork',
   ):
     super().__init__(name=name)
+    ## prepare the preprocessing layers
     if isinstance(network, NetworkConfig):
       network = network.create_network()
     assert isinstance(network, Layer), \
       f'network must be instance of keras.layers.Layer but given {network}'
     self.network = network
+    ## prepare the output distribution
     from odin.bay.random_variable import RVmeta
     self.distributions = []
     for d in as_tuple(distributions):
@@ -590,20 +603,23 @@ class DistributionNetwork(Model):
     # others
     self.network_kws = _get_all_args(self.network.call)
     self.distributions_kws = [_get_all_args(d.call) for d in self.distributions]
-    if input_shape is not None:
-      self.build(input_shape)
 
   def build(self, input_shape) -> DistributionNetwork:
     super().build(input_shape)
     return self
 
-  def call(self, inputs, **kwargs):
-    h = self.network(
+  def preprocess(self, inputs, **kwargs):
+    hidden = self.network(
         inputs, **{k: v for k, v in kwargs.items() if k in self.network_kws})
+    return hidden
+
+  def call(self, inputs, **kwargs):
+    hidden = self.preprocess(inputs, **kwargs)
     # applying the distribution transformation
     outputs = []
-    for d, args in zip(self.distributions, self.distributions_kws):
-      outputs.append(d(h, **{k: v for k, v in kwargs.items() if k in args}))
+    for dist, args in zip(self.distributions, self.distributions_kws):
+      o = dist(hidden, **{k: v for k, v in kwargs.items() if k in args})
+      outputs.append(o)
     return outputs[0] if len(outputs) == 1 else tuple(outputs)
 
   def __str__(self):
