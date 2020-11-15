@@ -153,6 +153,14 @@ class miVAE(betaVAE):
     self.kl_codes_coef = float(kl_codes_coef)
     self.steps_without_mi = int(steps_without_mi)
 
+  def sample_prior(self,
+                   sample_shape: Union[int, List[int]] = (),
+                   seed: int = 1) -> Tensor:
+    r""" Sampling from prior distribution """
+    z1 = super().sample_prior(sample_shape=sample_shape, seed=seed)
+    z2 = self.mutual_codes.prior.sample(sample_shape, seed=seed)
+    return (z1, z2)
+
   def encode(self, inputs, **kwargs):
     h_e = self.encoder(inputs, **kwargs)
     # create the latents distribution
@@ -166,6 +174,11 @@ class miVAE(betaVAE):
 
   def decode(self, latents, **kwargs):
     latents = tf.concat(latents, axis=-1)
+    if hasattr(self.decoder, 'input_shape'):
+      s1 = self.decoder.input_shape[1:]
+      s2 = latents.shape[1:]
+      tf.assert_equal(
+          s1, s2, f'decoder input shape is {s1} but the latents shape is {s2}')
     return super().decode(latents, **kwargs)
 
   def elbo_components(self, inputs, training=None, mask=None):

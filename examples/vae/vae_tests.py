@@ -83,8 +83,8 @@ def mnist_networks(input_shape, qz, zdim, is_semi_supervised):
   ],
                              name='encoder')
   decoder = keras.Sequential([
-      keras.layers.InputLayer(input_shape=[zdim]),
-      keras.layers.Reshape([1, 1, zdim]),
+      keras.layers.Lambda(
+          lambda x: tf.reshape(x, [-1, 1, 1, x.shape[-1]])),
       deconv2D(64, 7, strides=1, padding='valid'),
       deconv2D(64, 5, strides=1),
       deconv2D(64, 5, strides=2),
@@ -262,6 +262,7 @@ def main(cfg: dict):
     losses = get_current_trainer().valid_loss
     if losses[-1] <= np.min(losses):
       vae.save_weights(overwrite=True)
+    tracking_metrics = dict()
     # show reconstruction image
     P, Q = vae(x_samples, training=True)
     P = as_tuple(P)  # just in case multiple outputs or latents
@@ -270,14 +271,13 @@ def main(cfg: dict):
                                    grids=(sqrt(n_visual_samples),
                                           sqrt(n_visual_samples)))
     # latents stats
-    mean = tf.reduce_mean(Q[0].mean(), axis=0)
-    std = tf.reduce_mean(Q[0].stddev(), axis=0)
+    mean = tf.reduce_mean(tf.concat([q.mean() for q in Q], axis=-1), axis=0)
+    std = tf.reduce_mean(tf.concat([q.stddev() for q in Q], axis=-1), axis=0)
     w_d = vae.decoder.trainable_variables[0]
     if w_d.shape.ndims == 2:
       w_d = tf.reduce_sum(w_d, axis=-1)
     else:
       w_d = tf.reduce_sum(w_d, axis=(0, 1, 2))
-    w_d = w_d[:mean.shape[0]]
     image_latents = plot_latent_units(mean, std, w_d)
     # show sampled image
     P = vae.decode(z_samples, training=False)
@@ -295,17 +295,18 @@ def main(cfg: dict):
       decoder_grad = sum(v for k, v in all_grads if 'decoder' in k)
       latents_grad = sum(v for k, v in all_grads if 'latents' in k)
     # latent traverse
-    top_indices = np.argsort(std)[:20]  # smaller std -> more meaningful
-    z = traverse_dims(Q[0].mean(),
-                      feature_indices=top_indices,
+    n_indices = 20
+    z = tf.concat([q.mean() for q in Q], axis=-1)
+    z = traverse_dims(z,
+                      feature_indices=np.argsort(std)[:n_indices],
                       min_val=-3.,
                       max_val=3.,
                       n_traverse_points=21,
                       n_random_samples=1,
                       mode='linear',
                       seed=1)
-    images = vae.decode(z, training=False).mean().numpy()
-    n_indices = len(top_indices)
+    images = vae.decode(z[0] if len(z) == 1 else z,
+                        training=False).mean().numpy()
     image_traverse = to_image(images,
                               grids=(n_indices,
                                      int(images.shape[0] / n_indices)))
