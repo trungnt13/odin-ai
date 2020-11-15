@@ -1,13 +1,12 @@
 from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
+from odin.bay.distributions import ZeroInflated
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers.distribution_layer import _event_size
-
-from odin.bay.distributions import ZeroInflated
 
 __all__ = [
     'OneHotCategoricalLayer', 'CategoricalLayer',
@@ -227,12 +226,11 @@ class OneHotCategoricalLayer(tfl.DistributionLambda):
     else:
       logits = params
       probs = None
-    dist = tfd.OneHotCategorical(
-        logits=logits,
-        probs=probs,
-        dtype=dtype or params.dtype,
-        validate_args=validate_args,
-        name=name)
+    dist = tfd.OneHotCategorical(logits=logits,
+                                 probs=probs,
+                                 dtype=dtype or params.dtype,
+                                 validate_args=validate_args,
+                                 name=name)
     return dist
 
   @staticmethod

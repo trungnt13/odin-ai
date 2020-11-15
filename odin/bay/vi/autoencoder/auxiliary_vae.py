@@ -240,6 +240,10 @@ class auxiliaryVAE(conditionalM2VAE):
     kl = {k: tf.reduce_mean(v) for k, v in dict(**kl_u, **kl_l).items()}
     return llk, kl
 
+  @classmethod
+  def is_semi_supervised(cls) -> bool:
+    return True
+
   def __str__(self):
     s = super().__str__()
     s += '\nAuxiliary:  '

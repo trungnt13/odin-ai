@@ -111,8 +111,8 @@ class multitaskVAE(betaVAE):
         llk[f"llk_{name}"] = loss
     return llk, kl
 
-  @property
-  def is_semi_supervised(self):
+  @classmethod
+  def is_semi_supervised(self) -> bool:
     return True
 
 
@@ -149,8 +149,8 @@ class MultiheadVAE(multitaskVAE):
     # add to the main output layers
     self.observation += semi_layers
 
-  @property
-  def is_semi_supervised(self):
+  @classmethod
+  def is_semi_supervised(self) -> bool:
     return True
 
   def decode(self,

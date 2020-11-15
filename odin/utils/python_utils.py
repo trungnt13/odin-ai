@@ -282,13 +282,12 @@ def as_tuple(x, N=None, t=None):
     else:
       x = (x,)
   # ====== check length ====== #
-  if is_number(N):
+  if N is not None and isinstance(N, numbers.Number):
     N = int(N)
     if len(x) == 1:
       x = x * N
     elif len(x) != N:
-      raise ValueError('x has length=%d, but required length N=%d' %
-                       (len(x), N))
+      raise ValueError(f'x has length={len(x)}, but required length {N}')
   # ====== check type ====== #
   if t is None:
     filter_func = lambda o: True

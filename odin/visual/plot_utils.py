@@ -250,6 +250,8 @@ def tile_raster_images(X: np.ndarray,
   # ====== Append columns ====== #
   rows = []
   nrows, ncols = grids
+  nrows = int(nrows)
+  ncols = int(ncols)
   for i in range(nrows):  # each rows
     r = []
     for j in range(ncols):  # all columns

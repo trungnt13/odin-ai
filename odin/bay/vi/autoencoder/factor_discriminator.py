@@ -64,7 +64,6 @@ class FactorDiscriminator(SequentialNetwork):
 
   def __init__(
       self,
-      input_shape: Optional[List[int]] = None,
       batchnorm: bool = False,
       input_dropout: float = 0.,
       dropout: float = 0.,
@@ -72,7 +71,7 @@ class FactorDiscriminator(SequentialNetwork):
       observation: Union[RVmeta, List[RVmeta]] = RVmeta(1,
                                                         'bernoulli',
                                                         projection=True,
-                                                        name="Discriminator"),
+                                                        name="discriminator"),
       activation: Union[str, Callable[[], Any]] = tf.nn.leaky_relu,
       ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
                            'min'] = 'logsumexp',
@@ -95,7 +94,6 @@ class FactorDiscriminator(SequentialNetwork):
                            flatten_inputs=True,
                            input_dropout=input_dropout,
                            activation=activation,
-                           input_shape=input_shape,
                            prefix=name)
     super().__init__(layers, name=name)
     self.ss_strategy = str(ss_strategy)
@@ -103,20 +101,6 @@ class FactorDiscriminator(SequentialNetwork):
     self.n_outputs = n_outputs
     self._distributions = []
     assert self.ss_strategy in {'sum', 'logsumexp', 'mean', 'max', 'min'}
-    if input_shape is not None:
-      self.build(input_shape)
-
-  @property
-  def n_observation(self) -> int:
-    return len(self.observation)
-
-  @property
-  def distributions(self) -> List[DenseDistribution]:
-    return self._distributions
-
-  @property
-  def prior(self) -> List[Distribution]:
-    return [d.prior for d in self._distributions]
 
   def build(self, input_shape):
     super().build(input_shape)
@@ -133,12 +117,12 @@ class FactorDiscriminator(SequentialNetwork):
     distributions = [d(outputs, **kwargs) for d in self.distributions]
     return distributions[0] if len(distributions) == 1 else tuple(distributions)
 
-  def _to_samples(self, qZ_X, mean=False, stop_grad=False):
-    qZ_X = tf.nest.flatten(qZ_X)
+  def _to_samples(self, qz_x, mean=False, stop_grad=False):
+    qz_x = tf.nest.flatten(qz_x)
     if mean:
-      z = tf.concat([q.mean() for q in qZ_X], axis=-1)
+      z = tf.concat([q.mean() for q in qz_x], axis=-1)
     else:
-      z = tf.concat([tf.convert_to_tensor(q) for q in qZ_X], axis=-1)
+      z = tf.concat([tf.convert_to_tensor(q) for q in qz_x], axis=-1)
     z = tf.reshape(z, tf.concat([(-1,), z.shape[-self.input_ndim:]], axis=0))
     if stop_grad:
       z = tf.stop_gradient(z)
@@ -177,7 +161,7 @@ class FactorDiscriminator(SequentialNetwork):
     return getattr(tf, 'reduce_%s' % self.ss_strategy)(Xs, axis=-1)
 
   def total_correlation(self,
-                        qZ_X: Distribution,
+                        qz_x: Distribution,
                         training: Optional[bool] = None) -> tf.Tensor:
     r""" Total correlation Eq(3)
     ```
@@ -193,13 +177,13 @@ class FactorDiscriminator(SequentialNetwork):
       correlation for the construction of the ELBO in Eq(2)
 
     Arguments:
-      qZ_X : a Tensor, [batch_dim, latent_dim] or Distribution
+      qz_x : a Tensor, [batch_dim, latent_dim] or Distribution
 
     Return:
       TC(z) : a scalar, approximation of the density-ratio that arises in the
         KL-term.
     """
-    z = self._to_samples(qZ_X, stop_grad=False)
+    z = self._to_samples(qz_x, stop_grad=False)
     logits = self(z, training=training)
     logits = self._tc_logits(logits)
     # in case using sigmoid, other implementation use -logits here but it
@@ -208,8 +192,8 @@ class FactorDiscriminator(SequentialNetwork):
     return tf.reduce_mean(logits)
 
   def dtc_loss(self,
-               qZ_X: Distribution,
-               qZ_Xprime: Optional[Distribution] = None,
+               qz_x: Distribution,
+               qz_xprime: Optional[Distribution] = None,
                training: Optional[bool] = None) -> tf.Tensor:
     r""" Discriminated total correlation loss Algorithm(2)
 
@@ -218,24 +202,24 @@ class FactorDiscriminator(SequentialNetwork):
      - `q(z')` misclassified as `D(z')[:, 1]`
 
     Arguments:
-      qZ_X : `Tensor` or `Distribution`.
+      qz_x : `Tensor` or `Distribution`.
         Samples of the latents from first batch
-      qZ_Xprime : `Tensor` or `Distribution` (optional).
+      qz_xprime : `Tensor` or `Distribution` (optional).
         Samples of the latents from second batch, this will be permuted.
-        If not given, then reuse `qZ_X`.
+        If not given, then reuse `qz_x`.
 
     Return:
       scalar - loss value for training the discriminator
     """
     # we don't want the gradient to be propagated to the encoder
-    z = self._to_samples(qZ_X, stop_grad=True)
+    z = self._to_samples(qz_x, stop_grad=True)
     z_logits = self._tc_logits(self(z, training=training))
     # using log_softmax function give more numerical stabalized results than
     # logsumexp yourself.
     d_z = -tf.math.log_sigmoid(z_logits)  # must be negative here
     # for X_prime
-    if qZ_Xprime is not None:
-      z = self._to_samples(qZ_Xprime, stop_grad=True)
+    if qz_xprime is not None:
+      z = self._to_samples(qz_xprime, stop_grad=True)
     z_perm = permute_dims(z)
     zperm_logits = self._tc_logits(self(z_perm, training=training))
     d_zperm = -tf.math.log_sigmoid(zperm_logits)  # also negative here
@@ -246,12 +230,12 @@ class FactorDiscriminator(SequentialNetwork):
 
   def supervised_loss(self,
                       labels: tf.Tensor,
-                      qZ_X: Distribution,
+                      qz_x: Distribution,
                       mean: bool = False,
                       mask: Optional[tf.Tensor] = None,
                       training: Optional[bool] = None) -> tf.Tensor:
     labels = tf.nest.flatten(labels)
-    z = self._to_samples(qZ_X, mean=mean, stop_grad=True)
+    z = self._to_samples(qz_x, mean=mean, stop_grad=True)
     distributions = tf.nest.flatten(self(z, training=training))
     ## applying the mask (1-labelled, 0-unlabelled)
     if mask is not None:
@@ -274,6 +258,18 @@ class FactorDiscriminator(SequentialNetwork):
     loss = tf.cond(
         tf.abs(loss) < 1e-8, lambda: tf.stop_gradient(loss), lambda: loss)
     return loss
+
+  @property
+  def n_observation(self) -> int:
+    return len(self.observation)
+
+  @property
+  def distributions(self) -> List[DenseDistribution]:
+    return self._distributions
+
+  @property
+  def prior(self) -> List[Distribution]:
+    return [d.prior for d in self._distributions]
 
   def __str__(self):
     s = super().__str__()

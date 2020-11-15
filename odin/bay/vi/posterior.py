@@ -898,11 +898,11 @@ class VariationalPosterior(Posterior):
   ############## Experiment setup
   def traverse(
       self,
-      axis: Union[int, List[int]],
+      feature_indices: Union[int, List[int]],
       min_val: int = -2.0,
       max_val: int = 2.0,
-      num: int = 11,
-      n_samples: int = 1,
+      n_traverse_points: int = 11,
+      n_random_samples: int = 1,
       mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
       seed: int = 1,
   ) -> VariationalPosterior:
@@ -910,14 +910,14 @@ class VariationalPosterior(Posterior):
 
     Parameters
     ----------
-    axis : Union[int, List[int]]
+    feature_indices : Union[int, List[int]]
     min_val : int, optional
         minimum value of the traverse, by default -2.0
     max_val : int, optional
         maximum value of the traverse, by default 2.0
-    num : int, optional
+    n_traverse_points : int, optional
         number of points in the traverse, must be odd number, by default 11
-    n_samples : int, optional
+    n_random_samples : int, optional
         number of samples selected for the traverse, by default 2
     mode : {'linear', 'quantile', 'gaussian'}, optional
         'linear' mode take linear interpolation between the `min_val` and `max_val`.
@@ -944,11 +944,11 @@ class VariationalPosterior(Posterior):
     ```
     """
     Z, indices = traverse_dims(x=self.latents.sample(seed=seed),
-                               axis=axis,
+                               feature_indices=feature_indices,
                                min_val=min_val,
                                max_val=max_val,
-                               num=num,
-                               n_samples=n_samples,
+                               n_traverse_points=n_traverse_points,
+                               n_random_samples=n_random_samples,
                                mode=mode,
                                return_indices=True,
                                seed=seed)

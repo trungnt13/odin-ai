@@ -550,8 +550,8 @@ class Networks(keras.Model, MD5object):
       return fig
     return self
 
-  @property
-  def is_semi_supervised(self) -> bool:
+  @classmethod
+  def is_semi_supervised(cls) -> bool:
     return False
 
   @property

@@ -134,22 +134,24 @@ class miVAE(betaVAE):
 
   def __init__(self,
                beta: float = 1.0,
-               lamda: float = 1.0,
-               mutual_codes: RVmeta = RVmeta(10,
+               mi_coef: float = 1.0,
+               kl_codes_coef: float = 0.,
+               latents: RVmeta = RVmeta(32,
+                                        'mvndiag',
+                                        projection=True,
+                                        name='Latents'),
+               mutual_codes: RVmeta = RVmeta(32,
                                              'mvndiag',
                                              projection=True,
                                              name='Codes'),
-               minimize_kl_codes: bool = False,
-               step_without_mi: int = 100,
-               mode: bool = True,
+               steps_without_mi: int = 100,
                **kwargs):
     self.is_binary_code = mutual_codes.is_binary
-    super().__init__(beta=beta, **kwargs)
+    super().__init__(beta=beta, latents=latents, **kwargs)
     self.mutual_codes = mutual_codes.create_posterior()
-    self.lamda = tf.convert_to_tensor(lamda, dtype=self.dtype, name='lambda')
-    self.minimize_kl_codes = bool(minimize_kl_codes)
-    self.mode = bool(mode)
-    self.step_without_mi = int(step_without_mi)
+    self.mi_coef = float(mi_coef)
+    self.kl_codes_coef = float(kl_codes_coef)
+    self.steps_without_mi = int(steps_without_mi)
 
   def encode(self, inputs, **kwargs):
     h_e = self.encoder(inputs, **kwargs)
@@ -191,8 +193,8 @@ class miVAE(betaVAE):
     qz_xprime, qc_xprime = self.encode(x, training=training)
     #' mutual information (we want to maximize this, hence, add it to the llk)
     mi_c = qc_xprime.log_prob(c_prime)
-    llk['mi_codes'] = tf.cond(self.step > self.step_without_mi,
-                              true_fn=lambda: self.lamda * mi_c,
+    llk['mi_codes'] = tf.cond(self.step > self.steps_without_mi,
+                              true_fn=lambda: self.mi_coef * mi_c,
                               false_fn=lambda: 0.)
     ## this value is just for monitoring
     mi_z = qz_xprime.log_prob(z_prime)
@@ -202,8 +204,10 @@ class miVAE(betaVAE):
       kl_c = qc_x.KL_divergence()
     else:
       kl_c = 0.
-    if not self.minimize_kl_codes:
+    if self.kl_codes_coef == 0.:
       kl_c = tf.stop_gradient(kl_c)
+    else:
+      kl_c = self.kl_codes_coef * kl_c
     kl['kl_codes'] = kl_c
     return llk, kl
 

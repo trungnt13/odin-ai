@@ -415,8 +415,8 @@ class conditionalM2VAE(betaVAE):
     kl = {k: tf.reduce_mean(v) for k, v in dict(**kl_u, **kl_l).items()}
     return llk, kl
 
-  @property
-  def is_semi_supervised(self):
+  @classmethod
+  def is_semi_supervised(self) -> bool:
     return True
 
   def __str__(self):

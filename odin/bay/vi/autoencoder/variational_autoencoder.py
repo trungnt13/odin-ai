@@ -164,8 +164,6 @@ class VAEStep(TrainStep):
 
   vae: VariationalAutoencoder
   call_kw: Dict[str, Any]
-  pX_Z: Optional[Distribution, List[Distribution]] = None
-  qZ_X: Optional[Distribution, List[Distribution]] = None
 
   def call(self) -> Tuple[Tensor, Dict[str, Any]]:
     llk, kl = self.vae.elbo_components(self.inputs,
@@ -490,9 +488,10 @@ class VariationalAutoencoder(VariationalModel):
       pz = qz.KL_divergence.prior
       if pz is None:
         pz = tfd.Normal(loc=tf.zeros(qz.event_shape, dtype=z.dtype),
-                        scale=tf.ones(qz.event_shape, dtype=z.dtype))
-      llk_pz = pZ.log_prob(z)
-      llk_qz_x = qZ.log_prob(z)
+                        scale=tf.ones(qz.event_shape, dtype=z.dtype),
+                        name='pz')
+      llk_pz = pz.log_prob(z)
+      llk_qz_x = qz.log_prob(z)
       llk.append(llk_pz)
       llk.append(llk_qz_x)
     # sum all llk
@@ -555,7 +554,7 @@ class VariationalAutoencoder(VariationalModel):
         i for i in type.mro(type(self)) if issubclass(i, VariationalAutoencoder)
     ]
     text = (f"{'->'.join([i.__name__ for i in cls[::-1]])} "
-            f"(semi:{self.is_semi_supervised})")
+            f"(semi:{type(self).is_semi_supervised()})")
     text += f'\n Tensorboard : {self.tensorboard_logdir}'
     text += f'\n Analytic     : {self.analytic}'
     text += f'\n Reverse      : {self.reverse}'

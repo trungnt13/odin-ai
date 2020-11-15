@@ -12,17 +12,21 @@ from tensorflow_probability.python.distributions import Distribution
 
 class betaVAE(VariationalAutoencoder):
   r""" Implementation of beta-VAE
-  Arguments:
-    beta : a Scalar. A regularizer weight indicate the capacity of the latent.
 
-  Reference:
-    Higgins, I., Matthey, L., Pal, A., et al. "beta-VAE: Learning Basic
+  Parameters
+  ----------
+  beta : a Scalar.
+      A regularizer weight indicate the capacity of the latent.
+
+  Reference
+  -----------
+  Higgins, I., Matthey, L., Pal, A., et al. "beta-VAE: Learning Basic
       Visual Concepts with a Constrained Variational Framework".
       ICLR'17
   """
 
-  def __init__(self, beta: float = 10.0, **kwargs):
-    super().__init__(**kwargs)
+  def __init__(self, beta: float = 1.0, name='BetaVAE', **kwargs):
+    super().__init__(name=name, **kwargs)
     self.beta = beta
 
   @property
@@ -44,6 +48,13 @@ class betaVAE(VariationalAutoencoder):
                                       training=training)
     kl = {key: self.beta * val for key, val in kl.items()}
     return llk, kl
+
+
+class beta10VAE(betaVAE):
+
+  def __init__(self, name='Beta10VAE', **kwargs):
+    kwargs.pop('beta', None)
+    super().__init__(beta=10.0, name=name, **kwargs)
 
 
 class betatcVAE(betaVAE):

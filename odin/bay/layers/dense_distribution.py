@@ -173,13 +173,9 @@ class DenseDistribution(Dense):
                          **kwargs)
     # store the distribution from last call
     self._most_recent_distribution = None
-    if 'input_shape' in kwargs and not self.built:
-      pass
 
   def build(self, input_shape) -> DenseDistribution:
-    if self.projection and not self.built:
-      super().build(input_shape)
-    self.built = True
+    super().build(input_shape)
     return self
 
   @property

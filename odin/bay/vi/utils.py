@@ -145,13 +145,15 @@ def permute_dims(z):
       shuffle points along batch_dim
   ```
 
+  Parameters
+  -----------
+    z : A Tensor
+      a tensor of shape `[batch_size, latent_dim]`
 
-  Arguments:
-    z : A Tensor `[batch_size, latent_dim]`
-
-  Reference:
-    Kim, H., Mnih, A., 2018. Disentangling by Factorising.
-      arXiv:1802.05983 [cs, stat].
+  Reference
+  -----------
+  Kim, H., Mnih, A., 2018. Disentangling by Factorising.
+    arXiv:1802.05983 [cs, stat].
   """
   shape = z.shape
   batch_dim, latent_dim = shape[-2:]
@@ -171,11 +173,11 @@ def permute_dims(z):
 
 
 def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
-                  axis: Union[int, List[int]],
+                  feature_indices: Union[int, List[int]],
                   min_val: int = -2.0,
                   max_val: int = 2.0,
-                  num: int = 11,
-                  n_samples: int = 1,
+                  n_traverse_points: int = 11,
+                  n_random_samples: int = 1,
                   mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
                   return_indices: bool = False,
                   seed: int = 1) -> np.ndarray:
@@ -185,16 +187,16 @@ def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
   ----------
   x : Union[np.ndarray, tf.Tensor, Distribution]
       the array for performing dimension traverse
-  axis : Union[int, List[int]]
-      a single axis or list of axes for traverse (i.e. which columns of the
+  feature_indices : Union[int, List[int]]
+      a single index or list of indices for traverse (i.e. which columns of the
       last dimension are for traverse)
   min_val : int, optional
       minimum value of the traverse, by default -2.0
   max_val : int, optional
       maximum value of the traverse, by default 2.0
-  num : int, optional
+  n_traverse_points : int, optional
       number of points in the traverse, must be odd number, by default 11
-  n_samples : int, optional
+  n_random_samples : int, optional
       number of samples selected for the traverse, by default 2
   mode : {'linear', 'quantile', 'gaussian'}, optional
       'linear' mode take linear interpolation between the `min_val` and `max_val`.
@@ -209,7 +211,7 @@ def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
 
   Example
   --------
-  For `n_samples=2`, `num=2`, and `n_latents=2`, the return latents are:
+  For `n_random_samples=2`, `num=2`, and `n_latents=2`, the return latents are:
   ```
   [[-2., 0.47],
    [ 0., 0.47],
@@ -219,35 +221,41 @@ def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
    [ 2., 0.31]]
   ```
   """
-  if axis is None:
-    axis = list(
+  if feature_indices is None:
+    feature_indices = list(
         range(
             x.event_shape[-1] if isinstance(x, Distribution) else x.shape[-1]))
-  axis = [int(i) for i in tf.nest.flatten(axis)]
-  if len(axis) > 1:
+  if hasattr(feature_indices, 'numpy'):
+    feature_indices = feature_indices.numpy()
+  if isinstance(feature_indices, np.ndarray):
+    feature_indices = feature_indices.tolist()
+  feature_indices = as_tuple(feature_indices, t=int)
+  if len(feature_indices) > 1:
     arr = [
         traverse_dims(x,
-                      ax,
+                      i,
                       min_val=min_val,
                       max_val=max_val,
-                      num=num,
-                      n_samples=n_samples,
+                      n_traverse_points=n_traverse_points,
+                      n_random_samples=n_random_samples,
                       mode=mode,
                       return_indices=return_indices,
-                      seed=seed) for ax in axis
+                      seed=seed) for i in feature_indices
     ]
     if return_indices:
       return np.concatenate([a[0] for a in arr], axis=0), \
         np.concatenate([a[1] for a in arr], axis=0)
     return np.concatenate(arr, axis=0)
-  axis = axis[0]
-  num = int(num)
-  assert num % 2 == 1, \
-    f'num must be odd number, i.e. centerred at 0, given {num}'
-  n_samples = int(n_samples)
-  assert num > 1 and n_samples > 0, \
-    ("num > 1 and n_samples > 0, "
-     f"but given: num={num} n_samples={n_samples}")
+  feature_indices = feature_indices[0]
+  n_traverse_points = int(n_traverse_points)
+  assert n_traverse_points % 2 == 1, \
+    ('n_traverse_points must be odd number, '
+     f'i.e. centerred at 0, given {n_traverse_points}')
+  n_random_samples = int(n_random_samples)
+  assert n_traverse_points > 1 and n_random_samples > 0, \
+    ('n_traverse_points > 1 and n_random_samples > 0, '
+     f'but given: n_traverse_points={n_traverse_points} '
+     f'n_random_samples={n_random_samples}')
   ### check the mode
   all_mode = ('quantile', 'linear', 'gaussian')
   mode = str(mode).strip().lower()
@@ -263,34 +271,41 @@ def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
   ### sample
   random_state = np.random.RandomState(seed=seed)
   x_org = np.asarray(x)
-  indices = random_state.choice(x.shape[0], size=n_samples, replace=False)
+  indices = random_state.choice(x.shape[0],
+                                size=n_random_samples,
+                                replace=False)
   x = x_org[indices]
   ### ranges
   # z_range is a matrix [n_latents, num]
   # linear range
   if mode == 'linear':
-    x_range = np.linspace(min_val, max_val, num=num)
+    x_range = np.linspace(min_val, max_val, num=n_traverse_points)
   # min-max quantile
   elif mode == 'quantile':
-    x_range = np.linspace(min(x_org[:, axis]), max(x_org[:, axis]), num=num)
+    x_range = np.linspace(min(x_org[:, feature_indices]),
+                          max(x_org[:, feature_indices]),
+                          num=n_traverse_points)
   # gaussian quantile
   elif mode == 'gaussian':
     dist = Normal(
-        loc=tf.reduce_mean(px.mean()[:, axis]),
-        scale=tf.reduce_mean(px.stddev()[:, axis]),
+        loc=tf.reduce_mean(px.mean()[:, feature_indices]),
+        scale=tf.reduce_mean(px.stddev()[:, feature_indices]),
     )
     x_range = []
-    for i in np.linspace(1e-5, 1.0 - 1e-5, num=num, dtype=np.float32):
+    for i in np.linspace(1e-5,
+                         1.0 - 1e-5,
+                         num=n_traverse_points,
+                         dtype=np.float32):
       x_range.append(dist.quantile(i))
     x_range = np.array(x_range)
   ### traverse
   X = np.repeat(x, len(x_range), axis=0)
   indices = np.repeat(indices, len(x_range), axis=0)
   # repeat for each sample
-  for i in range(n_samples):
+  for i in range(n_random_samples):
     s = i * len(x_range)
     e = (i + 1) * len(x_range)
-    X[s:e, axis] = x_range
+    X[s:e, feature_indices] = x_range
   if return_indices:
     return X, indices
   return X

@@ -2,8 +2,8 @@ from __future__ import absolute_import, division, print_function
 
 import inspect
 import os
-import pickle
 from functools import partial
+from math import sqrt
 
 import numpy as np
 import seaborn as sns
@@ -13,7 +13,8 @@ from odin import backend as bk
 from odin import visual as vs
 from odin.backend import interpolation
 from odin.bay.vi import (GroundTruth, NetworkConfig, RVmeta,
-                         VariationalAutoencoder, VariationalPosterior, get_vae)
+                         VariationalAutoencoder, VariationalPosterior, get_vae,
+                         traverse_dims)
 from odin.exp import get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import IterableDataset, get_dataset
 from odin.utils import ArgController, as_tuple, clear_folder
@@ -37,37 +38,121 @@ sns.set()
 # Example:
 # python all_vae_test.py vae=betavae ds=dsprites beta=1,10,20 px=bernoulli py=onehot max_iter=100000 -m -j4
 # ===========================================================================
+OUTPUT_DIR = '/tmp/vae_all'
+batch_size = 32
+n_visual_samples = 16
+
 CONFIG = \
 r"""
 vae:
 ds:
-px:
-py:
-beta: 1
-gamma: 6
-alpha: 10
-zdim: 64
 qz: mvndiag
-batch_size: 32
-max_iter: 50000
+beta: 1
+gamma: 1
+alpha: 10
+lamda: 1
+zdim: 32
+max_iter: 30000
 override: False
 """
+
+# ===========================================================================
+# Networks
+# ===========================================================================
+activation = tf.nn.leaky_relu
+# he_uniform is better for leaky_relu
+conv2D = partial(keras.layers.Conv2D,
+                 padding='same',
+                 kernel_initializer='he_uniform',
+                 activation=activation)
+deconv2D = partial(keras.layers.Conv2DTranspose,
+                   padding='same',
+                   kernel_initializer='he_uniform',
+                   activation=activation)
+
+
+def mnist_networks(input_shape, qz, zdim, is_semi_supervised):
+  encoder = keras.Sequential([
+      keras.layers.InputLayer(input_shape=input_shape),
+      conv2D(32, 5, strides=1),
+      conv2D(32, 5, strides=2),
+      conv2D(64, 5, strides=1),
+      conv2D(64, 5, strides=2),
+      conv2D(4 * zdim, 7, strides=1, padding='valid'),
+      keras.layers.Flatten()
+  ],
+                             name='encoder')
+  decoder = keras.Sequential([
+      keras.layers.InputLayer(input_shape=[zdim]),
+      keras.layers.Reshape([1, 1, zdim]),
+      deconv2D(64, 7, strides=1, padding='valid'),
+      deconv2D(64, 5, strides=1),
+      deconv2D(64, 5, strides=2),
+      deconv2D(32, 5, strides=1),
+      deconv2D(32, 5, strides=2),
+      deconv2D(32, 5, strides=1),
+      conv2D(1, 5, strides=1, activation=None),
+      keras.layers.Flatten()
+  ],
+                             name='decoder')
+  latents = RVmeta((zdim,), qz, projection=True, name="latents"),
+  observation = RVmeta(input_shape, "bernoulli", projection=False,
+                       name="image"),
+  return dict(encoder=encoder,
+              decoder=decoder,
+              observation=observation,
+              latents=latents)
+
+
+def dsprites_networks(input_shape, qz, zdim, is_semi_supervised):
+  n_channels = input_shape[-1]
+  proj_dim = 128 if n_channels == 1 else 256
+  encoder = keras.Sequential([
+      conv2D(32, 4, strides=2),
+      conv2D(32, 4, strides=2),
+      conv2D(64, 4, strides=2),
+      conv2D(64, 4, strides=2),
+      keras.layers.Flatten(),
+      keras.layers.Dense(proj_dim, activation='linear')
+  ],
+                             name='encoder')
+  decoder = keras.Sequential([
+      keras.layers.Dense(proj_dim, activation=activation),
+      keras.layers.Lambda(lambda x: tf.reshape(x, (-1, 1, 1, proj_dim))),
+      keras.layers.Dense(4 * 4 * 64, activation=activation),
+      keras.layers.Reshape((4, 4, 64)),
+      deconv2D(64, 4, strides=2),
+      deconv2D(32, 4, strides=2),
+      deconv2D(32, 4, strides=2),
+      deconv2D(n_channels, 4, strides=2),
+      keras.layers.Flatten(),
+  ],
+                             name='decoder')
+  latents = RVmeta((zdim,), qz, projection=True, name="latents"),
+  observation = RVmeta(input_shape, "bernoulli", projection=False,
+                       name="image"),
+  return dict(encoder=encoder,
+              decoder=decoder,
+              observation=observation,
+              latents=latents)
 
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def load_data(name: str, batch_size: int):
-  dataset = get_dataset(name)()
-  assert dataset.has_labels, f'No labels for given dataset {name}'
-  kw = dict(batch_size=batch_size, drop_remainder=True)
-  test_l = dataset.create_dataset(partition='test', inc_labels=1.0, **kw)
-  sample_images, y = [(x[:16], y[:16]) for x, y in test_l.take(1)][0]
-  # inputs structure
-  images, labels = tf.data.experimental.get_structure(test_l)
-  images_shape = images.shape[1:]
-  labels_shape = labels.shape[1:]
-  return dataset, (sample_images, y), (images_shape, labels_shape)
+def load_data(name: str):
+  ds = get_dataset(name)()
+  test = ds.create_dataset(partition='test',
+                           inc_labels=1.0 if ds.has_labels else 0.0)
+  samples = [
+      [i[:n_visual_samples] for i in tf.nest.flatten(x)] for x in test.take(1)
+  ][0]
+  if ds.has_labels:
+    x_samples, y_samples = samples
+  else:
+    x_samples = samples[0]
+    y_samples = None
+  return ds, x_samples, y_samples
 
 
 def to_image(X, grids):
@@ -111,29 +196,24 @@ def plot_latent_units(mean, std, w):
                markersize=6,
                color='g',
                alpha=0.5)
-  ax1 = ax.twinx()
-  l3 = ax1.plot(w,
-                label='weight',
-                linewidth=1.0,
-                linestyle='--',
-                marker='s',
-                markersize=6,
-                color='b',
-                alpha=0.5)
-  lines = l1 + l2 + l3
-  labs = [l.get_label() for l in lines]
+  l3 = ax.plot(w,
+               label='weight',
+               linewidth=1.0,
+               linestyle='--',
+               marker='s',
+               markersize=6,
+               color='b',
+               alpha=0.5)
   ax.grid(True)
-  ax.legend(lines, labs)
+  ax.legend()
   return vs.plot_to_image(fig)
 
 
 # ===========================================================================
 # Main
 # ===========================================================================
-@run_hydra(output_dir='/tmp/vae_all',
-           exclude_keys=['max_iter', 'override', 'py'])
+@run_hydra(output_dir=OUTPUT_DIR, exclude_keys=['max_iter', 'override'])
 def main(cfg: dict):
-  assert cfg.px is not None, "Output distribution 'px=...' must be given."
   assert cfg.vae is not None, \
     ('No VAE model given, select one of the following: '
      f"{', '.join(i.__name__.lower() for i in get_vae())}")
@@ -146,34 +226,31 @@ def main(cfg: dict):
   if cfg.override:
     clear_folder(output_dir, verbose=True)
   ### load dataset
-  ds, (x_samples, y_samples), (x_shape, y_shape) = \
-    load_data(name=cfg.ds, batch_size=cfg.batch_size)
-  assert ds.has_labels, f"Dataset with name={cfg.ds} has no labels"
-  ds_kw = dict(batch_size=int(cfg.batch_size), drop_remainder=True)
-  ### the variables
-  latents = RVmeta(cfg.zdim, cfg.qz, projection=True, name="Latents"),
-  observation = RVmeta(x_shape, cfg.px, projection=True, name="Data")
+  ds, x_samples, y_samples = load_data(name=cfg.ds)
+  ds_kw = dict(batch_size=batch_size, drop_remainder=True)
   ### prepare model init
   model = get_vae(cfg.vae)
   model_kw = inspect.getfullargspec(model.__init__).args[1:]
   kw = {k: v for k, v in cfg.items() if k in model_kw}
-  if 'labels' in model_kw:
-    if cfg.py is None:
-      raise ValueError("Semi-supervised model but 'py' is not provided")
-    labels = RVmeta(y_shape, cfg.py, projection=True, name="Labels")
-    kw['labels'] = labels
+  is_semi_supervised = ds.has_labels and model.is_semi_supervised()
   ### create the model
-  vae = model(encoder=NetworkConfig([256, 256, 256], name='Encoder'),
-              decoder=NetworkConfig([256, 256, 256], name='Decoder'),
-              observation=observation,
-              latents=latents,
-              path=model_path,
-              **kw)
-  vae.build((None,) + x_shape)
+  network_kw = dict(input_shape=x_samples.shape[1:],
+                    qz=cfg.qz,
+                    zdim=cfg.zdim,
+                    is_semi_supervised=is_semi_supervised)
+  if 'mnist' in cfg.ds:
+    fn_networks = mnist_networks
+  elif 'dsprites' in cfg.ds:
+    fn_networks = dsprites_networks
+  else:
+    raise NotImplementedError(
+        f'No predefined networks support for dataset {cfg.ds}')
+  vae = model(path=model_path, **fn_networks(**network_kw), **kw)
+  vae.build((None,) + x_samples.shape[1:])
   vae.load_weights(raise_notfound=False, verbose=True)
   ### prepare evaluation data
-  z_samples = vae.sample_prior(sample_shape=16, seed=1)
-  if vae.is_semi_supervised:
+  z_samples = vae.sample_prior(sample_shape=n_visual_samples, seed=1)
+  if is_semi_supervised:
     train = ds.create_dataset(partition='train', inc_labels=0.1, **ds_kw)
     valid = ds.create_dataset(partition='valid', inc_labels=1.0, **ds_kw)
   else:
@@ -185,60 +262,73 @@ def main(cfg: dict):
     losses = get_current_trainer().valid_loss
     if losses[-1] <= np.min(losses):
       vae.save_weights(overwrite=True)
-    # reconstruction
-    px, _ = vae(x_samples, training=True)
-    image_reconstructed = to_image(as_tuple(px)[0].mean().numpy(), grids=(4, 4))
-    # latent traverse
-    vp = VariationalPosterior(model=vae,
-                              inputs=x_samples,
-                              groundtruth=GroundTruth(y_samples),
-                              n_samples=1000)
-    # stats
-    mean = tf.reduce_mean(vp.latents.mean(), axis=0)
-    std = tf.reduce_mean(vp.latents.stddev(), axis=0)
-    w_d = tf.reduce_sum(vae.decoder.trainable_variables[0], axis=-1)
+    # show reconstruction image
+    P, Q = vae(x_samples, training=True)
+    P = as_tuple(P)  # just in case multiple outputs or latents
+    Q = as_tuple(Q)
+    image_reconstructed = to_image(P[0].mean().numpy(),
+                                   grids=(sqrt(n_visual_samples),
+                                          sqrt(n_visual_samples)))
+    # latents stats
+    mean = tf.reduce_mean(Q[0].mean(), axis=0)
+    std = tf.reduce_mean(Q[0].stddev(), axis=0)
+    w_d = vae.decoder.trainable_variables[0]
+    if w_d.shape.ndims == 2:
+      w_d = tf.reduce_sum(w_d, axis=-1)
+    else:
+      w_d = tf.reduce_sum(w_d, axis=(0, 1, 2))
+    w_d = w_d[:mean.shape[0]]
     image_latents = plot_latent_units(mean, std, w_d)
-    # show traverse image
-    images = np.concatenate([
-        vp.traverse(i,
-                    min_val=-2,
-                    max_val=2,
-                    num=21,
-                    n_samples=1,
-                    mode='linear').outputs[0].mean().numpy()
-        for i in np.argsort(std)[:20]
-    ])
-    image_traverse = to_image(images, grids=(20, int(images.shape[0] / 20)))
     # show sampled image
-    px = as_tuple(vae.decode(z_samples, training=False))
-    image_sampled = to_image(px[0].mean().numpy(), grids=(4, 4))
-    # gradients
+    P = vae.decode(z_samples, training=False)
+    P = as_tuple(P)
+    image_sampled = to_image(P[0].mean().numpy(),
+                             grids=(sqrt(n_visual_samples),
+                                    sqrt(n_visual_samples)))
+    # tracking the gradients
     all_grads = [(k, v) for k, v in vae.last_metrics.items() if 'grad/' in k]
     encoder_grad = 0
     decoder_grad = 0
     latents_grad = 0
     if len(all_grads) > 0:
-      encoder_grad = sum(v for k, v in all_grads if 'Encoder' in k)
-      decoder_grad = sum(v for k, v in all_grads if 'Decoder' in k)
-      latents_grad = sum(v for k, v in all_grads if 'Latents' in k)
-    # return
-    return dict(mean=mean,
-                std=std,
-                w_decode=w_d,
-                encoder_grad=encoder_grad,
-                decoder_grad=decoder_grad,
-                latents_grad=latents_grad,
-                noise_units=np.sum(std > 0.9),
-                reconstructed=image_reconstructed,
-                traverse=image_traverse,
-                sampled=image_sampled,
-                latents=image_latents)
+      encoder_grad = sum(v for k, v in all_grads if 'encoder' in k)
+      decoder_grad = sum(v for k, v in all_grads if 'decoder' in k)
+      latents_grad = sum(v for k, v in all_grads if 'latents' in k)
+    # latent traverse
+    top_indices = np.argsort(std)[:20]  # smaller std -> more meaningful
+    z = traverse_dims(Q[0].mean(),
+                      feature_indices=top_indices,
+                      min_val=-3.,
+                      max_val=3.,
+                      n_traverse_points=21,
+                      n_random_samples=1,
+                      mode='linear',
+                      seed=1)
+    images = vae.decode(z, training=False).mean().numpy()
+    n_indices = len(top_indices)
+    image_traverse = to_image(images,
+                              grids=(n_indices,
+                                     int(images.shape[0] / n_indices)))
+    # create the return metrics
+    tracking_metrics = dict(mean=mean,
+                            std=std,
+                            w_decode=w_d,
+                            encoder_grad=encoder_grad,
+                            decoder_grad=decoder_grad,
+                            latents_grad=latents_grad,
+                            noise_units=np.sum(std > 0.9),
+                            reconstructed=image_reconstructed,
+                            sampled=image_sampled,
+                            latents=image_latents,
+                            traverse=image_traverse)
+    return tracking_metrics
 
+  ### fit
   vae.fit(train,
           valid=valid,
           epochs=-1,
           max_iter=int(cfg.max_iter),
-          valid_freq=1000,
+          valid_freq=100,
           logging_interval=2,
           skip_fitted=True,
           callback=callback,

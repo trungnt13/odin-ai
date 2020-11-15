@@ -423,22 +423,21 @@ class MultivariateNormalLayer(DistributionLambda):
   def __init__(self,
                event_shape,
                covariance='diag',
-               loc_activation='identity',
+               loc_activation=None,
                scale_activation=None,
                convert_to_tensor_fn=tfd.Distribution.sample,
                validate_args=False,
                **kwargs):
     super(MultivariateNormalLayer, self).__init__(
-        lambda t: type(self).new(
-            t, event_shape, covariance, parse_activation(loc_activation, self),
-            parse_activation(scale_activation, self), validate_args),
+        lambda t: type(self).new(t, event_shape, covariance, loc_activation,
+                                 scale_activation, validate_args),
         convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape,
           covariance,
-          loc_activation=tf.identity,
+          loc_activation=None,
           scale_activation=None,
           validate_args=False,
           name=None):
@@ -451,7 +450,9 @@ class MultivariateNormalLayer(DistributionLambda):
       name = f"MultivariateNormal{covariance.capitalize()}"
     # parameters
     params = tf.convert_to_tensor(value=params, name='params')
-    loc = loc_activation(params[..., :event_size])
+    loc = params[..., :event_size]
+    if loc_activation is not None:
+      loc = loc_activation(loc)
     scale = params[..., event_size:]
     ### the distribution
     if covariance == 'tril':

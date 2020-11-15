@@ -12,7 +12,7 @@ import tensorflow_probability as tfp
 from odin import visual as vs
 from odin.bay.vi import RVmeta, get_vae
 from odin.exp import Trainer, get_current_trainer, get_output_dir, run_hydra
-from odin.fuel import MNIST, FashionMNIST, dSprites
+from odin.fuel import MNIST, BinarizedMNIST, FashionMNIST, dSprites
 from odin.ml import fast_umap
 from odin.utils import ArgController
 from tensorflow.python import keras
@@ -48,6 +48,7 @@ beta: 1
 # ===========================================================================
 # load data
 # ===========================================================================
+# he_uniform is better for leaky_relu
 conv2D = partial(layers.Conv2D,
                  padding='same',
                  kernel_initializer='he_uniform',
@@ -95,7 +96,9 @@ def create_decoder():
 def main(cfg: dict):
   assert cfg.vae is not None and cfg.beta is not None, \
     f'Invalid arguments: {cfg}'
-  if cfg.ds == 'mnist':
+  if cfg.ds == 'bmnist':
+    ds = BinarizedMNIST()
+  elif cfg.ds == 'mnist':
     ds = MNIST()
   elif cfg.ds == 'fmnist':
     ds = FashionMNIST()
@@ -118,33 +121,33 @@ def main(cfg: dict):
   # tfp model API
   if cfg.vae == 'tfp':
     encoder.append(tfpl.MultivariateNormalTriL(encoded_size))
-    encoder = keras.Sequential(encoder, name='Encoder')
+    encoder = keras.Sequential(encoder, name='encoder')
     decoder.append(tfpl.IndependentBernoulli(input_shape))
-    decoder = keras.Sequential(decoder, name="Decoder")
+    decoder = keras.Sequential(decoder, name="decoder")
     vae = keras.Model(inputs=encoder.inputs,
                       outputs=[decoder(encoder.outputs[0]), encoder.outputs[0]],
-                      name='VAE')
+                      name='tfp_vae')
   # odin model API
   else:
-    encoder = keras.Sequential(encoder, name='Encoder')
-    decoder = keras.Sequential(decoder, name="Decoder")
+    encoder = keras.Sequential(encoder, name='encoder')
+    decoder = keras.Sequential(decoder, name="decoder")
     vae = get_vae(cfg.vae)(
         encoder=encoder,
         decoder=decoder,
         # latents=tfpl.MultivariateNormalTriL(encoded_size),
         latents=RVmeta(event_shape=(encoded_size,),
-                               posterior='mvntril',
-                               projection=False,
-                               name="Latent"),
+                       posterior='mvntril',
+                       projection=False,
+                       name="latents"),
         observation=RVmeta(event_shape=input_shape,
-                                   posterior="bernoulli",
-                                   projection=False,
-                                   name="Image"),
-    )
+                           posterior="bernoulli",
+                           projection=False,
+                           name="image"),
+        name=f'odin_{cfg.vae}')
   ### training the model
   vae.build(input_shape=(None,) + input_shape)
   params = vae.trainable_variables
-  opt = tf.optimizers.Adam(learning_rate=1e-3)
+  opt = tf.optimizers.Adam(learning_rate=learning_rate)
 
   def optimize(x, training=None):
     with tf.GradientTape(watch_accessed_variables=False) as tape:
@@ -228,6 +231,7 @@ def main(cfg: dict):
                 encoder_grad=encoder_grad,
                 decoder_grad=decoder_grad)
 
+  ### Create trainer and fit
   trainer = Trainer(logdir=get_output_dir())
   trainer.fit(train_ds=train.repeat(-1),
               optimize=optimize,
