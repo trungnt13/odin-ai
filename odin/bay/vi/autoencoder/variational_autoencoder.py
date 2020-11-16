@@ -23,8 +23,7 @@ from odin.bay.layers import DenseDistribution, VectorDeterministicLayer
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi._base import VariationalModel
 from odin.exp.trainer import Trainer
-from odin.networks import (Identity, ImageNet, NetworkConfig, TensorTypes,
-                           TrainStep)
+from odin.networks import Identity, NetworkConfig, TensorTypes, TrainStep
 from odin.utils import as_tuple
 from odin.utils.python_utils import classproperty
 from scipy.sparse import spmatrix
@@ -84,6 +83,9 @@ def _parse_layers(network, is_decoding=False, name=None) -> Layer:
   ## identity
   if cfg is None:
     layer = Identity(name=name)
+  ## string alias of activation
+  elif isinstance(cfg, string_types):
+    layer = keras.layers.Activation(keras.activations.get(cfg))
   ## Callable or type
   elif (inspect.isfunction(cfg) or isinstance(cfg, partial) or
         isinstance(cfg, type)):
@@ -91,55 +93,13 @@ def _parse_layers(network, is_decoding=False, name=None) -> Layer:
   ## RVmeta
   elif isinstance(cfg, RVmeta):
     layer = cfg.create_posterior(name=name if cfg.name is None else None)
-  ## string type (for dataset name or network alias)
-  elif isinstance(cfg, string_types):
-    cfg = cfg.lower().strip()
-    #
-    if cfg in ('linear', 'identity'):
-      layer = Identity(name=name)
-    #
-    elif cfg in ('mnist', 'fashion_mnist'):
-      kw = dict(image_shape=(28, 28, 1),
-                projection_dim=128,
-                activation='relu',
-                center0=True,
-                distribution='bernoulli',
-                distribution_kw=dict(),
-                skip_connect=False,
-                convolution=True,
-                input_shape=None,
-                decoding=is_decoding)
-      layer = ImageNet(**kw)
-    #
-    elif cfg in ('shapes3d', 'dsprites', 'dspritesc', 'celeba', 'stl10',
-                 'legofaces', 'cifar10', 'cifar20', 'cifar100'):
-      n_channels = 1 if cfg in ('dsprites', 'dspritesc') else 3
-      if cfg in ('cifar10', 'cifar100', 'cifar20'):
-        image_shape = (32, 32, 3)
-      else:
-        image_shape = (64, 64, n_channels)
-      kw = dict(image_shape=image_shape,
-                projection_dim=256,
-                activation='relu',
-                center0=True,
-                distribution='bernoulli',
-                distribution_kw=dict(),
-                skip_connect=False,
-                convolution=True,
-                input_shape=None,
-                decoding=is_decoding)
-      layer = ImageNet(**kw)
-    #
-    else:
-      raise NotImplementedError(
-          f"No predefined network for dataset with name: {cfg}")
-  # the NetworkConfig
+  ## the NetworkConfig
   elif isinstance(cfg, NetworkConfig):
     layer = cfg.create_network(name=name)
-  # Layer
+  ## Layer
   elif isinstance(cfg, Layer):
     layer = cfg
-  # no support
+  ## no support
   else:
     raise ValueError(
         f"No support for network configuration of type: {type(cfg)}")

@@ -17,6 +17,8 @@ from odin.bay.vi import (GroundTruth, NetworkConfig, RVmeta,
                          traverse_dims)
 from odin.exp import get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import IterableDataset, get_dataset
+from odin.networks import (celeba_networks, dsprites_networks, mnist_networks,
+                           shapes3d_networks)
 from odin.utils import ArgController, as_tuple, clear_folder
 from tensorflow.python import keras
 from tqdm import tqdm
@@ -54,87 +56,8 @@ lamda: 1
 zdim: 32
 max_iter: 30000
 override: False
+skip: False
 """
-
-# ===========================================================================
-# Networks
-# ===========================================================================
-activation = tf.nn.leaky_relu
-# he_uniform is better for leaky_relu
-conv2D = partial(keras.layers.Conv2D,
-                 padding='same',
-                 kernel_initializer='he_uniform',
-                 activation=activation)
-deconv2D = partial(keras.layers.Conv2DTranspose,
-                   padding='same',
-                   kernel_initializer='he_uniform',
-                   activation=activation)
-
-
-def mnist_networks(input_shape, qz, zdim, is_semi_supervised):
-  encoder = keras.Sequential([
-      keras.layers.InputLayer(input_shape=input_shape),
-      conv2D(32, 5, strides=1),
-      conv2D(32, 5, strides=2),
-      conv2D(64, 5, strides=1),
-      conv2D(64, 5, strides=2),
-      conv2D(4 * zdim, 7, strides=1, padding='valid'),
-      keras.layers.Flatten()
-  ],
-                             name='encoder')
-  decoder = keras.Sequential([
-      keras.layers.Lambda(
-          lambda x: tf.reshape(x, [-1, 1, 1, x.shape[-1]])),
-      deconv2D(64, 7, strides=1, padding='valid'),
-      deconv2D(64, 5, strides=1),
-      deconv2D(64, 5, strides=2),
-      deconv2D(32, 5, strides=1),
-      deconv2D(32, 5, strides=2),
-      deconv2D(32, 5, strides=1),
-      conv2D(1, 5, strides=1, activation=None),
-      keras.layers.Flatten()
-  ],
-                             name='decoder')
-  latents = RVmeta((zdim,), qz, projection=True, name="latents"),
-  observation = RVmeta(input_shape, "bernoulli", projection=False,
-                       name="image"),
-  return dict(encoder=encoder,
-              decoder=decoder,
-              observation=observation,
-              latents=latents)
-
-
-def dsprites_networks(input_shape, qz, zdim, is_semi_supervised):
-  n_channels = input_shape[-1]
-  proj_dim = 128 if n_channels == 1 else 256
-  encoder = keras.Sequential([
-      conv2D(32, 4, strides=2),
-      conv2D(32, 4, strides=2),
-      conv2D(64, 4, strides=2),
-      conv2D(64, 4, strides=2),
-      keras.layers.Flatten(),
-      keras.layers.Dense(proj_dim, activation='linear')
-  ],
-                             name='encoder')
-  decoder = keras.Sequential([
-      keras.layers.Dense(proj_dim, activation=activation),
-      keras.layers.Lambda(lambda x: tf.reshape(x, (-1, 1, 1, proj_dim))),
-      keras.layers.Dense(4 * 4 * 64, activation=activation),
-      keras.layers.Reshape((4, 4, 64)),
-      deconv2D(64, 4, strides=2),
-      deconv2D(32, 4, strides=2),
-      deconv2D(32, 4, strides=2),
-      deconv2D(n_channels, 4, strides=2),
-      keras.layers.Flatten(),
-  ],
-                             name='decoder')
-  latents = RVmeta((zdim,), qz, projection=True, name="latents"),
-  observation = RVmeta(input_shape, "bernoulli", projection=False,
-                       name="image"),
-  return dict(encoder=encoder,
-              decoder=decoder,
-              observation=observation,
-              latents=latents)
 
 
 # ===========================================================================
@@ -234,14 +157,19 @@ def main(cfg: dict):
   kw = {k: v for k, v in cfg.items() if k in model_kw}
   is_semi_supervised = ds.has_labels and model.is_semi_supervised()
   ### create the model
-  network_kw = dict(input_shape=x_samples.shape[1:],
-                    qz=cfg.qz,
+  network_kw = dict(qz=cfg.qz,
                     zdim=cfg.zdim,
-                    is_semi_supervised=is_semi_supervised)
+                    activation=tf.nn.leaky_relu,
+                    centerize_image=True,
+                    is_semi_supervised=is_semi_supervised,
+                    skip_generator=cfg.skip,
+                    n_channels=x_samples.shape[-1])
   if 'mnist' in cfg.ds:
     fn_networks = mnist_networks
   elif 'dsprites' in cfg.ds:
     fn_networks = dsprites_networks
+  elif 'shapes3d' in cfg.ds:
+    fn_networks = shapes3d_networks
   else:
     raise NotImplementedError(
         f'No predefined networks support for dataset {cfg.ds}')
