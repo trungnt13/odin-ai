@@ -3,13 +3,14 @@ from __future__ import absolute_import, division, print_function
 import types
 import warnings
 from numbers import Number
-from typing import List, Union
+from typing import List, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
 from odin.utils import as_tuple
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import KBinsDiscretizer
+from tensorflow import Tensor
 from tensorflow_probability.python.distributions import Distribution, Normal
 from typing_extensions import Literal
 
@@ -17,6 +18,8 @@ __all__ = [
     'discretizing',
     'permute_dims',
     'traverse_dims',
+    'prepare_ssl_inputs',
+    'split_ssl_inputs',
     'marginalize_categorical_labels',
 ]
 
@@ -109,10 +112,103 @@ def discretizing(
   return factors
 
 
+# ===========================================================================
+# Helper for semi-supervised learning
+# ===========================================================================
+def _batch_size(x):
+  batch_size = x.shape[0]
+  if batch_size is None:
+    batch_size = tf.shape(x)[0]
+  return batch_size
+
+
+def prepare_ssl_inputs(
+    inputs: Union[Tensor, List[Tensor]],
+    mask: Tensor,
+    n_unsupervised_inputs: int,
+) -> Tuple[List[Tensor], List[Tensor], Tensor]:
+  """Prepare the inputs for the semi-supervised learning,
+  three cases are considered:
+
+    - Only the unlabeled data given
+    - Only the labeled data given
+    - A mixture of both unlabeled and labeled data, indicated by mask
+
+  Parameters
+  ----------
+  inputs : Union[TensorTypes, List[TensorTypes]]
+  n_unsupervised_inputs : int
+  mask : TensorTypes
+      The `mask` is given as indicator, `1` for labeled sample and
+      `0` for unlabeled samples
+
+  Returns
+  -------
+  Tuple[tf.Tensor, tf.Tensor, tf.Tensor]
+      - List of inputs tensors
+      - List of labels tensors
+      - mask tensor
+  """
+  inputs = tf.nest.flatten(as_tuple(inputs))
+  batch_size = _batch_size(inputs[0])
+  ## no labels provided
+  if len(inputs) == n_unsupervised_inputs:
+    X = inputs
+    y = []
+    mask = tf.cast(tf.zeros(shape=(batch_size, 1)), dtype=tf.bool)
+  ## labels is provided
+  else:
+    X = inputs[:n_unsupervised_inputs]
+    y = inputs[n_unsupervised_inputs:]
+    if mask is None:  # all data is labelled
+      mask = tf.cast(tf.ones(shape=(batch_size, 1)), tf.bool)
+  y = [i for i in y if i is not None]
+  return X, y, mask
+
+
+def split_ssl_inputs(
+    X: List[Tensor],
+    y: List[Tensor],
+    mask: Tensor,
+) -> Tuple[List[Tensor], List[Tensor], List[Tensor]]:
+  """Split semi-supervised inputs into unlabelled and labelled data
+
+  Parameters
+  ----------
+  X : List[tf.Tensor]
+  y : List[tf.Tensor]
+  mask : tf.Tensor
+
+  Returns
+  -------
+  Tuple[List[tf.Tensor], List[tf.Tensor], List[tf.Tensor], tf.Tensor]
+      - list of unlablled inputs
+      - list of labelled inputs
+      - list of labels
+  """
+  if not isinstance(X, (tuple, list)):
+    X = [X]
+  if y is None:
+    y = []
+  elif not isinstance(y, (tuple, list)):
+    y = [y]
+  if mask is None:
+    mask = tf.cast(tf.zeros(shape=(_batch_size(X[0]), 1)), dtype=tf.bool)
+  # flatten the mask
+  mask = tf.reshape(mask, (-1,))
+  # split into unlabelled and labelled data
+  X_unlabelled = [tf.boolean_mask(i, tf.logical_not(mask), axis=0) for i in X]
+  X_labelled = [tf.boolean_mask(i, mask, axis=0) for i in X]
+  y_labelled = [tf.boolean_mask(i, mask, axis=0) for i in y]
+  return X_unlabelled, X_labelled, y_labelled
+
+
 def marginalize_categorical_labels(X: tf.Tensor,
                                    n_classes: int,
                                    dtype: tf.DType = tf.float32):
-  """
+  """Marginalize discrete variable by repeating the input tensor for
+  all possible discrete values of the distribution.
+
   Example:
   ```
   # shape: [batch_size * n_labels, n_labels]
@@ -133,6 +229,9 @@ def marginalize_categorical_labels(X: tf.Tensor,
   return X, y
 
 
+# ===========================================================================
+# Dimensions manipulation
+# ===========================================================================
 @tf.function(autograph=True)
 def permute_dims(z):
   r""" Permutation of latent dimensions Algorithm(1):

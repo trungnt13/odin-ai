@@ -1,7 +1,12 @@
+from __future__ import annotations
+
+from typing import List, Union
+
 import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
@@ -11,7 +16,6 @@ class multitaskVAE(betaVAE):
   r""" Multi-tasks VAE for semi-supervised learning
 
   Example:
-
   ```
   from odin.fuel import MNIST
   from odin.bay.vi.autoencoder import multitaskVAE
@@ -29,26 +33,28 @@ class multitaskVAE(betaVAE):
                      labels=RVmeta(10, 'onehot', projection=True, name="Digit"))
   vae.fit(train, epochs=-1, max_iter=8000, compile_graph=True, sample_shape=1)
   ```
+
+  Reference
+  -----------
+  Trong, T. N. et al. Semisupervised Generative Autoencoder for Single-Cell Data.
+      Journal of Computational Biology 27, 1190–1203 (2019).
+
   """
 
   def __init__(self,
-               observation=RVmeta(64,
-                                          'gaussian',
-                                          projection=True,
-                                          name="Observation"),
-               labels=RVmeta(10,
-                                     'onehot',
-                                     projection=True,
-                                     name="Labels"),
-               alpha=10.,
-               beta=1.,
+               labels: Union[RVmeta, List[RVmeta]] = RVmeta(10,
+                                                            'onehot',
+                                                            projection=True,
+                                                            name="digits"),
+               skip_connect: bool = True,
+               alpha: float = 10.,
+               name: str = 'MultitaskVAE',
                **kwargs):
-    labels = tf.nest.flatten(labels)
-    observation = tf.nest.flatten(observation)
-    observation += labels
-    super().__init__(beta=beta, observation=observation, **kwargs)
-    self.labels = labels
+    super().__init__(name=name, **kwargs)
+    self.labels = [y.create_posterior() for y in as_tuple(labels)]
     self.alpha = alpha
+    self.skip_connect = bool(skip_connect)
+    self._projector = None
 
   @property
   def alpha(self):
@@ -59,115 +65,61 @@ class multitaskVAE(betaVAE):
     self._alpha = tf.convert_to_tensor(a, dtype=self.dtype, name='alpha')
 
   def encode(self, inputs, training=None, mask=None, **kwargs):
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
     # don't condition on the labels, only accept inputs
-    n_outputs = len(self.observation)
-    n_semi = len(self.labels)
-    inputs = tf.nest.flatten(inputs)[:(n_outputs - n_semi)]
-    if len(inputs) == 1:
-      inputs = inputs[0]
-    return super().encode(inputs, training=training, mask=mask, **kwargs)
+    X = X[0]
+    return super().encode(X, training=training, mask=None, **kwargs)
 
-  def elbo_components(self,
-                      inputs,
-                      training=None,
-                      pX_Z=None,
-                      qZ_X=None,
-                      mask=None,
-                      **kwargs):
-    n_semi = len(self.labels)
+  def decode(self, latents, training=None, mask=None, **kwargs):
+    h_d = super().decode(latents,
+                         training=training,
+                         mask=mask,
+                         only_decoding=True,
+                         **kwargs)
+    if self.skip_connect:
+      if self._projector is None:
+        self._projector = keras.layers.Dense(units=h_d.shape[-1],
+                                             activation=None,
+                                             name='skip_connect')
+      if isinstance(latents, (tuple, list)):
+        latents = tf.concat(latents, axis=-1)
+      h_d = h_d + self._projector(latents)
+    px_z = self.observation(h_d, training=training, mask=mask)
+    py_z = [fy(h_d, training=training, mask=mask) for fy in self.labels]
+    return (px_z,) + tuple(py_z)
+
+  def elbo_components(self, inputs, training=None, mask=None):
     # unsupervised ELBO
-    llk, kl = super().elbo_components(inputs,
-                                      pX_Z=pX_Z[:-n_semi],
-                                      qZ_X=qZ_X,
-                                      mask=mask,
-                                      training=training,
-                                      **kwargs)
-    inputs = tf.nest.flatten(inputs)
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    if mask is not None:
+      mask = tf.reshape(mask, (-1,))
+    llk, kl = super().elbo_components(X[0], mask=mask, training=training)
+    P, Q = self.last_outputs
     # supervised log-likelihood
-    if len(inputs) > len(self.observation) - n_semi:
-      obs = self.observation[-n_semi:]
-      Y = inputs[-n_semi:]
-      pY_Z = pX_Z[-n_semi:]
+    if len(y) > 0:
       # iterate over each pair
-      for layer, y, py, m in zip(obs, Y, pY_Z, as_tuple(mask, N=n_semi)):
+      for layer, yi, py in zip(self.labels, y, P[1:]):
         name = layer.name
-        llk_y = py.log_prob(y)
-        if m is not None:
-          m = tf.reshape(m, (-1,))
+        llk_y = py.log_prob(yi)
+        if mask is not None:
           # take into account the sample_shape by transpose the batch dim to
           # the first dimension
           # need to check the mask here, otherwise the loss can be NaN
           llk_y = tf.cond(
-              tf.reduce_all(tf.logical_not(m)),
+              tf.reduce_all(tf.logical_not(mask)),
               lambda: 0.,
               lambda: tf.transpose(
-                  tf.boolean_mask(tf.transpose(llk_y), m, axis=0)),
+                  tf.boolean_mask(tf.transpose(llk_y), mask, axis=0)),
           )
         # this is important, if loss=0 when using one-hot log_prob,
         # the gradient is NaN
-        loss = tf.reduce_mean(self.alpha * llk_y)
-        loss = tf.cond(
-            tf.abs(loss) < 1e-8, lambda: tf.stop_gradient(loss), lambda: loss)
-        llk[f"llk_{name}"] = loss
+        llk_y = tf.reduce_mean(self.alpha * llk_y)
+        llk_y = tf.cond(tf.abs(llk_y) < 1e-8,
+                        true_fn=lambda: tf.stop_gradient(llk_y),
+                        false_fn=lambda: llk_y)
+        llk[f"llk_{name}"] = llk_y
     return llk, kl
 
   @classmethod
   def is_semi_supervised(self) -> bool:
     return True
-
-
-class MultiheadVAE(multitaskVAE):
-  r""" A same multi-outputs design as `multitaskVAE`, however, the
-  semi-supervised heads are directly connected to the latent layers to
-  exert influences. """
-
-  def __init__(self,
-               outputs=RVmeta(64,
-                                      'gaussian',
-                                      projection=True,
-                                      name="Input"),
-               labels=RVmeta(10,
-                                     'onehot',
-                                     projection=True,
-                                     name="Label"),
-               alpha=10.,
-               beta=1.,
-               **kwargs):
-    super().__init__(alpha=alpha,
-                     beta=beta,
-                     outputs=outputs,
-                     labels=[],
-                     **kwargs)
-    # create and build the semi-supervised output layers
-    self.labels = tf.nest.flatten(labels)
-    z = keras.Input(shape=self.latent_shape[1:], batch_size=None)
-    semi_layers = [
-        l.create_posterior(self.latent_shape[1:]) for l in self.labels
-    ]
-    for layer in semi_layers:
-      layer(z)
-    # add to the main output layers
-    self.observation += semi_layers
-
-  @classmethod
-  def is_semi_supervised(self) -> bool:
-    return True
-
-  def decode(self,
-             latents,
-             training=None,
-             mask=None,
-             sample_shape=(),
-             **kwargs):
-    n_semi = len(self.labels)
-    semi_layers = self.observation[-n_semi:]
-    self.observation = self.observation[:-n_semi]
-    # unsupervised outputs
-    pX = super().decode(latents, training, mask, sample_shape, **kwargs)
-    # semi outputs
-    pY = [layer(latents, training=training, mask=mask) for layer in semi_layers]
-    for p in pY:  # remember to store the keras mask in outputs
-      p._keras_mask = mask
-    # recover and return
-    self.observation = self.observation + semi_layers
-    return tf.nest.flatten(pX) + pY

@@ -17,6 +17,7 @@ from odin.bay.vi import (GroundTruth, NetworkConfig, RVmeta,
                          traverse_dims)
 from odin.exp import get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import IterableDataset, get_dataset
+from odin.ml import fast_tsne, fast_umap
 from odin.networks import (celeba_networks, dsprites_networks, mnist_networks,
                            shapes3d_networks)
 from odin.utils import ArgController, as_tuple, clear_folder
@@ -257,7 +258,7 @@ def main(cfg: dict):
           valid=valid,
           epochs=-1,
           max_iter=int(cfg.max_iter),
-          valid_freq=100,
+          valid_freq=1000,
           logging_interval=2,
           skip_fitted=True,
           callback=callback,

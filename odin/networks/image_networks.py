@@ -53,30 +53,34 @@ def _prepare_cnn(activation=tf.nn.leaky_relu):
 
 class SkipSequential(keras.Model):
 
-  def __init__(self, activation=None, layers=[], name='SkipGenerator'):
+  def __init__(self, layers=[], name='SkipGenerator'):
     super().__init__(name=name)
     self.all_layers = list(layers)
     self.proj_layers = list()
+    self.activation = list()
     linear = keras.activations.get('linear')
     for l in layers:
       if isinstance(l, keras.layers.Conv2DTranspose):
-        l.activation = linear
+        self.activation.append(l.activation)
         self.proj_layers.append(
             keras.layers.Conv2D(l.filters, (1, 1),
                                 padding='same',
-                                activation='linear'))
+                                activation='linear',
+                                name=f'{l.name}_proj'))
+        l.activation = linear
       else:
         self.proj_layers.append(None)
-    self.activation = keras.activations.get(activation)
+        self.activation.append(None)
 
   def call(self, x, **kwargs):
     z = tf.reshape(x, (-1, 1, 1, x.shape[-1]))
-    for fn, proj in zip(self.all_layers, self.proj_layers):
+    for fn, proj, activation in zip(self.all_layers, self.proj_layers,
+                                    self.activation):
       x = fn(x, **kwargs)
       # shortcut connection
       if proj is not None:
         z_proj = proj(z, **kwargs)
-        x = self.activation(x + z_proj)
+        x = activation(x + z_proj)
     return x
 
 
@@ -96,11 +100,11 @@ def mnist_networks(qz: str = 'mvndiag',
   encoder = keras.Sequential(
       [
           CenterAt0(enable=centerize_image),
-          conv(32, 5, strides=1),
-          conv(32, 5, strides=2),
-          conv(64, 5, strides=1),
-          conv(64, 5, strides=2),
-          conv(4 * zdim, 7, strides=1, padding='valid'),
+          conv(32, 5, strides=1, name='encoder0'),
+          conv(32, 5, strides=2, name='encoder1'),
+          conv(64, 5, strides=1, name='encoder2'),
+          conv(64, 5, strides=2, name='encoder3'),
+          conv(4 * zdim, 7, strides=1, padding='valid', name='encoder4'),
           keras.layers.Flatten()
       ],
       name='encoder',
@@ -108,27 +112,28 @@ def mnist_networks(qz: str = 'mvndiag',
   layers = [
       keras.layers.Lambda(  # assume that n_mcmc_sample=()
           lambda x: tf.reshape(x, [-1, 1, 1, x.shape[-1]])),
-      deconv(64, 7, strides=1, padding='valid'),
-      deconv(64, 5, strides=1),
-      deconv(64, 5, strides=2),
-      deconv(32, 5, strides=1),
-      deconv(32, 5, strides=2),
-      deconv(32, 5, strides=1),
-      conv(1, 5, strides=1, activation=None),
+      deconv(64, 7, strides=1, padding='valid', name='decoder0'),
+      deconv(64, 5, strides=1, name='decoder1'),
+      deconv(64, 5, strides=2, name='decoder2'),
+      deconv(32, 5, strides=1, name='decoder3'),
+      deconv(32, 5, strides=2, name='decoder4'),
+      deconv(32, 5, strides=1, name='decoder5'),
+      conv(1, 5, strides=1, activation=None, name='decoder6'),
       keras.layers.Flatten()
   ]
   if skip_generator:
-    decoder = SkipSequential(activation=activation,
-                             layers=layers,
-                             name='skipdecoder')
+    decoder = SkipSequential(layers=layers, name='skipdecoder')
   else:
     decoder = keras.Sequential(layers=layers, name='decoder')
   latents = RVmeta((zdim,), qz, projection=True, name="latents")
   observation = RVmeta(input_shape, "bernoulli", projection=False, name="image")
-  return dict(encoder=encoder,
-              decoder=decoder,
-              observation=observation,
-              latents=latents)
+  networks = dict(encoder=encoder,
+                  decoder=decoder,
+                  observation=observation,
+                  latents=latents)
+  if is_semi_supervised:
+    networks['labels'] = RVmeta(10, 'onehot', projection=True, name='digits')
+  return networks
 
 
 def dsprites_networks(qz: str = 'mvndiag',
@@ -145,30 +150,28 @@ def dsprites_networks(qz: str = 'mvndiag',
   encoder = keras.Sequential(
       [
           CenterAt0(enable=centerize_image),
-          conv(32, 4, strides=2),
-          conv(32, 4, strides=2),
-          conv(64, 4, strides=2),
-          conv(64, 4, strides=2),
+          conv(32, 4, strides=2, name='encoder0'),
+          conv(32, 4, strides=2, name='encoder1'),
+          conv(64, 4, strides=2, name='encoder2'),
+          conv(64, 4, strides=2, name='encoder3'),
           keras.layers.Flatten(),
-          keras.layers.Dense(proj_dim, activation='linear')
+          keras.layers.Dense(proj_dim, activation='linear', name='encoder4')
       ],
       name='encoder',
   )
   layers = [
-      keras.layers.Dense(proj_dim, activation=activation),
+      keras.layers.Dense(proj_dim, activation=activation, name='decoder0'),
       keras.layers.Lambda(lambda x: tf.reshape(x, (-1, 1, 1, proj_dim))),
-      keras.layers.Dense(4 * 4 * 64, activation=activation),
+      keras.layers.Dense(4 * 4 * 64, activation=activation, name='decoder1'),
       keras.layers.Reshape((4, 4, 64)),
-      deconv(64, 4, strides=2),
-      deconv(32, 4, strides=2),
-      deconv(32, 4, strides=2),
-      deconv(n_channels, 4, strides=2),
+      deconv(64, 4, strides=2, name='decoder2'),
+      deconv(32, 4, strides=2, name='decoder3'),
+      deconv(32, 4, strides=2, name='decoder4'),
+      deconv(n_channels, 4, strides=2, name='decoder5'),
       keras.layers.Flatten()
   ]
   if skip_generator:
-    decoder = SkipSequential(activation=activation,
-                             layers=layers,
-                             name='skipdecoder')
+    decoder = SkipSequential(layers=layers, name='skipdecoder')
   else:
     decoder = keras.Sequential(layers=layers, name='decoder')
   latents = RVmeta((zdim,), qz, projection=True, name="latents")

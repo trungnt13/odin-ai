@@ -16,7 +16,8 @@ from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              _parse_layers)
-from odin.bay.vi.utils import marginalize_categorical_labels
+from odin.bay.vi.utils import (marginalize_categorical_labels,
+                               prepare_ssl_inputs, split_ssl_inputs)
 from odin.networks import NetworkConfig, TensorTypes
 from odin.networks.conditional_embedding import (ProjectionEmbedding,
                                                  get_embedding)
@@ -30,97 +31,6 @@ from tensorflow_probability.python.distributions import (
 from typing_extensions import Literal
 
 __all__ = ['conditionalM2VAE']
-
-
-# ===========================================================================
-# Helpers
-# ===========================================================================
-def _batch_size(x):
-  batch_size = x.shape[0]
-  if batch_size is None:
-    batch_size = tf.shape(x)[0]
-  return batch_size
-
-
-def prepare_ssl_inputs(
-    inputs: Union[TensorTypes, List[TensorTypes]],
-    mask: TensorTypes,
-    n_unsupervised_inputs: int,
-) -> Tuple[List[tf.Tensor], List[tf.Tensor], tf.Tensor]:
-  """Prepare the inputs for the semi-supervised learning,
-  three cases are considered:
-
-    - Only the unlabeled data given
-    - Only the labeled data given
-    - A mixture of both unlabeled and labeled data, indicated by mask
-
-  Parameters
-  ----------
-  inputs : Union[TensorTypes, List[TensorTypes]]
-  n_unsupervised_inputs : int
-  mask : TensorTypes
-      The `mask` is given as indicator, `1` for labeled sample and
-      `0` for unlabeled samples
-
-  Returns
-  -------
-  Tuple[tf.Tensor, tf.Tensor, tf.Tensor]
-      - List of inputs tensors
-      - List of labels tensors
-      - mask tensor
-  """
-  inputs = tf.nest.flatten(as_tuple(inputs))
-  batch_size = _batch_size(inputs[0])
-  ## no labels provided
-  if len(inputs) == n_unsupervised_inputs:
-    X = inputs
-    y = []
-    mask = tf.cast(tf.zeros(shape=(batch_size, 1)), dtype=tf.bool)
-  ## labels is provided
-  else:
-    X = inputs[:n_unsupervised_inputs]
-    y = inputs[n_unsupervised_inputs:]
-    if mask is None:  # all data is labelled
-      mask = tf.cast(tf.ones(shape=(batch_size, 1)), tf.bool)
-  y = [i for i in y if i is not None]
-  return X, y, mask
-
-
-def split_ssl_inputs(
-    X: List[tf.Tensor],
-    y: List[tf.Tensor],
-    mask: tf.Tensor,
-) -> Tuple[List[tf.Tensor], List[tf.Tensor], List[tf.Tensor]]:
-  """Split semi-supervised inputs into unlabelled and labelled data
-
-  Parameters
-  ----------
-  X : List[tf.Tensor]
-  y : List[tf.Tensor]
-  mask : tf.Tensor
-
-  Returns
-  -------
-  Tuple[List[tf.Tensor], List[tf.Tensor], List[tf.Tensor], tf.Tensor]
-      - list of unlablled inputs
-      - list of labelled inputs
-      - list of labels
-  """
-  if not isinstance(X, (tuple, list)):
-    X = [X]
-  if y is None:
-    y = []
-  elif not isinstance(y, (tuple, list)):
-    y = [y]
-  if mask is None:
-    mask = tf.cast(tf.zeros(shape=(_batch_size(X[0]), 1)), dtype=tf.bool)
-  # flatten the mask
-  mask = tf.reshape(mask, (-1,))
-  # split into unlabelled and labelled data
-  X_unlabelled = [tf.boolean_mask(i, tf.logical_not(mask), axis=0) for i in X]
-  X_labelled = [tf.boolean_mask(i, mask, axis=0) for i in X]
-  y_labelled = [tf.boolean_mask(i, mask, axis=0) for i in y]
-  return X_unlabelled, X_labelled, y_labelled
 
 
 # ===========================================================================
@@ -198,7 +108,7 @@ class conditionalM2VAE(betaVAE):
 
   def __init__(
       self,
-      n_classes: int = 10,
+      labels: RVmeta = RVmeta(10, 'onehot', name='digits'),
       observation: RVmeta = RVmeta((28, 28, 1),
                                    'bernoulli',
                                    projection=True,
@@ -236,7 +146,9 @@ class conditionalM2VAE(betaVAE):
                      **kwargs)
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name="alpha")
     self.marginalize = bool(marginalize)
-    self.n_classes = int(n_classes)
+    self.n_classes = int(np.prod(labels.event_shape))
+    assert labels.posterior == 'onehot', \
+      f'only support Categorical distribution for labels, given {labels.posterior}'
     self.embedding_dim = int(embedding_dim)
     self.embedding_method = str(embedding_method)
     self.batchnorm = bool(batchnorm)
@@ -256,22 +168,22 @@ class conditionalM2VAE(betaVAE):
       posterior = 'relaxedonehot'
       dist_kw = dict(temperature=temperature)
       self.relaxed = True
-    self.labels = RVmeta(n_classes,
+    self.labels = RVmeta(self.n_classes,
                          posterior,
                          projection=True,
-                         prior=OneHotCategorical(probs=[1. / n_classes] *
-                                                 n_classes),
-                         name='labels',
+                         prior=OneHotCategorical(probs=[1. / self.n_classes] *
+                                                 self.n_classes),
+                         name=labels.name,
                          kwargs=dist_kw).create_posterior()
     # create embedder
     embedder = get_embedding(self.embedding_method)
     # q(z|xy)
-    self.y_to_qz = embedder(n_classes=n_classes,
+    self.y_to_qz = embedder(n_classes=self.n_classes,
                             event_shape=self.embedding_dim,
                             name='y_to_qz')
     self.x_to_qz = Dense(embedding_dim, activation='linear', name='x_to_qz')
     # p(x|zy)
-    self.y_to_px = embedder(n_classes=n_classes,
+    self.y_to_px = embedder(n_classes=self.n_classes,
                             event_shape=self.embedding_dim,
                             name='y_to_px')
     self.z_to_px = Dense(embedding_dim, activation='linear', name='z_to_px')

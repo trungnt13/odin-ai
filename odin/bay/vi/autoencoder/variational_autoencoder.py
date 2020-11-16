@@ -281,6 +281,7 @@ class VariationalAutoencoder(VariationalModel):
              inputs: Union[TensorTypes, List[TensorTypes]],
              training: Optional[bool] = None,
              mask: Optional[TensorTypes] = None,
+             only_encoding: bool = False,
              **kwargs) -> Distribution:
     r""" Encoding inputs to latent codes """
     kw = dict(kwargs)
@@ -289,6 +290,8 @@ class VariationalAutoencoder(VariationalModel):
     if 'training' in self._encoder_args:
       kw['training'] = training
     h_e = self.encoder(inputs, **kw)
+    if only_encoding:
+      return h_e
     # create the latents distribution
     kw = {}
     if 'training' in self._latents_args:
@@ -306,6 +309,7 @@ class VariationalAutoencoder(VariationalModel):
              latents: Union[TensorTypes, List[TensorTypes]],
              training: Optional[bool] = None,
              mask: Optional[Tensor] = None,
+             only_decoding: bool = False,
              **kwargs) -> Distribution:
     r""" Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
@@ -333,6 +337,9 @@ class VariationalAutoencoder(VariationalModel):
       org_shape = tf.concat(
           [self.sample_shape, [-1], tf.shape(h_d)[1:]], axis=0)
       h_d = tf.reshape(h_d, org_shape)
+    # only return hidden states from the decoder
+    if only_decoding:
+      return h_d
     # create the output distribution
     kw = {}
     if 'training' in self._observation_args:

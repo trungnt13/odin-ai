@@ -294,7 +294,7 @@ class factorVAE(betaVAE):
 # ===========================================================================
 # Same as Factor VAE but with multi-task semi-supervised extension
 # ===========================================================================
-class ssfVAE(factorVAE):
+class ssfactorVAE(factorVAE):
   r""" Semi-supervised Factor VAE
 
   Note:
@@ -310,8 +310,6 @@ class ssfVAE(factorVAE):
                                        'onehot',
                                        projection=True,
                                        name="Labels"),
-               discriminator: Union[FactorDiscriminator, Dict[str, Any]] = dict(
-                   units=[1000, 1000, 1000, 1000, 1000]),
                alpha: float = 10.,
                ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
                                     'min'] = 'logsumexp',
@@ -403,7 +401,7 @@ class factor2VAE(factorVAE):
     return llk, div
 
 
-class ssf2VAE(ssfVAE, factor2VAE):
+class ssfactor2VAE(ssfactorVAE, factor2VAE):
   r""" Combination of Semi-supervised VAE and Factor-2 VAE which leverages
   both labelled samples and the use of 2 latents space (1 for contents, and
   1 for factors)
