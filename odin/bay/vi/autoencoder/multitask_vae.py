@@ -13,32 +13,24 @@ from tensorflow.python.ops import array_ops
 
 
 class multitaskVAE(betaVAE):
-  r""" Multi-tasks VAE for semi-supervised learning
+  """Multi-tasks VAE for semi-supervised learning
 
-  Example:
-  ```
-  from odin.fuel import MNIST
-  from odin.bay.vi.autoencoder import multitaskVAE
-
-  # load the dataset, include 50% of the labels for semi-supervised objective
-  ds = MNIST()
-  train = ds.create_dataset(partition='train', inc_labels=0.5)
-
-  # create and train the model
-  vae = multitaskVAE(encoder='mnist',
-                     outputs=RVmeta((28, 28, 1),
-                                'bern',
-                                projection=False,
-                                name="Image"),
-                     labels=RVmeta(10, 'onehot', projection=True, name="Digit"))
-  vae.fit(train, epochs=-1, max_iter=8000, compile_graph=True, sample_shape=1)
-  ```
+  Parameters
+  ----------
+  labels : Union[RVmeta, List[RVmeta]], optional
+      distribution description of the label(s)
+  skip_decoder : bool, optional
+      the supervised outputs are directly connected to the latents,
+      by default True
+  alpha : float, optional
+      coefficient of the supervised objective, by default 10.
+  name : str, optional
+      by default 'MultitaskVAE'
 
   Reference
   -----------
   Trong, T. N. et al. Semisupervised Generative Autoencoder for Single-Cell Data.
       Journal of Computational Biology 27, 1190–1203 (2019).
-
   """
 
   def __init__(self,
@@ -46,15 +38,14 @@ class multitaskVAE(betaVAE):
                                                             'onehot',
                                                             projection=True,
                                                             name="digits"),
-               skip_connect: bool = True,
+               skip_decoder: bool = True,
                alpha: float = 10.,
                name: str = 'MultitaskVAE',
                **kwargs):
     super().__init__(name=name, **kwargs)
     self.labels = [y.create_posterior() for y in as_tuple(labels)]
     self.alpha = alpha
-    self.skip_connect = bool(skip_connect)
-    self._projector = None
+    self.skip_decoder = bool(skip_decoder)
 
   @property
   def alpha(self):
@@ -76,16 +67,11 @@ class multitaskVAE(betaVAE):
                          mask=mask,
                          only_decoding=True,
                          **kwargs)
-    if self.skip_connect:
-      if self._projector is None:
-        self._projector = keras.layers.Dense(units=h_d.shape[-1],
-                                             activation=None,
-                                             name='skip_connect')
-      if isinstance(latents, (tuple, list)):
-        latents = tf.concat(latents, axis=-1)
-      h_d = h_d + self._projector(latents)
     px_z = self.observation(h_d, training=training, mask=mask)
-    py_z = [fy(h_d, training=training, mask=mask) for fy in self.labels]
+    py_z = [
+        fy(latents if self.skip_decoder else h_d, training=training, mask=mask)
+        for fy in self.labels
+    ]
     return (px_z,) + tuple(py_z)
 
   def elbo_components(self, inputs, training=None, mask=None):

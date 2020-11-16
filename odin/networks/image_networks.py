@@ -72,6 +72,15 @@ class SkipSequential(keras.Model):
         self.proj_layers.append(None)
         self.activation.append(None)
 
+  def build(self, input_shape):
+    # this is a simple logic why keras don't do this by default!
+    self._build_input_shape = input_shape
+    return super().build(input_shape)
+
+  @property
+  def input_shape(self):
+    return self._build_input_shape
+
   def call(self, x, **kwargs):
     z = tf.reshape(x, (-1, 1, 1, x.shape[-1]))
     for fn, proj, activation in zip(self.all_layers, self.proj_layers,

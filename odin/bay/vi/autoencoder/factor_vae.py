@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import collections
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
@@ -13,6 +13,8 @@ from odin.bay.vi.autoencoder.variational_autoencoder import (DatasetV2,
                                                              OptimizerV2,
                                                              TensorTypes,
                                                              TrainStep, VAEStep)
+from odin.bay.vi.utils import prepare_ssl_inputs
+from odin.utils import as_tuple
 from tensorflow.python import keras
 from tensorflow_probability.python.distributions import Distribution
 from typing_extensions import Literal
@@ -86,9 +88,9 @@ class FactorDiscriminatorStep(VAEStep):
     ## applying the classifier loss,
     # if model is semi-supervised and the labels is given
     supervised_loss = 0.
-    if (self.vae.is_semi_supervised() and
-        len(inputs) > len(self.vae.observation)):
-      labels = inputs[-1]
+    inputs = as_tuple(self.inputs)
+    if (self.vae.is_semi_supervised() and len(inputs) > 1):
+      labels = inputs[1:]
       supervised_loss = self.vae.supervised_loss(labels,
                                                  qz_x=qz_x,
                                                  mask=self.mask,
@@ -120,50 +122,57 @@ class factorVAE(betaVAE):
     dis_optimizer.apply_gradients(dtc_loss, dis.parameters)
   ```
 
-  Arguments:
-    discriminator : a Dictionary or `keras.layers.Layer`.
-      Keywords arguments for creating the `FactorDiscriminator`
-    maximize_tc : a Boolean. If True, instead of minimize total correlation
-      for more factorized latents, try to maximize the divergence.
-    gamma : a Scalar. Weight for minimizing total correlation
-    beta : a Scalar. Weight for minimizing Kl-divergence to the prior
-    lamda : a Scalar. Weight for minimizing the discriminator loss
+  Parameters
+  ------------
+  discriminator : a Dictionary or `keras.layers.Layer`.
+    Keywords arguments for creating the `FactorDiscriminator`
+  maximize_tc : a Boolean. If True, instead of minimize total correlation
+    for more factorized latents, try to maximize the divergence.
+  gamma : a Scalar. Weight for minimizing total correlation
+  beta : a Scalar. Weight for minimizing Kl-divergence to the prior
+  lamda : a Scalar. Weight for minimizing the discriminator loss
 
-  Note:
-    You should use double the `batch_size` since the minibatch will be splitted
-    into 2 partitions for `X` and `X_prime`.
+  Note
+  ------
+  You should use double the `batch_size` since the minibatch will be splitted
+  into 2 partitions for `X` and `X_prime`.
 
-    It is recommended to use the same optimizers configuration like in the
-    paper: `Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999)` for the VAE
-    and `Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)` for the
-    discriminator.
+  It is recommended to use the same optimizers configuration like in the
+  paper: `Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999)` for the VAE
+  and `Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)` for the
+  discriminator.
 
-    Discriminator's Adam has learning rate `1e-4` for dSprites and `1e-5` for
-    Shapes3D and other colored image datasets.
+  Discriminator's Adam has learning rate `1e-4` for dSprites and `1e-5` for
+  Shapes3D and other colored image datasets.
 
-  Reference:
+  Reference
+  -----------
     Kim, H., Mnih, A., 2018. Disentangling by Factorising.
       arXiv:1802.05983 [cs, stat].
   """
 
   def __init__(self,
-               discriminator: Union[FactorDiscriminator, Dict[str, Any]] = dict(
-                   units=[1000, 1000, 1000, 1000, 1000]),
+               discriminator_units: List[int] = [1000, 1000, 1000, 1000, 1000],
+               activation: Union[str, Callable[[], Any]] = tf.nn.leaky_relu,
+               batchnorm: bool = False,
                gamma: float = 1.0,
                beta: float = 1.0,
                lamda: float = 1.0,
                maximize_tc: bool = False,
                **kwargs):
+    ss_strategy = kwargs.pop('ss_strategy', 'logsumexp')
+    labels = kwargs.pop(
+        'labels', RVmeta(1, 'bernoulli', projection=True, name="discriminator"))
     super().__init__(beta=beta, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     self.lamda = tf.convert_to_tensor(lamda, dtype=self.dtype, name='lamda')
     ## init discriminator
-    if not isinstance(discriminator, FactorDiscriminator):
-      discriminator = FactorDiscriminator(**discriminator)
-    assert isinstance(discriminator, FactorDiscriminator), \
-      ('discriminator must be instance of FactorDiscriminator, '
-       f'but given {type(discriminator)}')
-    self.discriminator = discriminator
+    self.discriminator = FactorDiscriminator(
+        units=as_tuple(discriminator_units),
+        activation=activation,
+        batchnorm=batchnorm,
+        ss_strategy=ss_strategy,
+        observation=labels)
     # VAE and discriminator must be trained separated so we split their params here
     self.maximize_tc = bool(maximize_tc)
     ## For training
@@ -314,19 +323,13 @@ class ssfactorVAE(factorVAE):
                ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
                                     'min'] = 'logsumexp',
                **kwargs):
-    if isinstance(discriminator, dict):
-      discriminator['outputs'] = labels
-      discriminator['ss_strategy'] = ss_strategy
-    super().__init__(discriminator=discriminator, **kwargs)
+    super().__init__(ss_strategy=ss_strategy, labels=labels, **kwargs)
     self.n_labels = self.discriminator.n_outputs
-    self.labels = labels
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
 
   def encode(self, inputs, training=None, mask=None, **kwargs):
-    inputs = tf.nest.flatten(inputs)[:len(self.observation)]
-    if len(inputs) == 1:
-      inputs = inputs[0]
-    return super().encode(inputs, training=training, mask=mask, **kwargs)
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    return super().encode(X[0], training=training, mask=None, **kwargs)
 
   def classify(self,
                inputs: Union[TensorTypes, List[TensorTypes]],
@@ -346,7 +349,7 @@ class ssfactorVAE(factorVAE):
                       qz_x: Distribution,
                       mask: Optional[TensorTypes] = None,
                       training: Optional[bool] = None) -> tf.Tensor:
-    r""" The semi-supervised classifier loss, `mask` is given to indicate
+    """The semi-supervised classifier loss, `mask` is given to indicate
     labelled examples (i.e. `mask=1`), and otherwise, unlabelled examples.
     """
     return self.alpha * self.discriminator.supervised_loss(

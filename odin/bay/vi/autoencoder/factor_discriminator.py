@@ -7,6 +7,7 @@ from odin.bay.layers import DenseDistribution
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.utils import permute_dims
 from odin.networks import SequentialNetwork, dense_network
+from odin.utils import as_tuple
 from tensorflow_probability.python.distributions import (Distribution,
                                                          Independent)
 from typing_extensions import Literal
@@ -229,14 +230,14 @@ class FactorDiscriminator(SequentialNetwork):
     return loss
 
   def supervised_loss(self,
-                      labels: tf.Tensor,
+                      labels: Union[tf.Tensor, List[tf.Tensor]],
                       qz_x: Distribution,
                       mean: bool = False,
                       mask: Optional[tf.Tensor] = None,
                       training: Optional[bool] = None) -> tf.Tensor:
-    labels = tf.nest.flatten(labels)
+    labels = as_tuple(labels)
     z = self._to_samples(qz_x, mean=mean, stop_grad=True)
-    distributions = tf.nest.flatten(self(z, training=training))
+    distributions = as_tuple(self(z, training=training))
     ## applying the mask (1-labelled, 0-unlabelled)
     if mask is not None:
       mask = tf.reshape(mask, (-1,))
