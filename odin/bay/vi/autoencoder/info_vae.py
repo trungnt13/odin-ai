@@ -174,11 +174,6 @@ class miVAE(betaVAE):
 
   def decode(self, latents, **kwargs):
     latents = tf.concat(latents, axis=-1)
-    if hasattr(self.decoder, 'input_shape'):
-      s1 = self.decoder.input_shape[1:]
-      s2 = latents.shape[1:]
-      tf.assert_equal(
-          s1, s2, f'decoder input shape is {s1} but the latents shape is {s2}')
     return super().decode(latents, **kwargs)
 
   def elbo_components(self, inputs, training=None, mask=None):

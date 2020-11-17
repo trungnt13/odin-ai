@@ -55,7 +55,6 @@ gamma: 1
 alpha: 10
 lamda: 1
 zdim: 32
-max_iter: 30000
 override: False
 skip: False
 """
@@ -136,7 +135,7 @@ def plot_latent_units(mean, std, w):
 # ===========================================================================
 # Main
 # ===========================================================================
-@run_hydra(output_dir=OUTPUT_DIR, exclude_keys=['max_iter', 'override'])
+@run_hydra(output_dir=OUTPUT_DIR, exclude_keys=['override'])
 def main(cfg: dict):
   assert cfg.vae is not None, \
     ('No VAE model given, select one of the following: '
@@ -167,10 +166,13 @@ def main(cfg: dict):
                     n_channels=x_samples.shape[-1])
   if 'mnist' in cfg.ds:
     fn_networks = mnist_networks
+    max_iter = 25000
   elif 'dsprites' in cfg.ds:
     fn_networks = dsprites_networks
+    max_iter = 50000
   elif 'shapes3d' in cfg.ds:
     fn_networks = shapes3d_networks
+    max_iter = 100000
   else:
     raise NotImplementedError(
         f'No predefined networks support for dataset {cfg.ds}')
@@ -257,7 +259,7 @@ def main(cfg: dict):
   vae.fit(train,
           valid=valid,
           epochs=-1,
-          max_iter=int(cfg.max_iter),
+          max_iter=max_iter,
           valid_freq=1000,
           logging_interval=2,
           skip_fitted=True,

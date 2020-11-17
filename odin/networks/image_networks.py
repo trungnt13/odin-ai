@@ -185,10 +185,16 @@ def dsprites_networks(qz: str = 'mvndiag',
     decoder = keras.Sequential(layers=layers, name='decoder')
   latents = RVmeta((zdim,), qz, projection=True, name="latents")
   observation = RVmeta(input_shape, "bernoulli", projection=False, name="image")
-  return dict(encoder=encoder,
-              decoder=decoder,
-              observation=observation,
-              latents=latents)
+  networks = dict(encoder=encoder,
+                  decoder=decoder,
+                  observation=observation,
+                  latents=latents)
+  if is_semi_supervised:
+    networks['labels'] = RVmeta(5,
+                                'negativebinomial',
+                                projection=True,
+                                name='attributes')
+  return networks
 
 
 def shapes3d_networks(qz: str = 'mvndiag',
@@ -198,13 +204,20 @@ def shapes3d_networks(qz: str = 'mvndiag',
                       centerize_image: bool = True,
                       skip_generator: bool = False,
                       n_channels: int = 3):
-  return dsprites_networks(qz=qz,
-                           zdim=zdim,
-                           activation=activation,
-                           is_semi_supervised=is_semi_supervised,
-                           centerize_image=centerize_image,
-                           skip_generator=skip_generator,
-                           n_channels=n_channels)
+  from odin.bay.random_variable import RVmeta
+  networks = dsprites_networks(qz=qz,
+                               zdim=zdim,
+                               activation=activation,
+                               is_semi_supervised=is_semi_supervised,
+                               centerize_image=centerize_image,
+                               skip_generator=skip_generator,
+                               n_channels=n_channels)
+  if is_semi_supervised:
+    networks['labels'] = RVmeta(6,
+                                'gaussian',
+                                projection=True,
+                                name='attributes')
+  return networks
 
 
 def celeba_networks(qz: str = 'mvndiag',
