@@ -41,7 +41,7 @@ sns.set()
 # Example:
 # python all_vae_test.py vae=betavae ds=dsprites beta=1,10,20 px=bernoulli py=onehot max_iter=100000 -m -j4
 # ===========================================================================
-OUTPUT_DIR = '/tmp/vae_all'
+OUTPUT_DIR = '/tmp/vae_tests'
 batch_size = 32
 n_visual_samples = 16
 
@@ -236,8 +236,10 @@ def main(cfg: dict):
                       n_random_samples=1,
                       mode='linear',
                       seed=1)
-    images = vae.decode(z[0] if len(z) == 1 else z,
-                        training=False).mean().numpy()
+    # support multiple outputs here
+    P = vae.decode(z[0] if len(z) == 1 else z, training=False)
+    P = as_tuple(P)
+    images = P[0].mean().numpy()
     image_traverse = to_image(images,
                               grids=(n_indices,
                                      int(images.shape[0] / n_indices)))

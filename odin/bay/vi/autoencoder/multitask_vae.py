@@ -38,7 +38,7 @@ class multitaskVAE(betaVAE):
                                                             'onehot',
                                                             projection=True,
                                                             name="digits"),
-               skip_decoder: bool = True,
+               skip_decoder: bool = False,
                alpha: float = 10.,
                name: str = 'MultitaskVAE',
                **kwargs):
@@ -68,6 +68,8 @@ class multitaskVAE(betaVAE):
                          only_decoding=True,
                          **kwargs)
     px_z = self.observation(h_d, training=training, mask=mask)
+    if isinstance(latents, (tuple, list)):
+      latents = tf.concat(latents, axis=-1)
     py_z = [
         fy(latents if self.skip_decoder else h_d, training=training, mask=mask)
         for fy in self.labels
@@ -109,3 +111,10 @@ class multitaskVAE(betaVAE):
   @classmethod
   def is_semi_supervised(self) -> bool:
     return True
+
+
+class skiptaskVAE(multitaskVAE):
+
+  def __init__(self, name: str = 'SkiptaskVAE', **kwargs):
+    kwargs.pop('skip_decoder', None)
+    super().__init__(skip_decoder=True, name=name, **kwargs)

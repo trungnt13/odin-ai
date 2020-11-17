@@ -4,7 +4,9 @@ import os
 import re
 import sys
 import tempfile
+from collections import defaultdict
 from copy import deepcopy
+from datetime import datetime
 from typing import Any, Callable, List, Optional, Union
 
 import numpy as np
@@ -40,6 +42,8 @@ OVERRIDE_PATTERN = re.compile(r"\A[\+\~]?[\w\.\\\@]+=[\w\(\)\[\]\{\}\,\.\']+")
 JOBS_PATTERN = re.compile(r"\A-{1,2}j=?(\d+)\Z")
 LIST_PATTERN = re.compile(r"\A-{1,2}l(ist)?\Z")
 RESET_PATTERN = re.compile(r"\A-+r(eset)?\Z")
+TIME_FMT = r'%d%b%y_%H%M%S'
+HYDRA_TIME_FMT = r"${now:%d%b%y_%H%M%S}"
 
 
 def _insert_argv(key, value, is_value_string=True):
@@ -228,9 +232,12 @@ def run_hydra(output_dir: str = '/tmp/outputs',
   Useful commands:
     - `hydra/launcher=joblib` enable joblib launcher
     - `hydra.launcher.n_jobs=-1` set maximum number of processes
+    - `--list` : list all exist experiments
+    - `-j=2` : run multi-processing (with 2 processes)
+    - `--summary` : summary of the exist experiments
 
-
-  Example:
+  Examples
+  --------
   ```
   @experimenter.run_hydra()
   def run(cfg: DictConfig):
@@ -239,8 +246,9 @@ def run_hydra(output_dir: str = '/tmp/outputs',
   run("/tmp/conf/base.yaml")
   ```
 
-  Note:
-    to add `db` sub-config file to `database` object, from command line
+  Note
+  ------
+  to add `db` sub-config file to `database` object, from command line
       `python tmp.py db=mysql`, with the `#@package database`
       on top of the `mysql.yaml`, otherwise, from `base.yaml`
   ```
@@ -248,7 +256,7 @@ def run_hydra(output_dir: str = '/tmp/outputs',
     - db: mysql
   ```
 
-    Adding db to specific attribute of `database` object, from command line
+  Adding db to specific attribute of `database` object, from command line
       `python tmp.py db@database.src=mysql`, otherwise, from `base.yaml`
   ```
   defaults:
@@ -298,11 +306,24 @@ def run_hydra(output_dir: str = '/tmp/outputs',
       for a in sys.argv:
         if LIST_PATTERN.match(a):
           print("Output dir:", output_dir)
+          all_logs = defaultdict(list)
+          for i in os.listdir(log_dir):
+            name, time_str = i.replace('.log', '').split(':')
+            all_logs[name].append((time_str, os.path.join(log_dir, i)))
           for fname in sorted(os.listdir(output_dir)):
             path = os.path.join(output_dir, fname)
+            # basics meta
             print(
                 f" {fname}", f"({len(os.listdir(path))} files)"
                 if os.path.isdir(path) else "")
+            # show the log files info
+            if fname in all_logs:
+              for time_str, log_file in all_logs[fname]:
+                with open(log_file, 'r') as f:
+                  n = len(f.read().split('\n'))
+                  print(
+                      f'  log {datetime.strptime(time_str, TIME_FMT)} ({n} lines)'
+                  )
           exit()
       ### check if overrides provided
       is_overrided = False
@@ -311,7 +332,6 @@ def run_hydra(output_dir: str = '/tmp/outputs',
         if match and not any(k in match.string for k in exclude_keys):
           is_overrided = True
       ### formatting output dirs
-      time_fmt = r"${now:%j_%H%M%S}"
       if is_overrided:
         override_id = r"${hydra.job.override_dirname}"
       else:
@@ -336,10 +356,10 @@ def run_hydra(output_dir: str = '/tmp/outputs',
                    value=f"{output_dir}/{override_id}",
                    is_value_string=True)
       _insert_argv(key="hydra.sweep.dir",
-                   value=f"{output_dir}/multirun/{time_fmt}",
+                   value=f"{output_dir}/multirun/{HYDRA_TIME_FMT}",
                    is_value_string=True)
       _insert_argv(key="hydra.job_logging.handlers.file.filename",
-                   value=f"{log_dir}/{override_id}:{time_fmt}.log",
+                   value=f"{log_dir}/{override_id}:{HYDRA_TIME_FMT}.log",
                    is_value_string=True)
       _insert_argv(key="hydra.job.config.override_dirname.exclude_keys",
                    value=f"[{','.join([str(i) for i in exclude_keys])}]",
