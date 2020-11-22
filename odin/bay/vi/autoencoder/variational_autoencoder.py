@@ -19,7 +19,7 @@ import tensorflow as tf
 from numpy import ndarray
 from odin import backend as bk
 from odin.backend.keras_helpers import layer2text
-from odin.bay.layers import DenseDistribution, VectorDeterministicLayer
+from odin.bay.layers import DistributionDense, VectorDeterministicLayer
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi._base import VariationalModel
 from odin.exp.trainer import Trainer
@@ -393,8 +393,7 @@ class VariationalAutoencoder(VariationalModel):
         mask=mask,
         **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
     )
-    self._last_outputs = (px_z, qz_x)
-    return self.last_outputs
+    return (px_z, qz_x)
 
   @tf.function(autograph=False)
   def marginal_log_prob(self,
@@ -450,7 +449,7 @@ class VariationalAutoencoder(VariationalModel):
         continue
       z = tf.convert_to_tensor(qz)
       # the prior is injected into the distribution during the call method of
-      # DenseDistribution, or modified during the encode method by setting
+      # DistributionDense, or modified during the encode method by setting
       # qZ_X.KL_divergence.prior = ...
       pz = qz.KL_divergence.prior
       if pz is None:
@@ -576,7 +575,7 @@ class Autoencoder(VariationalAutoencoder):
     for qz in as_tuple(latents):
       if isinstance(qz, RVmeta):
         qz.posterior = 'vdeterministic'
-      elif isinstance(qz, DenseDistribution):
+      elif isinstance(qz, DistributionDense):
         assert qz.posterior == VectorDeterministicLayer, \
           ('Autoencoder only support VectorDeterministic posterior, '
           f'but given:{qz.posterior}')

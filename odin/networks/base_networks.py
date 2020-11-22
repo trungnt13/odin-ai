@@ -196,8 +196,9 @@ class Networks(keras.Model, MD5object):
                      **kwargs)
     self.step = tf.Variable(step, dtype=tf.int64, trainable=False, name="Step")
     self._save_path = path
-    self._last_outputs = None
-    self.trainer = None
+    with trackable.no_automatic_dependency_tracking_scope(self):
+      self._last_outputs = None
+      self._trainer = [None]
 
   def build(self, input_shape: List[Union[None, int]]) -> Networks:
     """Build the networks for given input or list of inputs
@@ -217,13 +218,20 @@ class Networks(keras.Model, MD5object):
     return self
 
   @property
+  def trainer(self) -> Trainer:
+    return self._trainer[0]
+
+  @property
   def last_outputs(self):
     """Return the last outputs from call method"""
     return self._last_outputs
 
   def __call__(self, *args, **kwargs):
     outputs = super().__call__(*args, **kwargs)
-    self._last_outputs = outputs
+    # do not track the outputs here, it will be serialized when
+    # save_weights is called which often results exception.
+    with trackable.no_automatic_dependency_tracking_scope(self):
+      self._last_outputs = outputs
     return outputs
 
   @property
@@ -277,7 +285,7 @@ class Networks(keras.Model, MD5object):
         if verbose:
           print(f"Loading trainer at path: {trainer_path}")
         with open(trainer_path, 'rb') as f:
-          self.trainer = pickle.load(f)
+          self._trainer[0] = pickle.load(f)
     self._save_path = filepath
     return self
 
@@ -292,7 +300,7 @@ class Networks(keras.Model, MD5object):
       filepath = self.save_path
     assert filepath is not None
     with open(filepath + '.trainer', 'wb') as f:
-      pickle.dump(self.trainer, f)
+      pickle.dump(self._trainer[0], f)
     logging.get_logger().disabled = True
     super().save_weights(filepath=filepath,
                          overwrite=overwrite,
@@ -500,7 +508,7 @@ class Networks(keras.Model, MD5object):
     if self.trainer is None:
       with trackable.no_automatic_dependency_tracking_scope(self):
         trainer = Trainer(logdir=logdir)
-        self.trainer = trainer
+        self._trainer[0] = trainer
     else:
       trainer = self.trainer
     ## if already called repeat, then no need to repeat more

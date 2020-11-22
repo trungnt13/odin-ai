@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
 from tensorflow.python import keras
@@ -43,7 +44,7 @@ class multitaskVAE(betaVAE):
                name: str = 'MultitaskVAE',
                **kwargs):
     super().__init__(name=name, **kwargs)
-    self.labels = [y.create_posterior() for y in as_tuple(labels)]
+    self.labels = [_parse_layers(y) for y in as_tuple(labels)]
     self.alpha = alpha
     self.skip_decoder = bool(skip_decoder)
 

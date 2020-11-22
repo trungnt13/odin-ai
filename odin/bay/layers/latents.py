@@ -9,7 +9,7 @@ from tensorflow_probability.python.distributions import (Independent, LogNormal,
 
 from odin.bay.layers.continuous import (LogNormalLayer, MultivariateNormalLayer,
                                         NormalLayer)
-from odin.bay.layers.dense_distribution import (DenseDistribution,
+from odin.bay.layers.dense_distribution import (DistributionDense,
                                                 MixtureDensityNetwork)
 
 __all__ = [
@@ -20,7 +20,7 @@ __all__ = [
 ]
 
 
-class MultivariateNormalDiagLatent(DenseDistribution):
+class MultivariateNormalDiagLatent(DistributionDense):
   r""" Multivariate normal diagonal latent distribution """
 
   def __init__(self,
@@ -42,7 +42,7 @@ class MultivariateNormalDiagLatent(DenseDistribution):
     )
 
 
-class IndependentNormalLatent(DenseDistribution):
+class IndependentNormalLatent(DistributionDense):
   r""" Independent normal distribution latent """
 
   def __init__(self,

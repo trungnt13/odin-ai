@@ -5,10 +5,13 @@ from typing import Callable, Dict, List, Union
 import numpy as np
 import tensorflow as tf
 from odin.backend.keras_helpers import layer2text
+from odin.bay.distributions import (Bernoulli, Categorical, Distribution, Gamma,
+                                    JointDistributionConcatenation, Normal)
 from odin.networks.base_networks import NetworkConfig, SequentialNetwork
 from odin.networks.skip_connection import SkipConnection
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
+from tensorflow_probability.python.layers import DistributionLambda
 
 __all__ = [
     'mnist_networks', 'dsprites_networks', 'shapes3d_networks',
@@ -151,8 +154,9 @@ def dsprites_networks(qz: str = 'mvndiag',
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
                       skip_generator: bool = False,
-                      n_channels: int = 1):
+                      **kwargs) -> Dict[str, Layer]:
   from odin.bay.random_variable import RVmeta
+  n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (64, 64, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
   proj_dim = 128 if n_channels == 1 else 256
@@ -197,13 +201,29 @@ def dsprites_networks(qz: str = 'mvndiag',
   return networks
 
 
+def _shapes3d_distribution(x):
+  return JointDistributionConcatenation([
+      Bernoulli(logits=x[..., 0], name='floor_hue'),
+      Bernoulli(logits=x[..., 1], name='wall_hue'),
+      Bernoulli(logits=x[..., 2], name='object_hue'),
+      Gamma(concentration=tf.math.softplus(x[..., 3]),
+            rate=tf.math.softplus(x[..., 4]),
+            name='scale'),
+      Categorical(logits=x[..., 5:9], name='shape'),
+      Normal(
+          loc=x[..., 10], scale=tf.nn.softplus(x[..., 11]), name='orientation'),
+  ],
+                                        name='shapes3d')
+
+
 def shapes3d_networks(qz: str = 'mvndiag',
                       zdim: int = 32,
                       activation: Union[Callable, str] = tf.nn.leaky_relu,
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
                       skip_generator: bool = False,
-                      n_channels: int = 3):
+                      **kwargs) -> Dict[str, Layer]:
+  from odin.bay.layers import DistributionDense
   from odin.bay.random_variable import RVmeta
   networks = dsprites_networks(qz=qz,
                                zdim=zdim,
@@ -211,12 +231,12 @@ def shapes3d_networks(qz: str = 'mvndiag',
                                is_semi_supervised=is_semi_supervised,
                                centerize_image=centerize_image,
                                skip_generator=skip_generator,
-                               n_channels=n_channels)
+                               n_channels=3)
   if is_semi_supervised:
-    networks['labels'] = RVmeta(6,
-                                'gaussian',
-                                projection=True,
-                                name='attributes')
+    networks['labels'] = DistributionDense(event_shape=(6,),
+                                           posterior=_shapes3d_distribution,
+                                           units=12,
+                                           name='shapes3d')
   return networks
 
 

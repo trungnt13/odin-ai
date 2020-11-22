@@ -152,6 +152,9 @@ def coercible_tensor(d: tfd.Distribution,
   assert isinstance(d, tfd.Distribution), \
     "dist must be instance of tensorflow_probability.Distribution"
   convert_to_tensor_fn = _get_convert_to_tensor_fn(convert_to_tensor_fn)
+  if inspect.isfunction(convert_to_tensor_fn) and \
+    convert_to_tensor_fn in list(tfd.Distribution.__dict__.values()):
+    convert_to_tensor_fn = getattr(type(d), convert_to_tensor_fn.__name__)
   # Wraps the distribution to return both dist and concrete value."""
   distribution = dtc._TensorCoercible(distribution=d,
                                       convert_to_tensor_fn=convert_to_tensor_fn)

@@ -10,7 +10,7 @@ import tensorflow as tf
 from odin.backend.tensor import dropout as apply_dropout
 from odin.bay.distributions import (Dirichlet, Distribution, LogitNormal,
                                     MultivariateNormalDiag, OneHotCategorical)
-from odin.bay.layers import (BinomialLayer, DenseDistribution, DirichletLayer,
+from odin.bay.layers import (BinomialLayer, DistributionDense, DirichletLayer,
                              DistributionLambda, MultinomialLayer,
                              MultivariateNormalLayer, NegativeBinomialLayer,
                              OneHotCategoricalLayer, PoissonLayer,
@@ -161,7 +161,7 @@ class LatentDirichletDecoder(Model):
         shape=[1, n_topics],
         trainable=bool(trainable_prior),
         name="topics_prior_logits")
-    self.posterior_layer = DenseDistribution(
+    self.posterior_layer = DistributionDense(
         posterior_kwargs=post_kw,
         prior=self.topics_prior_distribution,
         projection=True,

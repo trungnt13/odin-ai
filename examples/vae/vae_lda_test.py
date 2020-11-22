@@ -12,7 +12,7 @@ import numpy as np
 import scipy as sp
 import tensorflow as tf
 from odin.bay import concat_distributions
-from odin.bay.layers import DenseDistribution
+from odin.bay.layers import DistributionDense
 from odin.bay.vi import (AmortizedLDA, LatentDirichletDecoder, NetworkConfig,
                          RVmeta, TwoStageLDA, VariationalAutoencoder,
                          betaVAE, factorVAE, miVAE)
@@ -270,7 +270,7 @@ def main(cfg):
     vae0 = betaVAE(beta=1.0,
                    encoder=NetworkConfig(units=[300], name='Encoder'),
                    decoder=NetworkConfig(units=[300, 300], name='Decoder'),
-                   outputs=DenseDistribution(
+                   outputs=DistributionDense(
                        (n_words,),
                        posterior='onehot',
                        posterior_kwargs=dict(probs_input=True),

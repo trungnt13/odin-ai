@@ -3,7 +3,7 @@ from typing import Any, Callable, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
-from odin.bay.layers import DenseDistribution
+from odin.bay.layers import DistributionDense
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.utils import permute_dims
 from odin.networks import SequentialNetwork, dense_network
@@ -81,7 +81,7 @@ class FactorDiscriminator(SequentialNetwork):
     if not isinstance(observation, (tuple, list)):
       observation = [observation]
     assert len(observation) > 0, "No output is given for FactorDiscriminator"
-    assert all(isinstance(o, RVmeta) for o in observation), \
+    assert all(isinstance(o, (RVmeta, DistributionDense)) for o in observation), \
       (f"outputs must be instance of RVmeta, but given:{observation}")
     n_outputs = 0
     for o in observation:
@@ -106,7 +106,10 @@ class FactorDiscriminator(SequentialNetwork):
   def build(self, input_shape):
     super().build(input_shape)
     shape = self.output_shape[1:]
-    self._distributions = [o.create_posterior(shape) for o in self.observation]
+    self._distributions = [
+        o.create_posterior(shape) if isinstance(o, RVmeta) else o
+        for o in self.observation
+    ]
     self.input_ndim = len(self.input_shape) - 1
     return self
 
@@ -265,7 +268,7 @@ class FactorDiscriminator(SequentialNetwork):
     return len(self.observation)
 
   @property
-  def distributions(self) -> List[DenseDistribution]:
+  def distributions(self) -> List[DistributionDense]:
     return self._distributions
 
   @property

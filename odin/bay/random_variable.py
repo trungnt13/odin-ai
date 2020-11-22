@@ -149,6 +149,13 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   return prior
 
 
+def is_random_variable(x: Any) -> bool:
+  if (tf.is_tensor(x) and hasattr(x, 'distribution') and
+      isinstance(x.distribution, Distribution)):
+    return True
+  return False
+
+
 # ===========================================================================
 # Main-Method
 # ===========================================================================
@@ -204,7 +211,7 @@ class RVmeta:
     dist = x.create_posterior()
   """
   event_shape: List[int] = ()
-  posterior: str = 'gaus'
+  posterior: Union[str] = 'gaus'
   projection: bool = False
   dropout: float = 0.0
   name: Optional[str] = None
@@ -340,7 +347,7 @@ class RVmeta:
 
   def create_posterior(self,
                        input_shape: Optional[List[int]] = None,
-                       name: Optional[str] = None) -> obl.DenseDistribution:
+                       name: Optional[str] = None) -> obl.DistributionDense:
     r""" Initiate a Distribution for the random variable """
     # use Gaussian noise as prior distribution for  deterministic case
     if self.is_deterministic:
@@ -395,7 +402,7 @@ class RVmeta:
                                         **posterior_kwargs)
     ## non-mixture distribution
     else:
-      layer = obl.DenseDistribution(event_shape,
+      layer = obl.DistributionDense(event_shape,
                                     posterior=distribution_layer,
                                     prior=prior,
                                     activation=activation,

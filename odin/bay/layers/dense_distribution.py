@@ -3,15 +3,16 @@ from __future__ import absolute_import, annotations, division, print_function
 import inspect
 from functools import partial
 from numbers import Number
+from types import LambdaType
 from typing import Any, Callable, List, Optional, Text, Type, Union
 
 import numpy as np
 import tensorflow as tf
 from odin import backend as bk
-from odin.bay.helpers import (KLdivergence, is_binary_distribution,
-                              is_discrete_distribution, is_mixture_distribution,
+from odin.bay.helpers import (KLdivergence, coercible_tensor,
+                              is_binary_distribution, is_discrete_distribution,
+                              is_mixture_distribution,
                               is_zeroinflated_distribution, kl_divergence)
-from odin.bay.layers.deterministic_layers import VectorDeterministicLayer
 from odin.bay.layers.distribution_util_layers import Moments, Sampling
 from odin.networks import NetworkConfig
 from odin.utils import as_tuple
@@ -22,14 +23,11 @@ from tensorflow.python.keras.constraints import Constraint
 from tensorflow.python.keras.initializers.initializers_v2 import Initializer
 from tensorflow.python.keras.layers import Dense, Lambda, Layer
 from tensorflow.python.keras.regularizers import Regularizer
+from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -40,7 +38,7 @@ from typing_extensions import Literal
 
 __all__ = [
     'DenseDeterministic',
-    'DenseDistribution',
+    'DistributionDense',
     'MixtureDensityNetwork',
     'MixtureMassNetwork',
     'DistributionNetwork',
@@ -78,7 +76,7 @@ def _get_all_args(fn):
 # ===========================================================================
 # Main classes
 # ===========================================================================
-class DenseDistribution(Dense):
+class DistributionDense(Dense):
   r""" Using `Dense` layer to parameterize the tensorflow_probability
   `Distribution`
 
@@ -101,11 +99,11 @@ class DenseDistribution(Dense):
   def __init__(
       self,
       event_shape: List[int] = (),
-      posterior: Union[str, DistributionLambda] = 'normal',
-      posterior_kwargs: dict = {},
+      posterior: Union[str, DistributionLambda,
+                       Callable[..., Distribution]] = 'normal',
+      posterior_kwargs: Dict[str, Any] = {},
       prior: Optional[Union[Distribution, Callable[[], Distribution]]] = None,
       convert_to_tensor_fn: Callable[..., Tensor] = Distribution.sample,
-      dropout: float = 0.0,
       activation: Union[str, Callable[..., Tensor]] = 'linear',
       use_bias: bool = True,
       kernel_initializer: Union[str, Initializer] = 'glorot_normal',
@@ -115,13 +113,18 @@ class DenseDistribution(Dense):
       activity_regularizer: Union[str, Regularizer] = None,
       kernel_constraint: Union[str, Constraint] = None,
       bias_constraint: Union[str, Constraint] = None,
+      dropout: float = 0.0,
       projection: bool = True,
+      flatten_inputs: bool = False,
+      units: Optional[int] = None,
       **kwargs,
   ):
-    assert isinstance(prior, (Distribution, Callable, type(None))), \
+    assert isinstance(prior, (Distribution, type(None))) or callable(prior), \
       ("prior can only be None or instance of Distribution, DistributionLambda"
        f",  but given: {prior}-{type(prior)}")
-    # duplicated event_shape or event_size in posterior_kwargs
+    self._projection = bool(projection)
+    self.flatten_inputs = bool(flatten_inputs)
+    ## duplicated event_shape or event_size in posterior_kwargs
     posterior_kwargs = dict(posterior_kwargs)
     if 'event_shape' in posterior_kwargs:
       event_shape = posterior_kwargs.pop('event_shape')
@@ -129,37 +132,58 @@ class DenseDistribution(Dense):
       event_shape = posterior_kwargs.pop('event_size')
     convert_to_tensor_fn = posterior_kwargs.pop('convert_to_tensor_fn',
                                                 Distribution.sample)
-    # process the posterior
-    if inspect.isclass(posterior) and issubclass(posterior, DistributionLambda):
-      post_layer_cls = posterior
-    else:
+    ## process the posterior
+    self._posterior_layer = None
+    self._callable_posterior = False
+    if isinstance(posterior, DistributionLambda):
+      self._posterior_layer = posterior
+      self._posterior_class = type(posterior)
+    elif inspect.isclass(posterior) and issubclass(posterior,
+                                                   DistributionLambda):
+      self._posterior_class = posterior
+    elif isinstance(posterior, string_types):
       from odin.bay.distribution_alias import parse_distribution
-      post_layer_cls, _ = parse_distribution(posterior)
-    # create layers
-    self._convert_to_tensor_fn = convert_to_tensor_fn
+      self._posterior_class, _ = parse_distribution(posterior)
+    elif callable(posterior):
+      self._callable_posterior = True
+      if isinstance(posterior, LambdaType):
+        posterior = tf.autograph.experimental.do_not_convert(posterior)
+      self._posterior_layer = posterior
+      self._posterior_class = type(posterior)
+    else:
+      raise ValueError('posterior could be: string, DistributionLambda, '
+                       f'callable or type; but give: {posterior}')
     self._posterior = posterior
+    self._posterior_kwargs = posterior_kwargs
+    self._posterior_sample_shape = ()
+    ## create layers
+    self._convert_to_tensor_fn = convert_to_tensor_fn
     self._prior = prior
     self._event_shape = event_shape
     self._dropout = dropout
-    # for initializing the posterior
-    self._posterior_class = post_layer_cls
-    self._posterior_kwargs = posterior_kwargs
-    self._posterior_sample_shape = ()
-    self._posterior_layer = None
-    # set more descriptive name
+    ## set more descriptive name
     name = kwargs.pop('name', None)
     if name is None:
-      name = f'dense_{posterior if isinstance(posterior, string_types) else posterior.__class__.__name__}'
+      posterior_name = (posterior if isinstance(posterior, string_types) else
+                        posterior.__class__.__name__)
+      name = f'dense_{posterior_name}'
     kwargs['name'] = name
-    # params_size could be static function or method
+    ## params_size could be static function or method
     if not projection:
       self._params_size = 0
     else:
-      self._params_size = int(
-          _params_size(self.posterior_layer, event_shape,
-                       **self._posterior_kwargs))
-    self._projection = bool(projection)
-    super(DenseDistribution,
+      if not hasattr(self.posterior_layer, 'params_size'):
+        if units is None:
+          raise ValueError(
+              f'posterior layer of type {type(self.posterior_layer)} '
+              "doesn't has method params_size, number of parameters "
+              'must be provided as `units` argument, but given: None')
+        self._params_size = int(units)
+      else:
+        self._params_size = int(
+            _params_size(self.posterior_layer, event_shape,
+                         **self._posterior_kwargs))
+    super(DistributionDense,
           self).__init__(units=self._params_size,
                          activation=activation,
                          use_bias=use_bias,
@@ -171,10 +195,16 @@ class DenseDistribution(Dense):
                          kernel_constraint=kernel_constraint,
                          bias_constraint=bias_constraint,
                          **kwargs)
-    # store the distribution from last call
-    self._most_recent_distribution = None
+    # store the distribution from last call,
+    self._most_recently_built_distribution = None
+    # We'll need to keep track of who's calling who since the functional
+    # API has a different way of injecting `_keras_history` than the
+    # `keras.Sequential` way.
+    self._enter_dunder_call = False
+    spec = inspect.getfullargspec(self.posterior_layer)
+    self._posterior_call_kw = set(spec.args + spec.kwonlyargs)
 
-  def build(self, input_shape) -> DenseDistribution:
+  def build(self, input_shape) -> DistributionDense:
     super().build(input_shape)
     return self
 
@@ -227,22 +257,29 @@ class DenseDistribution(Dense):
     return dist.sample(sample_shape=self._posterior_sample_shape)
 
   @property
-  def posterior_layer(self) -> DistributionLambda:
-    if not isinstance(self._posterior_layer, DistributionLambda):
-      if self._convert_to_tensor_fn == Distribution.sample:
-        fn = self._sample_fn
-      else:
-        fn = self._convert_to_tensor_fn
-      self._posterior_layer = self._posterior_class(self._event_shape,
-                                                    convert_to_tensor_fn=fn,
-                                                    **self._posterior_kwargs)
+  def convert_to_tensor_fn(self) -> Callable[..., Tensor]:
+    if self._convert_to_tensor_fn == Distribution.sample:
+      return self._sample_fn
+    else:
+      return self._convert_to_tensor_fn
+
+  @property
+  def posterior_layer(
+      self) -> Union[DistributionLambda, Callable[..., Distribution]]:
+    if self._callable_posterior:
+      ...
+    elif not isinstance(self._posterior_layer, DistributionLambda):
+      self._posterior_layer = self._posterior_class(
+          self._event_shape,
+          convert_to_tensor_fn=self.convert_to_tensor_fn,
+          **self._posterior_kwargs)
     return self._posterior_layer
 
   @property
   def posterior(self) -> Distribution:
     r""" Return the most recent parametrized distribution,
     i.e. the result from the last `call` """
-    return self._most_recent_distribution
+    return self._most_recently_built_distribution
 
   @tf.function
   def sample(self, sample_shape=(), seed=None):
@@ -252,26 +289,58 @@ class DenseDistribution(Dense):
                          self.__class__.__name__)
     return self.prior.sample(sample_shape=sample_shape, seed=seed)
 
+  def __call__(self, inputs, *args, **kwargs):
+    if self._callable_posterior:
+      self._enter_dunder_call = True
+      distribution, _ = super().__call__(inputs, *args, **kwargs)
+      self._enter_dunder_call = False
+    else:
+      distribution = super().__call__(inputs, *args, **kwargs)
+    return distribution
+
   def call(self, inputs, training=None, sample_shape=(), **kwargs):
-    # projection by Dense layer could be skipped by setting projection=False
-    # NOTE: a 2D inputs is important here, but we don't want to flatten
+    ## NOTE: a 2D inputs is important here, but we don't want to flatten
     # automatically
+    if self.flatten_inputs:
+      inputs = tf.reshape(inputs, (tf.shape(inputs)[0], -1))
     params = inputs
-    # do not use tf.cond here, it infer the wrong shape when trying to build
-    # the layer in Graph mode.
+    ## do not use tf.cond here, it infer the wrong shape when
+    # trying to build the layer in Graph mode.
     if self.projection:
       params = super().call(params)
-    # applying dropout
+    ## applying dropout
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
-    # create posterior distribution
+    ## create posterior distribution
     self._posterior_sample_shape = sample_shape
-    posterior = self.posterior_layer(params, training=training)
-    self._most_recent_distribution = posterior
-    # NOTE: all distribution has the method kl_divergence, so we cannot use it
+    kw = dict()
+    if 'training' in self._posterior_call_kw:
+      kw['training'] = training
+    if 'sample_shape' in self._posterior_call_kw:
+      kw['sample_shape'] = sample_shape
+    for k, v in kwargs.items():
+      if k in self._posterior_call_kw:
+        kw[k] = v
+    posterior = self.posterior_layer(params, **kw)
+    # tensorflow tries to serialize the distribution,
+    # which raise exception when saving the graphs,
+    # to avoid this, store it as non-tracking list.
+    with trackable.no_automatic_dependency_tracking_scope(self):
+      self._most_recently_built_distribution = posterior
+    ## NOTE: all distribution has the method kl_divergence, so we cannot use it
     posterior.KL_divergence = KLdivergence(
         posterior, prior=self.prior,
         sample_shape=None)  # None mean reuse sampled data here
+    ## special case callable (act as DistributionLambda)
+    if self._callable_posterior:
+      posterior, value = coercible_tensor(posterior,
+                                          self.convert_to_tensor_fn,
+                                          return_value=True)
+      if self._enter_dunder_call:
+        # Its critical to return both distribution and concretization
+        # so Keras can inject `_keras_history` to both. This is what enables
+        # either to be used as an input to another Keras `Model`.
+        return posterior, value
     return posterior
 
   def kl_divergence(self,
@@ -282,16 +351,19 @@ class DenseDistribution(Dense):
     r""" KL(q||p) where `p` is the posterior distribution returned from last
     call
 
-    Arguments:
-      prior : instance of `tensorflow_probability.Distribution`
+    Parameters
+    -----------
+    prior : instance of `tensorflow_probability.Distribution`
         prior distribution of the latent
-      analytic : `bool` (default=`True`). Using closed form solution for
+    analytic : `bool` (default=`True`). Using closed form solution for
         calculating divergence, otherwise, sampling with MCMC
-      reverse : `bool`. If `True`, calculate `KL(q||p)` else `KL(p||q)`
-      sample_shape : `int` (default=`1`)
+    reverse : `bool`.
+        If `True`, calculate `KL(q||p)` else `KL(p||q)`
+    sample_shape : `int` (default=`1`)
         number of MCMC sample if `analytic=False`
 
-    Return:
+    Returns
+    --------
       kullback_divergence : Tensor [sample_shape, batch_size, ...]
     """
     if prior is None:
@@ -299,7 +371,7 @@ class DenseDistribution(Dense):
     assert isinstance(prior, Distribution), "prior is not given!"
     if self.posterior is None:
       raise RuntimeError(
-          "DenseDistribution must be called to create the distribution before "
+          "DistributionDense must be called to create the distribution before "
           "calculating the kl-divergence.")
 
     kullback_div = kl_divergence(q=self.posterior,
@@ -352,13 +424,15 @@ class DenseDistribution(Dense):
     config['dropout'] = self._dropout
     config['posterior_kwargs'] = self._posterior_kwargs
     config['projection'] = self.projection
+    config['flatten_inputs'] = self.flatten_inputs
+    config['units'] = self.units
     return config
 
 
 # ===========================================================================
 # Shortcuts
 # ===========================================================================
-class MixtureDensityNetwork(DenseDistribution):
+class MixtureDensityNetwork(DistributionDense):
   r""" Mixture Density Network
 
   Mixture of Gaussian parameterized by neural network
@@ -459,7 +533,7 @@ class MixtureDensityNetwork(DenseDistribution):
     return self
 
 
-class MixtureMassNetwork(DenseDistribution):
+class MixtureMassNetwork(DistributionDense):
   r""" Mixture Mass Network
 
   Mixture of NegativeBinomial parameterized by neural network
@@ -519,7 +593,7 @@ class MixtureMassNetwork(DenseDistribution):
                      **kwargs)
 
 
-class DenseDeterministic(DenseDistribution):
+class DenseDeterministic(DistributionDense):
   r""" Similar to `keras.Dense` layer but return a
   `tensorflow_probability.VectorDeterministic` distribution to represent
   the output, hence, making it compatible to the probabilistic framework.

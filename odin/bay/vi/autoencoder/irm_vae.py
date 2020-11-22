@@ -4,7 +4,7 @@ from typing import Optional
 
 import numpy as np
 import tensorflow as tf
-from odin.bay.layers import DenseDistribution, VectorDeterministicLayer
+from odin.bay.layers import DistributionDense, VectorDeterministicLayer
 from odin.bay.vi.autoencoder.variational_autoencoder import (
     LayerCreator, RVmeta, VariationalAutoencoder, _iter_lists)
 from odin.networks import SequentialNetwork
@@ -159,7 +159,7 @@ class irmAE(irmVAE):
     for qz in tf.nest.flatten(latents):
       if isinstance(qz, RVmeta):
         qz.posterior = 'vdeterministic'
-      elif isinstance(qz, DenseDistribution):
+      elif isinstance(qz, DistributionDense):
         assert qz.posterior == VectorDeterministicLayer, \
           ('irmAE only support VectorDeterministic posterior, '
           f'but given:{qz.posterior}')
