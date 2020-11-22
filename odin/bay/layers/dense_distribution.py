@@ -80,20 +80,37 @@ class DistributionDense(Dense):
   r""" Using `Dense` layer to parameterize the tensorflow_probability
   `Distribution`
 
-  Arguments:
-    event_shape : `int`
-      number of output units.
-    posterior : the posterior distribution, a distribution alias or Distribution
-      type can be given for later initialization (Default: 'normal').
-    prior : {`None`, `tensorflow_probability.Distribution`}
-      prior distribution, used for calculating KL divergence later.
-    use_bias : `bool` (default=`True`)
-      enable biases for the Dense layers
-    posterior_kwargs : `dict`. Keyword arguments for initializing the posterior
-      `DistributionLambda`
+    Parameters
+    ----------
+    event_shape : List[int]
+        distribution event shape, by default ()
+    posterior : {str, DistributionLambda, Callable[..., Distribution]}
+        Instrution for creating the posterior distribution, could be one of
+        the following:
+        - string : alias of the distribution, e.g. 'normal', 'mvndiag', etc.
+        - DistributionLambda : an instance or type.
+        - Callable : a callable that accept a Tensor as inputs and return a Distribution.
+    posterior_kwargs : Dict[str, Any], optional
+        keywords arguments for initialize the DistributionLambda if a type is
+        given as posterior.
+    prior : Union[Distribution, Callable[[], Distribution]]
+        prior Distribution, could be one of the following:
+        -
+        -
+    convert_to_tensor_fn : Callable[..., Tensor], optional
+        [description], by default Distribution.sample
+    dropout : float, optional
+        [description], by default 0.0
+    projection : bool, optional
+        [description], by default True
+    flatten_inputs : bool, optional
+        [description], by default False
+    units : Optional[int], optional
+        [description], by default None
 
-  Return:
-    `tensorflow_probability.Distribution`
+  Return
+  -------
+  `tensorflow_probability.Distribution`
   """
 
   def __init__(
@@ -322,9 +339,8 @@ class DistributionDense(Dense):
       if k in self._posterior_call_kw:
         kw[k] = v
     posterior = self.posterior_layer(params, **kw)
-    # tensorflow tries to serialize the distribution,
-    # which raise exception when saving the graphs,
-    # to avoid this, store it as non-tracking list.
+    # tensorflow tries to serialize the distribution, which raise exception
+    # when saving the graphs, to avoid this, store it as non-tracking list.
     with trackable.no_automatic_dependency_tracking_scope(self):
       self._most_recently_built_distribution = posterior
     ## NOTE: all distribution has the method kl_divergence, so we cannot use it

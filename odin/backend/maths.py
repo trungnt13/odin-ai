@@ -4,10 +4,9 @@ import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
 import torch
-from scipy.special import logsumexp
-
 from odin.backend import tensor as ts
 from odin.backend.tensor import _normalize_axis, dtype_universal
+from scipy.special import logsumexp
 
 
 # ===========================================================================
@@ -276,8 +275,7 @@ def softplus(x):
 
 
 def softplus1(x):
-  r""" `softplus(x + softplus_inverse(1.0))`
-  e.g. positive standard deviation for normal distributions """
+  """ `softplus(x + softplus_inverse(1.0))` """
   return softplus(x + softplus_inverse(1.0))
 
 

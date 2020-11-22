@@ -15,6 +15,7 @@ from odin.bay.vi.autoencoder.self_supervised_vae import *
 from odin.bay.vi.autoencoder.stochastic_vae import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.bay.vi.autoencoder.vq_vae import *
+from odin.bay.vi.autoencoder.hyperbolic_vae import *
 from odin.networks import NetworkConfig
 from six import string_types
 

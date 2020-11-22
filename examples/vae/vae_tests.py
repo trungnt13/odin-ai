@@ -261,6 +261,7 @@ def main(cfg: dict):
   vae.fit(train,
           valid=valid,
           epochs=-1,
+          clipnorm=100,
           max_iter=max_iter,
           valid_freq=1000,
           logging_interval=2,
