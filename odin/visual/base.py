@@ -1,4 +1,4 @@
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import absolute_import, division, print_function
 
 import os
 from collections import defaultdict
@@ -30,7 +30,7 @@ class Visualizer(object):
   def figures(self) -> Dict[Text, plt.Figure]:
     return _FIGURE_LIST[id(self)]
 
-  def add_figure(self, name: str, fig: plt.Figure) -> Visualizer:
+  def add_figure(self, name: str, fig: plt.Figure) -> 'Visualizer':
     from matplotlib import pyplot as plt
     self.assert_figure(fig)
     figures = _FIGURE_LIST[id(self)]
@@ -46,7 +46,7 @@ class Visualizer(object):
                    dpi: int = 100,
                    separate_files: bool = True,
                    clear_figures: bool = True,
-                   verbose: bool = False) -> Visualizer:
+                   verbose: bool = False) -> 'Visualizer':
     r""" Saving all stored figures to path
 
     Arguments:

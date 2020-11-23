@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
@@ -43,7 +41,7 @@ class VariationalModel(Networks):
       analytic: Optional[bool] = None,
       reverse: Optional[bool] = None,
       sample_shape: Optional[Union[int, List[int]]] = None,
-  ) -> VariationalModel:
+  ) -> 'VariationalModel':
     """Set the configuration for ELBO
 
     Parameters

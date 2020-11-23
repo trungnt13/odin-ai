@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Optional
 
 import numpy as np
@@ -54,7 +52,7 @@ class ImplicitRankMinimizer(keras.layers.Layer):
     self.regularizer = as_tuple(keras.regularizers.get(regularizer), N=n_layers)
     self.constraint = as_tuple(keras.constraints.get(constraint), N=n_layers)
 
-  def build(self, input_shape) -> ImplicitRankMinimizer:
+  def build(self, input_shape) -> 'ImplicitRankMinimizer':
     super().build(input_shape)
     input_dim = input_shape[-1]
     last_w = None
@@ -121,9 +119,9 @@ class irmVAE(VariationalAutoencoder):
 
   def __init__(self,
                latents: LayerCreator = RVmeta(64,
-                                                      'mvndiag',
-                                                      projection=True,
-                                                      name='Latents'),
+                                              'mvndiag',
+                                              projection=True,
+                                              name='Latents'),
                n_layers: int = 3,
                share_weights: bool = False,
                name: str = 'irmVAE',
@@ -151,9 +149,9 @@ class irmAE(irmVAE):
 
   def __init__(self,
                latents: LayerCreator = RVmeta(64,
-                                                      'vdeterministic',
-                                                      projection=True,
-                                                      name='Latents'),
+                                              'vdeterministic',
+                                              projection=True,
+                                              name='Latents'),
                name: str = 'irmAE',
                **kwargs):
     for qz in tf.nest.flatten(latents):

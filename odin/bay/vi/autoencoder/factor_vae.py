@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import collections
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
@@ -70,7 +68,7 @@ def _split_inputs(inputs, mask, call_kw):
 
 @dataclass
 class FactorDiscriminatorStep(VAEStep):
-  vae: factorVAE
+  vae: 'factorVAE'
 
   def call(self):
     px_z, qz_x = self.vae.last_outputs
@@ -180,7 +178,7 @@ class factorVAE(betaVAE):
     # modification without re-writing the train_steps method
     self._is_pretraining = False
 
-  def build(self, input_shape) -> factorVAE:
+  def build(self, input_shape) -> 'factorVAE':
     super().build(input_shape)
     self.discriminator.build(self.latent_shape)
     # split the parameters

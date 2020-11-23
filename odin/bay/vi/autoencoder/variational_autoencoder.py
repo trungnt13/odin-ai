@@ -1,4 +1,4 @@
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import absolute_import, division, print_function
 
 import copy
 import glob
@@ -123,7 +123,7 @@ def _iter_lists(X, Y):
 class VAEStep(TrainStep):
   r""" A single train step (iteration) for Variational Autoencoder """
 
-  vae: VariationalAutoencoder
+  vae: 'VariationalAutoencoder'
   call_kw: Dict[str, Any]
 
   def call(self) -> Tuple[Tensor, Dict[str, Any]]:

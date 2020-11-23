@@ -1,4 +1,4 @@
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import absolute_import, division, print_function
 
 import random
 import warnings
@@ -32,7 +32,11 @@ from tensorflow_probability.python.distributions import (Distribution,
 from tqdm import tqdm
 from typing_extensions import Literal
 
-__all__ = ['GroundTruth', 'VariationalPosterior']
+__all__ = [
+    'GroundTruth',
+    'Posterior',
+    'VariationalPosterior',
+]
 
 
 # ===========================================================================
@@ -225,7 +229,7 @@ class GroundTruth:
       factor_index = self.names.index(factor_index)
     return self.categorical[factor_index]
 
-  def copy(self) -> GroundTruth:
+  def copy(self) -> 'GroundTruth':
     obj = GroundTruth.__new__(GroundTruth)
     obj.factors = self.factors
     obj.factors_original = self.factors_original
@@ -361,7 +365,7 @@ class Posterior(vs.Visualizer):
   def configure(
       self,
       dist_to_tensor: Optional[Callable[[Distribution], Tensor]] = None
-  ) -> Posterior:
+  ) -> 'Posterior':
     d2t = self._dist_to_tensor
     if dist_to_tensor is not None:
       assert callable(dist_to_tensor), \
@@ -383,7 +387,7 @@ class Posterior(vs.Visualizer):
       return_figure: bool = False,
       ax: Optional['Axes'] = None,
       seed: int = 1,
-  ) -> Union['Figure', Posterior]:
+  ) -> Union['Figure', 'Posterior']:
     """Plot dimension reduced scatter points of the sample set.
 
     Parameters
@@ -810,7 +814,7 @@ class Posterior(vs.Visualizer):
     f = self.factors
     return mutual_info_gap(z, f)
 
-  def copy(self, suffix='copy') -> Posterior:
+  def copy(self, suffix='copy') -> 'Posterior':
     obj = self.__class__.__new__(self.__class__)
     obj._name = f'{self.name}_{suffix}'
     obj._verbose = self._verbose
@@ -905,7 +909,7 @@ class VariationalPosterior(Posterior):
       n_random_samples: int = 1,
       mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
       seed: int = 1,
-  ) -> VariationalPosterior:
+  ) -> 'VariationalPosterior':
     """Create data for latents' traverse experiments
 
     Parameters
@@ -965,7 +969,7 @@ class VariationalPosterior(Posterior):
                    known: Dict[Union[str, int], Callable[[int], bool]],
                    logical_not: bool = False,
                    n_samples: Optional[int] = None,
-                   seed: int = 1) -> VariationalPosterior:
+                   seed: int = 1) -> 'VariationalPosterior':
     """Conditioning the sampled dataset on known factors
 
     Parameters
@@ -1022,7 +1026,7 @@ class VariationalPosterior(Posterior):
            indices: Optional[Union[slice, List[int]]] = None,
            latents: Optional[Distribution] = None,
            outputs: Optional[List[Distribution]] = None,
-           suffix: str = 'copy') -> VariationalPosterior:
+           suffix: str = 'copy') -> 'VariationalPosterior':
     """Return the deepcopy"""
     obj = super().copy(suffix=suffix)
     # helper for slicing

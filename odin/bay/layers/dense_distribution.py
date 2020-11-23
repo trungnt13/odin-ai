@@ -1,4 +1,4 @@
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import absolute_import, division, print_function
 
 import inspect
 from functools import partial
@@ -25,9 +25,13 @@ from tensorflow.python.keras.layers import Dense, Lambda, Layer
 from tensorflow.python.keras.regularizers import Regularizer
 from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -221,7 +225,7 @@ class DistributionDense(Dense):
     spec = inspect.getfullargspec(self.posterior_layer)
     self._posterior_call_kw = set(spec.args + spec.kwonlyargs)
 
-  def build(self, input_shape) -> DistributionDense:
+  def build(self, input_shape) -> 'DistributionDense':
     super().build(input_shape)
     return self
 
@@ -690,7 +694,7 @@ class DistributionNetwork(Model):
     self.network_kws = _get_all_args(self.network.call)
     self.distributions_kws = [_get_all_args(d.call) for d in self.distributions]
 
-  def build(self, input_shape) -> DistributionNetwork:
+  def build(self, input_shape) -> 'DistributionNetwork':
     super().build(input_shape)
     return self
 

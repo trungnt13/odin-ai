@@ -1,4 +1,4 @@
-from __future__ import absolute_import, annotations, division, print_function
+from __future__ import absolute_import, division, print_function
 
 import collections
 import copy
@@ -200,7 +200,7 @@ class Networks(keras.Model, MD5object):
       self._last_outputs = None
       self._trainer = [None]
 
-  def build(self, input_shape: List[Union[None, int]]) -> Networks:
+  def build(self, input_shape: List[Union[None, int]]) -> 'Networks':
     """Build the networks for given input or list of inputs
 
     Parameters
@@ -258,7 +258,7 @@ class Networks(keras.Model, MD5object):
   def load_weights(self,
                    filepath: Optional[str] = None,
                    raise_notfound: bool = False,
-                   verbose: bool = False) -> Networks:
+                   verbose: bool = False) -> 'Networks':
     """Load all the saved weights in tensorflow format at given path
 
     Note
@@ -291,7 +291,7 @@ class Networks(keras.Model, MD5object):
 
   def save_weights(self,
                    filepath: Optional[str] = None,
-                   overwrite: bool = True) -> Networks:
+                   overwrite: bool = True) -> 'Networks':
     r""" Just copy this function here to fix the `save_format` to 'tf'
 
     Since saving 'h5' will drop certain variables.
@@ -424,7 +424,7 @@ class Networks(keras.Model, MD5object):
           terminate_on_nan: bool = True,
           logdir: Optional[str] = None,
           allow_none_gradients: bool = False,
-          track_gradients: bool = False) -> Networks:
+          track_gradients: bool = False) -> 'Networks':
     """Override the original fit method of keras to provide simplified
     procedure with `Networks.optimize` and `Networks.train_steps`
 
