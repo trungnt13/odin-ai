@@ -3,25 +3,27 @@ from os import path
 from setuptools import find_packages, setup
 
 ODIN_VERSION = '1.3.0'
-TENSORFLOW_VERSION = '2.3.0'
-TFP_VERSION = '0.11.0'
+TENSORFLOW_VERSION = '2.3.1'
+TFP_VERSION = '0.12.0'
 TENSORFLOW_ADDONS_VERSION = '0.5.2'
-PYTORCH_VERSION = '1.6.0'
+PYTORCH_VERSION = '1.7.0'
 TORCHVISION_VERSION = '1.6.0'
-PYRO_VERSION = '1.4.0'
+PYRO_VERSION = '1.5.1'
 
 # ===========================================================================
 # Dependencies
 # ===========================================================================
 dependencies = [
     'numpy>=1.0.0',
+    'scipy',
     f"tensorflow=={TENSORFLOW_VERSION}",
     f'tensorflow-probability=={TFP_VERSION}',
     # 'tensorflow-addons==%s' % _TENSORFLOW_ADDONS_VERSION,
     'tensorflow-datasets',
     f'torch=={PYTORCH_VERSION}',
     f'pyro-ppl=={PYRO_VERSION}',
-    'hydra-core',  # for easy configuration
+    'transformers>=3.0.2',
+    'hydra-core>=1.0.0',
     'bigarray>=0.2.1',
     'six>=1.9.0',
     'scikit-learn==0.22.1',
