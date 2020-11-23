@@ -72,7 +72,7 @@ except ImportError:
 def _boostrap_sampling(
     model: VariationalModel,
     inputs: List[ndarray],
-    groundtruth: GroundTruth,
+    groundtruth: 'GroundTruth',
     n_samples: int,
     batch_size: int,
     verbose: bool,

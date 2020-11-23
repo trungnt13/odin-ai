@@ -6,8 +6,8 @@ channels:
   - conda-forge
   - rapidsai
   - nvidia
-  - defaults
   - pytorch
+  - defaults
 
 dependencies:
   - python=3.7
@@ -24,19 +24,20 @@ dependencies:
   - rapids>=0.15
   - pytorch
   - torchvision
+  - torchaudio
+  - pyro-ppl>=1.4.0
 
   - pip:
       - tensorflow>=2.3.1
       - tensorflow-probability==0.11.1
       - tensorflow-datasets>=4.0.0
       - tensorflow-addons>=0.11.2
-      - pyro-ppl==1.4.0
       - transformers>=3.0.2
-      - numba>=0.48.0
-      - pycrypto==2.6.1
-      - bigarray==0.2.1
       - hydra-core>=1.0.0
       - hydra-joblib-launcher>=1.1.0
+      - bigarray==0.2.1
+      - numba>=0.48.0
+      - pycrypto==2.6.1
       - spacy
       - umap-learn
       - arviz # bayesian analysis

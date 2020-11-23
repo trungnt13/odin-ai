@@ -4,7 +4,7 @@ import inspect
 from functools import partial
 from numbers import Number
 from types import LambdaType
-from typing import Any, Callable, List, Optional, Text, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Text, Type, Union
 
 import numpy as np
 import tensorflow as tf
