@@ -9,7 +9,7 @@ from tqdm import tqdm
 
 
 class CelebA(ImageDataset):
-  r""" The dataset must be manually downloaded from Google Drive:
+  r"""The dataset must be manually downloaded from Google Drive:
     https://drive.google.com/drive/folders/0B7EVK8r0v71pWEZsZE9oNnFuzTm8
 
   The following files are required:

@@ -6,20 +6,13 @@ import numpy as np
 import tensorflow as tf
 from bigarray import MmapArray, MmapArrayWriter
 from odin.fuel.image_data._base import ImageDataset, get_partition
-from odin.utils import batching, md5_checksum
+from odin.utils import batching
 from tqdm import tqdm
+
 
 # ===========================================================================
 # Shapes 3D
 # ===========================================================================
-_shapes3d_md5 = {
-    None: 'f62b3388bd3de97cf9c11e75bdde5904',
-    28: '6ebdd0855e495ac53a4cf73cd2b71137',
-    48: 'ea6bcfb4493b96135d70d75d9fb8bc8c',
-    'labels': '7c79d148877ae4cd27f12005c87855ea',
-}
-
-
 class Shapes3D(ImageDataset):
   r""" The dataset must be manually downloaded from GCS at
     https://console.cloud.google.com/storage/browser/3d-shapes
@@ -66,15 +59,6 @@ class Shapes3D(ImageDataset):
       suffix = str(image_size)
     image_path = os.path.join(cache_dir, f'3dshapes{suffix}.images')
     label_path = os.path.join(cache_dir, f'3dshapes.labels')
-    ## check md5
-    if (image_size in _shapes3d_md5 and os.path.exists(image_path) and
-        md5_checksum(image_path) != _shapes3d_md5[image_size]):
-      print('MD5 mismatch remove file:', image_path)
-      os.remove(image_path)
-    if (os.path.exists(label_path) and
-        md5_checksum(label_path) != _shapes3d_md5['labels']):
-      print('MD5 mismatch remove file:', label_path)
-      os.remove(label_path)
     ## read the dataset and cache it again
     if not os.path.exists(image_path) or not os.path.exists(label_path):
       import h5py
