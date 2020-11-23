@@ -14,8 +14,12 @@ from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python.layers import DistributionLambda
 
 __all__ = [
-    'mnist_networks', 'dsprites_networks', 'shapes3d_networks',
-    'celeba_networks'
+    'mnist_networks',
+    'dsprites_networks',
+    'shapes3dsmall_networks',
+    'shapes3d_networks',
+    'celebasmall_networks',
+    'celeba_networks',
 ]
 
 
@@ -100,13 +104,14 @@ class SkipSequential(keras.Model):
 # Basic Network
 # ===========================================================================
 def mnist_networks(qz: str = 'mvndiag',
-                   zdim: int = 32,
+                   zdim: int = 64,
                    activation: Union[Callable, str] = tf.nn.leaky_relu,
                    is_semi_supervised: bool = False,
                    centerize_image: bool = True,
                    skip_generator: bool = False,
-                   n_channels: int = 1) -> Dict[str, Layer]:
+                   **kwargs) -> Dict[str, Layer]:
   from odin.bay.random_variable import RVmeta
+  n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (28, 28, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
   encoder = keras.Sequential(
@@ -130,7 +135,7 @@ def mnist_networks(qz: str = 'mvndiag',
       deconv(32, 5, strides=1, name='decoder3'),
       deconv(32, 5, strides=2, name='decoder4'),
       deconv(32, 5, strides=1, name='decoder5'),
-      conv(1, 5, strides=1, activation=None, name='decoder6'),
+      conv(n_channels, 5, strides=1, activation=None, name='decoder6'),
       keras.layers.Flatten()
   ]
   if skip_generator:
@@ -149,7 +154,7 @@ def mnist_networks(qz: str = 'mvndiag',
 
 
 def dsprites_networks(qz: str = 'mvndiag',
-                      zdim: int = 32,
+                      zdim: int = 64,
                       activation: Union[Callable, str] = tf.nn.leaky_relu,
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
@@ -201,6 +206,9 @@ def dsprites_networks(qz: str = 'mvndiag',
   return networks
 
 
+# ===========================================================================
+# Shapes 3D
+# ===========================================================================
 def _shapes3d_distribution(x):
   return JointDistributionConcatenation([
       Bernoulli(logits=x[..., 0], name='floor_hue'),
@@ -216,35 +224,94 @@ def _shapes3d_distribution(x):
                                         name='shapes3d')
 
 
+def shapes3dsmall_networks(qz: str = 'mvndiag',
+                           zdim: int = 64,
+                           activation: Union[Callable, str] = tf.nn.leaky_relu,
+                           is_semi_supervised: bool = False,
+                           centerize_image: bool = True,
+                           skip_generator: bool = False,
+                           **kwargs) -> Dict[str, Layer]:
+  networks = mnist_networks(qz=qz,
+                            zdim=zdim,
+                            activation=activation,
+                            is_semi_supervised=False,
+                            centerize_image=centerize_image,
+                            skip_generator=skip_generator,
+                            n_channels=3)
+  if is_semi_supervised:
+    from odin.bay.layers import DistributionDense
+    networks['labels'] = DistributionDense(event_shape=(6,),
+                                           posterior=_shapes3d_distribution,
+                                           units=12,
+                                           name='geometry')
+  return networks
+
+
 def shapes3d_networks(qz: str = 'mvndiag',
-                      zdim: int = 32,
+                      zdim: int = 64,
                       activation: Union[Callable, str] = tf.nn.leaky_relu,
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
                       skip_generator: bool = False,
                       **kwargs) -> Dict[str, Layer]:
-  from odin.bay.layers import DistributionDense
-  from odin.bay.random_variable import RVmeta
   networks = dsprites_networks(qz=qz,
                                zdim=zdim,
                                activation=activation,
-                               is_semi_supervised=is_semi_supervised,
+                               is_semi_supervised=False,
                                centerize_image=centerize_image,
                                skip_generator=skip_generator,
                                n_channels=3)
   if is_semi_supervised:
+    from odin.bay.layers import DistributionDense
     networks['labels'] = DistributionDense(event_shape=(6,),
                                            posterior=_shapes3d_distribution,
                                            units=12,
-                                           name='shapes3d')
+                                           name='geometry')
+  return networks
+
+
+# ===========================================================================
+# CelebA
+# ===========================================================================
+def celebasmall_networks(qz: str = 'mvndiag',
+                         zdim: int = 64,
+                         activation: Union[Callable, str] = tf.nn.leaky_relu,
+                         is_semi_supervised: bool = False,
+                         centerize_image: bool = True,
+                         skip_generator: bool = False,
+                         **kwargs):
+  networks = mnist_networks(qz=qz,
+                            zdim=zdim,
+                            activation=activation,
+                            is_semi_supervised=False,
+                            centerize_image=centerize_image,
+                            skip_generator=skip_generator,
+                            n_channels=3)
+  if is_semi_supervised:
+    from odin.bay.layers import DistributionDense
+    networks['labels'] = DistributionDense(event_shape=40,
+                                           posterior='bernoulli',
+                                           name='attributes')
   return networks
 
 
 def celeba_networks(qz: str = 'mvndiag',
-                    zdim: int = 32,
+                    zdim: int = 64,
                     activation: Union[Callable, str] = tf.nn.leaky_relu,
                     is_semi_supervised: bool = False,
                     centerize_image: bool = True,
                     skip_generator: bool = False,
-                    n_channels: int = 3):
-  raise NotImplementedError
+                    **kwargs):
+  networks = dsprites_networks(qz=qz,
+                               zdim=zdim,
+                               activation=activation,
+                               is_semi_supervised=False,
+                               centerize_image=centerize_image,
+                               skip_generator=skip_generator,
+                               n_channels=3)
+  if is_semi_supervised:
+    from odin.bay.layers import DistributionDense
+    networks['labels'] = DistributionDense(event_shape=40,
+                                           posterior='bernoulli',
+                                           name='attributes')
+  return networks

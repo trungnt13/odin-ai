@@ -1,5 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
+from typing import Union, List
+
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
@@ -555,6 +557,53 @@ def to_sample_weights(indices, weights, name=None):
     # ====== sample weights ====== #
     weights = tf.gather(prior_weights, indices)
   return weights
+
+
+# ===========================================================================
+# Information theory
+# ===========================================================================
+def poincare_normalize(x: tf.Tensor,
+                       axis: Union[None, int, List[int]] = -1,
+                       epsilon: float = 1e-6):
+  r"""Hyperbolic geometry is suitable for hierarchical data presentation,
+  for instance, a tree structure - as the tree grow exponentially at its
+  children, so does the hyperbolic disc with its radius expanding.
+
+  ```
+  if ||x|| > 1 - epsilon:
+    return (x * (1 - epsilon)) / ||x||
+  else:
+    return x
+  ```
+
+  Parameters
+  ----------
+  x : tf.Tensor
+      input tensor
+  axis : Union[None, int, List[int]], optional
+      the normalzing axis, by default -1
+  epsilon : float, optional
+      epsilon, by default 1e-6
+
+  Returns
+  -------
+  Tensor :
+    a Poincare embedding tensor has the same shape as input tensor
+
+  References
+  ------------
+  Nickel, M. & Kiela, D. Poincar\’e Embeddings for Learning Hierarchical
+      Representations. arXiv:1705.08039 [cs, stat] (2017).
+  Mathieu, E., Le Lan, C., Maddison, C. J., Tomioka, R. & Teh, Y. W.
+      Continuous hierarchical representations with poincaré variational
+      auto-encoders. in Advances in neural information processing systems
+      (Curran Associates, Inc., 2019).
+
+  """
+  square_sum = tf.reduce_sum(tf.math.square(x), axis, keepdims=True)
+  x_inv_norm = tf.math.rsqrt(square_sum)
+  x_inv_norm = tf.math.minimum((1.0 - epsilon) * x_inv_norm, 1.0)
+  return x * x_inv_norm
 
 
 # ===========================================================================

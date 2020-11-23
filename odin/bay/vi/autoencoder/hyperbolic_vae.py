@@ -43,6 +43,19 @@ class _power_spherical:
 
 
 class hypersphericalVAE(betaVAE):
+  """
+
+  References
+  -----------
+  Davidson, T. R., Falorsi, L., De Cao, N., Kipf, T. & Tomczak, J. M.
+      Hyperspherical Variational Auto-Encoders. arXiv:1804.00891 [cs, stat] (2018).
+  Davidson, T. R., Tomczak, J. M. & Gavves, E. Increasing Expressivity
+      of a Hyperspherical VAE.
+  Xu, J. & Durrett, G. Spherical Latent Spaces for Stable Variational
+      Autoencoders. arXiv:1808.10805 [cs] (2018).
+  De Cao, N. & Aziz, W. The Power Spherical distribution.
+      arXiv:2006.04437 [cs, stat] (2020).
+  """
 
   def __init__(self,
                latents: Union[RVmeta, Layer] = RVmeta(64, name="latents"),
@@ -75,3 +88,7 @@ class powersphericalVAE(hypersphericalVAE):
 
   def __init__(self, name: str = 'PowerSphericalVAE', **kwargs):
     super().__init__(distribution='powerspherical', name=name, **kwargs)
+
+
+class poincareVAE(betaVAE):
+  ...

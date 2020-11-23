@@ -6,7 +6,9 @@ import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
-from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
+from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
+                                                             NetworkConfig,
+                                                             _parse_layers)
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
 from tensorflow.python import keras
@@ -115,7 +117,41 @@ class multitaskVAE(betaVAE):
 
 
 class skiptaskVAE(multitaskVAE):
+  """The supervised outputs, skip the decoder, and directly connect to
+  the latents"""
 
   def __init__(self, name: str = 'SkiptaskVAE', **kwargs):
     kwargs.pop('skip_decoder', None)
     super().__init__(skip_decoder=True, name=name, **kwargs)
+
+
+class multiheadVAE(multitaskVAE):
+
+  def __init__(self,
+               decoder_y: LayerCreator = NetworkConfig([512, 512, 512],
+                                                       batchnorm=True,
+                                                       name='decoder_y'),
+               name: str = 'MultiheadVAE',
+               **kwargs):
+    kwargs.pop('skip_decoder', None)
+    super().__init__(skip_decoder=False, name=name, **kwargs)
+    self.decoder_y = _parse_layers(decoder_y)
+
+  def decode(self, latents, training=None, mask=None, **kwargs):
+    h_d = super(multitaskVAE, self).decode(latents,
+                                           training=training,
+                                           mask=mask,
+                                           only_decoding=True,
+                                           **kwargs)
+    px_z = self.observation(h_d, training=training, mask=mask)
+    if isinstance(latents, (tuple, list)):
+      latents = tf.concat(latents, axis=-1)
+    h_y = self.decoder_y(latents, training=training, mask=mask)
+    py_z = [fy(h_y, training=training, mask=mask) for fy in self.labels]
+    return (px_z,) + tuple(py_z)
+
+  def __str__(self):
+    text = super().__str__()
+    text += "\nDecoderY:\n "
+    text += '\n '.join(str(self.decoder_y).split('\n'))
+    return text

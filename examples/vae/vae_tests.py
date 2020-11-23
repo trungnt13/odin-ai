@@ -19,7 +19,7 @@ from odin.exp import get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import IterableDataset, get_dataset
 from odin.ml import fast_tsne, fast_umap
 from odin.networks import (celeba_networks, dsprites_networks, mnist_networks,
-                           shapes3d_networks)
+                           shapes3d_networks, shapes3dsmall_networks)
 from odin.utils import ArgController, as_tuple, clear_folder
 from tensorflow.python import keras
 from tqdm import tqdm
@@ -166,13 +166,16 @@ def main(cfg: dict):
                     n_channels=x_samples.shape[-1])
   if 'mnist' in cfg.ds:
     fn_networks = mnist_networks
-    max_iter = 25000
+    max_iter = 30000
   elif 'dsprites' in cfg.ds:
     fn_networks = dsprites_networks
-    max_iter = 50000
+    max_iter = 80000
+  elif 'shapes3dsmall' in cfg.ds:
+    fn_networks = shapes3dsmall_networks
+    max_iter = 120000
   elif 'shapes3d' in cfg.ds:
     fn_networks = shapes3d_networks
-    max_iter = 100000
+    max_iter = 150000
   else:
     raise NotImplementedError(
         f'No predefined networks support for dataset {cfg.ds}')
