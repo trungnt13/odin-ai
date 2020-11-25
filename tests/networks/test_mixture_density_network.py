@@ -6,12 +6,11 @@ import numpy as np
 import seaborn as sns
 import tensorflow as tf
 from matplotlib import pyplot as plt
+from odin import visual as vis
+from odin.networks import MixtureDensityNetwork
 from scipy import stats
 from sklearn.mixture import GaussianMixture
 from tensorflow.python.keras import Sequential
-
-from odin import visual as vis
-from odin.networks import MixtureDensityNetwork
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
@@ -49,7 +48,7 @@ mdn = MixtureDensityNetwork(1,
                             covariance_type='none')
 model = Sequential([mdn])
 model.compile(optimizer='adam', loss=fn_loss)
-model.fit(x=x, y=x, epochs=48, batch_size=64, verbose=True)
+model.fit(x=x, y=x, epochs=48, batch_size=32, verbose=True)
 
 y = model(x)
 mdn_llk = tf.reduce_mean(y.log_prob(x)).numpy()

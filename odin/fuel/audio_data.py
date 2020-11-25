@@ -102,7 +102,7 @@ class AudioFeatureLoader():
                      file_list,
                      feature='mels',
                      channels=0,
-                     batch_size=64,
+                     batch_size=32,
                      drop_remainder=False,
                      shuffle=None,
                      prefetch=tf.data.experimental.AUTOTUNE,

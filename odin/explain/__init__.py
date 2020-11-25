@@ -1,1 +1,1 @@
-from odin.explain import adversarial_attack, deep_dream
+from odin.traininglain import adversarial_attack, deep_dream

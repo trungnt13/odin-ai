@@ -31,7 +31,7 @@ class ClusteringTest(unittest.TestCase):
 
     model = [
         fast_kmeans(x, n_clusters=n, force_sklearn=True),
-        fast_kmeans(x, n_clusters=n, batch_size=64)
+        fast_kmeans(x, n_clusters=n, batch_size=32)
     ]
     mtype = [KMeans, MiniBatchKMeans]
     if _CUML:

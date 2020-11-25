@@ -357,7 +357,7 @@ class NLPDataset(IterableDataset):
     return outputs if is_batch else outputs[0]
 
   def create_dataset(self,
-                     batch_size=64,
+                     batch_size=32,
                      drop_remainder=False,
                      shuffle=1000,
                      prefetch=tf.data.experimental.AUTOTUNE,

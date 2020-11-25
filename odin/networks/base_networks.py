@@ -18,9 +18,9 @@ import tensorflow as tf
 from odin.backend.alias import (parse_activation, parse_constraint,
                                 parse_initializer, parse_regularizer)
 from odin.backend.keras_helpers import layer2text
-from odin.exp import Callback, Trainer
 from odin.networks.util_layers import (Conv1DTranspose, ExpandDims, Identity,
                                        ReshapeMCMC)
+from odin.training import Callback, Trainer
 from odin.utils import MD5object, as_tuple, classproperty
 from scipy import sparse
 from six import string_types
@@ -561,13 +561,6 @@ class Networks(keras.Model, MD5object):
   @classmethod
   def is_semi_supervised(cls) -> bool:
     return False
-
-  @property
-  def last_metrics(self) -> Dict[str, Any]:
-    """Return the cached metrics from last training iteration"""
-    if self.trainer is None:
-      return {}
-    return self.trainer.last_metrics
 
   @property
   def summary_writer(self) -> SummaryWriter:

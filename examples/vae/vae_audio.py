@@ -15,7 +15,7 @@ from odin import networks as net
 from odin import visual as vs
 from odin.backend import interpolation
 from odin.bay.vi.autoencoder import RVmeta, VariationalAutoencoder
-from odin.exp import Trainer
+from odin.training import Trainer
 from odin.fuel import AudioFeatureLoader
 from odin.utils import ArgController, clean_folder, partialclass
 

@@ -12,7 +12,7 @@ import numpy as np
 import tensorflow as tf
 from odin.bay import distributions as D
 from odin.bay import vi
-from odin.exp import get_current_trainer, get_output_dir, run_hydra
+from odin.training import get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import MNIST, FashionMNIST, dSprites
 from tensorflow_probability.python import bijectors as bj
 

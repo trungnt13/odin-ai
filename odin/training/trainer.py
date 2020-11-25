@@ -315,70 +315,6 @@ class Trainer(object):
     return models, optimizers, trainer
 
   @staticmethod
-  def early_stop(losses,
-                 threshold=0.001,
-                 progress_length=0,
-                 min_epoch=-1,
-                 verbose=0):
-    r""" Early stopping based on generalization loss and the three rules:
-
-      - Stop when generalization error exceeds threshold in a number of
-          successive steps.
-      - Stop as soon as the generalization loss exceeds a certain threshold.
-      - Surpress stopping if the training is still progress rapidly.
-
-    Generalization loss: `GL(t) = losses[-1] / min(losses[:-1]) - 1`
-
-      - if `GL(t)` <= 0 : save the best model
-      - if `GL(t)` <= threshold : continue training
-      - if `GL(t)` > threshold : stop training
-
-    Progression: `PG(t) = 10 * sum(L) / (k * min(L))` where `L = losses[-k:]`
-
-    The condition for early stopping: `GL(t) / PG(t) >= threshold`
-
-    Arguments:
-      losses : List of loss values (smaller is better)
-      threshold : Float. Determine by `generalization_error / progression`
-      progress_length : Integer. Number of steps to look into the past for
-        estimating the training progression. If smaller than 2, turn-off
-        progression for early stopping.
-      min_epoch: Minimum number of epoch until early stop kicks in.
-        Note, all the metrics won't be updated until the given epoch.
-
-    Return:
-
-    Reference:
-      Prechelt, L. (1998). "Early Stopping | but when?".
-    """
-    if len(losses) < max(2., min_epoch):
-      tf.print("[EarlyStop] Priming first 2 warmup epochs.")
-      return 'SIGNAL_BEST'
-    # generalization error (smaller is better)
-    current = losses[-1]
-    best = np.min(losses[:-1])
-    generalization = current / best - 1.  # <0 = improvement
-    # progression (bigger is better)
-    if progress_length > 1:
-      progress = losses[-progress_length:]
-      progression = 10 * \
-        (np.sum(progress) / (progress_length * np.min(progress)) - 1)
-    else:
-      progression = 1.
-    # thresholding
-    error = generalization / progression
-    threshold = np.abs(threshold)
-    if error >= -threshold:
-      tf.print("[EarlyStop] improvement:%.4f progression:%.4f threshold:%.4f" %
-               (-generalization, progression, threshold))
-      return 'SIGNAL_TERMINATE'
-    elif generalization < 0:
-      if verbose:
-        tf.print("[EarlyStop] Best model, improvement:%.4f, threshold:%.4f" %
-                 ((best / current - 1.), np.abs(threshold)))
-      return 'SIGNAL_BEST'
-
-  @staticmethod
   def apply_gradients(tape, optimizer, loss, model_or_weights):
     r"""
     Arguments:
@@ -474,19 +410,34 @@ class Trainer(object):
     self._n_iter = 0
     # default attributes
     self._summary_writer = None
-    self._current_valid_loss = []
+    self._last_valid_loss = None
+    self._last_valid_metrics = {}
+    self._last_train_loss = None
+    self._last_train_metrics = {}
+
     self._current_train_progress = None
     self._cached_tensorboard = None
     self._is_training = False
-    self._last_metrics = {}
 
   @property
   def n_iter(self) -> int:
     return self._n_iter
 
   @property
-  def last_metrics(self) -> Dict[str, Any]:
-    return self._last_metrics
+  def last_train_loss(self) -> Optional[float]:
+    return self._last_train_loss
+
+  @property
+  def last_valid_loss(self) -> Optional[float]:
+    return self._last_valid_loss
+
+  @property
+  def last_train_metrics(self) -> Dict[str, Any]:
+    return self._last_train_metrics
+
+  @property
+  def last_valid_metrics(self) -> Dict[str, Any]:
+    return self._last_valid_metrics
 
   @property
   def tensorboard(self) -> Dict[Text, Tuple[float, int, float]]:
@@ -498,20 +449,17 @@ class Trainer(object):
         self._cached_tensorboard = read_tensorboard(self.logdir)
     return self._cached_tensorboard
 
-  @property
-  def train_loss(self) -> List[float]:
+  def get_train_losses(self) -> List[float]:
     losses = self.tensorboard.get('train/loss', [])
     losses = [i[-1] for i in losses]
     return losses
 
-  @property
-  def valid_loss(self) -> List[float]:
+  def get_valid_losses(self) -> List[float]:
     losses = self.tensorboard.get('valid/loss', [])
     losses = [i[-1] for i in losses]
     return losses
 
-  @property
-  def train_metrics(self) -> Dict[str, List[float]]:
+  def get_train_metrics(self) -> Dict[str, List[float]]:
     metrics = dict()
     for key, val in self.tensorboard.items():
       if "train/" == key[:6] and key != "train/loss":
@@ -520,8 +468,7 @@ class Trainer(object):
         metrics[key] = val
     return metrics
 
-  @property
-  def valid_metrics(self) -> Dict[str, List[float]]:
+  def get_valid_metrics(self) -> Dict[str, List[float]]:
     metrics = dict()
     for key, val in self.tensorboard.items():
       if "valid/" == key[:6] and key != "valid/loss":
@@ -699,7 +646,8 @@ class Trainer(object):
         self._cached_tensorboard = None
         # ====== train ====== #
         loss, metrics = fn_step(inputs, training=True)
-        self._last_metrics = dict(metrics)
+        self._last_train_loss = loss
+        self._last_train_metrics = dict(metrics)
         # metric could be hiden by add '_' to the beginning
         metrics = {k: v for k, v in metrics.items() if '_' != k[0]}
         # do not record the loss and metrics at every iteration, the
@@ -729,7 +677,8 @@ class Trainer(object):
           if valid_ds is not None:
             # finish the validation
             val_loss, val_metrics = valid()
-            self._current_valid_loss.append(val_loss)
+            self._last_valid_loss = val_loss
+            self._last_valid_metrics = val_metrics
             _save_summary(val_loss, val_metrics, prefix="valid/", flush=True)
             _print_summary(progress,
                            log_tag,

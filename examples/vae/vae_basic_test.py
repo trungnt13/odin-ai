@@ -11,9 +11,10 @@ import tensorflow_datasets as tfds
 import tensorflow_probability as tfp
 from odin import visual as vs
 from odin.bay.vi import RVmeta, get_vae
-from odin.exp import Trainer, get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import MNIST, BinarizedMNIST, FashionMNIST, dSprites
 from odin.ml import fast_umap
+from odin.training import (Trainer, get_current_trainer, get_output_dir,
+                           run_hydra)
 from odin.utils import ArgController
 from tensorflow.python import keras
 from tensorflow.python.keras import layers
@@ -218,7 +219,7 @@ def main(cfg: dict):
     vs.plot_scatter(z, color=y, size=12.0, alpha=0.4)
     img_umap = vs.plot_to_image(fig)
     # gradients
-    grads = [(k, v) for k, v in trainer.last_metrics.items() if '_grad/' in k]
+    grads = [(k, v) for k, v in trainer.last_train_metrics.items() if '_grad/' in k]
     encoder_grad = sum(v for k, v in grads if 'Encoder' in k)
     decoder_grad = sum(v for k, v in grads if 'Decoder' in k)
     return dict(reconstruct=img_res,

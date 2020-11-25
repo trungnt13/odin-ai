@@ -15,12 +15,12 @@ from odin.backend import interpolation
 from odin.bay.vi import (GroundTruth, NetworkConfig, RVmeta,
                          VariationalAutoencoder, VariationalPosterior, get_vae,
                          traverse_dims)
-from odin.exp import get_current_trainer, get_output_dir, run_hydra
 from odin.fuel import IterableDataset, get_dataset
 from odin.ml import fast_tsne, fast_umap
 from odin.networks import (celeba_networks, celebasmall_networks,
                            dsprites_networks, mnist_networks, shapes3d_networks,
                            shapes3dsmall_networks)
+from odin.training import get_current_trainer, get_output_dir, run_hydra
 from odin.utils import ArgController, as_tuple, clear_folder
 from tensorflow.python import keras
 from tqdm import tqdm
@@ -227,7 +227,9 @@ def main(cfg: dict):
                              grids=(sqrt(n_visual_samples),
                                     sqrt(n_visual_samples)))
     # tracking the gradients
-    all_grads = [(k, v) for k, v in vae.last_metrics.items() if 'grad/' in k]
+    all_grads = [(k, v)
+                 for k, v in vae.trainer.last_train_metrics.items()
+                 if 'grad/' in k]
     encoder_grad = 0
     decoder_grad = 0
     latents_grad = 0

@@ -85,7 +85,7 @@ class Newsgroup20_clean(IterableDataset):
     return False
 
   def create_dataset(self,
-                     batch_size=64,
+                     batch_size=32,
                      drop_remainder=False,
                      shuffle=1000,
                      prefetch=tf.data.experimental.AUTOTUNE,

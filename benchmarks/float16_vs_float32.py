@@ -90,7 +90,7 @@ print('Data type:', X_train.dtype, X_test.dtype)
 # Build trainer
 # ===========================================================================
 print('Start training ...')
-task = training.MainLoop(batch_size=64, seed=12, shuffle_level=2)
+task = training.MainLoop(batch_size=32, seed=12, shuffle_level=2)
 task.set_checkpoint(get_modelpath(name='mnist.ai', override=True), ops)
 task.set_task(f_train, (X_train, ds['y_train']), epoch=3, name='train')
 task.set_subtask(f_test, (X_test, ds['y_test']), freq=0.6, name='valid')

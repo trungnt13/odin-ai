@@ -14,7 +14,7 @@ from odin.bay import RVmeta
 from odin.bay.vi import Criticizer
 from odin.bay.vi.autoencoder import (Factor2VAE, FactorDiscriminator,
                                      SemiFactor2VAE, SemifactorVAE, factorVAE)
-from odin.exp import Experimenter, pretty_config
+from odin.training import Experimenter, pretty_config
 from odin.fuel import get_dataset
 from odin.utils import md5_folder
 from sklearn.metrics import accuracy_score, classification_report

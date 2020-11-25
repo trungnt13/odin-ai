@@ -8,7 +8,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 from tensorflow import keras
 
-from odin.exp import Trainer
+from odin.training import Trainer
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'

@@ -16,8 +16,8 @@ from odin.bay.layers import DistributionDense
 from odin.bay.vi import (AmortizedLDA, LatentDirichletDecoder, NetworkConfig,
                          RVmeta, TwoStageLDA, VariationalAutoencoder,
                          betaVAE, factorVAE, miVAE)
-from odin.exp import Trainer, get_current_trainer
-from odin.exp.experimenter import get_output_dir, run_hydra, save_to_yaml
+from odin.training import Trainer, get_current_trainer
+from odin.training.experimenter import get_output_dir, run_hydra, save_to_yaml
 from odin.fuel import (Cortex, LeukemiaATAC, Newsgroup5, Newsgroup20,
                        Newsgroup20_clean)
 from odin.utils import ArgController, clean_folder

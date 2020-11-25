@@ -397,7 +397,7 @@ class KaldiDataset(data.Dataset):
                labels: Optional[List[int]] = None,
                shuffle=False,
                shuffle_batches=False,
-               batch_size=64,
+               batch_size=32,
                post_processing=None,
                clipping=None,
                clipping_per_batch=True,

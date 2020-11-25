@@ -454,7 +454,7 @@ class CriticizerBase(object):
                    factor_names=None,
                    train_percent=0.8,
                    n_samples=[2000, 1000],
-                   batch_size=64,
+                   batch_size=32,
                    verbose=True):
     r""" Sample a batch of training and testing for evaluation of VAE
 

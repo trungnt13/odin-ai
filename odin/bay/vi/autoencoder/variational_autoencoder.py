@@ -22,7 +22,7 @@ from odin.backend.keras_helpers import layer2text
 from odin.bay.layers import DistributionDense, VectorDeterministicLayer
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi._base import VariationalModel
-from odin.exp.trainer import Trainer
+from odin.training.trainer import Trainer
 from odin.networks import Identity, NetworkConfig, TensorTypes, TrainStep
 from odin.utils import as_tuple
 from odin.utils.python_utils import classproperty

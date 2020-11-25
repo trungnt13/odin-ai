@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 from sklearn.base import BaseEstimator
 
-from odin.explain.helpers import _may_add_batch_dim, get_pretrained_model
+from odin.traininglain.helpers import _may_add_batch_dim, get_pretrained_model
 
 
 # it seems adding tf.function don't improve much performance
