@@ -9,6 +9,14 @@ from odin.fuel.image_data._base import ImageDataset, get_partition
 from odin.utils import batching
 from tqdm import tqdm
 
+__all__ = [
+    'Shapes3D',
+    'Shapes3DSmall',
+    'Shapes3DMedium',
+    'dSprites',
+    'dSpritesContinuous',
+]
+
 
 # ===========================================================================
 # Shapes 3D
@@ -245,7 +253,7 @@ class Shapes3DSmall(Shapes3D):
 # dSprites
 # ===========================================================================
 class dSprites(ImageDataset):
-  r"""
+  """dSprites dataset
 
   Discrete attributes:
     label_orientation: ()
@@ -348,8 +356,8 @@ class dSprites(ImageDataset):
     return ds
 
 
-class dSpritesC(dSprites):
-  r""" Same as dSprites but the factors labels are non-negative continuous
+class dSpritesContinuous(dSprites):
+  """Same as dSprites but the factors labels are non-negative continuous
   values """
 
   def __init__(self):

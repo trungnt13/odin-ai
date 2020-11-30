@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
+from odin.training.utils import EarlyStopping
 from odin.utils import as_tuple
 from six import string_types
 from tensorflow import Tensor, Variable
@@ -408,16 +409,21 @@ class Trainer(object):
     self.logdir = logdir
     self.trace_on = bool(trace_on)
     self._n_iter = 0
-    # default attributes
     self._summary_writer = None
+    # default attributes
     self._last_valid_loss = None
     self._last_valid_metrics = {}
     self._last_train_loss = None
     self._last_train_metrics = {}
-
+    # others
     self._current_train_progress = None
     self._cached_tensorboard = None
     self._is_training = False
+    self._early_stopping = EarlyStopping()
+
+  @property
+  def early_stopping(self) -> EarlyStopping:
+    return self._early_stopping
 
   @property
   def n_iter(self) -> int:
@@ -495,10 +501,10 @@ class Trainer(object):
     self._is_training = False
 
   def __getstate__(self):
-    return (self.logdir, self.trace_on, self.n_iter)
+    return (self.logdir, self.trace_on, self.n_iter, self.early_stopping)
 
   def __setstate__(self, states):
-    (self.logdir, self.trace_on, self._n_iter) = states
+    (self.logdir, self.trace_on, self._n_iter, self._early_stopping) = states
     # default attributes
     self._summary_writer = None
     self._current_valid_loss = []
@@ -646,6 +652,8 @@ class Trainer(object):
         self._cached_tensorboard = None
         # ====== train ====== #
         loss, metrics = fn_step(inputs, training=True)
+        if valid_ds is None:
+          self._early_stopping._losses.append(loss)
         self._last_train_loss = loss
         self._last_train_metrics = dict(metrics)
         # metric could be hiden by add '_' to the beginning
@@ -677,6 +685,7 @@ class Trainer(object):
           if valid_ds is not None:
             # finish the validation
             val_loss, val_metrics = valid()
+            self._early_stopping._losses.append(val_loss)
             self._last_valid_loss = val_loss
             self._last_valid_metrics = val_metrics
             _save_summary(val_loss, val_metrics, prefix="valid/", flush=True)

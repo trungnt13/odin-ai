@@ -17,15 +17,17 @@ from __future__ import absolute_import, division, print_function
 
 import warnings
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple, Union
+from enum import IntFlag, auto
+from functools import partial
+from typing import Dict, List, Optional, Tuple, Type, Union
 
+import tensorflow as tf
 import numpy as np
 import scipy as sp
 from odin.bay.vi.downstream_metrics import *
 from odin.utils import catch_warnings_ignore
 from odin.utils.mpi import MPI, get_cpu_count
 from sklearn.cluster import KMeans
-from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.linear_model import Lasso
 from sklearn.metrics import adjusted_mutual_info_score, adjusted_rand_score
 from sklearn.metrics import completeness_score as _cluster_completeness_score
@@ -33,25 +35,26 @@ from sklearn.metrics import (homogeneity_score, mutual_info_score,
                              normalized_mutual_info_score, silhouette_score)
 from sklearn.metrics.cluster import entropy as entropy1D
 from sklearn.mixture import GaussianMixture
+from tensorflow_probability.python.distributions import Distribution
 from tqdm import tqdm
+from typeguard import typechecked
 from typing_extensions import Literal
+from odin.bay.vi.downstream_metrics import *
 
 __all__ = [
     'correlation_matrix',
     'discrete_mutual_info',
     'discrete_entropy',
-    'mutual_info_score',
     'mutual_info_estimate',
     'mutual_info_gap',
-    'representative_importance_matrix',
-    'dci_scores',
+    'relative_strength',
     # unsupervised scores
     'unsupervised_clustering_scores',
-    # downstream score
-    'separated_attr_predictability',
-    'beta_vae_score',
-    'factor_vae_score',
+    'Correlation',
 ]
+
+_cached_correlation_matrix = defaultdict(dict)
+_cached_mi_matrix = {}
 
 # ===========================================================================
 # Correlation
@@ -60,10 +63,11 @@ _corr_methods = ['spearman', 'lasso', 'pearson', 'average']
 
 
 def correlation_matrix(
-    x1: np.ndarray,
-    x2: np.ndarray,
+    x1: Union[np.ndarray, tf.Tensor],
+    x2: Union[np.ndarray, tf.Tensor],
     method: Literal['spearman', 'pearson', 'lasso', 'average'] = 'spearman',
     seed: int = 1,
+    cache_key: Optional[str] = None,
 ) -> np.ndarray:
   """Correlation matrix of each column in `x1` to each column in `x2`
 
@@ -89,6 +93,9 @@ def correlation_matrix(
       correlation matrices `[x1.shape[1], x2.shape[1]]`, all entries are
       in `[0, 1]`.
   """
+  if (cache_key is not None and
+      cache_key in _cached_correlation_matrix[method]):
+    return _cached_correlation_matrix[method][cache_key]
   x1 = np.asarray(x1)
   x2 = np.asarray(x2)
   d1 = x1.shape[-1]
@@ -123,6 +130,8 @@ def correlation_matrix(
             corr = sp.stats.pearsonr(j1, j2)[0]
           corr_mat[i1, i2] = corr
   ## decoding and return
+  if cache_key is not None:
+    _cached_correlation_matrix[method][cache_key] = corr_mat
   return corr_mat
 
 
@@ -130,7 +139,7 @@ def correlation_matrix(
 # Clustering scores
 # ===========================================================================
 def _unsupervised_clustering_accuracy(y, y_pred):
-  r""" Unsupervised Clustering Accuracy
+  """Unsupervised Clustering Accuracy
 
   Author: scVI (https://github.com/YosefLab/scVI)
   """
@@ -195,7 +204,7 @@ def unsupervised_clustering_scores(factors: np.ndarray,
                                    random_state: int = 1,
                                    n_cpu: int = 1,
                                    verbose: bool = True) -> Dict[str, float]:
-  r""" Calculating the unsupervised clustering Scores:
+  """ Calculating the unsupervised clustering Scores:
 
     - ASW : silhouette_score ([-1, 1], higher is better)
         is calculated using the mean intra-cluster distance and the
@@ -340,14 +349,17 @@ def discrete_entropy(labels):
   return h
 
 
-def mutual_info_estimate(representations: np.ndarray,
-                         factors: np.ndarray,
-                         continuous_representations: bool = True,
-                         continuous_factors: bool = False,
-                         n_neighbors: int = 3,
-                         n_cpu: int = 1,
-                         seed: int = 1,
-                         verbose: bool = False):
+def mutual_info_estimate(
+    representations: np.ndarray,
+    factors: np.ndarray,
+    continuous_representations: bool = True,
+    continuous_factors: bool = False,
+    n_neighbors: int = 3,
+    n_cpu: int = 1,
+    seed: int = 1,
+    verbose: bool = False,
+    cache_key: Optional[str] = None,
+) -> np.ndarray:
   r""" Nonparametric method for estimating entropy from k-nearest neighbors
   distances (note: this implementation use multi-processing)
 
@@ -368,6 +380,8 @@ def mutual_info_estimate(representations: np.ndarray,
   L. F. Kozachenko, N. N. Leonenko, “Sample Estimate of the Entropy of a
     Random Vector:, Probl. Peredachi Inf., 23:2 (1987), 9-16
   """
+  if cache_key is not None and cache_key in _cached_mi_matrix:
+    return _cached_mi_matrix[cache_key]
   from sklearn.feature_selection import (mutual_info_classif,
                                          mutual_info_regression)
   mutual_info = mutual_info_regression if continuous_factors else \
@@ -386,6 +400,7 @@ def mutual_info_estimate(representations: np.ndarray,
                      random_state=seed)
     return idx, mi
 
+  ## compute the MI matrix
   jobs = list(range(num_factors))
   if n_cpu < 2:
     it = (func(i) for i in jobs)
@@ -396,6 +411,9 @@ def mutual_info_estimate(representations: np.ndarray,
     it = tqdm(it, desc='Estimating mutual information', total=len(jobs))
   for i, mi in it:
     mi_matrix[:, i] = mi
+  ## return
+  if cache_key is not None:
+    _cached_mi_matrix[cache_key] = mi_matrix
   return mi_matrix
 
 
@@ -425,133 +443,6 @@ def mutual_info_gap(representations, factors):
   return np.mean(np.divide(sorted_m[0, :] - sorted_m[1, :], entropy_[:]))
 
 
-# ===========================================================================
-# Disentanglement, completeness, informativeness
-# ===========================================================================
-def disentanglement_score(importance_matrix):
-  r""" Compute the disentanglement score of the representation.
-
-  Arguments:
-    importance_matrix : is of shape `[num_latents, num_factors]`.
-  """
-  per_code = 1. - sp.stats.entropy(
-      importance_matrix + 1e-11, base=importance_matrix.shape[1], axis=1)
-  if importance_matrix.sum() == 0.:
-    importance_matrix = np.ones_like(importance_matrix)
-  code_importance = importance_matrix.sum(axis=1) / importance_matrix.sum()
-  return np.sum(per_code * code_importance)
-
-
-def completeness_score(importance_matrix):
-  r""""Compute completeness of the representation.
-
-  Arguments:
-    importance_matrix : is of shape `[num_latents, num_factors]`.
-  """
-  per_factor = 1. - sp.stats.entropy(
-      importance_matrix + 1e-11, base=importance_matrix.shape[0], axis=0)
-  if importance_matrix.sum() == 0.:
-    importance_matrix = np.ones_like(importance_matrix)
-  factor_importance = importance_matrix.sum(axis=0) / importance_matrix.sum()
-  return np.sum(per_factor * factor_importance)
-
-
-def representative_importance_matrix(repr_train,
-                                     factor_train,
-                                     repr_test,
-                                     factor_test,
-                                     random_state=1234,
-                                     algo=GradientBoostingClassifier):
-  r""" Using Tree Classifier to estimate the importance of each
-  representation for each factor.
-
-  Arguments:
-    repr_train, repr_test : a Matrix `(n_samples, n_features)`
-      input features for training the classifier
-    factor_train, factor_test : a Matrix `(n_samples, n_factors)`
-      discrete labels for the classifier
-    algo : `sklearn.Estimator`, a classifier with `feature_importances_`
-      attribute, for example:
-        averaging methods:
-        - `sklearn.ensemble.ExtraTreesClassifier`
-        - `sklearn.ensemble.RandomForestClassifier`
-        - `sklearn.ensemble.IsolationForest`
-        and boosting methods:
-        - `sklearn.ensemble.GradientBoostingClassifier`
-        - `sklearn.ensemble.AdaBoostClassifier`
-
-  Return:
-    importance_matrix : a Matrix of shape `(n_features, n_factors)`
-    train accuracy : a Scalar
-    test accuracy : a Scalar
-  """
-  num_latents = repr_train.shape[1]
-  num_factors = factor_train.shape[1]
-  assert hasattr(algo, 'feature_importances_'), \
-    "The class must contain 'feature_importances_' attribute"
-
-  def _train(factor_idx):
-    model = algo(random_state=random_state, n_iter_no_change=100)
-    model.fit(np.asarray(repr_train), np.asarray(factor_train[:, factor_idx]))
-    feat = np.abs(model.feature_importances_)
-    train = np.mean(model.predict(repr_train) == factor_train[:, factor_idx])
-    test = np.mean(model.predict(repr_test) == factor_test[:, factor_idx])
-    return factor_idx, feat, train, test
-
-  # ====== compute importance based on gradient boosted trees ====== #
-  importance_matrix = np.zeros(shape=[num_latents, num_factors],
-                               dtype=np.float64)
-  train_acc = list(range(num_factors))
-  test_acc = list(range(num_factors))
-  ncpu = min(max(1, get_cpu_count() - 1), 10)
-  for factor_idx in range(num_factors):
-    i, feat, train, test = _train(factor_idx)
-    importance_matrix[:, i] = feat
-    train_acc[i] = train
-    test_acc[i] = test
-  return importance_matrix, train_acc, test_acc
-
-
-def dci_scores(repr_train,
-               factor_train,
-               repr_test,
-               factor_test,
-               random_state=1234):
-  r""" Disentanglement, completeness, informativeness
-
-  Arguments:
-    repr_train, repr_test : 2-D matrix `[n_samples, latent_dim]`
-    factor_train, factor_test : 2-D matrix `[n_samples, n_factors]`
-
-  Return:
-    tuple of 3 scores (disentanglement, completeness, informativeness), all
-      scores are higher is better.
-      - disentanglement score: The degree to which a representation factorises
-        or disentangles the underlying factors of variation
-      - completeness score: The degree to which each underlying factor is
-        captured by a single code variable.
-      - informativeness score: test accuracy of a factor recognizer trained
-        on train data
-
-  References:
-    Based on "A Framework for the Quantitative Evaluation of Disentangled
-    Representations" (https://openreview.net/forum?id=By-7dz-AZ).
-
-  Note:
-    This implementation only return accuracy on test data as informativeness
-      score
-  """
-  importance, train_acc, test_acc = representative_importance_matrix(
-      repr_train, factor_train, repr_test, factor_test, random_state)
-  train_acc = np.mean(train_acc)
-  test_acc = np.mean(test_acc)
-  # ====== disentanglement and completeness ====== #
-  d = disentanglement_score(importance)
-  c = completeness_score(importance)
-  i = test_acc
-  return d, c, i
-
-
 def relative_strength(mat):
   r""" Computes relative strength score for both axes of a correlation matrix.
 
@@ -567,3 +458,67 @@ def relative_strength(mat):
       np.power(np.max(mat, axis=1), 2) / np.sum(mat, axis=1),
       copy=False, nan=0.0))
   return (score_x + score_y) / 2
+
+
+# ===========================================================================
+# Summary
+# ===========================================================================
+class Correlation(IntFlag):
+  """Generalized interface for estimating the correlation of two matrices:
+
+  Parameters
+  ----------
+  x1 : Union[np.ndarray, tf.Tensor]
+      representation matrix of shape `[n_samples, n_latents]`
+  x2 : Union[np.ndarray, tf.Tensor]
+      factor matrix of shape `[n_samples, n_factors]`
+  seed : int, optional
+      random seed, by default 1
+  **kwargs : extra keywords arguments for the method
+
+  Returns
+  -------
+  Union[np.ndarray, List[np.ndarray]]
+      The output is correlation matrix of shape `[n_latents, n_factors]`
+
+  """
+  Pearson = auto()
+  Spearman = auto()
+  Lasso = auto()
+  MutualInfo = auto()
+  Importance = auto()
+
+  def __iter__(self):
+    for method in Correlation:
+      if method in self:
+        yield method
+
+  def __len__(self):
+    return len(list(iter(self)))
+
+  @property
+  def is_single(self) -> bool:
+    return len(self) == 1
+
+  def __call__(self,
+               x1: Union[Distribution, np.ndarray, tf.Tensor],
+               x2: Union[Distribution, np.ndarray, tf.Tensor],
+               seed: int = 1,
+               **kwargs) -> Union[np.ndarray, List[np.ndarray]]:
+    if hasattr(x1, 'numpy'):
+      x1 = x1.numpy()
+    if hasattr(x2, 'numpy'):
+      x2 = x2.numpy()
+    if len(self) != 1:
+      return [method(x1, x2, seed=seed, **kwargs) for method in self]
+    if self == Correlation.Pearson:
+      fn = partial(correlation_matrix, method='pearson')
+    elif self == Correlation.Spearman:
+      fn = partial(correlation_matrix, method='spearman')
+    elif self == Correlation.Lasso:
+      fn = partial(correlation_matrix, method='lasso')
+    elif self == Correlation.MutualInfo:
+      fn = mutual_info_estimate
+    elif self == Correlation.Importance:
+      fn = lambda *args, **kw: importance_matrix(*args, **kw)[0]
+    return fn(x1, x2, seed=seed, **kwargs)

@@ -44,7 +44,7 @@ class EarlyStopping:
   ----------
   min_improvement : float, optional
       Determine by `generalization_error / progression`, by default 0.
-  min_niter : int, optional
+  warmup_niter : int, optional
       Minimum number of iteration until early stop kicks in., by default -1
   patience : int, optional
       after which training will be stopped, by default 0
@@ -64,7 +64,8 @@ class EarlyStopping:
       batching the losses into mini-batch then applying the
       `reduce_method`, by default 1
   smooth : float, optional
-      moving exponential average smooth value, by default 0.2
+      moving exponential average smooth value, 0.0 means no smoothing and
+      the value must < 1.0, by default 0.2
   reduce_method : Callable[[np.ndarray, int], np.ndarray], optional
       for mini-batched losses, by default np.mean
   verbose : bool, optional
@@ -102,18 +103,18 @@ class EarlyStopping:
   @typechecked
   def __init__(self,
                min_improvement: float = 0.,
-               min_niter: int = -1,
-               patience: int = 0,
+               warmup_niter: int = -1,
+               patience: int = 2,
                reward: float = 0.5,
                progression_length: int = 0,
                mode: Literal['min', 'max'] = 'min',
                losses: Union[List[float], np.ndarray, tf.Tensor] = [],
                batch_size: int = 1,
-               smooth: float = 0.2,
+               smooth: float = 0.1,
                reduce_method: Callable[[np.ndarray, int], np.ndarray] = np.mean,
                verbose: bool = False):
     self.min_improvement = min_improvement
-    self.min_niter = -1
+    self.warmup_niter = max(2, warmup_niter)
     self.patience = patience
     self.reward = reward
     self.progression_length = progression_length
@@ -123,9 +124,16 @@ class EarlyStopping:
     self._losses = list(losses)
     self.batch_size = int(batch_size)
     self.smooth = float(smooth)
+    assert self.smooth < 1.0, \
+      f'smoothing must be smaller than 1.0 but given {self.smooth}'
     self.verbose = verbose
     self.reduce_method = reduce_method
     self._is_best = False
+    # history
+    n = max(warmup_niter, self.n_iter) + 1
+    self._patience_history = [self.patience] * n
+    self._generalization_history = [0.] * n
+    self._progress_history = [1.] * n
 
   @property
   def n_iter(self) -> int:
@@ -135,6 +143,18 @@ class EarlyStopping:
   def is_best(self) -> bool:
     """Return `True` if the last iteration achieved the best score."""
     return self._is_best
+
+  @property
+  def patience_history(self) -> List[float]:
+    return list(self._patience_history)
+
+  @property
+  def generalization_history(self) -> List[float]:
+    return list(self._generalization_history)
+
+  @property
+  def progress_history(self) -> List[float]:
+    return list(self._progress_history)
 
   @property
   def losses(self) -> np.ndarray:
@@ -159,9 +179,9 @@ class EarlyStopping:
     self._losses.append(loss)
     return self()
 
-  def __call__(self) -> bool:
+  def __call__(self, verbose=None) -> bool:
     losses = self.losses
-    if self.n_iter < max(2., self.min_niter):
+    if self.n_iter < self.warmup_niter:
       if self.verbose:
         print(f"[EarlyStop] niter:{self.n_iter} Not enough iteration ")
       return False
@@ -186,30 +206,55 @@ class EarlyStopping:
       self._is_best = True
       self.patience += self.reward
     decision = True if self.patience < 0 else False
-    if self.verbose:
+    # store history
+    self._patience_history.append(self.patience)
+    self._generalization_history.append(generalization)
+    self._progress_history.append(progress)
+    if (bool(verbose) if verbose is not None else self.verbose):
       print(f"[EarlyStop] niter:{self.n_iter} improvement:{improvement:.4f} "
             f"progress:{progress:.4f} patience:{self.patience} "
             f"best:{self.is_best} stop:{decision} "
-            f"last10:{','.join(['%.2f' % i for i in losses[-10:]])}")
+            f"last10:[{','.join(['%.2f' % i for i in losses[-10:]])}]")
     return decision
 
-  def plot_losses(self, ax=None):
+  def plot_losses(self, save_path=None, ax=None):
     losses = self.losses
     if len(losses) < 2:
       return None
     from matplotlib import pyplot as plt
+    try:
+      import seaborn as sns
+      sns.set()
+    except ImportError:
+      pass
     if ax is None:
       ax = plt.gca()
+    legends = []
+    ## plotting
     min_idx = np.argmin(self._ema_L)
     min_val = self._ema_L[min_idx]
-    ax.plot(self._org_L, label='losses')
-    ax.plot(self._ema_L, label=f'smooth-{self.smooth}', linestyle='--')
-    ax.plot(min_idx,
-            min_val,
-            marker='.',
-            markersize=30,
-            alpha=0.5,
-            linewidth=0.0,
-            label='min')
-    ax.legend()
+    legends += ax.plot(self._org_L, label='losses', color='red')
+    legends += ax.plot(self._ema_L,
+                       label=f'smoothed-{self.smooth}',
+                       linestyle='--',
+                       color='salmon')
+    legends += ax.plot(min_idx,
+                       min_val,
+                       marker='.',
+                       markersize=10,
+                       alpha=0.5,
+                       linewidth=0.0,
+                       label='min')
+    ## plot the history
+    ax = ax.twinx()
+    styles = dict(linestyle='-.', linewidth=1.5, alpha=0.4)
+    legends += ax.plot(self._patience_history, label='patience', **styles)
+    legends += ax.plot(self._generalization_history,
+                       label='improvement',
+                       **styles)
+    legends += ax.plot(self._progress_history, label='progress', **styles)
+    ax.grid(False)
+    ax.legend(legends, [i.get_label() for i in legends], fontsize=6)
+    if save_path is not None:
+      ax.get_figure().savefig(save_path, dpi=200)
     return ax

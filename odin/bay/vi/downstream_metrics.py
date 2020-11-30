@@ -2,45 +2,239 @@ from __future__ import absolute_import, division, print_function
 
 import os
 from collections import defaultdict
+from typing import List, Optional, Type, Union
+import scipy as sp
 
 import numpy as np
 import tensorflow as tf
 from numpy.random import RandomState
-from sklearn.linear_model import LogisticRegression
-from sklearn.metrics import f1_score
-from sklearn.svm import LinearSVC
-from tensorflow_probability import distributions as tfd
-
 from odin.bay.distributions import CombinedDistribution
 from odin.bay.helpers import batch_slice
 from odin.bay.vi.utils import discretizing
 from odin.stats import is_discrete
+from sklearn.base import BaseEstimator
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import f1_score
+from sklearn.svm import LinearSVC
+from tensorflow_probability import distributions as tfd
+from tensorflow_probability.python.distributions import Distribution
+from sklearn.model_selection import train_test_split
+
+__all__ = [
+    'separated_attr_predictability',
+    'importance_matrix',
+    'dci_scores',
+    'beta_vae_score',
+    'factor_vae_score',
+]
 
 
-def separated_attr_predictability(repr_train,
-                                  factor_train,
-                                  repr_test,
-                                  factor_test,
-                                  continuous_factors=False,
-                                  random_state=1234):
-  r""" The SAP score
+# ===========================================================================
+# Helpers
+# ===========================================================================
+def _to_numpy(x) -> np.ndarray:
+  if isinstance(x, Distribution):
+    x = x.mean()
+  if hasattr(x, 'numpy'):
+    x = x.numpy()
+  return x
+
+
+_cached_importance_matrix = {}
+
+
+# ===========================================================================
+# Disentanglement, completeness, informativeness
+# ===========================================================================
+def disentanglement_score(matrix):
+  """Compute the disentanglement score of the representation.
 
   Arguments:
-    repr_train, repr_test : `[n_samples, n_latents]`, the continuous
-      latent representation.
-    factor_train, factor_test : `[n_samples, n_factors]`. The groundtruth
-      factors, could be continuous or discrete
-    continuous_factors : A Boolean, indicate if the factor is discrete or
-      continuous
-
-  Reference:
-    Kumar, A., Sattigeri, P., Balakrishnan, A., 2018. Variational Inference of
-      Disentangled Latent Concepts from Unlabeled Observations.
-      arXiv:1711.00848 [cs, stat].
-
+    matrix : is of shape `[num_latents, num_factors]`.
   """
+  per_code = 1. - sp.stats.entropy(matrix + 1e-11, base=matrix.shape[1], axis=1)
+  if matrix.sum() == 0.:
+    matrix = np.ones_like(matrix)
+  code_importance = matrix.sum(axis=1) / matrix.sum()
+  return np.sum(per_code * code_importance)
+
+
+def completeness_score(matrix):
+  """Compute completeness of the representation.
+
+  Arguments:
+    matrix : is of shape `[num_latents, num_factors]`.
+  """
+  per_factor = 1. - sp.stats.entropy(
+      matrix + 1e-11, base=matrix.shape[0], axis=0)
+  if matrix.sum() == 0.:
+    matrix = np.ones_like(matrix)
+  factor_importance = matrix.sum(axis=0) / matrix.sum()
+  return np.sum(per_factor * factor_importance)
+
+
+def importance_matrix(
+    repr_train: Union[Distribution, tf.Tensor, np.ndarray],
+    factor_train: Union[tf.Tensor, np.ndarray],
+    repr_test: Optional[Union[Distribution, tf.Tensor, np.ndarray]] = None,
+    factor_test: Optional[Union[tf.Tensor, np.ndarray]] = None,
+    test_size: float = 0.2,
+    n_iter_no_change: int = 10,
+    algo: Type[BaseEstimator] = GradientBoostingClassifier,
+    seed: int = 1,
+    cache_key: Optional[str] = None,
+):
+  """Using Tree Classifier to estimate the importance of each
+  representation for each factor.
+
+  Parameters
+  -----------
+  repr_train, repr_test : a Matrix `(n_samples, n_features)`
+    input features for training the classifier
+  factor_train, factor_test : a Matrix `(n_samples, n_factors)`
+    discrete labels for the classifier
+  algo : `sklearn.Estimator`, a classifier with `feature_importances_`
+    attribute, for example:
+      averaging methods:
+      - `sklearn.ensemble.ExtraTreesClassifier`
+      - `sklearn.ensemble.RandomForestClassifier`
+      - `sklearn.ensemble.IsolationForest`
+      and boosting methods:
+      - `sklearn.ensemble.GradientBoostingClassifier`
+      - `sklearn.ensemble.AdaBoostClassifier`
+
+  Returns
+  --------
+  importance_matrix : a Matrix of shape `(n_features, n_factors)`
+  train accuracy : a Scalar
+  test accuracy : a Scalar
+  """
+  ## check the cahce
+  if cache_key is not None and cache_key in _cached_importance_matrix:
+    return _cached_importance_matrix[cache_key]
+  ## preprocess data
+  repr_train = _to_numpy(repr_train)
+  if repr_test is not None:
+    repr_test = _to_numpy(repr_test)
   num_latents = repr_train.shape[1]
   num_factors = factor_train.shape[1]
+  assert hasattr(algo, 'feature_importances_'), \
+    "The class must contain 'feature_importances_' attribute"
+  ## split the datasets
+  if repr_test is None or factor_test is None:
+    repr_train, repr_test, factor_train, factor_test = train_test_split(
+        repr_train, factor_train, test_size=0.2, random_state=seed)
+
+  def _train(factor_idx):
+    model = algo(random_state=seed, n_iter_no_change=n_iter_no_change)
+    model.fit(np.asarray(repr_train), np.asarray(factor_train[:, factor_idx]))
+    feat = np.abs(model.feature_importances_)
+    train = np.mean(model.predict(repr_train) == factor_train[:, factor_idx])
+    test = np.mean(model.predict(repr_test) == factor_test[:, factor_idx])
+    return factor_idx, feat, train, test
+
+  # ====== compute importance based on gradient boosted trees ====== #
+  matrix = np.zeros(shape=[num_latents, num_factors], dtype=np.float64)
+  train_acc = list(range(num_factors))
+  test_acc = list(range(num_factors))
+  for factor_idx in range(num_factors):
+    i, feat, train, test = _train(factor_idx)
+    matrix[:, i] = feat
+    train_acc[i] = train
+    test_acc[i] = test
+  rets = (matrix, train_acc, test_acc)
+  if cache_key is not None:
+    _cached_importance_matrix[cache_key] = rets
+  return rets
+
+
+def dci_scores(
+    repr_train: Union[Distribution, tf.Tensor, np.ndarray],
+    factor_train: Union[tf.Tensor, np.ndarray],
+    repr_test: Optional[Union[Distribution, tf.Tensor, np.ndarray]] = None,
+    factor_test: Optional[Union[tf.Tensor, np.ndarray]] = None,
+    test_size: float = 0.2,
+    seed: int = 1,
+    **kwargs,
+):
+  """Disentanglement, completeness, informativeness
+
+  Parameteres
+  ------------
+  repr_train, repr_test : 2-D matrix `[n_samples, latent_dim]`
+  factor_train, factor_test : 2-D matrix `[n_samples, n_factors]`
+
+  Returns
+  --------
+  tuple of 3 scores (disentanglement, completeness, informativeness), all
+    scores are higher is better.
+    - disentanglement score: The degree to which a representation factorises
+      or disentangles the underlying factors of variation
+    - completeness score: The degree to which each underlying factor is
+      captured by a single code variable.
+    - informativeness score: test accuracy of a factor recognizer trained
+      on train data
+
+  References
+  ------------
+  Based on "A Framework for the Quantitative Evaluation of Disentangled
+      Representations" (https://openreview.net/forum?id=By-7dz-AZ).
+
+  Note
+  -----
+  This implementation only return accuracy on test data as informativeness
+      score
+  """
+  importance, train_acc, test_acc = importance_matrix(repr_train,
+                                                      factor_train,
+                                                      repr_test,
+                                                      factor_test,
+                                                      seed=seed,
+                                                      **kwargs)
+  train_acc = np.mean(train_acc)
+  test_acc = np.mean(test_acc)
+  # ====== disentanglement and completeness ====== #
+  d = disentanglement_score(importance)
+  c = completeness_score(importance)
+  i = test_acc
+  return d, c, i
+
+
+def separated_attr_predictability(
+    repr_train: Union[Distribution, tf.Tensor, np.ndarray],
+    factor_train: Union[tf.Tensor, np.ndarray],
+    repr_test: Optional[Union[Distribution, tf.Tensor, np.ndarray]] = None,
+    factor_test: Optional[Union[tf.Tensor, np.ndarray]] = None,
+    test_size: float = 0.2,
+    continuous_factors: bool = False,
+    seed: int = 1234):
+  """The SAP score
+
+  Parameters
+  ----------
+  repr_train, repr_test : `[n_samples, n_latents]`, the continuous
+    latent representation.
+  factor_train, factor_test : `[n_samples, n_factors]`. The groundtruth
+    factors, could be continuous or discrete
+  continuous_factors : A Boolean, indicate if the factor is discrete or
+    continuous
+
+  Reference
+  ---------
+  Kumar, A., Sattigeri, P., Balakrishnan, A., 2018. Variational Inference of
+      Disentangled Latent Concepts from Unlabeled Observations.
+      arXiv:1711.00848 [cs, stat].
+  """
+  repr_train = _to_numpy(repr_train)
+  if repr_test is not None:
+    repr_test = _to_numpy(repr_test)
+  num_latents = repr_train.shape[1]
+  num_factors = factor_train.shape[1]
+  ## split the datasets
+  if repr_test is None or factor_test is None:
+    repr_train, repr_test, factor_train, factor_test = train_test_split(
+        repr_train, factor_train, test_size=0.2, random_state=seed)
   # ====== compute the score matrix ====== #
   score_matrix = np.zeros([num_latents, num_factors])
   for i in range(num_latents):
@@ -64,7 +258,7 @@ def separated_attr_predictability(repr_train,
         classifier = LinearSVC(C=0.01,
                                max_iter=8000,
                                class_weight="balanced",
-                               random_state=random_state)
+                               random_state=seed)
         classifier.fit(np.expand_dims(x_i, axis=-1), y_j)
         pred = classifier.predict(np.expand_dims(x_i_test, axis=-1))
         score_matrix[i, j] = np.mean(pred == y_j_test)
@@ -187,7 +381,7 @@ def beta_vae_score(representations: tfd.Distribution,
                    use_mean=False,
                    batch_size=8,
                    n_samples=1000,
-                   random_state=1234,
+                   seed: int = 1,
                    return_model=False,
                    verbose=False):
   r""" The Beta-VAE score train a logistic regression to detect the invariant
@@ -200,8 +394,7 @@ def beta_vae_score(representations: tfd.Distribution,
   """
   desc = "betaVAE scoring"
   strategy = 'betavae'
-  rand = random_state if isinstance(random_state, RandomState) else \
-    RandomState(seed=random_state)
+  rand = RandomState(seed=seed)
   features, labels = _sampling_helper(**locals())
   ## train the classifier
   model = LogisticRegression(max_iter=1000, random_state=rand.randint(1e8))
@@ -214,12 +407,12 @@ def beta_vae_score(representations: tfd.Distribution,
 
 def factor_vae_score(representations: tfd.Distribution,
                      factors: np.ndarray,
-                     use_mean=False,
-                     batch_size=8,
-                     n_samples=1000,
-                     random_state=1234,
-                     return_model=False,
-                     verbose=False):
+                     use_mean: bool = False,
+                     batch_size: int = 8,
+                     n_samples: int = 1000,
+                     seed: int = 1,
+                     return_model: bool = False,
+                     verbose: bool = False):
   r""" The Factor-VAE score train a highest-vote classifier to detect the
   invariant factor index from the lowest variated latent dimension.
 
@@ -229,8 +422,7 @@ def factor_vae_score(representations: tfd.Distribution,
   """
   desc = "factorVAE scoring"
   strategy = 'factorvae'
-  rand = random_state if isinstance(random_state, RandomState) else \
-    RandomState(seed=random_state)
+  rand = RandomState(seed=seed)
   features, labels = _sampling_helper(**locals())
   ## voting classifier
   n_codes = representations.event_shape[0]

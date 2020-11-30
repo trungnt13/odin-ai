@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
@@ -98,7 +98,13 @@ class IterableDataset:
 
   @property
   def shape(self) -> List[int]:
+    """Return shape of single example (i.e. no batch dimension)"""
     raise NotImplementedError()
+
+  @property
+  def full_shape(self) -> List[Union[None, int]]:
+    """Return the shape with batch dimension"""
+    return (None,) + tuple([i for i in self.shape])
 
   @property
   def is_binary(self) -> bool:

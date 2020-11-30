@@ -19,8 +19,12 @@ from odin.ml.scoring import (Scorer, VectorNormalizer, compute_class_avg,
                              compute_wccn, compute_within_cov)
 from sklearn.base import ClassifierMixin
 from typing_extensions import Literal
+from enum import IntFlag, auto
 
 
+# ===========================================================================
+# Helpers functions
+# ===========================================================================
 def linear_classifier(X: np.ndarray,
                       y: np.ndarray,
                       algo: Literal['svm', 'lda', 'knn', 'tree', 'logistic',
@@ -184,3 +188,63 @@ def dimension_reduce(*X,
     raise ValueError(
         "No support for dimension reduction algorithm with name: '%s'" % algo)
   return outputs
+
+
+class DimReduce(IntFlag):
+  """Applying dimension reduction algorithm on a list of array
+
+  Parameters
+  ----------
+  n_components : int, optional
+      number of components or cluster, by default 2
+  return_model : bool, optional
+      If `True`, return both transformed array and trained models,
+      otherwise, only return the array., by default False
+  random_state : int, optional
+      seed for random state, by default 1
+  kwargs : dict
+      specialized arguments for each algorithm
+
+  Returns
+  -------
+  np.ndarray
+      the transformed array and trained model (if `return_model=True`)
+  """
+  PCA = auto()
+  UMAP = auto()
+  TSNE = auto()
+  KNN = auto()
+  KMEANS = auto()
+
+  def __iter__(self):
+    for method in DimReduce:
+      if method in self:
+        yield method
+
+  def __len__(self):
+    return len(list(iter(self)))
+
+  @property
+  def is_single(self) -> bool:
+    return len(self) == 1
+
+  def __call__(self,
+               *X,
+               n_components: int = 2,
+               return_model: bool = False,
+               random_state: int = 1,
+               **kwargs) -> np.ndarray:
+    if len(self) > 1:
+      return [
+          method(*X,
+                 n_components=n_components,
+                 return_model=return_model,
+                 random_state=random_state,
+                 **kwargs) for method in self
+      ]
+    return dimension_reduce(*X,
+                            algo=self.name.lower(),
+                            n_components=n_components,
+                            return_model=return_model,
+                            random_state=random_state,
+                            **kwargs)

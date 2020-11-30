@@ -25,7 +25,6 @@ dependencies:
   - pytorch
   - torchvision
   - torchaudio
-  - pyro-ppl>=1.4.0
 
   - pip:
       - tensorflow>=2.3.1
@@ -43,6 +42,7 @@ dependencies:
       - arviz # bayesian analysis
       - statsmodels # hypothesis testing and frequentist statistic analysis
       - typeguard>=2.10.0
+      - pyro-ppl>=1.4.0
 
 # Other helpful library:
 # pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git

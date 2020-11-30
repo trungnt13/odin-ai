@@ -20,7 +20,7 @@ from odin.backend.alias import (parse_activation, parse_constraint,
 from odin.backend.keras_helpers import layer2text
 from odin.networks.util_layers import (Conv1DTranspose, ExpandDims, Identity,
                                        ReshapeMCMC)
-from odin.training import Callback, Trainer
+from odin.training import Callback, EarlyStopping, Trainer
 from odin.utils import MD5object, as_tuple, classproperty
 from scipy import sparse
 from six import string_types
@@ -220,6 +220,10 @@ class Networks(keras.Model, MD5object):
   @property
   def trainer(self) -> Trainer:
     return self._trainer[0]
+
+  @property
+  def early_stopping(self) -> EarlyStopping:
+    return self.trainer.early_stopping
 
   @property
   def last_outputs(self):

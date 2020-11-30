@@ -388,8 +388,8 @@ _uuid_random_state = numpy.random.RandomState(
     int(str(int(time.time() * 100))[3:]))
 
 
-def uuid(length=8):
-  """ Generate random UUID 8 characters with very very low collision """
+def uuid(length: int = 8) -> str:
+  """Generate random UUID characters with very very low collision """
   # m = time.time()
   # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)
   # uniqid = str(uuid.uuid4())[:8]

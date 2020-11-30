@@ -17,7 +17,7 @@ from odin.bay.distributions import CombinedDistribution
 from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.metrics import (correlation_matrix, mutual_info_estimate,
                                  mutual_info_gap,
-                                 representative_importance_matrix)
+                                 importance_matrix)
 from odin.bay.vi.utils import discretizing, traverse_dims
 from odin.ml import dimension_reduce, linear_classifier
 from odin.search import diagonal_linear_assignment

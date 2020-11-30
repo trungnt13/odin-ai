@@ -4,3 +4,4 @@ from odin.bay.vi.metrics import *
 from odin.bay.vi.posterior import *
 from odin.bay.vi.utils import *
 from odin.bay.vi._base import *
+from odin.bay.vi.disentanglement_gym import *

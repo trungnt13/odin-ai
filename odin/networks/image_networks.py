@@ -1,7 +1,10 @@
+import inspect
 from functools import partial
 from numbers import Number
-from typing import Callable, Dict, List, Union
+from typing import Callable, Dict, List, Union, Any
+from typeguard import typechecked
 
+from six import string_types
 import numpy as np
 import tensorflow as tf
 from odin.backend.keras_helpers import layer2text
@@ -20,6 +23,7 @@ __all__ = [
     'shapes3d_networks',
     'celebasmall_networks',
     'celeba_networks',
+    'get_networks',
 ]
 
 
@@ -103,13 +107,16 @@ class SkipSequential(keras.Model):
 # ===========================================================================
 # Basic Network
 # ===========================================================================
-def mnist_networks(qz: str = 'mvndiag',
-                   zdim: int = 64,
-                   activation: Union[Callable, str] = tf.nn.leaky_relu,
-                   is_semi_supervised: bool = False,
-                   centerize_image: bool = True,
-                   skip_generator: bool = False,
-                   **kwargs) -> Dict[str, Layer]:
+@typechecked
+def mnist_networks(
+    qz: str = 'mvndiag',
+    zdim: int = 64,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
+    is_semi_supervised: bool = False,
+    centerize_image: bool = True,
+    skip_generator: bool = False,
+    **kwargs,
+) -> Dict[str, Layer]:
   from odin.bay.random_variable import RVmeta
   n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (28, 28, n_channels)
@@ -142,29 +149,39 @@ def mnist_networks(qz: str = 'mvndiag',
     decoder = SkipSequential(layers=layers, name='skipdecoder')
   else:
     decoder = keras.Sequential(layers=layers, name='decoder')
-  latents = RVmeta((zdim,), qz, projection=True, name="latents")
-  observation = RVmeta(input_shape, "bernoulli", projection=False, name="image")
+  latents = RVmeta((zdim,), qz, projection=True,
+                   name="latents").create_posterior()
+  observation = RVmeta(input_shape, "bernoulli", projection=False,
+                       name="image").create_posterior()
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,
                   latents=latents)
   if is_semi_supervised:
-    networks['labels'] = RVmeta(10, 'onehot', projection=True, name='digits')
+    networks['labels'] = RVmeta(10, 'onehot', projection=True,
+                                name='digits').create_posterior()
   return networks
 
 
-def dsprites_networks(qz: str = 'mvndiag',
-                      zdim: int = 64,
-                      activation: Union[Callable, str] = tf.nn.leaky_relu,
-                      is_semi_supervised: bool = False,
-                      centerize_image: bool = True,
-                      skip_generator: bool = False,
-                      **kwargs) -> Dict[str, Layer]:
+@typechecked
+def dsprites_networks(
+    qz: str = 'mvndiag',
+    zdim: int = 64,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
+    is_semi_supervised: bool = False,
+    centerize_image: bool = True,
+    skip_generator: bool = False,
+    **kwargs,
+) -> Dict[str, Layer]:
   from odin.bay.random_variable import RVmeta
   n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (64, 64, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
-  proj_dim = 128 if n_channels == 1 else 256
+  proj_dim = kwargs.get('proj_dim', None)
+  if proj_dim is None:
+    proj_dim = 128 if n_channels == 1 else 256
+  else:
+    proj_dim = int(proj_dim)
   encoder = keras.Sequential(
       [
           CenterAt0(enable=centerize_image),
@@ -192,8 +209,10 @@ def dsprites_networks(qz: str = 'mvndiag',
     decoder = SkipSequential(layers=layers, name='skipdecoder')
   else:
     decoder = keras.Sequential(layers=layers, name='decoder')
-  latents = RVmeta((zdim,), qz, projection=True, name="latents")
-  observation = RVmeta(input_shape, "bernoulli", projection=False, name="image")
+  latents = RVmeta((zdim,), qz, projection=True,
+                   name="latents").create_posterior()
+  observation = RVmeta(input_shape, "bernoulli", projection=False,
+                       name="image").create_posterior()
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,
@@ -202,7 +221,7 @@ def dsprites_networks(qz: str = 'mvndiag',
     networks['labels'] = RVmeta(5,
                                 'negativebinomial',
                                 projection=True,
-                                name='attributes')
+                                name='attributes').create_posterior()
   return networks
 
 
@@ -237,7 +256,8 @@ def shapes3dsmall_networks(qz: str = 'mvndiag',
                             is_semi_supervised=False,
                             centerize_image=centerize_image,
                             skip_generator=skip_generator,
-                            n_channels=3)
+                            n_channels=3,
+                            proj_dim=128)
   if is_semi_supervised:
     from odin.bay.layers import DistributionDense
     networks['labels'] = DistributionDense(event_shape=(6,),
@@ -286,7 +306,8 @@ def celebasmall_networks(qz: str = 'mvndiag',
                             is_semi_supervised=False,
                             centerize_image=centerize_image,
                             skip_generator=skip_generator,
-                            n_channels=3)
+                            n_channels=3,
+                            proj_dim=128)
   if is_semi_supervised:
     from odin.bay.layers import DistributionDense
     networks['labels'] = DistributionDense(event_shape=40,
@@ -315,3 +336,29 @@ def celeba_networks(qz: str = 'mvndiag',
                                            posterior='bernoulli',
                                            name='attributes')
   return networks
+
+
+# ===========================================================================
+# Utils
+# ===========================================================================
+def get_networks(dataset_name: str,
+                 qz: str = 'mvndiag',
+                 zdim: int = 64,
+                 activation: Union[Callable, str] = tf.nn.leaky_relu,
+                 is_semi_supervised: bool = False,
+                 centerize_image: bool = True,
+                 skip_generator: bool = False) -> Dict[str, Layer]:
+  dataset_name = str(dataset_name).lower().strip()
+  for k, v in globals().items():
+    if isinstance(k, string_types) and inspect.isfunction(v):
+      k = k.split('_')[0]
+      if k == dataset_name:
+        return v(qz=qz,
+                 zdim=zdim,
+                 activation=activation,
+                 is_semi_supervised=is_semi_supervised,
+                 centerize_image=centerize_image,
+                 skip_generator=skip_generator)
+  raise ValueError(
+      f'Cannot find pre-implemented network for dataset with name="{dataset_name}"'
+  )

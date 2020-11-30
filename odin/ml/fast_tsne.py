@@ -3,7 +3,6 @@ from __future__ import absolute_import, division, print_function
 import warnings
 
 import numpy as np
-
 from odin.utils.crypto import md5_checksum
 from odin.utils.mpi import MPI, cpu_count
 

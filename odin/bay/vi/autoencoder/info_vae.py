@@ -66,9 +66,10 @@ class infoVAE(betaVAE):
                                              kernel='gaussian',
                                              q_sample_shape=None,
                                              p_sample_shape=100),
+      name='InfoVAE',
       **kwargs,
   ):
-    super().__init__(beta=1 - alpha, **kwargs)
+    super().__init__(beta=1 - alpha, name=name, **kwargs)
     self.lamda = tf.convert_to_tensor(lamda, dtype=self.dtype, name='lambda')
     # select right divergence
     assert callable(divergence), \

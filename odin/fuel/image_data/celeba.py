@@ -1,5 +1,6 @@
 import glob
 import os
+import zipfile
 from typing import Optional, Union
 
 import numpy as np

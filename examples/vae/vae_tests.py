@@ -20,7 +20,7 @@ from odin.ml import fast_tsne, fast_umap
 from odin.networks import (celeba_networks, celebasmall_networks,
                            dsprites_networks, mnist_networks, shapes3d_networks,
                            shapes3dsmall_networks)
-from odin.training import get_current_trainer, get_output_dir, run_hydra
+from odin.training import get_output_dir, run_hydra
 from odin.utils import ArgController, as_tuple, clear_folder
 from tensorflow.python import keras
 from tqdm import tqdm
@@ -65,7 +65,7 @@ skip: False
 # Helpers
 # ===========================================================================
 def load_data(name: str):
-  ds = get_dataset(name)()
+  ds = get_dataset(name)
   test = ds.create_dataset(partition='test',
                            inc_labels=1.0 if ds.has_labels else 0.0)
   samples = [
@@ -200,8 +200,9 @@ def main(cfg: dict):
 
   ### fit the network
   def callback():
-    losses = get_current_trainer().valid_loss
-    if losses[-1] <= np.min(losses):
+    if vae.early_stopping(verbose=True):
+      vae.trainer.terminate()
+    elif vae.early_stopping.is_best:
       vae.save_weights(overwrite=True)
     tracking_metrics = dict()
     # show reconstruction image
@@ -242,8 +243,8 @@ def main(cfg: dict):
     z = tf.concat([q.mean() for q in Q], axis=-1)
     z = traverse_dims(z,
                       feature_indices=np.argsort(std)[:n_indices],
-                      min_val=-3.,
-                      max_val=3.,
+                      min_val=-4.,
+                      max_val=4.,
                       n_traverse_points=21,
                       n_random_samples=1,
                       mode='linear',

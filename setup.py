@@ -32,6 +32,7 @@ dependencies = [
     'tqdm',
     'pyyaml',
     'pycrypto',
+    'typeguard' # runtime type check
 ]
 # ===========================================================================
 # Description
