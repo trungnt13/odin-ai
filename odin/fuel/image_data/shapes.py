@@ -278,15 +278,13 @@ class dSprites(ImageDataset):
         split=["train[:85%]", "train[85%:90%]", "train[90%:]"],
         shuffle_files=True)
     if continuous:
-      self._factors = np.array([
-          'value_orientation', 'value_scale', 'value_shape', 'value_x_position',
-          'value_y_position'
-      ])
+      self._prefix = 'value_'
     else:
-      self._factors = np.array([
-          'label_orientation', 'label_scale', 'label_shape', 'label_x_position',
-          'label_y_position'
-      ])
+      self._prefix = 'label_'
+    self._factors = np.array([
+        'orientation', 'scale', 'shape', 'x_position',
+        'y_position'
+    ])
 
   @property
   def labels(self):
@@ -329,7 +327,7 @@ class dSprites(ImageDataset):
                        train=self.train,
                        valid=self.valid,
                        test=self.test)
-    factors = self._factors
+    factors = [f'{self._prefix}{i}' for i in self._factors]
     inc_labels = float(inc_labels)
     gen = tf.random.experimental.Generator.from_seed(seed=seed)
 

@@ -4,12 +4,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
+from odin.backend import TensorTypes
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import (DatasetV2,
                                                              OptimizerV2,
-                                                             TensorTypes,
                                                              TrainStep, VAEStep)
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
@@ -123,12 +123,18 @@ class factorVAE(betaVAE):
   Parameters
   ------------
   discriminator : a Dictionary or `keras.layers.Layer`.
-    Keywords arguments for creating the `FactorDiscriminator`
+      Keywords arguments for creating the `FactorDiscriminator`
   maximize_tc : a Boolean. If True, instead of minimize total correlation
-    for more factorized latents, try to maximize the divergence.
-  gamma : a Scalar. Weight for minimizing total correlation
-  beta : a Scalar. Weight for minimizing Kl-divergence to the prior
-  lamda : a Scalar. Weight for minimizing the discriminator loss
+      for more factorized latents, try to maximize the divergence.
+  gamma : float.
+      Weight for minimizing total correlation. According to
+      (Kim et al. 2018), for dSprites dataset `gamma=35`,
+      for `3DShapes` dataset `gamma=7`, and for `CelebA` dataset
+      `gamma=6.4`.
+  beta : float.
+      Weight for minimizing Kl-divergence to the prior
+  lamda : float.
+      Weight for minimizing the discriminator loss
 
   Note
   ------
@@ -145,7 +151,7 @@ class factorVAE(betaVAE):
 
   Reference
   -----------
-    Kim, H., Mnih, A., 2018. Disentangling by Factorising.
+  Kim, H., Mnih, A., 2018. Disentangling by Factorising.
       arXiv:1802.05983 [cs, stat].
   """
 
@@ -153,7 +159,7 @@ class factorVAE(betaVAE):
                discriminator_units: List[int] = [1000, 1000, 1000, 1000, 1000],
                activation: Union[str, Callable[[], Any]] = tf.nn.leaky_relu,
                batchnorm: bool = False,
-               gamma: float = 1.0,
+               gamma: float = 7.0,
                beta: float = 1.0,
                lamda: float = 1.0,
                maximize_tc: bool = False,

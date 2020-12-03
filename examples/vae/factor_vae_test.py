@@ -73,7 +73,7 @@ class Factor(Experimenter):
                      hash_length=5)
 
   def on_load_data(self, cfg):
-    ds = get_dataset(cfg.ds)()
+    ds = get_dataset(cfg.ds)
     ds.sample_images(save_path=os.path.join(self.save_path, 'samples.png'))
     kw = dict(batch_size=128, drop_remainder=True)
     train = ds.create_dataset(partition='train',

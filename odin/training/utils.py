@@ -79,9 +79,10 @@ class EarlyStopping:
   --------
   ```python
   def callback():
-    if es.update(vae.trainer.last_valid_loss):
+    signal = es.update(vae.trainer.last_valid_loss)
+    if signal < 0:
       vae.trainer.terminate()
-    elif es.is_best:
+    elif signal > 0:
       vae.save_weights()
   ```
 
@@ -128,7 +129,6 @@ class EarlyStopping:
       f'smoothing must be smaller than 1.0 but given {self.smooth}'
     self.verbose = verbose
     self.reduce_method = reduce_method
-    self._is_best = False
     # history
     n = max(warmup_niter, self.n_iter) + 1
     self._patience_history = [self.patience] * n
@@ -138,11 +138,6 @@ class EarlyStopping:
   @property
   def n_iter(self) -> int:
     return len(self._losses)
-
-  @property
-  def is_best(self) -> bool:
-    """Return `True` if the last iteration achieved the best score."""
-    return self._is_best
 
   @property
   def patience_history(self) -> List[float]:
@@ -179,7 +174,22 @@ class EarlyStopping:
     self._losses.append(loss)
     return self()
 
-  def __call__(self, verbose=None) -> bool:
+  def __call__(self, verbose: bool = None) -> int:
+    """Applying the early stopping algorithm
+
+    Parameters
+    ----------
+    verbose : bool, optional
+        log the debugging message, by default None
+
+    Returns
+    -------
+    int : early stopping signal
+
+        - `-1` for stop,
+        - `0` for unchange,
+        - `1` for best
+    """
     losses = self.losses
     if self.n_iter < self.warmup_niter:
       if self.verbose:
@@ -199,22 +209,26 @@ class EarlyStopping:
       progress = 1.
     # thresholding
     improvement = generalization / progress
-    self._is_best = False
-    if improvement < self.min_improvement:
+    decision = 0
+    if improvement < self.min_improvement:  # degrade
       self.patience -= 1
-    elif improvement > self.min_improvement:
-      self._is_best = True
+      if self.patience < 0:
+        decision = -1
+    elif improvement > self.min_improvement:  # improve
       self.patience += self.reward
-    decision = True if self.patience < 0 else False
+      decision = 1
+    else:  # unchanged
+      ...
     # store history
     self._patience_history.append(self.patience)
     self._generalization_history.append(generalization)
     self._progress_history.append(progress)
     if (bool(verbose) if verbose is not None else self.verbose):
-      print(f"[EarlyStop] niter:{self.n_iter} improvement:{improvement:.4f} "
-            f"progress:{progress:.4f} patience:{self.patience} "
-            f"best:{self.is_best} stop:{decision} "
-            f"last10:[{','.join(['%.2f' % i for i in losses[-10:]])}]")
+      print(
+          f"[EarlyStop] niter:{self.n_iter} improvement:{improvement:.4f} "
+          f"progress:{progress:.4f} patience:{self.patience} "
+          f"decision:{decision} last10:[{','.join(['%.2f' % i for i in losses[-10:]])}]"
+      )
     return decision
 
   def plot_losses(self, save_path=None, ax=None):

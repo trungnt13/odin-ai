@@ -12,9 +12,9 @@ from matplotlib import pyplot as plt
 from odin import backend as bk
 from odin import visual as vs
 from odin.backend import interpolation
-from odin.bay.vi import (GroundTruth, NetworkConfig, RVmeta,
+from odin.bay.vi import (DisentanglementGym, GroundTruth, NetworkConfig, RVmeta,
                          VariationalAutoencoder, VariationalPosterior, get_vae,
-                         traverse_dims)
+                         traverse_dims, DimReduce, Correlation)
 from odin.fuel import IterableDataset, get_dataset
 from odin.ml import fast_tsne, fast_umap
 from odin.networks import (celeba_networks, celebasmall_networks,
@@ -79,58 +79,30 @@ def load_data(name: str):
   return ds, x_samples, y_samples
 
 
-def to_image(X, grids):
-  if X.shape[-1] == 1:  # grayscale image
-    X = np.squeeze(X, axis=-1)
-  else:  # color image
-    X = np.transpose(X, (0, 3, 1, 2))
-  nrows, ncols = grids
-  fig = vs.plot_figure(nrows=nrows, ncols=ncols, dpi=100)
-  vs.plot_images(X, grids=grids)
-  image = vs.plot_to_image(fig)
-  return image
-
-
-def evaluate(vae: VariationalAutoencoder, ds: IterableDataset):
-  test_u = ds.create_dataset(batch_size=32,
-                             drop_remainder=True,
-                             partition='test',
-                             inc_labels=False)
-  test_l = ds.create_dataset(batch_size=32,
-                             drop_remainder=True,
-                             partition='test',
-                             inc_labels=1.0)
-
-
-def plot_latent_units(mean, std, w):
-  # plot the latents and its weights
-  fig = plt.figure(figsize=(6, 4), dpi=200)
-  ax = plt.gca()
-  l1 = ax.plot(mean,
-               label='mean',
-               linewidth=1.0,
-               marker='o',
-               markersize=6,
-               color='r',
-               alpha=0.5)
-  l2 = ax.plot(std,
-               label='std',
-               linewidth=1.0,
-               marker='o',
-               markersize=6,
-               color='g',
-               alpha=0.5)
-  l3 = ax.plot(w,
-               label='weight',
-               linewidth=1.0,
-               linestyle='--',
-               marker='s',
-               markersize=6,
-               color='b',
-               alpha=0.5)
-  ax.grid(True)
-  ax.legend()
-  return vs.plot_to_image(fig)
+def create_gym(dsname: str, vae: VariationalAutoencoder) -> DisentanglementGym:
+  gym = DisentanglementGym(dataset=dsname, vae=vae)
+  gym.set_config(track_gradients=True,
+                 latents_pairs=None,
+                 mig_score=True,
+                 silhouette_score=True,
+                 adjusted_rand_score=True,
+                 mode='train')
+  gym.set_config(
+      latents_pairs=Correlation.Lasso | Correlation.MutualInfo,
+      correlation_methods=Correlation.Lasso | Correlation.MutualInfo |
+      Correlation.Importance | Correlation.Spearman,
+      dimension_reduction=DimReduce.PCA | DimReduce.TSNE | DimReduce.UMAP,
+      mig_score=True,
+      dci_score=True,
+      sap_score=True,
+      factor_vae=True,
+      beta_vae=True,
+      silhouette_score=True,
+      adjusted_rand_score=True,
+      normalized_mutual_info=True,
+      adjusted_mutual_info=True,
+      mode='eval')
+  return gym
 
 
 # ===========================================================================
@@ -146,6 +118,8 @@ def main(cfg: dict):
      'mnist, dsprites, shapes3d, celeba, cortex, newsgroup20, newsgroup5, ...')
   ### paths
   output_dir = get_output_dir()
+  gym_train_path = os.path.join(output_dir, 'gym_train')
+  gym_eval_path = os.path.join(output_dir, 'gym_eval')
   model_path = os.path.join(output_dir, 'model')
   if cfg.override:
     clear_folder(output_dir, verbose=True)
@@ -157,6 +131,12 @@ def main(cfg: dict):
   model_kw = inspect.getfullargspec(model.__init__).args[1:]
   kw = {k: v for k, v in cfg.items() if k in model_kw}
   is_semi_supervised = ds.has_labels and model.is_semi_supervised()
+  if is_semi_supervised:
+    train = ds.create_dataset(partition='train', inc_labels=0.1, **ds_kw)
+    valid = ds.create_dataset(partition='valid', inc_labels=1.0, **ds_kw)
+  else:
+    train = ds.create_dataset(partition='train', inc_labels=0., **ds_kw)
+    valid = ds.create_dataset(partition='valid', inc_labels=0., **ds_kw)
   ### create the model
   network_kw = dict(qz=cfg.qz,
                     zdim=cfg.zdim,
@@ -189,90 +169,24 @@ def main(cfg: dict):
   vae = model(path=model_path, **fn_networks(**network_kw), **kw)
   vae.build((None,) + x_samples.shape[1:])
   vae.load_weights(raise_notfound=False, verbose=True)
-  ### prepare evaluation data
-  z_samples = vae.sample_prior(sample_shape=n_visual_samples, seed=1)
-  if is_semi_supervised:
-    train = ds.create_dataset(partition='train', inc_labels=0.1, **ds_kw)
-    valid = ds.create_dataset(partition='valid', inc_labels=1.0, **ds_kw)
-  else:
-    train = ds.create_dataset(partition='train', inc_labels=0., **ds_kw)
-    valid = ds.create_dataset(partition='valid', inc_labels=0., **ds_kw)
+  gym = create_gym(dsname=cfg.ds, vae=vae)
+  gym.train()
 
   ### fit the network
   def callback():
-    if vae.early_stopping(verbose=True):
+    signal = vae.early_stopping(verbose=True)
+    if signal < 0:
       vae.trainer.terminate()
-    elif vae.early_stopping.is_best:
+    elif signal > 0:
       vae.save_weights(overwrite=True)
-    tracking_metrics = dict()
-    # show reconstruction image
-    P, Q = vae(x_samples, training=True)
-    P = as_tuple(P)  # just in case multiple outputs or latents
-    Q = as_tuple(Q)
-    image_reconstructed = to_image(P[0].mean().numpy(),
-                                   grids=(sqrt(n_visual_samples),
-                                          sqrt(n_visual_samples)))
-    # latents stats
-    mean = tf.reduce_mean(tf.concat([q.mean() for q in Q], axis=-1), axis=0)
-    std = tf.reduce_mean(tf.concat([q.stddev() for q in Q], axis=-1), axis=0)
-    w_d = vae.decoder.trainable_variables[0]
-    if w_d.shape.ndims == 2:
-      w_d = tf.reduce_sum(w_d, axis=-1)
-    else:
-      w_d = tf.reduce_sum(w_d, axis=(0, 1, 2))
-    image_latents = plot_latent_units(mean, std, w_d)
-    # show sampled image
-    P = vae.decode(z_samples, training=False)
-    P = as_tuple(P)
-    image_sampled = to_image(P[0].mean().numpy(),
-                             grids=(sqrt(n_visual_samples),
-                                    sqrt(n_visual_samples)))
-    # tracking the gradients
-    all_grads = [(k, v)
-                 for k, v in vae.trainer.last_train_metrics.items()
-                 if 'grad/' in k]
-    encoder_grad = 0
-    decoder_grad = 0
-    latents_grad = 0
-    if len(all_grads) > 0:
-      encoder_grad = sum(v for k, v in all_grads if 'encoder' in k)
-      decoder_grad = sum(v for k, v in all_grads if 'decoder' in k)
-      latents_grad = sum(v for k, v in all_grads if 'latents' in k)
-    # latent traverse
-    n_indices = 20
-    z = tf.concat([q.mean() for q in Q], axis=-1)
-    z = traverse_dims(z,
-                      feature_indices=np.argsort(std)[:n_indices],
-                      min_val=-4.,
-                      max_val=4.,
-                      n_traverse_points=21,
-                      n_random_samples=1,
-                      mode='linear',
-                      seed=1)
-    # support multiple outputs here
-    P = vae.decode(z[0] if len(z) == 1 else z, training=False)
-    P = as_tuple(P)
-    images = P[0].mean().numpy()
-    image_traverse = to_image(images,
-                              grids=(n_indices,
-                                     int(images.shape[0] / n_indices)))
     # create the return metrics
-    tracking_metrics = dict(mean=mean,
-                            std=std,
-                            w_decode=w_d,
-                            encoder_grad=encoder_grad,
-                            decoder_grad=decoder_grad,
-                            latents_grad=latents_grad,
-                            noise_units=np.sum(std > 0.9),
-                            reconstructed=image_reconstructed,
-                            sampled=image_sampled,
-                            latents=image_latents,
-                            traverse=image_traverse)
-    return tracking_metrics
+    return gym(save_path=gym_train_path, remove_saved_image=True, dpi=150)
 
   ### fit
   vae.fit(train,
           valid=valid,
+          learning_rate=tf.optimizers.schedules.ExponentialDecay(
+              1e-3, decay_steps=5000, decay_rate=0.96, staircase=True),
           epochs=-1,
           clipnorm=100,
           max_iter=max_iter,
@@ -285,7 +199,8 @@ def main(cfg: dict):
           track_gradients=True)
 
   ### evaluation
-  evaluate(vae, ds)
+  gym.eval()
+  gym(save_path=gym_eval_path, remove_saved_image=True, dpi=200, verbose=True)
 
 
 # ===========================================================================

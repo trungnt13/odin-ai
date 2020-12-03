@@ -2,7 +2,8 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
-from odin.networks import Networks, TensorTypes
+from odin.networks import Networks
+from odin.backend import TensorTypes
 from odin.utils import as_tuple
 from scipy import sparse
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
@@ -17,7 +18,7 @@ class VariationalModel(Networks):
 
   def __init__(
       self,
-      analytic: bool = True,
+      analytic: bool = False,
       reverse: bool = True,
       sample_shape: Union[int, List[int]] = (),
       **kwargs,

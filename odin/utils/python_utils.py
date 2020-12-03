@@ -107,9 +107,11 @@ class struct(dict):
 
 
 class bidict(dict):
-  r""" Bi-directional dictionary (i.e. a <-> b)
-  Note:
-    When you iterate over this dictionary, it will be a double-size dictionary
+  """Bi-directional dictionary (i.e. a <-> b)
+
+  Note
+  ----
+  When you iterate over this dictionary, it will be a double-size dictionary
   """
 
   def __init__(self, *args, **kwargs):
@@ -144,7 +146,7 @@ class bidict(dict):
 
 
 class defaultdictkey(defaultdict):
-  """ Enhanced version of `defaultdict`, instead of return a
+  """Enhanced version of `defaultdict`, instead of return a
   default value, return an "improvised" default value based on
   the given key.
 
@@ -184,6 +186,51 @@ def partialclass(cls, *args, **kwargs):
   # class PartialClass(cls):
   #   __init__ = functools.partialmethod(cls.__init__, *args, **kwargs)
   return new_cls
+
+
+class fifodict(dict):
+  """Dictionary with first-in-first-out (fIFO) queue for storing
+  a maximum number of keys.
+
+  Note
+  ----
+  This class is useful in caching function returns
+  """
+
+  def __init__(self, *args, maxlen: int = 1000, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._queue = list(self.keys())
+    self.maxlen = int(maxlen)
+
+  def copy(self):
+    return fifodict(self, maxlen=self.maxlen)
+
+  def clear(self):
+    self._queue.clear()
+    return super().clear()
+
+  def pop(self, key, default=...):
+    super().pop(key, default)
+    if key in self:
+      self._queue.remove(key)
+
+  def popitem(self):
+    super().popitem()
+    self._queue.pop(-1)
+
+  def __delitem__(self, key):
+    self._queue.remove(key)
+    return super().__delitem__(key)
+
+  def update(self, **kwargs):
+    return super().update(**kwargs)
+
+  def __setitem__(self, key, value):
+    if key not in self:
+      if len(self) >= self.maxlen:
+        del self[self._queue[0]]
+      self._queue.append(key)
+    return super().__setitem__(key, value)
 
 
 # ===========================================================================

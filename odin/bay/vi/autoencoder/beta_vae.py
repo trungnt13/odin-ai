@@ -1,13 +1,8 @@
-from typing import Dict, List, Optional, Tuple, Union
-
 import tensorflow as tf
 from odin.backend import interpolation as interp
-from odin.bay.vi.autoencoder.variational_autoencoder import (
-    TensorTypes, VariationalAutoencoder)
+from odin.bay.vi.autoencoder.variational_autoencoder import VariationalAutoencoder
 from odin.bay.vi.losses import total_correlation
 from odin.utils import as_tuple
-from tensorflow import Tensor
-from tensorflow_probability.python.distributions import Distribution
 
 
 class betaVAE(VariationalAutoencoder):

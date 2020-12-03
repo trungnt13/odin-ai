@@ -15,15 +15,17 @@
 # limitations under the License.
 from __future__ import absolute_import, division, print_function
 
+import itertools
 import warnings
 from collections import defaultdict
 from enum import IntFlag, auto
 from functools import partial
 from typing import Dict, List, Optional, Tuple, Type, Union
 
-import tensorflow as tf
 import numpy as np
 import scipy as sp
+import tensorflow as tf
+from odin.utils import fifodict
 from odin.bay.vi.downstream_metrics import *
 from odin.utils import catch_warnings_ignore
 from odin.utils.mpi import MPI, get_cpu_count
@@ -39,7 +41,6 @@ from tensorflow_probability.python.distributions import Distribution
 from tqdm import tqdm
 from typeguard import typechecked
 from typing_extensions import Literal
-from odin.bay.vi.downstream_metrics import *
 
 __all__ = [
     'correlation_matrix',
@@ -53,8 +54,8 @@ __all__ = [
     'Correlation',
 ]
 
-_cached_correlation_matrix = defaultdict(dict)
-_cached_mi_matrix = {}
+_cached_correlation_matrix = defaultdict(partial(fifodict, maxlen=10))
+_cached_mi_matrix = fifodict(maxlen=10)
 
 # ===========================================================================
 # Correlation
@@ -68,6 +69,7 @@ def correlation_matrix(
     method: Literal['spearman', 'pearson', 'lasso', 'average'] = 'spearman',
     seed: int = 1,
     cache_key: Optional[str] = None,
+    verbose: bool = False,
 ) -> np.ndarray:
   """Correlation matrix of each column in `x1` to each column in `x2`
 
@@ -121,14 +123,23 @@ def correlation_matrix(
     # spearman and pearson
     else:
       corr_mat = np.empty(shape=(d1, d2), dtype=np.float64)
-      for i1 in range(d1):
-        for i2 in range(d2):
-          j1, j2 = x1[:, i1], x2[:, i2]
-          if method == 'spearman':
-            corr = sp.stats.spearmanr(j1, j2, nan_policy="omit")[0]
-          elif method == 'pearson':
-            corr = sp.stats.pearsonr(j1, j2)[0]
-          corr_mat[i1, i2] = corr
+      progress = itertools.product(range(d1), range(d2))
+      if verbose:
+        progress = tqdm(progress, desc=f'Correlation({method})')
+      for i1, i2 in progress:
+        j1, j2 = x1[:, i1], x2[:, i2]
+        if np.all(np.isnan(j1)):
+          raise ValueError(f'x1={j1} index={i1} is all NaNs')
+        if np.all(np.isnan(j2)):
+          raise ValueError(f'x2={j2} index={i2} is all NaNs')
+        if method == 'spearman':
+          corr = sp.stats.spearmanr(j1, j2, nan_policy="omit")[0]
+        elif method == 'pearson':
+          corr = sp.stats.pearsonr(j1, j2)[0]
+        corr_mat[i1, i2] = corr
+      if verbose:
+        progress.clear()
+        progress.close()
   ## decoding and return
   if cache_key is not None:
     _cached_correlation_matrix[method][cache_key] = corr_mat
@@ -408,7 +419,7 @@ def mutual_info_estimate(
     it = MPI(jobs=jobs, func=func, ncpu=n_cpu, batch=1)
   if verbose:
     from tqdm import tqdm
-    it = tqdm(it, desc='Estimating mutual information', total=len(jobs))
+    it = tqdm(it, desc='MutualInfo', total=len(jobs))
   for i, mi in it:
     mi_matrix[:, i] = mi
   ## return
@@ -504,13 +515,17 @@ class Correlation(IntFlag):
                x1: Union[Distribution, np.ndarray, tf.Tensor],
                x2: Union[Distribution, np.ndarray, tf.Tensor],
                seed: int = 1,
+               verbose: bool = False,
                **kwargs) -> Union[np.ndarray, List[np.ndarray]]:
     if hasattr(x1, 'numpy'):
       x1 = x1.numpy()
     if hasattr(x2, 'numpy'):
       x2 = x2.numpy()
     if len(self) != 1:
-      return [method(x1, x2, seed=seed, **kwargs) for method in self]
+      return [
+          method(x1, x2, seed=seed, verbose=verbose, **kwargs)
+          for method in self
+      ]
     if self == Correlation.Pearson:
       fn = partial(correlation_matrix, method='pearson')
     elif self == Correlation.Spearman:
@@ -521,4 +536,4 @@ class Correlation(IntFlag):
       fn = mutual_info_estimate
     elif self == Correlation.Importance:
       fn = lambda *args, **kw: importance_matrix(*args, **kw)[0]
-    return fn(x1, x2, seed=seed, **kwargs)
+    return fn(x1, x2, seed=seed, verbose=verbose, **kwargs)

@@ -10,37 +10,31 @@ import pickle
 import types
 from functools import partial
 from numbers import Number
-from typing import (Any, Callable, Dict, Iterator, List, MutableSequence,
-                    Optional, Text, Tuple, Union)
+from typing import (Any, Callable, Dict, Iterator, List, Optional, Text, Tuple, Union)
 
 import numpy as np
 import tensorflow as tf
-from odin.backend.alias import (parse_activation, parse_constraint,
-                                parse_initializer, parse_regularizer)
 from odin.backend.keras_helpers import layer2text
-from odin.networks.util_layers import (Conv1DTranspose, ExpandDims, Identity,
-                                       ReshapeMCMC)
+from odin.backend.types_helpers import TensorTypes
+from odin.networks.util_layers import (Conv1DTranspose, Identity)
 from odin.training import Callback, EarlyStopping, Trainer
 from odin.utils import MD5object, as_tuple, classproperty
 from scipy import sparse
 from six import string_types
 from tensorflow import Tensor
+from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.python import keras
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
-from tensorflow.python.framework import tensor_shape
-from tensorflow.python.keras.engine import training_utils
 from tensorflow.python.keras.layers import Layer
 from tensorflow.python.keras.layers.convolutional import Conv as _Conv
 from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
-from tensorflow.python.keras.utils import layer_utils
 from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training.tracking import base as trackable
-from tensorflow.python.util import tf_inspect
 from typing_extensions import Literal
 
+
 __all__ = [
-    'TensorTypes',
     'TrainStep',
     'Networks',
     'SequentialNetwork',
@@ -87,9 +81,6 @@ def _infer_rank_and_input_shape(rank, input_shape):
 # ===========================================================================
 # Networks
 # ===========================================================================
-TensorTypes = Union[sparse.spmatrix, np.ndarray, Tensor]
-
-
 def _to_optimizer(optimizer, learning_rate, clipnorm):
   optimizer = tf.nest.flatten(optimizer)
   learning_rate = tf.nest.flatten(learning_rate)
@@ -98,12 +89,17 @@ def _to_optimizer(optimizer, learning_rate, clipnorm):
     learning_rate = learning_rate * len(optimizer)
   if len(clipnorm) == 1:
     clipnorm = clipnorm * len(clipnorm)
+  ## check learning rate
+  lr_types = (sparse.spmatrix, np.ndarray, Tensor, float, LearningRateSchedule)
+  for lr in learning_rate:
+    assert isinstance(lr, lr_types), \
+      f'Invalid learning_rate type {lr}; allow types are: {lr_types}'
   ## create the optimizer
   all_optimizers = []
   for opt, lr, clip in zip(optimizer, learning_rate, clipnorm):
     # string
     if isinstance(opt, string_types):
-      config = dict(learning_rate=float(lr))
+      config = dict(learning_rate=lr)
       if clip is not None:
         config['clipnorm'] = clip
       opt = tf.optimizers.get({'class_name': opt, 'config': config})
@@ -218,12 +214,35 @@ class Networks(keras.Model, MD5object):
     return self
 
   @property
+  def learning_rate(self) -> Union[Tensor, List[Tensor]]:
+    """Return the current learning rate"""
+    lrs = []
+    for optim in as_tuple(self.optimizer):
+      lr = optim.learning_rate
+      if isinstance(lr, LearningRateSchedule):
+        lr = lr(optim.iterations)
+      lrs.append(lr)
+    return lrs[0] if len(lrs) == 1 else lrs
+
+  @property
   def trainer(self) -> Trainer:
     return self._trainer[0]
 
   @property
   def early_stopping(self) -> EarlyStopping:
+    if self.trainer is None:
+      raise ValueError("fit method hasn't been called, trainer is None.")
     return self.trainer.early_stopping
+
+  @early_stopping.setter
+  def set_early_stopping(self, es: EarlyStopping):
+    assert isinstance(es, EarlyStopping), \
+      ('early stopping must be instance of odin.training.EarlyStopping '
+       f'but given {es}')
+    if self.trainer is None:
+      raise ValueError("fit method hasn't been called, trainer is None.")
+    es._losses = list(self.trainer._early_stopping._losses)
+    self.trainer._early_stopping = es
 
   @property
   def last_outputs(self):
@@ -393,10 +412,8 @@ class Networks(keras.Model, MD5object):
         opt.apply_gradients(grads_params)
         # tracking the gradient norms for debugging
         if track_gradients:
-          track_gradients = int(track_gradients)
-          prefix = '' if track_gradients > 1 else '_'
           for g, p in grads_params:
-            metrics[f"{prefix}grad/{p.name}"] = tf.linalg.norm(g)
+            metrics[f"_grad/{p.name}"] = g
       ## for validation
       else:
         tape = None
@@ -405,30 +422,31 @@ class Networks(keras.Model, MD5object):
       all_metrics.update(metrics)
       total_loss += loss
     ## return
-    all_metrics = {i: tf.reduce_mean(j) for i, j in all_metrics.items()}
+    # all_metrics = {i: j for i, j in all_metrics.items()}
     return total_loss, all_metrics
 
-  def fit(self,
-          train: Union[TensorTypes, DatasetV2],
-          valid: Optional[Union[TensorTypes, DatasetV2]] = None,
-          valid_freq: int = 500,
-          valid_interval: float = 0,
-          optimizer: Union[str, List[str], OptimizerV2,
-                           List[OptimizerV2]] = 'adam',
-          learning_rate: float = 1e-3,
-          clipnorm: Optional[float] = None,
-          epochs: int = -1,
-          max_iter: int = 1000,
-          batch_size: int = 32,
-          callback: Union[Callback, List[Callback]] = lambda: None,
-          compile_graph: bool = True,
-          autograph: bool = False,
-          logging_interval: float = 3,
-          skip_fitted: Union[bool, int] = False,
-          terminate_on_nan: bool = True,
-          logdir: Optional[str] = None,
-          allow_none_gradients: bool = False,
-          track_gradients: bool = False) -> 'Networks':
+  def fit(
+      self,
+      train: Union[TensorTypes, DatasetV2],
+      valid: Optional[Union[TensorTypes, DatasetV2]] = None,
+      valid_freq: int = 500,
+      valid_interval: float = 0,
+      optimizer: Union[str, List[str], OptimizerV2, List[OptimizerV2]] = 'adam',
+      learning_rate: Union[float, TensorTypes, LearningRateSchedule] = 1e-4,
+      clipnorm: Optional[float] = None,
+      epochs: int = -1,
+      max_iter: int = 1000,
+      batch_size: int = 32,
+      callback: Union[Callback, List[Callback]] = lambda: None,
+      compile_graph: bool = True,
+      autograph: bool = False,
+      logging_interval: float = 3,
+      skip_fitted: Union[bool, int] = False,
+      terminate_on_nan: bool = True,
+      logdir: Optional[str] = None,
+      allow_none_gradients: bool = False,
+      track_gradients: bool = False,
+  ) -> 'Networks':
     """Override the original fit method of keras to provide simplified
     procedure with `Networks.optimize` and `Networks.train_steps`
 
@@ -476,11 +494,9 @@ class Networks(keras.Model, MD5object):
         tensorboard logging directory, by default None
     allow_none_gradients : bool, optional
         allow variables with None gradients during training, by default False
-    track_gradients : bool or int, optional
-        track and return the metrics includes the gradients' L2-norm for each
-        trainable variable.
-        If the value is `True` or 1, hide the gradient norm values from the
-        logging by prepending '_', by default False
+    track_gradients : bool, optional
+        track and return the gradients of trainable variable.
+        The gradients will be hidden by prepending '_', by default False
 
     Returns
     -------

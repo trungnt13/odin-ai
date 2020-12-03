@@ -2,11 +2,8 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import tensorflow as tf
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
-from odin.bay.vi.autoencoder.variational_autoencoder import TensorTypes
 from odin.bay.vi.losses import disentangled_inferred_prior_loss
 from odin.utils import as_tuple
-from tensorflow import Tensor
-from tensorflow_probability.python.distributions import Distribution
 
 
 class dipVAE(betaVAE):

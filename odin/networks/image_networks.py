@@ -1,3 +1,8 @@
+# References:
+# Kim, H., Mnih, A., 2018. Disentangling by factorising,
+#   in: Dy, J., Krause, A. (Eds.), Proceedings of Machine
+#   Learning Research. PMLR, Stockholmsmässan, Stockholm
+#   Sweden, pp. 2649–2658.
 import inspect
 from functools import partial
 from numbers import Number
@@ -110,7 +115,7 @@ class SkipSequential(keras.Model):
 @typechecked
 def mnist_networks(
     qz: str = 'mvndiag',
-    zdim: int = 64,
+    zdim: int = 16,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
@@ -166,7 +171,7 @@ def mnist_networks(
 @typechecked
 def dsprites_networks(
     qz: str = 'mvndiag',
-    zdim: int = 64,
+    zdim: int = 10,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
@@ -244,7 +249,7 @@ def _shapes3d_distribution(x):
 
 
 def shapes3dsmall_networks(qz: str = 'mvndiag',
-                           zdim: int = 64,
+                           zdim: int = 6,
                            activation: Union[Callable, str] = tf.nn.leaky_relu,
                            is_semi_supervised: bool = False,
                            centerize_image: bool = True,
@@ -268,7 +273,7 @@ def shapes3dsmall_networks(qz: str = 'mvndiag',
 
 
 def shapes3d_networks(qz: str = 'mvndiag',
-                      zdim: int = 64,
+                      zdim: int = 6,
                       activation: Union[Callable, str] = tf.nn.leaky_relu,
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
@@ -294,7 +299,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
 # CelebA
 # ===========================================================================
 def celebasmall_networks(qz: str = 'mvndiag',
-                         zdim: int = 64,
+                         zdim: int = 10,
                          activation: Union[Callable, str] = tf.nn.leaky_relu,
                          is_semi_supervised: bool = False,
                          centerize_image: bool = True,
@@ -317,7 +322,7 @@ def celebasmall_networks(qz: str = 'mvndiag',
 
 
 def celeba_networks(qz: str = 'mvndiag',
-                    zdim: int = 64,
+                    zdim: int = 10,
                     activation: Union[Callable, str] = tf.nn.leaky_relu,
                     is_semi_supervised: bool = False,
                     centerize_image: bool = True,
@@ -343,22 +348,21 @@ def celeba_networks(qz: str = 'mvndiag',
 # ===========================================================================
 def get_networks(dataset_name: str,
                  qz: str = 'mvndiag',
-                 zdim: int = 64,
                  activation: Union[Callable, str] = tf.nn.leaky_relu,
                  is_semi_supervised: bool = False,
                  centerize_image: bool = True,
-                 skip_generator: bool = False) -> Dict[str, Layer]:
+                 skip_generator: bool = False,
+                 **kwargs) -> Dict[str, Layer]:
   dataset_name = str(dataset_name).lower().strip()
-  for k, v in globals().items():
-    if isinstance(k, string_types) and inspect.isfunction(v):
+  for k, fn in globals().items():
+    if isinstance(k, string_types) and inspect.isfunction(fn):
       k = k.split('_')[0]
       if k == dataset_name:
-        return v(qz=qz,
-                 zdim=zdim,
-                 activation=activation,
-                 is_semi_supervised=is_semi_supervised,
-                 centerize_image=centerize_image,
-                 skip_generator=skip_generator)
-  raise ValueError(
-      f'Cannot find pre-implemented network for dataset with name="{dataset_name}"'
-  )
+        return fn(qz=qz,
+                  activation=activation,
+                  is_semi_supervised=is_semi_supervised,
+                  centerize_image=centerize_image,
+                  skip_generator=skip_generator,
+                  **kwargs)
+  raise ValueError('Cannot find pre-implemented network for '
+                   f'dataset with name="{dataset_name}"')

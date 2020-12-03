@@ -6,15 +6,15 @@ import os
 from collections import Mapping
 from contextlib import contextmanager
 
-from six import add_metaclass
-from six.moves import builtins, cPickle
-
 from odin.backend import (interpolation, keras_callbacks, keras_helpers, losses,
                           metrics)
 from odin.backend.alias import *
 from odin.backend.maths import *
 from odin.backend.tensor import *
+from odin.backend.types_helpers import *
 from odin.utils import as_tuple, is_path, is_string
+from six import add_metaclass
+from six.moves import builtins, cPickle
 
 
 # ===========================================================================
@@ -24,8 +24,8 @@ class _nn_meta(type):
 
   def __getattr__(cls, key):
     fw = get_framework()
-    import torch
     import tensorflow as tf
+    import torch
 
     all_objects = {}
     if fw == torch:
@@ -34,8 +34,7 @@ class _nn_meta(type):
       all_objects.update(networks_torch.__dict__)
     elif fw == tf:
       from odin import networks
-      from tensorflow.python.keras.engine import sequential
-      from tensorflow.python.keras.engine import training
+      from tensorflow.python.keras.engine import sequential, training
       all_objects.update(tf.keras.layers.__dict__)
       all_objects.update(networks.__dict__)
       all_objects.update(sequential.__dict__)

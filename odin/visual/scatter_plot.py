@@ -51,8 +51,8 @@ def _validate_color_marker_size_legend(max_n_points,
                                        text_marker=False,
                                        is_colormap=False,
                                        size_range=8,
-                                       random_seed=1234):
-  r""" Return: colors, markers, sizes, legends """
+                                       random_seed=1):
+  """Return: colors, markers, sizes, legends"""
   from odin.backend import interpolation
   from matplotlib.colors import LinearSegmentedColormap
   # check size range
@@ -179,12 +179,12 @@ def _downsample_scatter_points(x, y, z, max_n_points, *args):
   return [len(x), x, y, z] + args
 
 
-def _prepare_scatter_points(x, y, z, val, color, marker, size, size_range,
-                            alpha, max_n_points, cbar, cbar_horizontal,
-                            cbar_ticks, cbar_labrotation, cbar_title,
-                            legend_enable, legend_loc, legend_ncol,
-                            legend_colspace, elev, azim, ticks_off, grid,
-                            fontsize, centroids, title, ax, **kwargs):
+def _plot_scatter_points(*, x, y, z, val, color, marker, size, size_range,
+                         alpha, max_n_points, cbar, cbar_horizontal,
+                         cbar_nticks, cbar_ticks_rotation, cbar_title,
+                         cbar_fontsize, legend_enable, legend_loc, legend_ncol,
+                         legend_colspace, elev, azim, ticks_off, grid, fontsize,
+                         centroids, xlabel, ylabel, title, ax, **kwargs):
   from matplotlib import pyplot as plt
   import matplotlib as mpl
   # keep the marker as its original text
@@ -299,24 +299,23 @@ def _prepare_scatter_points(x, y, z, val, color, marker, size, size_range,
           shrink=0.99,
           pad=0.01,
           orientation='horizontal' if cbar_horizontal else 'vertical')
-      if isinstance(cbar_ticks, Number):
-        cbar_range = np.linspace(vmin, vmax, num=int(cbar_ticks))
-        cbar_ticks = ['%.2g' % i for i in cbar_range]
-      elif isinstance(cbar_ticks, (tuple, list, np.ndarray)):
-        cbar_range = np.linspace(vmin, vmax, num=len(cbar_ticks))
-        cbar_ticks = [str(i) for i in cbar_ticks]
+      if isinstance(cbar_nticks, Number):
+        cbar_range = np.linspace(vmin, vmax, num=int(cbar_nticks))
+        cbar_nticks = [f'{i:.2g}' for i in cbar_range]
+      elif isinstance(cbar_nticks, (tuple, list, np.ndarray)):
+        cbar_range = np.linspace(vmin, vmax, num=len(cbar_nticks))
+        cbar_nticks = [str(i) for i in cbar_nticks]
       else:
-        raise ValueError("No support for cbar_ticks='%s'" % str(cbar_ticks))
+        raise ValueError(f"No support for cbar_nticks='{cbar_nticks}'")
       cba.set_ticks(cbar_range)
-      cba.set_ticklabels(cbar_ticks)
+      cba.set_ticklabels(cbar_nticks)
       if cbar_title is not None:
-        # horizontal colorbar
-        if cbar_horizontal:
-          cba.ax.set_xlabel(str(cbar_title), fontsize=fontsize + 1)
-        # vertical colorbar
-        else:
-          cba.ax.set_ylabel(str(cbar_title), fontsize=fontsize + 1)
-      cba.ax.tick_params(labelsize=fontsize, labelrotation=cbar_labrotation)
+        if cbar_horizontal:  # horizontal colorbar
+          cba.ax.set_xlabel(str(cbar_title), fontsize=cbar_fontsize)
+        else:  # vertical colorbar
+          cba.ax.set_ylabel(str(cbar_title), fontsize=cbar_fontsize)
+      cba.ax.tick_params(labelsize=cbar_fontsize,
+                         labelrotation=cbar_ticks_rotation)
     ## plot the legend
     if len(legend_name) > 0 and bool(legend_enable):
       markerscale = 1.5
@@ -350,6 +349,10 @@ def _prepare_scatter_points(x, y, z, val, color, marker, size, size_range,
       if is_3D_mode:
         ax.set_zticklabels([])
     ax.grid(grid)
+    if xlabel is not None:
+      ax.set_xlabel(str(xlabel), fontsize=fontsize - 1)
+    if ylabel is not None:
+      ax.set_ylabel(str(ylabel), fontsize=fontsize - 1)
     if title is not None:
       ax.set_title(str(title), fontsize=fontsize, fontweight='regular')
     if is_3D_mode and (elev is not None or azim is not None):
@@ -379,8 +382,9 @@ def plot_scatter(x,
                  grid=True,
                  cbar=False,
                  cbar_horizontal=False,
-                 cbar_ticks=10,
-                 cbar_labrotation=-30,
+                 cbar_nticks=10,
+                 cbar_ticks_rotation=-30,
+                 cbar_fontsize=10,
                  cbar_title=None,
                  legend_enable=True,
                  legend_loc='upper center',
@@ -389,56 +393,62 @@ def plot_scatter(x,
                  centroids=False,
                  max_n_points=None,
                  fontsize=10,
+                 xlabel=None,
+                 ylabel=None,
                  title=None):
-  r"""
-  Arguments:
-    x : {1D, or 2D array} [n_samples,]
-    y : {None, 1D-array} [n_samples,]
-    z : {None, 1D-array} [n_samples,]
-      if provided, plot in 3D
-    val : 1D-array (num_samples,)
-      float value for the intensity of given class
-    ax : {None, int, tuple of int, Axes object) (default: None)
-      if int, `ax` is the location of the subplot (e.g. `111`)
-      if tuple, `ax` is tuple of location (e.g. `(1, 1, 1)`)
-      if Axes object, `ax` must be `mpl_toolkits.mplot3d.Axes3D` in case `z`
-      is given
-    color: array [n_samples,]
-        list of colors for each class, check `generate_random_colors`,
-        length of color must be equal to `x` and `y`
-    marker: array [n_samples,]
-        different marker for each color, default marker is '.'
-    legend_ncol : int (default: 3)
-      number of columns for displaying legends
-    legend_colspace : float (default: 0.4)
-      space between columns in the legend
-    legend_loc : {str, int}
-      ‘best’  0
-      ‘upper right’ 1
-      ‘upper left’  2
-      ‘lower left’  3
-      ‘lower right’ 4
-      ‘right’ 5
-      ‘center left’ 6
-      ‘center right’  7
-      ‘lower center’  8
-      ‘upper center’  9
-      ‘center’  10
-    elev : {None, Number} (default: None or 30 degree)
-      stores the elevation angle in the z plane, with `elev=90` is
-      looking from top down.
-      This can be used to rotate the axes programatically.
-    azim : {None, Number} (default: None or -60 degree)
-      stores the azimuth angle in the x,y plane.
-      This can be used to rotate the axes programatically.
-    centroids : Boolean. If True, annotate the labels on centroid of
-      each cluster.
-    title : {None, string} (default: None)
-      specific title for the subplot
+  """Generalized function for plotting scatter points colored or heatmap.
+
+  Parameters
+  ----------
+  x : {1D, or 2D array} [n_samples,]
+  y : {None, 1D-array} [n_samples,]
+  z : {None, 1D-array} [n_samples,]
+    if provided, plot in 3D
+  val : 1D-array (num_samples,)
+    float value for the intensity of given class
+  ax : {None, int, tuple of int, Axes object) (default: None)
+    if int, `ax` is the location of the subplot (e.g. `111`)
+    if tuple, `ax` is tuple of location (e.g. `(1, 1, 1)`)
+    if Axes object, `ax` must be `mpl_toolkits.mplot3d.Axes3D` in case `z`
+    is given
+  color: array [n_samples,]
+      list of colors for each class, check `generate_random_colors`,
+      length of color must be equal to `x` and `y`
+  marker: array [n_samples,]
+      different marker for each color, default marker is '.'
+  legend_ncol : int (default: 3)
+    number of columns for displaying legends
+  legend_colspace : float (default: 0.4)
+    space between columns in the legend
+  legend_loc : {str, int}
+    ‘best’  0
+    ‘upper right’ 1
+    ‘upper left’  2
+    ‘lower left’  3
+    ‘lower right’ 4
+    ‘right’ 5
+    ‘center left’ 6
+    ‘center right’  7
+    ‘lower center’  8
+    ‘upper center’  9
+    ‘center’  10
+  elev : {None, Number} (default: None or 30 degree)
+    stores the elevation angle in the z plane, with `elev=90` is
+    looking from top down.
+    This can be used to rotate the axes programatically.
+  azim : {None, Number} (default: None or -60 degree)
+    stores the azimuth angle in the x,y plane.
+    This can be used to rotate the axes programatically.
+  centroids : Boolean. If True, annotate the labels on centroid of
+    each cluster.
+  xlabel, ylabel: str (optional)
+    label for x-axis and y-axis
+  title : {None, string} (default: None)
+    specific title for the subplot
   """
   from matplotlib import pyplot as plt
   for ax, artist, x, y, z, \
-    (color, marker, size) in _prepare_scatter_points(**locals()):
+    (color, marker, size) in _plot_scatter_points(**locals()):
     kwargs = dict(
         c=color,
         marker=marker,
@@ -476,8 +486,8 @@ def plot_scatter_text(x,
                       grid=True,
                       cbar=False,
                       cbar_horizontal=False,
-                      cbar_ticks=10,
-                      cbar_labrotation=-30,
+                      cbar_nticks=10,
+                      cbar_ticks_rotation=-30,
                       cbar_title=None,
                       legend_enable=True,
                       legend_loc='upper center',
@@ -514,7 +524,7 @@ def plot_scatter_text(x,
   ylim = (np.inf, -np.inf)
   zlim = (np.inf, -np.inf)
   for ax, artist, x, y, z, \
-    (color, marker, size) in _prepare_scatter_points(text_marker=True, **locals()):
+    (color, marker, size) in _plot_scatter_points(text_marker=True, **locals()):
     if len(color) != len(x):
       color = [color] * len(x)
     # axes limits

@@ -1,22 +1,15 @@
-import inspect
 from functools import partial
-from numbers import Number
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, List, Union
 
 import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
-from odin.bay.vi.autoencoder.variational_autoencoder import TensorTypes
-from odin.bay.vi.losses import get_divergence, maximum_mean_discrepancy
-from odin.bay.vi.utils import permute_dims
+from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.utils import as_tuple
 from tensorflow import Tensor
-from tensorflow_probability.python.distributions import (FULLY_REPARAMETERIZED,
-                                                         NOT_REPARAMETERIZED,
-                                                         Distribution,
-                                                         OneHotCategorical)
-from typing_extensions import Literal
+from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
+                                                         Distribution)
 
 
 # ===========================================================================

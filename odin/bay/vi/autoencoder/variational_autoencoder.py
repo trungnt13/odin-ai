@@ -23,12 +23,12 @@ from odin.bay.layers import DistributionDense, VectorDeterministicLayer
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi._base import VariationalModel
 from odin.training.trainer import Trainer
-from odin.networks import Identity, NetworkConfig, TensorTypes, TrainStep
+from odin.networks import Identity, NetworkConfig, TrainStep
+from odin.backend import TensorTypes
 from odin.utils import as_tuple
 from odin.utils.python_utils import classproperty
-from scipy.sparse import spmatrix
 from six import string_types
-from tensorflow import Tensor, Variable
+from tensorflow import Tensor
 from tensorflow.python import keras
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.keras.layers import Layer
@@ -133,7 +133,7 @@ class VAEStep(TrainStep):
     elbo = self.vae.elbo(llk, kl)
     loss = -tf.reduce_mean(elbo)
     metrics = dict(**llk, **kl)
-    return loss, metrics
+    return loss, {k: tf.reduce_mean(v) for k, v in metrics.items()}
 
 
 # ===========================================================================

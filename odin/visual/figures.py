@@ -1263,11 +1263,13 @@ def plot_close():
   plt.close('all')
 
 
-def plot_to_image(figure: plt.Figure, close_figure: bool = True) -> tf.Tensor:
+def plot_to_image(figure: plt.Figure,
+                  close_figure: bool = True,
+                  dpi: int = 150) -> tf.Tensor:
   """Convert the figure to png image for tensorboard"""
   # Save the plot to a PNG in memory.
   buf = io.BytesIO()
-  figure.savefig(buf, format='png')
+  figure.savefig(buf, format='png', dpi=dpi)
   # Closing the figure prevents it from being displayed directly inside
   # the notebook.
   plt.close(figure)

@@ -1,33 +1,25 @@
 from __future__ import absolute_import, division, print_function
 
-import os
-from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import List
 
 import numpy as np
 import tensorflow as tf
 from odin import backend as bk
-from odin.backend.keras_helpers import layer2text
-from odin.bay.helpers import coercible_tensor, kl_divergence
-from odin.bay.layers.distribution_util_layers import ConditionalTensorLayer
-from odin.bay.random_variable import RandomVariable, RVmeta
-from odin.bay.vi._base import VariationalModel
+from odin.backend import TensorTypes
+from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
-from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              _parse_layers)
 from odin.bay.vi.utils import (marginalize_categorical_labels,
                                prepare_ssl_inputs, split_ssl_inputs)
-from odin.networks import NetworkConfig, TensorTypes
-from odin.networks.conditional_embedding import (ProjectionEmbedding,
-                                                 get_embedding)
+from odin.networks import NetworkConfig
+from odin.networks.conditional_embedding import get_embedding
 from odin.utils import as_tuple
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import (BatchNormalization, Dense, Dropout,
                                             Layer)
-from tensorflow_probability.python.distributions import (
-    Categorical, Deterministic, Distribution, JointDistributionSequential,
-    OneHotCategorical, VectorDeterministic)
+from tensorflow_probability.python.distributions import (Distribution,
+                                                         OneHotCategorical)
 from typing_extensions import Literal
 
 __all__ = ['conditionalM2VAE']

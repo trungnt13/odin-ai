@@ -3,23 +3,25 @@ from __future__ import absolute_import, division, print_function
 import os
 from collections import defaultdict
 from typing import List, Optional, Type, Union
-import scipy as sp
 
 import numpy as np
+import scipy as sp
 import tensorflow as tf
 from numpy.random import RandomState
 from odin.bay.distributions import CombinedDistribution
 from odin.bay.helpers import batch_slice
 from odin.bay.vi.utils import discretizing
 from odin.stats import is_discrete
+from odin.utils import fifodict
 from sklearn.base import BaseEstimator
 from sklearn.ensemble import GradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
+from sklearn.model_selection import train_test_split
 from sklearn.svm import LinearSVC
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.distributions import Distribution
-from sklearn.model_selection import train_test_split
+from tqdm import tqdm
 
 __all__ = [
     'separated_attr_predictability',
@@ -41,7 +43,7 @@ def _to_numpy(x) -> np.ndarray:
   return x
 
 
-_cached_importance_matrix = {}
+_cached_importance_matrix = fifodict(maxlen=10)
 
 
 # ===========================================================================
@@ -51,7 +53,7 @@ def disentanglement_score(matrix):
   """Compute the disentanglement score of the representation.
 
   Arguments:
-    matrix : is of shape `[num_latents, num_factors]`.
+    matrix : is of shape `[n_latents, n_factors]`.
   """
   per_code = 1. - sp.stats.entropy(matrix + 1e-11, base=matrix.shape[1], axis=1)
   if matrix.sum() == 0.:
@@ -64,7 +66,7 @@ def completeness_score(matrix):
   """Compute completeness of the representation.
 
   Arguments:
-    matrix : is of shape `[num_latents, num_factors]`.
+    matrix : is of shape `[n_latents, n_factors]`.
   """
   per_factor = 1. - sp.stats.entropy(
       matrix + 1e-11, base=matrix.shape[0], axis=0)
@@ -83,6 +85,7 @@ def importance_matrix(
     n_iter_no_change: int = 10,
     algo: Type[BaseEstimator] = GradientBoostingClassifier,
     seed: int = 1,
+    verbose: bool = False,
     cache_key: Optional[str] = None,
 ):
   """Using Tree Classifier to estimate the importance of each
@@ -117,32 +120,40 @@ def importance_matrix(
   repr_train = _to_numpy(repr_train)
   if repr_test is not None:
     repr_test = _to_numpy(repr_test)
-  num_latents = repr_train.shape[1]
-  num_factors = factor_train.shape[1]
+  n_latents = repr_train.shape[1]
+  n_factors = factor_train.shape[1]
   assert hasattr(algo, 'feature_importances_'), \
     "The class must contain 'feature_importances_' attribute"
   ## split the datasets
   if repr_test is None or factor_test is None:
     repr_train, repr_test, factor_train, factor_test = train_test_split(
         repr_train, factor_train, test_size=0.2, random_state=seed)
+  repr_train = np.asarray(repr_train)
+  factor_train = np.asarray(factor_train)
 
   def _train(factor_idx):
     model = algo(random_state=seed, n_iter_no_change=n_iter_no_change)
-    model.fit(np.asarray(repr_train), np.asarray(factor_train[:, factor_idx]))
+    model.fit(repr_train, factor_train[:, factor_idx])
     feat = np.abs(model.feature_importances_)
     train = np.mean(model.predict(repr_train) == factor_train[:, factor_idx])
     test = np.mean(model.predict(repr_test) == factor_test[:, factor_idx])
     return factor_idx, feat, train, test
 
   # ====== compute importance based on gradient boosted trees ====== #
-  matrix = np.zeros(shape=[num_latents, num_factors], dtype=np.float64)
-  train_acc = list(range(num_factors))
-  test_acc = list(range(num_factors))
-  for factor_idx in range(num_factors):
+  matrix = np.zeros(shape=[n_latents, n_factors], dtype=np.float64)
+  train_acc = list(range(n_factors))
+  test_acc = list(range(n_factors))
+  progress = list(range(n_factors))
+  if verbose:
+    progress = tqdm(progress, desc=f'Fitting {algo.__name__}', unit='model')
+  for factor_idx in progress:
     i, feat, train, test = _train(factor_idx)
     matrix[:, i] = feat
     train_acc[i] = train
     test_acc[i] = test
+  if verbose:
+    progress.clear()
+    progress.close()
   rets = (matrix, train_acc, test_acc)
   if cache_key is not None:
     _cached_importance_matrix[cache_key] = rets
@@ -156,6 +167,7 @@ def dci_scores(
     factor_test: Optional[Union[tf.Tensor, np.ndarray]] = None,
     test_size: float = 0.2,
     seed: int = 1,
+    verbose: bool = False,
     **kwargs,
 ):
   """Disentanglement, completeness, informativeness
@@ -191,6 +203,7 @@ def dci_scores(
                                                       repr_test,
                                                       factor_test,
                                                       seed=seed,
+                                                      verbose=verbose,
                                                       **kwargs)
   train_acc = np.mean(train_acc)
   test_acc = np.mean(test_acc)
@@ -229,16 +242,16 @@ def separated_attr_predictability(
   repr_train = _to_numpy(repr_train)
   if repr_test is not None:
     repr_test = _to_numpy(repr_test)
-  num_latents = repr_train.shape[1]
-  num_factors = factor_train.shape[1]
+  n_latents = repr_train.shape[1]
+  n_factors = factor_train.shape[1]
   ## split the datasets
   if repr_test is None or factor_test is None:
     repr_train, repr_test, factor_train, factor_test = train_test_split(
         repr_train, factor_train, test_size=0.2, random_state=seed)
   # ====== compute the score matrix ====== #
-  score_matrix = np.zeros([num_latents, num_factors])
-  for i in range(num_latents):
-    for j in range(num_factors):
+  score_matrix = np.zeros([n_latents, n_factors])
+  for i in range(n_latents):
+    for j in range(n_factors):
       x_i = repr_train[:, i]
       y_j = factor_train[:, j]
       if continuous_factors:
@@ -263,7 +276,7 @@ def separated_attr_predictability(
         pred = classifier.predict(np.expand_dims(x_i_test, axis=-1))
         score_matrix[i, j] = np.mean(pred == y_j_test)
   # ====== compute_avg_diff_top_two ====== #
-  # [num_latents, num_factors]
+  # [n_latents, n_factors]
   sorted_matrix = np.sort(score_matrix, axis=0)
   return np.mean(sorted_matrix[-1, :] - sorted_matrix[-2, :])
 
@@ -300,19 +313,18 @@ def _sampling_helper(representations,
   assert isinstance(representations, tfd.Distribution),\
     f"representations must be instance of Distribution, but given: {type(representations)}"
   ## arguments
-  from tensorflow_probability.python.distributions import VectorDeterministic
   size = representations.batch_shape[0]
-  n_codes = representations.event_shape[0]
+  n_latents = representations.event_shape[0]
   n_factors = factors.shape[1]
   indices = np.arange(size, dtype=np.int64)
-  ## create mapping factor -> representation_index
+  ### create mapping factor -> representation_index
   code_map = defaultdict(list)
   for idx, y in enumerate(factors.T):
     for sample_idx, i in enumerate(y):
       code_map[(idx, i)].append(sample_idx)
-  ## prepare the output
+  ### prepare the output
   if strategy == 'betavae':
-    features = np.empty(shape=(n_samples, n_codes), dtype=np.float32)
+    features = np.empty(shape=(n_samples, n_latents), dtype=np.float32)
   elif strategy == 'factorvae':
     features = np.empty(shape=(n_samples,), dtype=np.int32)
     global_var = np.mean(representations.variance(), axis=0)
@@ -322,9 +334,9 @@ def _sampling_helper(representations,
   else:
     raise NotImplementedError(f"No support for sampling strategy: {strategy}")
   labels = np.empty(shape=(n_samples,), dtype=np.int32)
-  repr_fn = (lambda d: d.mean()) if use_mean else (lambda d: d.sample())
+  to_tensor = (lambda d: d.mean()) if use_mean else (lambda d: d.sample())
   count = 0
-  ## prepare the sampling progress
+  ### prepare the sampling progress
   if verbose:
     from tqdm import tqdm
     prog = tqdm(total=n_samples, desc=str(desc), unit='sample')
@@ -346,20 +358,20 @@ def _sampling_helper(representations,
       if len(obs1_ids) > 0:
         obs1 = batch_slice(representations, obs1_ids)
         obs2 = batch_slice(representations, obs2_ids)
-        feat = np.mean(np.abs(repr_fn(obs1) - repr_fn(obs2)), axis=0)
+        feat = np.mean(np.abs(to_tensor(obs1) - to_tensor(obs2)), axis=0)
         features[count, :] = feat
         labels[count] = factor_index
         count += 1
         if verbose:
           prog.update(1)
-    ## factorVAE sampling
+    ### factorVAE sampling
     elif strategy == 'factorvae':
       y = factors[rand.randint(size, dtype=np.int64), factor_index]
       obs_ids = code_map[(factor_index, y)]
       if len(obs_ids) > 1:
         obs_ids = rand.choice(obs_ids, size=batch_size, replace=True)
         obs = batch_slice(representations, obs_ids)
-        local_var = np.var(repr_fn(obs), axis=0, ddof=1)
+        local_var = np.var(to_tensor(obs), axis=0, ddof=1)
         if not np.any(active_dims):  # no active dims
           features[count] = 0
         else:
@@ -378,19 +390,19 @@ def _sampling_helper(representations,
 
 def beta_vae_score(representations: tfd.Distribution,
                    factors: np.ndarray,
-                   use_mean=False,
-                   batch_size=8,
-                   n_samples=1000,
+                   use_mean: bool = False,
+                   batch_size: int = 8,
+                   n_samples: int = 1000,
                    seed: int = 1,
-                   return_model=False,
-                   verbose=False):
-  r""" The Beta-VAE score train a logistic regression to detect the invariant
+                   return_model: bool = False,
+                   verbose: bool = False) -> float:
+  """ The Beta-VAE score train a logistic regression to detect the invariant
   factor based on the absolute difference in the representations.
 
-  References:
-    beta-VAE: Learning Basic Visual Concepts with a Constrained
+  References
+  ----------
+  beta-VAE: Learning Basic Visual Concepts with a Constrained
       Variational Framework (https://openreview.net/forum?id=Sy2fzU9gl).
-
   """
   desc = "betaVAE scoring"
   strategy = 'betavae'
@@ -412,12 +424,13 @@ def factor_vae_score(representations: tfd.Distribution,
                      n_samples: int = 1000,
                      seed: int = 1,
                      return_model: bool = False,
-                     verbose: bool = False):
-  r""" The Factor-VAE score train a highest-vote classifier to detect the
+                     verbose: bool = False) -> float:
+  """The Factor-VAE score train a highest-vote classifier to detect the
   invariant factor index from the lowest variated latent dimension.
 
-  References:
-    Kim, H., Mnih, A., 2018. Disentangling by Factorising.
+  References
+  ----------
+  Kim, H., Mnih, A., 2018. Disentangling by Factorising.
       arXiv:1802.05983 [cs, stat].
   """
   desc = "factorVAE scoring"
@@ -425,15 +438,15 @@ def factor_vae_score(representations: tfd.Distribution,
   rand = RandomState(seed=seed)
   features, labels = _sampling_helper(**locals())
   ## voting classifier
-  n_codes = representations.event_shape[0]
+  n_latents = representations.event_shape[0]
   n_factors = factors.shape[1]
-  votes = np.zeros((n_factors, n_codes), dtype=np.int64)
+  votes = np.zeros((n_factors, n_latents), dtype=np.int64)
   for minvar_index, factor_index in zip(features, labels):
     votes[factor_index, minvar_index] += 1
   # factor labels for each latent code
   true_labels = np.argmax(votes, axis=0)
   # accuracy score
-  score = np.sum(votes[true_labels, range(n_codes)]) / np.sum(votes)
+  score = np.sum(votes[true_labels, range(n_latents)]) / np.sum(votes)
   if return_model:
     return score, true_labels
   return score

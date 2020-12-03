@@ -46,7 +46,7 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   if not isinstance(event_shape, (Sequence, MutableSequence, tf.TensorShape)):
     raise ValueError("event_shape must be list of integer but given: "
                      f"{event_shape} type: {type(event_shape)}")
-  if isinstance(prior, (Distribution, DistributionLambda, Callable)):
+  if isinstance(prior, (Distribution, DistributionLambda)) or callable(prior):
     return prior
   elif not isinstance(prior, (string_types, type(None))):
     raise ValueError("prior must be string or instance of "
@@ -77,21 +77,26 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   ## Multivariate Normal
   elif issubclass(layer, obl.MultivariateNormalLayer):
     cov = layer._partial_kwargs['covariance']
-    if cov == 'mvndiag':  # diagonal covariance
-      loc = tf.zeros(shape=event_shape)
-      if tf.rank(loc) == 0:
-        loc = tf.expand_dims(loc, axis=-1)
-      prior = obd.MultivariateNormalDiag(
-          **_kwargs(loc=loc, scale_identity_multiplier=1.))
-    # TODO: another choice for prior here
-    else:  # low-triangle covariance
-      bijector = tfp.bijectors.FillScaleTriL(
-          diag_bijector=tfp.bijectors.Identity(), diag_shift=1e-5)
-      size = tf.reduce_prod(event_shape)
-      loc = tf.zeros(shape=[size])
-      scale_tril = bijector.forward(tf.ones(shape=[size * (size + 1) // 2]))
-      prior = obd.MultivariateNormalTriL(
-          **_kwargs(loc=loc, scale_tril=scale_tril))
+    prior = obd.Independent(
+        obd.Normal(**_kwargs(loc=tf.zeros(shape=event_shape),
+                             scale=tf.ones(shape=event_shape))),
+        reinterpreted_batch_ndims=1,
+    )
+    # if cov == 'mvndiag':  # diagonal covariance
+    #   loc = tf.zeros(shape=event_shape)
+    #   if tf.rank(loc) == 0:
+    #     loc = tf.expand_dims(loc, axis=-1)
+    #   prior = obd.MultivariateNormalDiag(
+    #       **_kwargs(loc=loc, scale_identity_multiplier=1.))
+    # # TODO: another choice for prior here
+    # else:  # low-triangle covariance
+    #   bijector = tfp.bijectors.FillScaleTriL(
+    #       diag_bijector=tfp.bijectors.Identity(), diag_shift=1e-5)
+    #   size = tf.reduce_prod(event_shape)
+    #   loc = tf.zeros(shape=[size])
+    #   scale_tril = bijector.forward(tf.ones(shape=[size * (size + 1) // 2]))
+    #   prior = obd.MultivariateNormalTriL(
+    #       **_kwargs(loc=loc, scale_tril=scale_tril))
   ## Log Normal
   elif layer == obl.LogNormalLayer:
     prior = obd.Independent(

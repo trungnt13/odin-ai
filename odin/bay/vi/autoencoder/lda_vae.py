@@ -19,8 +19,8 @@ from odin.bay.random_variable import RVmeta
 from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
-                                                             TensorTypes,
                                                              VAEStep)
+from odin.backend import TensorTypes
 from odin.networks import NetworkConfig
 from scipy import sparse
 from tensorflow import Tensor, Variable
