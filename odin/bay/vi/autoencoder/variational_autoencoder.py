@@ -45,8 +45,6 @@ __all__ = [
     'VAEStep',
     'VariationalAutoencoder',
     'VAE',
-    'Autoencoder',
-    'denoisingAE',
 ]
 
 # ===========================================================================
@@ -555,87 +553,3 @@ class VariationalAutoencoder(VariationalModel):
 
 
 VAE = VariationalAutoencoder
-
-
-# ===========================================================================
-# Simple implementation of Autoencoder
-# ===========================================================================
-class Autoencoder(VariationalAutoencoder):
-  """The vanilla autoencoder could be interpreted as a Variational Autoencoder with
-  `vector deterministic` distribution for latent codes."""
-
-  def __init__(
-      self,
-      latents: LayerCreator = RVmeta(64,
-                                     'vdeterministic',
-                                     projection=True,
-                                     name="Latents"),
-      name='Autoencoder',
-      **kwargs,
-  ):
-    for qz in as_tuple(latents):
-      if isinstance(qz, RVmeta):
-        qz.posterior = 'vdeterministic'
-      elif isinstance(qz, DistributionDense):
-        assert qz.posterior == VectorDeterministicLayer, \
-          ('Autoencoder only support VectorDeterministic posterior, '
-          f'but given:{qz.posterior}')
-    super().__init__(latents=latents, name=name, **kwargs)
-
-  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
-    llk, kl = super().elbo_components(inputs=inputs,
-                                      training=training,
-                                      mask=mask,
-                                      **kwargs)
-    # this make sure no KL is leaking
-    kl = {k: 0. for k, v in kl.items()}
-    return llk, kl
-
-
-def _mse_log_prob(x_pred, x_true):
-  return -tf.losses.mean_squared_error(y_true=x_true, y_pred=x_pred.mean())
-
-
-class denoisingAE(Autoencoder):
-  """Denoising Autoencoder using Mean-squared error loss"""
-
-  def __init__(
-      self,
-      observation: LayerCreator = RVmeta((28, 28, 1),
-                                         'bernoulli',
-                                         projection=True,
-                                         name='image'),
-      dropout: float = 0.3,
-      name='DenoisingAE',
-      **kwargs,
-  ):
-    for px in as_tuple(observation):
-      if isinstance(px, RVmeta):
-        px.posterior = 'deterministic'
-        px.kwargs['log_prob'] = _mse_log_prob
-        px.kwargs['reinterpreted_batch_ndims'] = len(observation.event_shape)
-      elif isinstance(px, DistributionDense):
-        assert px.posterior == VectorDeterministicLayer, \
-          ('Denoising Autoencoder only support VectorDeterministic output, '
-          f'but given:{px.posterior}')
-    super().__init__(observation=observation, name=name, **kwargs)
-    self.dropout = tf.convert_to_tensor(dropout,
-                                        dtype=self.dtype,
-                                        name='dropout')
-
-  def encode(self,
-             inputs,
-             training=None,
-             mask=None,
-             only_encoding=False,
-             **kwargs) -> Distribution:
-    r"""Encoding inputs to latent codes"""
-    if isinstance(inputs, (tuple, list)):
-      inputs = [tf.nn.dropout(i, rate=self.dropout) for i in inputs]
-    else:
-      inputs = tf.nn.dropout(inputs, rate=self.dropout)
-    return super().encode(inputs,
-                          training=training,
-                          mask=mask,
-                          only_encoding=only_encoding,
-                          **kwargs)

@@ -6,7 +6,7 @@
 import inspect
 from functools import partial
 from numbers import Number
-from typing import Callable, Dict, List, Union, Any
+from typing import Callable, Dict, List, Union, Any, Tuple
 from typeguard import typechecked
 
 from six import string_types
@@ -20,6 +20,7 @@ from odin.networks.skip_connection import SkipConnection
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python.layers import DistributionLambda
+from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 
 __all__ = [
     'mnist_networks',
@@ -29,6 +30,7 @@ __all__ = [
     'celebasmall_networks',
     'celeba_networks',
     'get_networks',
+    'get_optimizer_info',
 ]
 
 
@@ -366,3 +368,52 @@ def get_networks(dataset_name: str,
                   **kwargs)
   raise ValueError('Cannot find pre-implemented network for '
                    f'dataset with name="{dataset_name}"')
+
+
+def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
+  """Return information for optimizing networks of given datasets
+
+  Parameters
+  ----------
+  dataset_name : str
+      name of datasets, e.g. 'mnist', 'dsprites', 'shapes3d'
+
+  Returns
+  -------
+  Tuple[int, LearningRateSchedule]
+      number of iterations, learning rate
+
+  """
+  dataset_name = str(dataset_name).strip().lower()
+  if 'mnist' in dataset_name:
+    max_iter = 30000
+    init_lr = 1e-3
+    decay_steps = 2500
+  elif 'dsprites' in dataset_name:
+    max_iter = 80000
+    init_lr = 1e-4
+    decay_steps = 5000
+  elif 'shapes3dsmall' in dataset_name:
+    max_iter = 120000
+    init_lr = 5e-5
+    decay_steps = 8000
+  elif 'shapes3d' in dataset_name:
+    max_iter = 150000
+    init_lr = 1e-5
+    decay_steps = 10000
+  elif 'celebasmall' in dataset_name:
+    max_iter = 120000
+    init_lr = 5e-5
+    decay_steps = 8000
+  elif 'celeba' in dataset_name:
+    max_iter = 150000
+    init_lr = 1e-5
+    decay_steps = 10000
+  else:
+    raise NotImplementedError(
+        f'No predefined optimizer information for dataset {dataset_name}')
+  lr = tf.optimizers.schedules.ExponentialDecay(init_lr,
+                                                decay_steps=decay_steps,
+                                                decay_rate=0.96,
+                                                staircase=True)
+  return max_iter, lr

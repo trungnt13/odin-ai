@@ -279,7 +279,8 @@ def get_stdio_path():
 
 
 def stdio(path=None, suppress=False, stderr=True):
-  """
+  """Redirect `stdio` and `stderr` to external file on disk.
+
   Parameters
   ----------
   path: {None, str, io.StringIO}

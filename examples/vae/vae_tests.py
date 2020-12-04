@@ -17,9 +17,7 @@ from odin.bay.vi import (DisentanglementGym, GroundTruth, NetworkConfig, RVmeta,
                          traverse_dims, DimReduce, Correlation)
 from odin.fuel import IterableDataset, get_dataset
 from odin.ml import fast_tsne, fast_umap
-from odin.networks import (celeba_networks, celebasmall_networks,
-                           dsprites_networks, mnist_networks, shapes3d_networks,
-                           shapes3dsmall_networks)
+from odin.networks import get_networks, get_optimizer_info
 from odin.training import get_output_dir, run_hydra
 from odin.utils import ArgController, as_tuple, clear_folder
 from tensorflow.python import keras
@@ -55,9 +53,8 @@ beta: 1
 gamma: 1
 alpha: 10
 lamda: 1
-zdim: 32
-override: False
 skip: False
+eval: False
 """
 
 
@@ -108,7 +105,7 @@ def create_gym(dsname: str, vae: VariationalAutoencoder) -> DisentanglementGym:
 # ===========================================================================
 # Main
 # ===========================================================================
-@run_hydra(output_dir=OUTPUT_DIR, exclude_keys=['override'])
+@run_hydra(output_dir=OUTPUT_DIR, exclude_keys=['eval'])
 def main(cfg: dict):
   assert cfg.vae is not None, \
     ('No VAE model given, select one of the following: '
@@ -121,15 +118,13 @@ def main(cfg: dict):
   gym_train_path = os.path.join(output_dir, 'gym_train')
   gym_eval_path = os.path.join(output_dir, 'gym_eval')
   model_path = os.path.join(output_dir, 'model')
-  if cfg.override:
-    clear_folder(output_dir, verbose=True)
   ### load dataset
   ds, x_samples, y_samples = load_data(name=cfg.ds)
   ds_kw = dict(batch_size=batch_size, drop_remainder=True)
   ### prepare model init
   model = get_vae(cfg.vae)
   model_kw = inspect.getfullargspec(model.__init__).args[1:]
-  kw = {k: v for k, v in cfg.items() if k in model_kw}
+  model_kw = {k: v for k, v in cfg.items() if k in model_kw}
   is_semi_supervised = ds.has_labels and model.is_semi_supervised()
   if is_semi_supervised:
     train = ds.create_dataset(partition='train', inc_labels=0.1, **ds_kw)
@@ -138,35 +133,12 @@ def main(cfg: dict):
     train = ds.create_dataset(partition='train', inc_labels=0., **ds_kw)
     valid = ds.create_dataset(partition='valid', inc_labels=0., **ds_kw)
   ### create the model
-  network_kw = dict(qz=cfg.qz,
-                    zdim=cfg.zdim,
-                    activation=tf.nn.leaky_relu,
-                    centerize_image=True,
-                    is_semi_supervised=is_semi_supervised,
-                    skip_generator=cfg.skip,
-                    n_channels=x_samples.shape[-1])
-  if 'mnist' in cfg.ds:
-    fn_networks = mnist_networks
-    max_iter = 30000
-  elif 'dsprites' in cfg.ds:
-    fn_networks = dsprites_networks
-    max_iter = 80000
-  elif 'shapes3dsmall' in cfg.ds:
-    fn_networks = shapes3dsmall_networks
-    max_iter = 120000
-  elif 'shapes3d' in cfg.ds:
-    fn_networks = shapes3d_networks
-    max_iter = 150000
-  elif 'celebasmall' in cfg.ds:
-    fn_networks = celebasmall_networks
-    max_iter = 120000
-  elif 'celeba' in cfg.ds:
-    fn_networks = celeba_networks
-    max_iter = 150000
-  else:
-    raise NotImplementedError(
-        f'No predefined networks support for dataset {cfg.ds}')
-  vae = model(path=model_path, **fn_networks(**network_kw), **kw)
+  vae = model(path=model_path,
+              **get_networks(cfg.ds,
+                             centerize_image=True,
+                             is_semi_supervised=is_semi_supervised,
+                             skip_generator=cfg.skip),
+              **model_kw)
   vae.build((None,) + x_samples.shape[1:])
   vae.load_weights(raise_notfound=False, verbose=True)
   gym = create_gym(dsname=cfg.ds, vae=vae)
@@ -183,10 +155,10 @@ def main(cfg: dict):
     return gym(save_path=gym_train_path, remove_saved_image=True, dpi=150)
 
   ### fit
+  max_iter, learning_rate = get_optimizer_info(cfg.ds)
   vae.fit(train,
           valid=valid,
-          learning_rate=tf.optimizers.schedules.ExponentialDecay(
-              1e-3, decay_steps=5000, decay_rate=0.96, staircase=True),
+          learning_rate=learning_rate,
           epochs=-1,
           clipnorm=100,
           max_iter=max_iter,
@@ -199,8 +171,9 @@ def main(cfg: dict):
           track_gradients=True)
 
   ### evaluation
-  gym.eval()
-  gym(save_path=gym_eval_path, remove_saved_image=True, dpi=200, verbose=True)
+  if cfg.eval:
+    gym.eval()
+    gym(save_path=gym_eval_path, remove_saved_image=True, dpi=200, verbose=True)
 
 
 # ===========================================================================

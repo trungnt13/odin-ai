@@ -252,7 +252,7 @@ class DisentanglementGym:
   vae : VariationalAutoencoder
       instance of `VariationalAutoencoder`
   max_valid_samples : int, optional
-      maximum number of samples used for validation, by default 1000
+      maximum number of samples used for validation, by default 2000
   max_test_samples : int, optional
       maximum number of samples used for testing, by default 20000
   batch_size : int, optional
@@ -268,7 +268,7 @@ class DisentanglementGym:
                dataset: Literal['shapes3d', 'shapes3dsmall', 'dsprites',
                                 'celeba', 'celebasmall', 'mnist'],
                vae: VariationalAutoencoder,
-               max_valid_samples: int = 1000,
+               max_valid_samples: int = 2000,
                max_test_samples: int = 20000,
                batch_size: int = 64,
                allow_exception: bool = True,
@@ -351,7 +351,7 @@ class DisentanglementGym:
       adjusted_rand_score: bool = False,
       normalized_mutual_info: bool = False,
       adjusted_mutual_info: bool = False,
-      max_valid_samples: int = 1000,
+      max_valid_samples: int = 2000,
       max_test_samples: int = 20000,
       mode=Literal['train', 'eval', 'all'],
   ) -> 'DisentanglementGym':
@@ -593,14 +593,14 @@ class DisentanglementGym:
           outputs[f'betavae{z_idx}'] = beta_vae_score(
               representations=z,
               factors=factors,
-              n_samples=1000 if self._is_training else 10000,
+              n_samples=2000 if self._is_training else 10000,
               verbose=verbose)
       if self._factor_vae:
         for z_idx, z in qz.items():
           outputs[f'factorvae{z_idx}'] = factor_vae_score(
               representations=z,
               factors=factors,
-              n_samples=1000 if self._is_training else 10000,
+              n_samples=2000 if self._is_training else 10000,
               verbose=verbose)
     ## track the gradients
     if vae.trainer is not None and self._track_gradients:

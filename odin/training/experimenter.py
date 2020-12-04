@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Callable, List, Optional, Union
 
 import numpy as np
-from odin.utils import as_tuple, clean_folder
+from odin.utils import as_tuple, clean_folder, stdio, clear_folder
 from odin.utils.crypto import md5_checksum
 from six import string_types
 
@@ -41,6 +41,8 @@ YAML_REGEX = re.compile(r"\w+: \w+")
 OVERRIDE_PATTERN = re.compile(r"\A[\+\~]?[\w\.\\\@]+=[\w\(\)\[\]\{\}\,\.\']+")
 JOBS_PATTERN = re.compile(r"\A-{1,2}j=?(\d+)\Z")
 LIST_PATTERN = re.compile(r"\A-{1,2}l(ist)?\Z")
+SUMMARY_PATTERN = re.compile(r"\A-{1,2}summary\Z")
+REMOVE_EXIST_PATTERN = re.compile(r"\A-{1,2}override\Z")
 RESET_PATTERN = re.compile(r"\A-+r(eset)?\Z")
 TIME_FMT = r'%d%b%y_%H%M%S'
 HYDRA_TIME_FMT = r"${now:%d%b%y_%H%M%S}"
@@ -232,9 +234,10 @@ def run_hydra(output_dir: str = '/tmp/outputs',
   Useful commands:
     - `hydra/launcher=joblib` enable joblib launcher
     - `hydra.launcher.n_jobs=-1` set maximum number of processes
-    - `--list` : list all exist experiments
-    - `-j=2` : run multi-processing (with 2 processes)
-    - `--summary` : summary of the exist experiments
+    - `--list` or `--summary` : list all exist experiments
+    - `-j2` : run multi-processing (with 2 processes)
+    - `--override` : override existed model of the given experiment
+    - `--reset` : remove all files and folder in the output_dir
 
   Examples
   --------
@@ -275,6 +278,9 @@ def run_hydra(output_dir: str = '/tmp/outputs',
   log_dir = os.path.join(output_dir, 'logs')
   if not os.path.exists(log_dir):
     os.makedirs(log_dir)
+  stdio_dir = os.path.join(output_dir, 'stdio')
+  if not os.path.exists(stdio_dir):
+    os.makedirs(stdio_dir)
 
   def main_decorator(task_function: TaskFunction) -> Callable[[], None]:
 
@@ -304,7 +310,7 @@ def run_hydra(output_dir: str = '/tmp/outputs',
         config_path, config_name = _save_config_to_tempdir(config)
       ### list all experiments command
       for a in sys.argv:
-        if LIST_PATTERN.match(a):
+        if LIST_PATTERN.match(a) or SUMMARY_PATTERN.match(a):
           print("Output dir:", output_dir)
           all_logs = defaultdict(list)
           for i in os.listdir(log_dir):
@@ -336,6 +342,14 @@ def run_hydra(output_dir: str = '/tmp/outputs',
         override_id = r"${hydra.job.override_dirname}"
       else:
         override_id = r"default"
+      ### check if enable remove exists experiment
+      remove_exists_exp = False
+      for i, a in enumerate(list(sys.argv)):
+        match = REMOVE_EXIST_PATTERN.match(a)
+        if match:
+          remove_exists_exp = True
+          sys.argv.pop(i)
+          break
       ### parallel jobs provided
       jobs = 1
       for i, a in enumerate(list(sys.argv)):
@@ -371,9 +385,22 @@ def run_hydra(output_dir: str = '/tmp/outputs',
       ## prepare arguments for task_function
       spec = inspect.getfullargspec(task_function)
       ## run hydra
+      @functools.wraps(task_function)
+      def _task_function(_cfg):
+        if remove_exists_exp:
+          clear_folder(get_output_dir(), verbose=True)
+        curr_time = datetime.now().strftime(TIME_FMT)
+        stdio_path = f"{stdio_dir}/{get_overrides()}:{curr_time}.log"
+        stdio(stdio_path)
+        results = task_function(_cfg)
+        if jobs == 1:
+          # Exception if run hydra in multiprocessing mode using joblib
+          stdio(None)
+        return results
+
       _run_hydra(
           args_parser=args,
-          task_function=task_function,
+          task_function=_task_function,
           config_path=config_path,
           config_name=config_name,
           strict=None,
