@@ -78,27 +78,28 @@ def load_data(name: str):
 
 def create_gym(dsname: str, vae: VariationalAutoencoder) -> DisentanglementGym:
   gym = DisentanglementGym(dataset=dsname, vae=vae)
-  gym.set_config(track_gradients=True,
-                 latents_pairs=None,
-                 mig_score=True,
-                 silhouette_score=True,
-                 adjusted_rand_score=True,
-                 mode='train')
+  cfg = dict(reconstruction=True,
+             latents_sampling=True,
+             latents_traverse=True,
+             latents_stats=True,
+             mig_score=True,
+             silhouette_score=True,
+             adjusted_rand_score=True)
+  gym.set_config(track_gradients=True, mode='train', **cfg)
+  gym.set_config(track_gradients=False, mode='valid', **cfg)
   gym.set_config(
+      correlation_methods=Correlation.Lasso | Correlation.Importance |
+      Correlation.Spearman | Correlation.MutualInfo,
+      dimension_reduction=DimReduce.UMAP | DimReduce.TSNE | DimReduce.PCA,
       latents_pairs=Correlation.Lasso | Correlation.MutualInfo,
-      correlation_methods=Correlation.Lasso | Correlation.MutualInfo |
-      Correlation.Importance | Correlation.Spearman,
-      dimension_reduction=DimReduce.PCA | DimReduce.TSNE | DimReduce.UMAP,
-      mig_score=True,
-      dci_score=True,
       sap_score=True,
-      factor_vae=True,
+      dci_score=True,
       beta_vae=True,
-      silhouette_score=True,
-      adjusted_rand_score=True,
-      normalized_mutual_info=True,
+      factor_vae=True,
       adjusted_mutual_info=True,
-      mode='eval')
+      normalized_mutual_info=True,
+      mode='test',
+      **cfg)
   return gym
 
 
@@ -116,7 +117,8 @@ def main(cfg: dict):
   ### paths
   output_dir = get_output_dir()
   gym_train_path = os.path.join(output_dir, 'gym_train')
-  gym_eval_path = os.path.join(output_dir, 'gym_eval')
+  gym_valid_path = os.path.join(output_dir, 'gym_valid')
+  gym_test_path = os.path.join(output_dir, 'gym_test')
   model_path = os.path.join(output_dir, 'model')
   ### load dataset
   ds, x_samples, y_samples = load_data(name=cfg.ds)
@@ -152,28 +154,41 @@ def main(cfg: dict):
     elif signal > 0:
       vae.save_weights(overwrite=True)
     # create the return metrics
-    return gym(save_path=gym_train_path, remove_saved_image=True, dpi=150)
-
-  ### fit
-  max_iter, learning_rate = get_optimizer_info(cfg.ds)
-  vae.fit(train,
-          valid=valid,
-          learning_rate=learning_rate,
-          epochs=-1,
-          clipnorm=100,
-          max_iter=max_iter,
-          valid_freq=1000,
-          logging_interval=2,
-          skip_fitted=True,
-          callback=callback,
-          logdir=output_dir,
-          compile_graph=True,
-          track_gradients=True)
+    tra = gym.train()(save_path=gym_train_path,
+                      remove_saved_image=True,
+                      prefix='train/',
+                      dpi=150)
+    val = gym.valid()(save_path=gym_valid_path,
+                      remove_saved_image=True,
+                      prefix='valid/',
+                      dpi=150)
+    return dict(**tra, **val)
 
   ### evaluation
   if cfg.eval:
+    vae.load_weights()
     gym.eval()
-    gym(save_path=gym_eval_path, remove_saved_image=True, dpi=200, verbose=True)
+    gym(save_path=gym_test_path, remove_saved_image=True, dpi=200, verbose=True)
+  ### fit
+  else:
+    vae.early_stopping.warmup_epochs = 10
+    vae.early_stopping.patience = 10
+    max_iter, learning_rate = get_optimizer_info(cfg.ds)
+    vae.fit(train,
+            valid=valid,
+            learning_rate=learning_rate,
+            epochs=-1,
+            clipnorm=100,
+            max_iter=max_iter,
+            valid_freq=1000,
+            logging_interval=2,
+            skip_fitted=True,
+            callback=callback,
+            logdir=output_dir,
+            compile_graph=True,
+            track_gradients=True)
+    vae.early_stopping.plot_losses(
+        save_path=os.path.join(output_dir, 'early_stopping.png'))
 
 
 # ===========================================================================

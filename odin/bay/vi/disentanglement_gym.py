@@ -3,7 +3,7 @@ import re
 from collections import defaultdict
 from functools import partial
 from math import sqrt
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -11,7 +11,6 @@ import seaborn as sns
 import tensorflow as tf
 from matplotlib import pyplot as plt
 from odin import visual as vs
-from odin.fuel import get_dataset
 from odin.bay.helpers import concat_distributions
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
@@ -20,9 +19,11 @@ from odin.bay.vi.metrics import (Correlation, beta_vae_score, dci_scores,
                                  separated_attr_predictability)
 from odin.bay.vi.posterior import GroundTruth, Posterior
 from odin.bay.vi.utils import discretizing, traverse_dims
+from odin.fuel import get_dataset
 from odin.ml import DimReduce
 from odin.utils import as_tuple, uuid
 from scipy import stats
+from six import string_types
 from sklearn import metrics
 from sklearn.cluster import KMeans
 from tqdm import tqdm
@@ -34,6 +35,8 @@ __all__ = [
     'Correlation',
     'DimReduce',
 ]
+
+TrainingMode = Literal['train', 'valid', 'test']
 
 
 # ===========================================================================
@@ -293,9 +296,11 @@ class DisentanglementGym:
                                         inc_labels=True,
                                         shuffle=1000)
     self.vae = vae
-    self._is_training = False
     self.z_samples = vae.sample_prior(sample_shape=_n_visual, seed=self.seed)
     ## prepare the samples
+    self.x_train, self.y_train = [
+        (x[:_n_visual], y[:_n_visual]) for x, y in self._train.take(1)
+    ][0]
     self.x_valid, self.y_valid = [
         (x[:_n_visual], y[:_n_visual]) for x, y in self._valid.take(1)
     ][0]
@@ -322,24 +327,28 @@ class DisentanglementGym:
     self._sap_score = False
     self._factor_vae = False
     self._beta_vae = False
-    self.setup = dict(train={}, eval={})
+    self.setup = dict(train={}, valid={}, test={})
+    self._mode = 'train'
+    self.data_info = dict(train=(self._train, self.x_train, self.y_train),
+                          valid=(self._valid, self.x_valid, self.y_valid),
+                          test=(self._test, self.x_test, self.y_test))
     ## others
     self._traverse_config = dict(
         min_val=-2,
         max_val=2,
-        n_traverse_points=25,
+        n_traverse_points=15,
         mode='linear',
     )
 
   @typechecked
   def set_config(
       self,
-      reconstruction: bool = True,
-      latents_sampling: bool = True,
-      latents_traverse: bool = True,
-      latents_stats: bool = True,
+      reconstruction: bool = False,
+      latents_sampling: bool = False,
+      latents_traverse: bool = False,
+      latents_stats: bool = False,
       track_gradients: bool = False,
-      latents_pairs: Optional[Correlation] = Correlation.Lasso,
+      latents_pairs: Optional[Correlation] = None,
       correlation_methods: Optional[Correlation] = None,
       dimension_reduction: Optional[DimReduce] = None,
       mig_score: bool = False,
@@ -351,10 +360,10 @@ class DisentanglementGym:
       adjusted_rand_score: bool = False,
       normalized_mutual_info: bool = False,
       adjusted_mutual_info: bool = False,
-      max_valid_samples: int = 2000,
-      max_test_samples: int = 20000,
-      mode=Literal['train', 'eval', 'all'],
+      mode: Union[TrainingMode,
+                  List[TrainingMode]] = ('train', 'valid', 'test'),
   ) -> 'DisentanglementGym':
+    """Set configuration for Disentanglement Gym"""
     kw = dict(locals())
     mode = kw.pop('mode')
     if mode == 'all':
@@ -362,10 +371,11 @@ class DisentanglementGym:
         if hasattr(self, f'_{k}'):
           setattr(self, f'_{k}', v)
     else:
-      setup = self.setup[mode]
-      for k, v in kw.items():
-        if hasattr(self, f'_{k}'):
-          setup[f'_{k}'] = v
+      for m in as_tuple(mode, t=string_types):
+        setup = self.setup[m]
+        for k, v in kw.items():
+          if hasattr(self, f'_{k}'):
+            setup[f'_{k}'] = v
     return self
 
   @typechecked
@@ -373,8 +383,8 @@ class DisentanglementGym:
       self,
       min_val: float = -2.,
       max_val: float = 2.,
-      n_traverse_points: int = 25,
-      mode='linear',
+      n_traverse_points: int = 15,
+      mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
   ) -> 'DisentanglementGym':
     self._traverse_config = dict(
         min_val=min_val,
@@ -389,20 +399,27 @@ class DisentanglementGym:
     return self._batch_size
 
   @property
-  def is_training(self) -> bool:
-    return self._is_training
+  def mode(self) -> TrainingMode:
+    """The training mode: 'train', 'valid', 'test' """
+    return self._mode
 
   def train(self) -> 'DisentanglementGym':
     """Enable the training mode"""
-    self._is_training = True
+    self._mode = 'train'
     for k, v in self.setup['train'].items():
       setattr(self, k, v)
     return self
 
-  def eval(self) -> 'DisentanglementGym':
+  def valid(self) -> 'DisentanglementGym':
+    self._mode = 'valid'
+    for k, v in self.setup['valid'].items():
+      setattr(self, k, v)
+    return self
+
+  def test(self) -> 'DisentanglementGym':
     """Enable the evaluation mode"""
-    self._is_training = False
-    for k, v in self.setup['eval'].items():
+    self._mode = 'test'
+    for k, v in self.setup['test'].items():
       setattr(self, k, v)
     return self
 
@@ -420,6 +437,7 @@ class DisentanglementGym:
                save_path: Optional[str] = None,
                remove_saved_image: bool = True,
                dpi: int = 150,
+               prefix: str = '',
                verbose: bool = False) -> Dict[str, Any]:
     """Run the disentanglement evaluation protocol
 
@@ -443,6 +461,7 @@ class DisentanglementGym:
       return self._call_safe(save_path=save_path,
                              remove_saved_image=remove_saved_image,
                              dpi=dpi,
+                             prefix=prefix,
                              verbose=verbose)
     except Exception as e:
       if self.allow_exception:
@@ -451,19 +470,13 @@ class DisentanglementGym:
         print(e)
       return {}
 
-  def _call_safe(self, save_path, remove_saved_image, dpi, verbose):
+  def _call_safe(self, save_path, remove_saved_image, dpi, prefix, verbose):
     unique_key = uuid(20)
     vae = self.vae
     grids = (int(sqrt(_n_visual)), int(sqrt(_n_visual)))
     outputs = dict()
-    ## training mode
-    if self._is_training:
-      x, y = self.x_valid, self.y_valid
-      ds = self._valid
-    ## evaluation mode
-    else:
-      x, y = self.x_test, self.y_test
-      ds = self._test
+    ds, x, y = self.data_info[self.mode]
+    n_score_samples = 10000 if self.mode == 'test' else 2000
     ## prepare
     P, Q = vae(x, training=False)
     P, Q = as_tuple(P), as_tuple(Q)
@@ -486,15 +499,16 @@ class DisentanglementGym:
       outputs['latents_stats'] = image_latents
     ## latents traverse
     if self._latents_traverse:
-      n_indices = 20
       z = tf.concat([q.mean() for q in Q], axis=-1)
+      sorted_indices = np.argsort(z_std)[:20]  # only top 20
       z = traverse_dims(z,
-                        feature_indices=np.argsort(z_std)[:n_indices],
+                        feature_indices=sorted_indices,
                         n_random_samples=1,
                         seed=self.seed,
                         **self._traverse_config)
       P = as_tuple(vae.decode(z[0] if len(z) == 1 else z, training=False))
       images = P[0].mean().numpy()
+      n_indices = len(sorted_indices)  # do it here, just in case zdim < 20
       image_traverse = _to_image(images,
                                  grids=(n_indices,
                                         int(images.shape[0] / n_indices)),
@@ -507,7 +521,7 @@ class DisentanglementGym:
       outputs['latents_sampled'] = image_sampled
     ## latents clusters
     if self._is_predict():
-      if self._is_training:
+      if self.mode in ('train', 'valid'):
         ds_pred = ds.take(int(self._max_valid_samples / self.batch_size) + 1)
       else:
         ds_pred = ds.take(int(self._max_test_samples / self.batch_size) + 1)
@@ -590,17 +604,16 @@ class DisentanglementGym:
                          verbose=verbose))
       if self._beta_vae:
         for z_idx, z in qz.items():
-          outputs[f'betavae{z_idx}'] = beta_vae_score(
-              representations=z,
-              factors=factors,
-              n_samples=2000 if self._is_training else 10000,
-              verbose=verbose)
+          outputs[f'betavae{z_idx}'] = beta_vae_score(representations=z,
+                                                      factors=factors,
+                                                      n_samples=n_score_samples,
+                                                      verbose=verbose)
       if self._factor_vae:
         for z_idx, z in qz.items():
           outputs[f'factorvae{z_idx}'] = factor_vae_score(
               representations=z,
               factors=factors,
-              n_samples=2000 if self._is_training else 10000,
+              n_samples=n_score_samples,
               verbose=verbose)
     ## track the gradients
     if vae.trainer is not None and self._track_gradients:
@@ -635,11 +648,16 @@ class DisentanglementGym:
             print('Saved image at:', img_path)
           if remove_saved_image:
             del outputs[k]
-    return outputs
+    ## add prefix and return
+    return {f'{prefix}{k}': v for k, v in outputs.items()}
 
   def __str__(self):
     s = 'DisentanglementGym:\n'
     for k, v in sorted(self.__dict__.items()):
       if re.match(r'\_\w*', k):
         s += f' {k[1:]}: {v}\n'
+    for k, v in self.setup.items():
+      s += f' Mode="{k}"\n'
+      for i, j in v.items():
+        s += f'  {i[1:]}: {j}\n'
     return s[:-1]

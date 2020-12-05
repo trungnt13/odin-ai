@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 from typing import Callable, List, Union
+import inspect
 
 import numpy as np
 import tensorflow as tf
@@ -44,7 +45,7 @@ class EarlyStopping:
   ----------
   min_improvement : float, optional
       Determine by `generalization_error / progression`, by default 0.
-  warmup_niter : int, optional
+  warmup_epochs : int, optional
       Minimum number of iteration until early stop kicks in., by default -1
   patience : int, optional
       after which training will be stopped, by default 0
@@ -103,40 +104,56 @@ class EarlyStopping:
 
   @typechecked
   def __init__(self,
+               losses: Union[List[float], np.ndarray, tf.Tensor] = [],
                min_improvement: float = 0.,
-               warmup_niter: int = -1,
+               warmup_epochs: int = -1,
                patience: int = 2,
                reward: float = 0.5,
                progression_length: int = 0,
                mode: Literal['min', 'max'] = 'min',
-               losses: Union[List[float], np.ndarray, tf.Tensor] = [],
                batch_size: int = 1,
-               smooth: float = 0.1,
-               reduce_method: Callable[[np.ndarray, int], np.ndarray] = np.mean,
-               verbose: bool = False):
+               smooth: float = 0.0,
+               reduce_method: Callable[[np.ndarray, int],
+                                       np.ndarray] = np.mean):
+    self._losses = list(losses)
     self.min_improvement = min_improvement
-    self.warmup_niter = max(2, warmup_niter)
+    self.warmup_epochs = max(2, warmup_epochs)
     self.patience = patience
     self.reward = reward
     self.progression_length = progression_length
     self.mode = str(mode.lower())
     assert self.mode in ('min', 'max'), \
       f'only support min or max mode, given {self.mode}'
-    self._losses = list(losses)
     self.batch_size = int(batch_size)
     self.smooth = float(smooth)
     assert self.smooth < 1.0, \
       f'smoothing must be smaller than 1.0 but given {self.smooth}'
-    self.verbose = verbose
     self.reduce_method = reduce_method
+    self._is_disabled = False
     # history
-    n = max(warmup_niter, self.n_iter) + 1
+    n = max(warmup_epochs, self.n_epochs) + 1
     self._patience_history = [self.patience] * n
     self._generalization_history = [0.] * n
     self._progress_history = [1.] * n
 
+  def enable(self) -> 'EarlyStopping':
+    self._is_disabled = False
+    return self
+
+  def disable(self) -> 'EarlyStopping':
+    """Disable the early stopping, only allow reporting the best models."""
+    self._is_disabled = True
+    return self
+
+  def __str__(self):
+    s = 'EarlyStopping\n'
+    for k, v in sorted(self.__dict__.items()):
+      if not inspect.ismethod(v) and '_' != k[0]:
+        s += f' {k}:{v}\n'
+    return s[:-1]
+
   @property
-  def n_iter(self) -> int:
+  def n_epochs(self) -> int:
     return len(self._losses)
 
   @property
@@ -174,7 +191,7 @@ class EarlyStopping:
     self._losses.append(loss)
     return self()
 
-  def __call__(self, verbose: bool = None) -> int:
+  def __call__(self, verbose: bool = False) -> int:
     """Applying the early stopping algorithm
 
     Parameters
@@ -191,9 +208,10 @@ class EarlyStopping:
         - `1` for best
     """
     losses = self.losses
-    if self.n_iter < self.warmup_niter:
-      if self.verbose:
-        print(f"[EarlyStop] niter:{self.n_iter} Not enough iteration ")
+    if self.n_epochs < self.warmup_epochs:
+      if verbose:
+        print(f"[EarlyStop] current epochs:{self.n_epochs} "
+              f"warmup epochs:{self.warmup_epochs}")
       return False
     # generalization error (smaller is better)
     current = losses[-1]
@@ -223,12 +241,15 @@ class EarlyStopping:
     self._patience_history.append(self.patience)
     self._generalization_history.append(generalization)
     self._progress_history.append(progress)
-    if (bool(verbose) if verbose is not None else self.verbose):
+    if verbose:
       print(
-          f"[EarlyStop] niter:{self.n_iter} improvement:{improvement:.4f} "
+          f"[EarlyStop] disable:{self._is_disabled} "
+          f"epochs:{self.n_epochs} improvement:{improvement:.4f} "
           f"progress:{progress:.4f} patience:{self.patience} "
           f"decision:{decision} last10:[{','.join(['%.2f' % i for i in losses[-10:]])}]"
       )
+    if self._is_disabled:
+      return max(0, decision)
     return decision
 
   def plot_losses(self, save_path=None, ax=None):
@@ -242,7 +263,8 @@ class EarlyStopping:
     except ImportError:
       pass
     if ax is None:
-      ax = plt.gca()
+      fig = plt.figure()
+      ax = fig.gca()
     legends = []
     ## plotting
     min_idx = np.argmin(self._ema_L)
@@ -270,5 +292,5 @@ class EarlyStopping:
     ax.grid(False)
     ax.legend(legends, [i.get_label() for i in legends], fontsize=6)
     if save_path is not None:
-      ax.get_figure().savefig(save_path, dpi=200)
+      fig.savefig(save_path, dpi=200)
     return ax

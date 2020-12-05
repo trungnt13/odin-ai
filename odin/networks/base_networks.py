@@ -10,7 +10,8 @@ import pickle
 import types
 from functools import partial
 from numbers import Number
-from typing import (Any, Callable, Dict, Iterator, List, Optional, Text, Tuple, Union)
+from typing import (Any, Callable, Dict, Iterator, List, Optional, Text, Tuple,
+                    Union)
 
 import numpy as np
 import tensorflow as tf
@@ -32,7 +33,6 @@ from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training.tracking import base as trackable
 from typing_extensions import Literal
-
 
 __all__ = [
     'TrainStep',
@@ -194,7 +194,8 @@ class Networks(keras.Model, MD5object):
     self._save_path = path
     with trackable.no_automatic_dependency_tracking_scope(self):
       self._last_outputs = None
-      self._trainer = [None]
+      self._trainer = None
+      self._early_stopping = None
 
   def build(self, input_shape: List[Union[None, int]]) -> 'Networks':
     """Build the networks for given input or list of inputs
@@ -226,23 +227,16 @@ class Networks(keras.Model, MD5object):
 
   @property
   def trainer(self) -> Trainer:
-    return self._trainer[0]
+    return self._trainer
 
   @property
   def early_stopping(self) -> EarlyStopping:
-    if self.trainer is None:
-      raise ValueError("fit method hasn't been called, trainer is None.")
-    return self.trainer.early_stopping
-
-  @early_stopping.setter
-  def set_early_stopping(self, es: EarlyStopping):
-    assert isinstance(es, EarlyStopping), \
-      ('early stopping must be instance of odin.training.EarlyStopping '
-       f'but given {es}')
-    if self.trainer is None:
-      raise ValueError("fit method hasn't been called, trainer is None.")
-    es._losses = list(self.trainer._early_stopping._losses)
-    self.trainer._early_stopping = es
+    if self._early_stopping is None:
+      if self.trainer is None:
+        self._early_stopping = EarlyStopping()
+      else:
+        self._early_stopping = self.trainer.early_stopping
+    return self._early_stopping
 
   @property
   def last_outputs(self):
@@ -307,8 +301,9 @@ class Networks(keras.Model, MD5object):
       if os.path.exists(trainer_path):
         if verbose:
           print(f"Loading trainer at path: {trainer_path}")
-        with open(trainer_path, 'rb') as f:
-          self._trainer[0] = pickle.load(f)
+        with trackable.no_automatic_dependency_tracking_scope(self):
+          with open(trainer_path, 'rb') as f:
+            self._trainer = pickle.load(f)
     self._save_path = filepath
     return self
 
@@ -323,7 +318,7 @@ class Networks(keras.Model, MD5object):
       filepath = self.save_path
     assert filepath is not None
     with open(filepath + '.trainer', 'wb') as f:
-      pickle.dump(self._trainer[0], f)
+      pickle.dump(self._trainer, f)
     logging.get_logger().disabled = True
     super().save_weights(filepath=filepath,
                          overwrite=overwrite,
@@ -528,9 +523,10 @@ class Networks(keras.Model, MD5object):
     if self.trainer is None:
       with trackable.no_automatic_dependency_tracking_scope(self):
         trainer = Trainer(logdir=logdir)
-        self._trainer[0] = trainer
-    else:
-      trainer = self.trainer
+        self._trainer = trainer
+        if self._early_stopping is not None:
+          trainer._early_stopping = self._early_stopping
+    trainer = self.trainer
     ## if already called repeat, then no need to repeat more
     if hasattr(train, 'repeat'):
       train = train.repeat(int(epochs))

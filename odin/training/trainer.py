@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
-from odin.training.utils import EarlyStopping
+from odin.training.early_stopping import EarlyStopping
 from odin.utils import as_tuple
 from six import string_types
 from tensorflow import Tensor, Variable
