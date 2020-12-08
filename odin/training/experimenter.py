@@ -395,7 +395,7 @@ def run_hydra(output_dir: str = '/tmp/outputs',
         stdio_path = f"{stdio_dir}/{get_overrides()}:{curr_time}.log"
         stdio(stdio_path)
         try:
-          results = task_function(_cfg)
+          task_function(_cfg)
         except Exception as e:
           logger = logging.getLogger(__name__)
           _, value, tb = sys.exc_info()
@@ -408,7 +408,6 @@ def run_hydra(output_dir: str = '/tmp/outputs',
         if jobs == 1:
           # Exception if run hydra in multiprocessing mode using joblib
           stdio(None)
-        return results
 
       _run_hydra(
           args_parser=args,

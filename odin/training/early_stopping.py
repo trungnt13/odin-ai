@@ -160,21 +160,21 @@ class EarlyStopping:
     if self._patience_history is None:
       n = max(self.warmup_epochs, self.n_epochs) + 1
       self._patience_history = [self.patience] * n
-    return list(self._patience_history)
+    return self._patience_history
 
   @property
   def generalization_history(self) -> List[float]:
     if self._generalization_history is None:
       n = max(self.warmup_epochs, self.n_epochs) + 1
-      self._generalization_history = [self.patience] * n
-    return list(self._generalization_history)
+      self._generalization_history = [0.] * n
+    return self._generalization_history
 
   @property
   def progress_history(self) -> List[float]:
     if self._progress_history is None:
       n = max(self.warmup_epochs, self.n_epochs) + 1
-      self._progress_history = [self.patience] * n
-    return list(self._progress_history)
+      self._progress_history = [0.] * n
+    return self._progress_history
 
   @property
   def losses(self) -> np.ndarray:
@@ -248,9 +248,9 @@ class EarlyStopping:
     else:  # unchanged
       ...
     # store history
-    self._patience_history.append(self.patience)
-    self._generalization_history.append(generalization)
-    self._progress_history.append(progress)
+    self.patience_history.append(self.patience)
+    self.generalization_history.append(generalization)
+    self.progress_history.append(progress)
     if verbose:
       print(
           f"[EarlyStop] disable:{self._is_disabled} "
