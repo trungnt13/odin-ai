@@ -131,10 +131,9 @@ class EarlyStopping:
     self.reduce_method = reduce_method
     self._is_disabled = False
     # history
-    n = max(warmup_epochs, self.n_epochs) + 1
-    self._patience_history = [self.patience] * n
-    self._generalization_history = [0.] * n
-    self._progress_history = [1.] * n
+    self._patience_history = None
+    self._generalization_history = None
+    self._progress_history = None
 
   def enable(self) -> 'EarlyStopping':
     self._is_disabled = False
@@ -148,7 +147,7 @@ class EarlyStopping:
   def __str__(self):
     s = 'EarlyStopping\n'
     for k, v in sorted(self.__dict__.items()):
-      if not inspect.ismethod(v) and '_' != k[0]:
+      if not inspect.ismethod(v) and k[0] != '_':
         s += f' {k}:{v}\n'
     return s[:-1]
 
@@ -158,14 +157,23 @@ class EarlyStopping:
 
   @property
   def patience_history(self) -> List[float]:
+    if self._patience_history is None:
+      n = max(self.warmup_epochs, self.n_epochs) + 1
+      self._patience_history = [self.patience] * n
     return list(self._patience_history)
 
   @property
   def generalization_history(self) -> List[float]:
+    if self._generalization_history is None:
+      n = max(self.warmup_epochs, self.n_epochs) + 1
+      self._generalization_history = [self.patience] * n
     return list(self._generalization_history)
 
   @property
   def progress_history(self) -> List[float]:
+    if self._progress_history is None:
+      n = max(self.warmup_epochs, self.n_epochs) + 1
+      self._progress_history = [self.patience] * n
     return list(self._progress_history)
 
   @property
@@ -189,9 +197,9 @@ class EarlyStopping:
     self._ema_L = L
     return L
 
-  def update(self, loss: float) -> bool:
+  def update(self, loss: float) -> 'EearlyStopping':
     self._losses.append(loss)
-    return self()
+    return self
 
   def __call__(self, verbose: bool = False) -> int:
     """Applying the early stopping algorithm
@@ -271,6 +279,7 @@ class EarlyStopping:
     ## plotting
     min_idx = np.argmin(self._ema_L)
     min_val = self._ema_L[min_idx]
+    # legends += ax.plot(self._losses, label='losses', color='red')
     legends += ax.plot(self._org_L, label='losses', color='red')
     legends += ax.plot(self._ema_L,
                        label=f'smoothed-{self.smooth}',
@@ -279,18 +288,22 @@ class EarlyStopping:
     legends += ax.plot(min_idx,
                        min_val,
                        marker='.',
-                       markersize=10,
+                       markersize=15,
                        alpha=0.5,
                        linewidth=0.0,
                        label='min')
     ## plot the history
     ax = ax.twinx()
-    styles = dict(linestyle='-.', linewidth=1.5, alpha=0.4)
-    legends += ax.plot(self._patience_history, label='patience', **styles)
-    legends += ax.plot(self._generalization_history,
-                       label='improvement',
+    styles = dict(linestyle='-.', linewidth=1., alpha=0.6)
+    legends += ax.plot(self.patience_history,
+                       label='patience',
+                       color='blue',
                        **styles)
-    legends += ax.plot(self._progress_history, label='progress', **styles)
+    # legends += ax.plot(self._generalization_history,
+    #                    label='improvement',
+    #                    **styles)
+    # legends += ax.plot(self._progress_history, label='progress', **styles)
+    ax.tick_params(axis='y', colors='blue')
     ax.grid(False)
     ax.legend(legends, [i.get_label() for i in legends], fontsize=6)
     if save_path is not None:
