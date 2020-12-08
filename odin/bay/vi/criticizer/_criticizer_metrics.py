@@ -8,7 +8,6 @@ from sklearn.linear_model import Lasso
 
 from odin import search
 from odin.bay import distributions as tfd
-from odin.bay.distributions import CombinedDistribution
 from odin.bay.vi import losses, metrics
 from odin.bay.vi.criticizer._criticizer_base import CriticizerBase
 

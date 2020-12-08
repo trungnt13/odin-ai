@@ -13,11 +13,10 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from numpy import ndarray
 from odin import visual as vs
-from odin.bay.distributions import CombinedDistribution
+from odin.bay.distributions import Blockwise, Batchwise
 from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.metrics import (correlation_matrix, mutual_info_estimate,
-                                 mutual_info_gap,
-                                 importance_matrix)
+                                 mutual_info_gap, importance_matrix)
 from odin.bay.vi.utils import discretizing, traverse_dims
 from odin.ml import dimension_reduce, linear_classifier
 from odin.search import diagonal_linear_assignment
@@ -78,7 +77,6 @@ def _boostrap_sampling(
     verbose: bool,
     seed: int,
 ):
-  from odin.bay.helpers import concat_distributions
   assert inputs.shape[0] == groundtruth.shape[0], \
     ('Number of samples mismatch between inputs and ground-truth, '
      f'{inputs.shape[0]} != {groundtruth.shape[0]}')
@@ -125,18 +123,22 @@ def _boostrap_sampling(
   # aggregate all data
   Xs = [np.concatenate(x, axis=0) for x in Xs]
   if isinstance(Zs[0], Distribution):
-    Zs = concat_distributions(Zs, name="Latents")
+    Zs = Batchwise(Zs, name="Latents")
   else:
-    Zs = CombinedDistribution([
-        concat_distributions([z[zi]
-                              for z in Zs], name=f"Latents{zi}")
-        for zi in range(len(Zs[0]))
-    ],
-                              name="Latents")
+    Zs = Blockwise(
+        [
+            Batchwise(
+                [z[zi] for z in Zs],
+                name=f"Latents{zi}",
+            ) for zi in range(len(Zs[0]))
+        ],
+        name="Latents",
+    )
   Os = [
-      concat_distributions([j[i]
-                            for j in Os], name=f"Output{i}")
-      for i in range(len(Os[0]))
+      Batchwise(
+          [j[i] for j in Os],
+          name=f"Output{i}",
+      ) for i in range(len(Os[0]))
   ]
   indices = np.concatenate(indices, axis=0)
   groundtruth = groundtruth[indices]
@@ -851,8 +853,8 @@ class VariationalPosterior(Posterior):
       if isinstance(latents, (np.ndarray, tf.Tensor)):
         latents = VectorDeterministic(loc=latents, name='Latents')
       latents = as_tuple(latents)
-      latents = latents[0] if len(latents) == 1 else \
-        CombinedDistribution(latents, name="Latents")
+      latents = latents[0] if len(latents) == 1 else Blockwise(latents,
+                                                               name="Latents")
       assert latents.batch_shape[0] == self.n_samples, \
         ('Number of samples mismatch between latents distribution and '
          f'ground-truth factors, {latents.batch_shape[0]} != {self.n_samples}')
@@ -1045,8 +1047,8 @@ class VariationalPosterior(Posterior):
       if outputs is None:
         outputs = self.model.decode(latents, training=False)
       latents = as_tuple(latents)
-      obj._latents = CombinedDistribution(latents, name='Latents') \
-        if len(latents) > 1 else latents[0]
+      obj._latents = (Blockwise(latents, name='Latents')
+                      if len(latents) > 1 else latents[0])
       obj._outputs = list(as_tuple(outputs))
     ## just copy paste
     else:

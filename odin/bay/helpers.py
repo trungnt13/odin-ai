@@ -9,12 +9,14 @@ from typing import Callable, List, Optional, Text, Union
 import numpy as np
 import tensorflow as tf
 from odin.bay import distributions as obd
+from odin.utils import as_tuple
 from six import string_types
 from tensorflow import Tensor
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.distributions.joint_distribution import JointDistribution
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     _get_convert_to_tensor_fn, _serialize)
@@ -357,7 +359,7 @@ dist_params = {
     obd.Independent: ['distribution', 'reinterpreted_batch_ndims'],
     obd.ZeroInflated: ['count_distribution', 'inflated_distribution'],
     obd.MixtureSameFamily: ['mixture_distribution', 'components_distribution'],
-    obd.CombinedDistribution: ['distributions'],
+    obd.Blockwise: ['distributions'],
     obd.ConditionalTensor: ['distribution', 'conditional_tensor'],
     # Exponential
     obd.Gamma: ['concentration', 'rate'],
@@ -398,25 +400,37 @@ for _type, _names in dist_params.items():
 
 
 def _find_axis_for_stack(dists, given_axis):
+  """This algorithm find any axis that is different among minibatches as
+  an axis for concatenation."""
   # check event shape is consistent
   if given_axis is not None:
     return int(given_axis)
-
-  event_shape = dists[0].event_shape
-  batch_shape = dists[0].batch_shape
-
+  is_joint_dist = isinstance(dists[0], JointDistribution)
+  event_ref = dists[0].event_shape
+  batch_ref = dists[0].batch_shape
+  if is_joint_dist:
+    event_ref = event_ref[0]
+    batch_ref = batch_ref[0]
+  # check shape matching conditions
   assertions = []
   for d in dists[1:]:
-    assertions.append(tf.assert_equal(event_shape, d.event_shape))
-    assertions.append(tf.assert_equal(batch_shape.ndims, d.batch_shape.ndims))
-
+    if is_joint_dist:
+      event_shape = tf.reduce_sum(d.event_shape)  # assume concatenation
+      ndims = d.batch_shape[0].ndims
+    else:
+      event_shape = d.event_shape
+      ndims = d.batch_shape.ndims
+    assertions.append(tf.assert_equal(event_ref, event_shape))
+    assertions.append(tf.assert_equal(batch_ref.ndims, ndims))
+  # searching for different dimension.
   with tf.control_dependencies(assertions):
     axis = []
     for d in dists:
-      shape = d.batch_shape
-      for ax, (i, j) in enumerate(zip(batch_shape, shape)):
+      shape = d.batch_shape[0] if is_joint_dist else d.batch_shape
+      for ax, (i, j) in enumerate(zip(batch_ref, shape)):
         if i != j:
           axis.append(ax)
+    # default, just  return the first one
     if len(axis) == 0:
       return 0
     assert len(set(axis)) == 1, \
@@ -475,24 +489,21 @@ def concat_distributions(dists: List[tfd.Distribution],
                          validate_args: bool = False,
                          allow_nan_stats: bool = True,
                          name: Optional[Text] = None) -> tfd.Distribution:
-  r""" This layer create a new `Distribution` by concatenate parameters of
+  """This layer create a new `Distribution` by concatenate parameters of
   multiple distributions of the same type along given `axis`
 
   Note
   ----
-  If your distribution is the output from
-  `tensorflow_probability.DistributionLambda`, this function will remove all
-  the keras tracking utilities, for better solution checkout
-  `odin.networks.distribution_util_layer.ConcatDistribution`
+  If your distribution is the output from `DistributionLambda`,
+      this function will remove all the keras history
   """
-  if not isinstance(dists, (tuple, list)):
-    dists = [dists]
+  dists = as_tuple(dists)
   if len(dists) == 1:
     return dists[0]
   if len(dists) == 0:
     raise ValueError("No distributions were given")
   axis = _find_axis_for_stack(dists, given_axis=axis)
-
+  # ====== get the proper distribution type ====== #
   dist_type = type(dists[0])
   # _TensorCoercible will messing up with the parameters of the
   # distribution
@@ -500,7 +511,10 @@ def concat_distributions(dists: List[tfd.Distribution],
     dist_type = type.mro(dist_type)[2]
     assert issubclass(dist_type, tfd.Distribution) and not issubclass(
         dist_type, dtc._TensorCoercible)
-
+  #TODO: issues concatenating JointDistribution, use Batchwise.
+  if issubclass(dist_type, JointDistribution):
+    from odin.bay.distributions.batchwise import Batchwise
+    return Batchwise(dists, axis=axis, validate_args=validate_args, name=name)
   # ====== special cases ====== #
   dist_func = None
   if dist_type == obd.MultivariateNormalDiag:

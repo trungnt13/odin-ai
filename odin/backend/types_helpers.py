@@ -14,6 +14,8 @@ __all__ = [
     'EVENT',
     'MCMC',
     'CorrelationMethod',
+    'Axes',
+    'Axis',
 ]
 
 CorrelationMethod = Literal['spearman', 'lasso', 'pearson', 'mutualinfo',
@@ -27,3 +29,6 @@ LayerTypes = Union[Layer, Model, Sequential, Callable[..., Layer],
 BATCH = Union[int, NoneType]
 EVENT = int
 MCMC = Union[int, NoneType]
+
+Axes = Union[int, List[int]]
+Axis = int

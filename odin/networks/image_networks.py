@@ -14,7 +14,8 @@ import numpy as np
 import tensorflow as tf
 from odin.backend.keras_helpers import layer2text
 from odin.bay.distributions import (Bernoulli, Categorical, Distribution, Gamma,
-                                    JointDistributionConcatenation, Normal)
+                                    JointDistributionSequential, Normal,
+                                    Blockwise, VonMises, ContinuousBernoulli)
 from odin.networks.base_networks import NetworkConfig, SequentialNetwork
 from odin.networks.skip_connection import SkipConnection
 from tensorflow.python import keras
@@ -170,6 +171,25 @@ def mnist_networks(
   return networks
 
 
+# ===========================================================================
+# dSprites
+# ===========================================================================
+def _dsprites_distribution(x: tf.Tensor) -> Blockwise:
+  dtype = x.dtype
+  py = JointDistributionSequential([
+      VonMises(loc=0.,
+               concentration=tf.math.softplus(x[..., 0]),
+               name='orientation'),
+      Gamma(concentration=tf.math.softplus(x[..., 1]),
+            rate=tf.math.softplus(x[..., 2]),
+            name='scale'),
+      Categorical(logits=x[..., 3:6], dtype=dtype, name='shape'),
+      ContinuousBernoulli(logits=x[..., 6], name='x_position'),
+      ContinuousBernoulli(logits=x[..., 7], name='y_position'),
+  ])
+  return Blockwise(py, name='shapes2d')
+
+
 @typechecked
 def dsprites_networks(
     qz: str = 'mvndiag',
@@ -225,29 +245,58 @@ def dsprites_networks(
                   observation=observation,
                   latents=latents)
   if is_semi_supervised:
-    networks['labels'] = RVmeta(5,
-                                'negativebinomial',
-                                projection=True,
-                                name='attributes').create_posterior()
+    from odin.bay.layers import DistributionDense
+    networks['labels'] = DistributionDense(event_shape=(5,),
+                                           posterior=_dsprites_distribution,
+                                           units=8,
+                                           name='geometry')
+  return networks
+
+
+def dspritessmall_networks(
+    qz: str = 'mvndiag',
+    zdim: int = 10,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
+    is_semi_supervised: bool = False,
+    centerize_image: bool = True,
+    skip_generator: bool = False,
+    **kwargs,
+) -> Dict[str, Layer]:
+  networks = mnist_networks(qz=qz,
+                            zdim=zdim,
+                            activation=activation,
+                            is_semi_supervised=False,
+                            centerize_image=centerize_image,
+                            skip_generator=skip_generator,
+                            n_channels=1,
+                            proj_dim=128)
+  if is_semi_supervised:
+    from odin.bay.layers import DistributionDense
+    networks['labels'] = DistributionDense(event_shape=(5,),
+                                           posterior=_dsprites_distribution,
+                                           units=8,
+                                           name='geometry')
   return networks
 
 
 # ===========================================================================
 # Shapes 3D
 # ===========================================================================
-def _shapes3d_distribution(x):
-  return JointDistributionConcatenation([
-      Bernoulli(logits=x[..., 0], name='floor_hue'),
-      Bernoulli(logits=x[..., 1], name='wall_hue'),
-      Bernoulli(logits=x[..., 2], name='object_hue'),
-      Gamma(concentration=tf.math.softplus(x[..., 3]),
-            rate=tf.math.softplus(x[..., 4]),
+def _shapes3d_distribution(x: tf.Tensor) -> Blockwise:
+  dtype = x.dtype
+  py = JointDistributionSequential([
+      VonMises(loc=0.,
+               concentration=tf.math.softplus(x[..., 0]),
+               name='orientation'),
+      Gamma(concentration=tf.math.softplus(x[..., 1]),
+            rate=tf.math.softplus(x[..., 2]),
             name='scale'),
-      Categorical(logits=x[..., 5:9], name='shape'),
-      Normal(
-          loc=x[..., 10], scale=tf.nn.softplus(x[..., 11]), name='orientation'),
-  ],
-                                        name='shapes3d')
+      Categorical(logits=x[..., 3:7], dtype=dtype, name='shape'),
+      ContinuousBernoulli(logits=x[..., 7], name='floor_hue'),
+      ContinuousBernoulli(logits=x[..., 8], name='wall_hue'),
+      ContinuousBernoulli(logits=x[..., 9], name='object_hue'),
+  ])
+  return Blockwise(py, name='shapes3d')
 
 
 def shapes3dsmall_networks(qz: str = 'mvndiag',
@@ -269,7 +318,7 @@ def shapes3dsmall_networks(qz: str = 'mvndiag',
     from odin.bay.layers import DistributionDense
     networks['labels'] = DistributionDense(event_shape=(6,),
                                            posterior=_shapes3d_distribution,
-                                           units=12,
+                                           units=10,
                                            name='geometry')
   return networks
 
@@ -292,7 +341,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
     from odin.bay.layers import DistributionDense
     networks['labels'] = DistributionDense(event_shape=(6,),
                                            posterior=_shapes3d_distribution,
-                                           units=12,
+                                           units=10,
                                            name='geometry')
   return networks
 

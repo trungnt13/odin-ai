@@ -171,6 +171,8 @@ class EarlyStopping:
   @property
   def losses(self) -> np.ndarray:
     """1D ndarray of the losses, smaller is better"""
+    if len(self._losses) == 0:
+      return []
     if self.mode == 'min':
       L = self._losses
     else:

@@ -4,13 +4,15 @@ import os
 import re
 import sys
 import tempfile
+import traceback
 from collections import defaultdict
 from copy import deepcopy
 from datetime import datetime
 from typing import Any, Callable, List, Optional, Union
+import logging
 
 import numpy as np
-from odin.utils import as_tuple, clean_folder, stdio, clear_folder
+from odin.utils import as_tuple, clean_folder, clear_folder, stdio
 from odin.utils.crypto import md5_checksum
 from six import string_types
 
@@ -395,12 +397,14 @@ def run_hydra(output_dir: str = '/tmp/outputs',
         try:
           results = task_function(_cfg)
         except Exception as e:
+          logger = logging.getLogger(__name__)
+          _, value, tb = sys.exc_info()
+          for line in traceback.TracebackException(
+              type(value), value, tb, limit=None).format(chain=None):
+            logger.exception(line)
+            print(line, end="")
           if jobs == 1:
             raise e
-          else:
-            import traceback
-            traceback.print_exc()
-            print(e)
         if jobs == 1:
           # Exception if run hydra in multiprocessing mode using joblib
           stdio(None)

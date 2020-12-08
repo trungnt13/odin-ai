@@ -11,7 +11,7 @@ import seaborn as sns
 import tensorflow as tf
 from matplotlib import pyplot as plt
 from odin import visual as vs
-from odin.bay.helpers import concat_distributions
+from odin.bay.distributions import Batchwise
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
 from odin.bay.vi.metrics import (Correlation, beta_vae_score, dci_scores,
@@ -113,9 +113,9 @@ def _process_labels(y: tf.Tensor, dsname: str,
     y = tf.argmax(y, axis=-1)
     raise NotImplementedError
   elif 'shapes3d' in dsname:
-    y_categorical = y[:, 4]
+    y_categorical = y[:, 2]
     y_discrete = discretizing(y,
-                              n_bins=[10, 10, 10, 8, 4, 15],
+                              n_bins=[15, 8, 4, 10, 10, 10],
                               strategy='uniform')
     names = [f'shape{i}' for i in range(4)]
   elif 'dsprites' in dsname:
@@ -140,8 +140,14 @@ def _predict(data, vae, dsname, labels, verbose):
   if verbose:
     data.clear()
     data.close()
-  qz = {idx: concat_distributions(dist_list) for idx, dist_list in qz.items()}
-  px = {idx: concat_distributions(dist_list) for idx, dist_list in px.items()}
+  qz = {
+      idx: Batchwise(dist_list, name=f'latent{idx}')
+      for idx, dist_list in qz.items()
+  }
+  px = {
+      idx: Batchwise(dist_list, name=f'output{idx}')
+      for idx, dist_list in px.items()
+  }
   py = tf.concat(py, 0)
   y_categorical, y_factors = _process_labels(py, dsname=dsname, labels=labels)
   return px, qz, y_categorical, y_factors, py.numpy()
@@ -482,6 +488,8 @@ class DisentanglementGym:
     P, Q = as_tuple(P), as_tuple(Q)
     z_mean = tf.reduce_mean(tf.concat([q.mean() for q in Q], axis=-1), axis=0)
     z_std = tf.reduce_mean(tf.concat([q.stddev() for q in Q], axis=-1), axis=0)
+    outputs['latents/mean'] = z_mean
+    outputs['latents/stddev'] = z_std
     ## reconstruction
     if self._reconstruction:
       px = P[0]

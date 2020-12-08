@@ -17,16 +17,24 @@ from tensorflow_probability.python.layers.internal import \
 from odin.bay.distributions.conditional import ConditionalTensor
 
 __all__ = [
-    'ConditionalTensorLayer', 'ConcatDistributionLayer', 'Sampling', 'Moments',
-    'Stddev', 'DistributionAttr'
+    'ConditionalTensorLayer',
+    'Sampling',
+    'Moments',
+    'Stddev',
+    'DistributionAttr',
 ]
 
-
+# ===========================================================================
+# Helpers
+# ===========================================================================
 def _check_distribution(x):
   assert isinstance(x, Distribution), \
   "Input to this layer must be instance of tensorflow_probability Distribution"
 
 
+# ===========================================================================
+# Main
+# ===========================================================================
 class ConditionalTensorLayer(DistributionLambda):
   r""" This layer concatenate a Tensor to all the statistics of given
   distribution, helpful for conditional VAE.
@@ -43,30 +51,6 @@ class ConditionalTensorLayer(DistributionLambda):
         lambda params: ConditionalTensor(distribution=params[0],
                                          conditional_tensor=params[1]),
         convert_to_tensor_fn, **kwargs)
-
-
-class ConcatDistributionLayer(DistributionLambda):
-  r""" This layer create a new `Distribution` by concatenate parameters of
-  multiple distributions of the same type along given `axis`
-  """
-
-  def __init__(self,
-               axis=None,
-               convert_to_tensor_fn=Distribution.sample,
-               sample_shape=(),
-               **kwargs):
-    from odin.bay.distributions.utils import concat_distributions
-    if convert_to_tensor_fn == Distribution.sample and sample_shape != ():
-      convert_to_tensor_fn = partial(Distribution.sample,
-                                     sample_shape=sample_shape)
-    super().__init__(lambda dists: concat_distributions(dists=dists, axis=axis),
-                     convert_to_tensor_fn, **kwargs)
-    self.axis = axis
-
-  def get_config(self):
-    config = super().get_config()
-    config['axis'] = self.axis
-    return config
 
 
 class Sampling(Layer):

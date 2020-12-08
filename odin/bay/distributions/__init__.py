@@ -1,4 +1,4 @@
-from odin.bay.distributions.combined import *
+from odin.bay.distributions.batchwise import *
 from odin.bay.distributions.conditional import *
 from odin.bay.distributions.joint_distributions_addons import *
 from odin.bay.distributions.logarizmed import *
@@ -9,5 +9,6 @@ from odin.bay.distributions.quantized import *
 from odin.bay.distributions.vector_quantizer import *
 from odin.bay.distributions.zero_inflated import ZeroInflated
 from tensorflow_probability.python.distributions import *
+from tensorflow_probability.python.distributions import ContinuousBernoulli
 
 RelaxedSoftmax = RelaxedOneHotCategorical

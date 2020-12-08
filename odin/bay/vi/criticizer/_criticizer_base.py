@@ -8,7 +8,7 @@ import tensorflow as tf
 from tqdm import tqdm
 
 from odin.bay import distributions as tfd
-from odin.bay.distributions import CombinedDistribution
+from odin.bay.distributions import Blockwise
 from odin.bay.vi import utils
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
@@ -432,8 +432,8 @@ class CriticizerBase(object):
       z_train = z_train[self._latent_indices]
       z_test = z_test[self._latent_indices]
     if self.is_multi_latents:
-      z_train = CombinedDistribution(z_train, name="LatentsTrain")
-      z_test = CombinedDistribution(z_test, name="LatentsTest")
+      z_train = Blockwise(z_train, name="LatentsTrain")
+      z_test = Blockwise(z_test, name="LatentsTest")
     # create a new critizer
     crt = self.copy()
     crt._representations = (\
@@ -504,8 +504,8 @@ class CriticizerBase(object):
         test_latents = test_latents[0]
       else:
         self._is_multi_latents = len(latents)
-        train_latents = CombinedDistribution(train_latents, name="Latents")
-        test_latents = CombinedDistribution(test_latents, name="Latents")
+        train_latents = Blockwise(train_latents, name="Latents")
+        test_latents = Blockwise(test_latents, name="Latents")
     else:
       ids = self.random_state.permutation(n_inputs)
       split = int(train_percent * n_inputs)
@@ -586,7 +586,7 @@ class CriticizerBase(object):
       Xs = [np.concatenate(x, axis=0) for x in Xs]
       Ys = np.concatenate(Ys, axis=0)
       if self.is_multi_latents:
-        Zs = CombinedDistribution(
+        Zs = Blockwise(
             [
                 concat_distributions(
                     [z[zi] for z in Zs],

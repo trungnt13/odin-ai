@@ -8,7 +8,7 @@ import numpy as np
 import scipy as sp
 import tensorflow as tf
 from numpy.random import RandomState
-from odin.bay.distributions import CombinedDistribution
+from odin.bay.distributions import Blockwise
 from odin.bay.helpers import batch_slice
 from odin.bay.vi.utils import discretizing
 from odin.stats import is_discrete
@@ -290,7 +290,7 @@ def predictive_strength(representations: tfd.Distribution,
                         n_samples=1000):
   representations = tf.nest.flatten(representations)
   if len(representations) > 1:
-    representations = CombinedDistribution(representations)
+    representations = Blockwise(representations)
   else:
     representations = representations[0]
   ### sampling

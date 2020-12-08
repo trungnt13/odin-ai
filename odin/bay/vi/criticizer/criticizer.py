@@ -48,8 +48,8 @@ class Criticizer(CriticizerPlot):
       crt._latent_indices = latent_indices
       if isinstance(z_train, (tuple, list)) and len(z_train) > 1:
         crt._is_multi_latents = int(len(z_train))
-        z_train = tfd.CombinedDistribution(z_train, name="LatentsTrain")
-        z_test = tfd.CombinedDistribution(z_test, name="LatentsTest")
+        z_train = tfd.Blockwise(z_train, name="LatentsTrain")
+        z_test = tfd.Blockwise(z_test, name="LatentsTest")
       else:
         crt._is_multi_latents = 0
       crt._representations = (z_train, z_test)
