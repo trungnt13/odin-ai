@@ -12,7 +12,7 @@ from typing import Any, Callable, List, Optional, Union
 import logging
 
 import numpy as np
-from odin.utils import as_tuple, clean_folder, clear_folder, stdio
+from odin.utils import as_tuple, clean_folder, clear_folder
 from odin.utils.crypto import md5_checksum
 from six import string_types
 
@@ -48,6 +48,7 @@ REMOVE_EXIST_PATTERN = re.compile(r"\A-{1,2}override\Z")
 RESET_PATTERN = re.compile(r"\A-+r(eset)?\Z")
 TIME_FMT = r'%d%b%y_%H%M%S'
 HYDRA_TIME_FMT = r"${now:%d%b%y_%H%M%S}"
+logger = logging.getLogger(__name__)
 
 
 def _insert_argv(key, value, is_value_string=True):
@@ -280,9 +281,6 @@ def run_hydra(output_dir: str = '/tmp/outputs',
   log_dir = os.path.join(output_dir, 'logs')
   if not os.path.exists(log_dir):
     os.makedirs(log_dir)
-  stdio_dir = os.path.join(output_dir, 'stdio')
-  if not os.path.exists(stdio_dir):
-    os.makedirs(stdio_dir)
 
   def main_decorator(task_function: TaskFunction) -> Callable[[], None]:
 
@@ -328,10 +326,14 @@ def run_hydra(output_dir: str = '/tmp/outputs',
             if fname in all_logs:
               for time_str, log_file in all_logs[fname]:
                 with open(log_file, 'r') as f:
-                  n = len(f.read().split('\n'))
+                  log_data = f.read()
+                  lines = log_data.split('\n')
+                  n = len(lines)
                   print(
                       f'  log {datetime.strptime(time_str, TIME_FMT)} ({n} lines)'
                   )
+                  for e in [l for l in lines if '[ERROR]' in l]:
+                    print(f'   {e.split("[ERROR]")[1]}')
           exit()
       ### check if overrides provided
       is_overrided = False
@@ -391,23 +393,16 @@ def run_hydra(output_dir: str = '/tmp/outputs',
       def _task_function(_cfg):
         if remove_exists_exp:
           clear_folder(get_output_dir(), verbose=True)
-        curr_time = datetime.now().strftime(TIME_FMT)
-        stdio_path = f"{stdio_dir}/{get_overrides()}:{curr_time}.log"
-        stdio(stdio_path)
+        # catch exception, continue running in case
         try:
           task_function(_cfg)
         except Exception as e:
-          logger = logging.getLogger(__name__)
           _, value, tb = sys.exc_info()
           for line in traceback.TracebackException(
               type(value), value, tb, limit=None).format(chain=None):
-            logger.exception(line)
-            print(line, end="")
+            logger.error(line)
           if jobs == 1:
             raise e
-        if jobs == 1:
-          # Exception if run hydra in multiprocessing mode using joblib
-          stdio(None)
 
       _run_hydra(
           args_parser=args,

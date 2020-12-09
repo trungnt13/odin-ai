@@ -769,64 +769,67 @@ class Trainer(object):
     from odin import visual as vs
     sns.set()
     summary_steps = as_tuple(summary_steps, N=2, t=int)
-    is_validated = bool(len(self.valid_loss) > 0) and bool(show_validation)
-    n_metrics = len(self.train_metrics)
-    metrics_name = list(self.train_metrics.keys())
-    metrics_name = ["loss"] + tf.nest.flatten(metrics_name)
-    # create the figure
-    ncol = 2 if is_validated else 1
-    nrow = 1 + n_metrics
-    fig = plt.figure(figsize=(8, nrow * 3))
-    # prepare the results
-    train = [self.train_loss] + \
-      [self.train_metrics[i] for i in metrics_name[1:]]
-    train_name = metrics_name
+    # prepare
+    train_losses = self.get_train_losses()
+    train_metrics = self.get_train_metrics()
+    valid_losses = self.get_valid_losses()
+    valid_metrics = self.get_valid_metrics()
+    is_validated = bool(len(valid_losses) > 0) and bool(show_validation)
+    metrics_name = list(train_metrics.keys())
+    metrics_name = ["loss"] + metrics_name
+    # gather the results
+    train = [train_losses] + [train_metrics[name] for name in metrics_name[1:]]
+    train_name = list(metrics_name)
+    all_data = list(zip(train_name, train))
     if is_validated:
-      valid = [self.valid_loss] + \
-        [self.valid_metrics[i] for i in metrics_name[1:]]
-      valid_name = ['val_' + i for i in metrics_name]
-      all_data = zip([i for pair in zip(train_name, valid_name) for i in pair],
-                     [i for pair in zip(train, valid) for i in pair])
-    else:
-      all_data = zip(train_name, train)
+      all_data.append(('val_loss', valid_losses))
+      for name, values in valid_metrics.items():
+        if name[:4] != 'val_':
+          name = f'val_{name}'
+        all_data.append((name, values))
+    # create the figure
+    all_data = [(name, data) for name, data in all_data if data[0].ndim == 0]
+    all_data = sorted(all_data, key=lambda x: x[0].replace('val_', ''))
+    n_metrics = len(all_data)
+    ncol = 6 if is_validated else 1
+    nrow = int(np.ceil(n_metrics / ncol))
+    fig = plt.figure(figsize=(ncol * 3, nrow * 3), dpi=dpi)
     # plotting
     subplots = []
     for idx, (name, data) in enumerate(all_data):
       ax = plt.subplot(nrow, ncol, idx + 1)
       subplots.append(ax)
-      batch_size = summary_steps[1 if 'val_' == name[:4] else 0]
+      is_val = ('val_' == name[:4])
+      batch_size = summary_steps[1 if is_val else 0]
       if batch_size > len(data):
         warnings.warn(f"Given summary_steps={batch_size} but only "
                       f"has {len(data)} data points, skip plot!")
         return self
       data = [batch for batch in tf.data.Dataset.from_tensor_slices(\
         data).batch(batch_size)]
-      data_avg = np.array([np.mean(i) for i in data])
-      data_std = np.array([np.std(i) for i in data])
-      data_min = np.min(data_avg)
-      data_max = np.max(data_avg)
-      plt.plot(data_avg, label='Avg.')
-      plt.plot(np.argmin(data_avg),
-               data_min,
+      avg = np.array([np.mean(i) for i in data])
+      std = np.array([np.std(i) for i in data])
+      vmin, vmax = np.min(avg), np.max(avg)
+      plt.plot(avg, label='Avg.')
+      plt.plot(np.argmin(avg),
+               vmin,
                marker='o',
                color='green',
                alpha=0.5,
-               label='Min:%.2f' % data_min)
-      plt.plot(np.argmax(data_avg),
-               data_max,
+               label=f'Min:{vmin:.2f}')
+      plt.plot(np.argmax(avg),
+               vmax,
                marker='o',
                color='red',
                alpha=0.5,
-               label='Max:%.2f' % data_max)
-      plt.fill_between(np.arange(len(data_avg)),
-                       data_avg + data_std,
-                       data_avg - data_std,
-                       alpha=0.3)
+               label=f'Max:{vmax:.2f}')
+      plt.fill_between(np.arange(len(avg)), avg + std, avg - std, alpha=0.3)
       plt.title(name)
       plt.legend(fontsize=10)
-    # set the xlabels
-    for ax, step in zip(subplots[-2:], summary_steps):
-      ax.set_xlabel("#Iter * %d" % step)
+      plt.tick_params(axis='both', labelsize=8)
+      ticks = np.linspace(0, len(data), num=5)
+      plt.xticks(ticks, (ticks * batch_size).astype(int))
+    # set the title
     if title is not None:
       fig.suptitle(str(title))
       fig.tight_layout(rect=[0, 0.03, 1, 0.97])

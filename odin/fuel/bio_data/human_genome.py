@@ -14,13 +14,6 @@ from tqdm import tqdm
 
 from odin.utils.crypto import md5_checksum
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
-
-tf.random.set_seed(1)
-np.random.seed(1)
-
 HEADER = [
     'hgnc_id', 'symbol', 'name', 'locus_group', 'locus_type', 'status',
     'location', 'location_sortable', 'alias_symbol', 'alias_name',

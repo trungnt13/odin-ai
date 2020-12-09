@@ -3,6 +3,7 @@ from __future__ import absolute_import, division, print_function
 import os
 from collections import defaultdict
 from typing import List, Optional, Type, Union
+from typing_extensions import Literal
 
 import numpy as np
 import scipy as sp
@@ -300,15 +301,15 @@ def predictive_strength(representations: tfd.Distribution,
 # ===========================================================================
 # betaVAE and factorVAE scoring methods
 # ===========================================================================
-def _sampling_helper(representations,
-                     factors,
-                     rand,
-                     use_mean,
-                     batch_size,
-                     n_samples,
-                     verbose,
-                     strategy,
-                     desc="Scoring",
+def _sampling_helper(representations: tfd.Distribution,
+                     factors: Union[tf.Tensor, np.ndarray],
+                     rand: np.random.RandomState,
+                     n_mcmc: int,
+                     batch_size: int,
+                     n_samples: int,
+                     verbose: bool,
+                     strategy: Literal['betavae', 'factorvae'],
+                     desc: str = "Scoring",
                      **kwargs):
   assert isinstance(representations, tfd.Distribution),\
     f"representations must be instance of Distribution, but given: {type(representations)}"
@@ -317,11 +318,11 @@ def _sampling_helper(representations,
   n_latents = representations.event_shape[0]
   n_factors = factors.shape[1]
   indices = np.arange(size, dtype=np.int64)
-  ### create mapping factor -> representation_index
-  code_map = defaultdict(list)
+  ### create mapping factor -> list of representation_indices
+  factor2ids = defaultdict(list)
   for idx, y in enumerate(factors.T):
     for sample_idx, i in enumerate(y):
-      code_map[(idx, i)].append(sample_idx)
+      factor2ids[(idx, i)].append(sample_idx)
   ### prepare the output
   if strategy == 'betavae':
     features = np.empty(shape=(n_samples, n_latents), dtype=np.float32)
@@ -334,12 +335,19 @@ def _sampling_helper(representations,
   else:
     raise NotImplementedError(f"No support for sampling strategy: {strategy}")
   labels = np.empty(shape=(n_samples,), dtype=np.int32)
-  to_tensor = (lambda d: d.mean()) if use_mean else (lambda d: d.sample())
-  count = 0
+  ### data selector
+  if n_mcmc == 0:  # use mean
+    _X = representations.mean().numpy()
+    get_x = lambda ids: _X[ids]
+  else:
+    _X = representations.sample(n_mcmc, seed=rand.randint(10e8)).numpy()
+    # select the MCMC samples group then the data indices
+    get_x = lambda ids: _X[rand.randint(0, n_mcmc)][ids]
   ### prepare the sampling progress
   if verbose:
     from tqdm import tqdm
     prog = tqdm(total=n_samples, desc=str(desc), unit='sample')
+  count = 0
   while count < n_samples:
     factor_index = rand.randint(n_factors)
     ## betaVAE sampling
@@ -349,16 +357,16 @@ def _sampling_helper(representations,
       obs1_ids = []
       obs2_ids = []
       for i in y:
-        sample_indices = code_map[(factor_index, i)]
+        sample_indices = factor2ids[(factor_index, i)]
         if len(sample_indices) >= 2:
           s1, s2 = rand.choice(sample_indices, size=2, replace=False)
           obs1_ids.append(s1)
           obs2_ids.append(s2)
       # create the observation:
       if len(obs1_ids) > 0:
-        obs1 = batch_slice(representations, obs1_ids)
-        obs2 = batch_slice(representations, obs2_ids)
-        feat = np.mean(np.abs(to_tensor(obs1) - to_tensor(obs2)), axis=0)
+        obs1 = get_x(obs1_ids)
+        obs2 = get_x(obs2_ids)
+        feat = np.mean(np.abs(obs1 - obs2), axis=0)
         features[count, :] = feat
         labels[count] = factor_index
         count += 1
@@ -367,11 +375,11 @@ def _sampling_helper(representations,
     ### factorVAE sampling
     elif strategy == 'factorvae':
       y = factors[rand.randint(size, dtype=np.int64), factor_index]
-      obs_ids = code_map[(factor_index, y)]
+      obs_ids = factor2ids[(factor_index, y)]
       if len(obs_ids) > 1:
         obs_ids = rand.choice(obs_ids, size=batch_size, replace=True)
-        obs = batch_slice(representations, obs_ids)
-        local_var = np.var(to_tensor(obs), axis=0, ddof=1)
+        obs = get_x(obs_ids)
+        local_var = np.var(obs, axis=0, ddof=1)
         if not np.any(active_dims):  # no active dims
           features[count] = 0
         else:
@@ -389,10 +397,10 @@ def _sampling_helper(representations,
 
 
 def beta_vae_score(representations: tfd.Distribution,
-                   factors: np.ndarray,
-                   use_mean: bool = False,
-                   batch_size: int = 8,
-                   n_samples: int = 1000,
+                   factors: Union[tf.Tensor, np.ndarray],
+                   n_mcmc: int = 10,
+                   batch_size: int = 16,
+                   n_samples: int = 10000,
                    seed: int = 1,
                    return_model: bool = False,
                    verbose: bool = False) -> float:
@@ -409,7 +417,7 @@ def beta_vae_score(representations: tfd.Distribution,
   rand = RandomState(seed=seed)
   features, labels = _sampling_helper(**locals())
   ## train the classifier
-  model = LogisticRegression(max_iter=1000, random_state=rand.randint(1e8))
+  model = LogisticRegression(max_iter=2000, random_state=rand.randint(1e8))
   model.fit(features, labels)
   score = model.score(features, labels)
   if return_model:
@@ -418,10 +426,10 @@ def beta_vae_score(representations: tfd.Distribution,
 
 
 def factor_vae_score(representations: tfd.Distribution,
-                     factors: np.ndarray,
-                     use_mean: bool = False,
-                     batch_size: int = 8,
-                     n_samples: int = 1000,
+                     factors: Union[tf.Tensor, np.ndarray],
+                     n_mcmc: int = 10,
+                     batch_size: int = 256,
+                     n_samples: int = 10000,
                      seed: int = 1,
                      return_model: bool = False,
                      verbose: bool = False) -> float:

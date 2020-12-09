@@ -2,7 +2,6 @@ from typing import Dict, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
-from odin.bay.random_variable import RVmeta
 from typing_extensions import Literal
 
 
@@ -65,10 +64,6 @@ def _merge_tensor(data):
 # Main
 # ===========================================================================
 class IterableDataset:
-
-  @property
-  def rvs(self) -> List[RVmeta]:
-    raise NotImplementedError
 
   @property
   def data_type(self) -> Literal['image', 'audio', 'text', 'gene']:

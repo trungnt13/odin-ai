@@ -31,7 +31,8 @@ class Batchwise(Distribution):
                distributions: List[Distribution],
                axis: Axis = 0,
                validate_args: bool = False,
-               name: Optional[str] = None):
+               name: Optional[str] = None,
+               **kwargs):
     parameters = dict(locals())
     distributions = as_tuple(distributions)
     # validate distribution types

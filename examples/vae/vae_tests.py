@@ -61,21 +61,6 @@ eval: False
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def load_data(name: str):
-  ds = get_dataset(name)
-  test = ds.create_dataset(partition='test',
-                           inc_labels=1.0 if ds.has_labels else 0.0)
-  samples = [
-      [i[:n_visual_samples] for i in tf.nest.flatten(x)] for x in test.take(1)
-  ][0]
-  if ds.has_labels:
-    x_samples, y_samples = samples
-  else:
-    x_samples = samples[0]
-    y_samples = None
-  return ds, x_samples, y_samples
-
-
 def create_gym(dsname: str, vae: VariationalAutoencoder) -> DisentanglementGym:
   gym = DisentanglementGym(dataset=dsname, vae=vae)
   cfg = dict(reconstruction=True,
@@ -121,7 +106,7 @@ def main(cfg: dict):
   gym_test_path = os.path.join(output_dir, 'gym_test')
   model_path = os.path.join(output_dir, 'model')
   ### load dataset
-  ds, x_samples, y_samples = load_data(name=cfg.ds)
+  ds = get_dataset(name=cfg.ds)
   ds_kw = dict(batch_size=batch_size, drop_remainder=True)
   ### prepare model init
   model = get_vae(cfg.vae)
@@ -141,7 +126,7 @@ def main(cfg: dict):
                              is_semi_supervised=is_semi_supervised,
                              skip_generator=cfg.skip),
               **model_kw)
-  vae.build((None,) + x_samples.shape[1:])
+  vae.build((None,) + ds.shape)
   vae.load_weights(raise_notfound=False, verbose=True)
   gym = create_gym(dsname=cfg.ds, vae=vae)
   gym.train()
@@ -167,7 +152,7 @@ def main(cfg: dict):
   ### evaluation
   if cfg.eval:
     vae.load_weights()
-    gym.eval()
+    gym.test()
     gym(save_path=gym_test_path, remove_saved_image=True, dpi=200, verbose=True)
   ### fit
   else:

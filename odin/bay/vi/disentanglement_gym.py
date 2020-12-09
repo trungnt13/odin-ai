@@ -256,7 +256,7 @@ class DisentanglementGym:
 
   Parameters
   ----------
-  dataset : {'shapes3d', 'shapes3dsmall', 'dsprites', 'celeba', 'celebasmall', 'mnist'}
+  dataset : {'shapes3d', 'shapes3dsmall', 'dsprites', 'dspritessmall', 'celeba', 'celebasmall', 'mnist'}
       name of the data
   vae : VariationalAutoencoder
       instance of `VariationalAutoencoder`
@@ -275,7 +275,8 @@ class DisentanglementGym:
   @typechecked
   def __init__(self,
                dataset: Literal['shapes3d', 'shapes3dsmall', 'dsprites',
-                                'celeba', 'celebasmall', 'mnist'],
+                                'dspritessmall', 'celeba', 'celebasmall',
+                                'mnist'],
                vae: VariationalAutoencoder,
                max_valid_samples: int = 2000,
                max_test_samples: int = 20000,
@@ -315,6 +316,7 @@ class DisentanglementGym:
     ][0]
     ## default configuration
     self._reconstruction = True
+    self._elbo = False
     self._latents_sampling = True
     self._latents_traverse = True
     self._latents_stats = True
@@ -350,6 +352,7 @@ class DisentanglementGym:
   def set_config(
       self,
       reconstruction: bool = False,
+      elbo: bool = False,
       latents_sampling: bool = False,
       latents_traverse: bool = False,
       latents_stats: bool = False,
@@ -482,7 +485,9 @@ class DisentanglementGym:
     grids = (int(sqrt(_n_visual)), int(sqrt(_n_visual)))
     outputs = dict()
     ds, x, y = self.data_info[self.mode]
-    n_score_samples = 10000 if self.mode == 'test' else 2000
+    n_score_samples = (20000 if self.mode == 'test' else 10000)
+    n_batches = int((self._max_test_samples if self.mode == 'test' else
+                     self._max_valid_samples) / self.batch_size)
     ## prepare
     P, Q = vae(x, training=False)
     P, Q = as_tuple(P), as_tuple(Q)
@@ -495,6 +500,24 @@ class DisentanglementGym:
       px = P[0]
       image_reconstructed = _to_image(px.mean().numpy(), grids=grids, dpi=dpi)
       outputs['reconstruction'] = image_reconstructed
+    ## ELBO
+    if self._elbo:
+      elbo_llk = defaultdict(list)
+      elbo_kl = defaultdict(list)
+      for inputs, _ in ds.take(n_batches):
+        llk, kl = vae.elbo_components(inputs, training=False)
+        for k, v in llk.items():
+          elbo_llk[k].append(v)
+        for k, v in kl.items():
+          elbo_kl[k].append(v)
+      elbo_llk = {
+          k: tf.reduce_mean(tf.concat(v, axis=0)) for k, v in elbo_llk.items()
+      }
+      elbo_kl = {
+          k: tf.reduce_mean(tf.concat(v, axis=0)) for k, v in elbo_kl.items()
+      }
+      outputs.update(elbo_llk)
+      outputs.update(elbo_kl)
     ## latents stats
     if self._latents_stats:
       w_d = vae.decoder.trainable_variables[0]
@@ -529,10 +552,7 @@ class DisentanglementGym:
       outputs['latents_sampled'] = image_sampled
     ## latents clusters
     if self._is_predict():
-      if self.mode in ('train', 'valid'):
-        ds_pred = ds.take(int(self._max_valid_samples / self.batch_size) + 1)
-      else:
-        ds_pred = ds.take(int(self._max_test_samples / self.batch_size) + 1)
+      ds_pred = ds.take(n_batches)
       px, qz, labels, factors, py = _predict(ds_pred,
                                              vae,
                                              self.name,
@@ -656,6 +676,15 @@ class DisentanglementGym:
             print('Saved image at:', img_path)
           if remove_saved_image:
             del outputs[k]
+      # save the scores
+      score_path = os.path.join(save_path, 'scores.txt')
+      with open(score_path, 'w') as f:
+        for k, v in outputs.items():
+          if hasattr(v, 'numpy'):
+            v = v.numpy()
+          f.write(f'{k}: {v}\n')
+        if verbose:
+          print('Saved scores at:', score_path)
     ## add prefix and return
     return {f'{prefix}{k}': v for k, v in outputs.items()}
 

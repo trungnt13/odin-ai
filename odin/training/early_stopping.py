@@ -256,7 +256,7 @@ class EarlyStopping:
           f"[EarlyStop] disable:{self._is_disabled} "
           f"epochs:{self.n_epochs} improvement:{improvement:.4f} "
           f"progress:{progress:.4f} patience:{self.patience} "
-          f"decision:{decision} last10:[{','.join(['%.2f' % i for i in losses[-10:]])}]"
+          f"decision:{decision} last10:[{','.join(['%.2f' % i for i in self._losses[-10:]])}]"
       )
     if self._is_disabled:
       return max(0, decision)
