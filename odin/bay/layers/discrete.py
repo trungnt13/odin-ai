@@ -1,4 +1,5 @@
 from __future__ import absolute_import, division, print_function
+from typing import Optional
 
 import tensorflow as tf
 from odin.bay.distributions import ZeroInflated
@@ -9,14 +10,18 @@ from tensorflow_probability.python.internal import \
 from tensorflow_probability.python.layers.distribution_layer import _event_size
 
 __all__ = [
-    'OneHotCategoricalLayer', 'CategoricalLayer',
-    'RelaxedOneHotCategoricalLayer', 'RelaxedBernoulliLayer', 'BernoulliLayer',
-    'ZIBernoulliLayer'
+    'OneHotCategoricalLayer',
+    'CategoricalLayer',
+    'RelaxedOneHotCategoricalLayer',
+    'RelaxedBernoulliLayer',
+    'BernoulliLayer',
+    'ContinuousBernoulliLayer',
+    'ZIBernoulliLayer',
 ]
 
 
 class BernoulliLayer(tfl.DistributionLambda):
-  r"""An Independent-Bernoulli layer.
+  """An Independent-Bernoulli layer.
 
   Arguments:
     event_shape: integer vector `Tensor` representing the shape of single
@@ -33,8 +38,10 @@ class BernoulliLayer(tfl.DistributionLambda):
   def __init__(self,
                event_shape=(),
                convert_to_tensor_fn=tfd.Distribution.sample,
-               sample_dtype=None,
-               validate_args=False,
+               sample_dtype: Optional[tf.DType] = None,
+               validate_args: bool = False,
+               continuous: bool = False,
+               lims=(0.499, 0.501),
                **kwargs):
     # If there is a 'make_distribution_fn' keyword argument (e.g., because we
     # are being called from a `from_config` method), remove it.  We pass the
@@ -42,16 +49,22 @@ class BernoulliLayer(tfl.DistributionLambda):
     # positional argument.
     kwargs.pop('make_distribution_fn', None)
     super().__init__(
-        lambda t: BernoulliLayer.new(t, event_shape, sample_dtype, validate_args
-                                    ), convert_to_tensor_fn, **kwargs)
+        lambda t: BernoulliLayer.new(t,
+                                     event_shape=event_shape,
+                                     dtype=sample_dtype,
+                                     validate_args=validate_args,
+                                     continuous=continuous,
+                                     lims=lims), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
           event_shape=(),
           dtype=None,
           validate_args=False,
+          continuous=False,
+          lims=(0.499, 0.501),
           name='BernoulliLayer'):
-    r"""Create the distribution instance from a `params` vector."""
+    """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(
         tf.convert_to_tensor(value=event_shape,
@@ -63,10 +76,17 @@ class BernoulliLayer(tfl.DistributionLambda):
         [tf.shape(input=params)[:-1], event_shape],
         axis=0,
     )
+    if continuous:
+      dist = tfd.ContinuousBernoulli(logits=tf.reshape(params, new_shape),
+                                     dtype=dtype or params.dtype.base_dtype,
+                                     lims=lims,
+                                     validate_args=validate_args)
+    else:
+      dist = tfd.Bernoulli(logits=tf.reshape(params, new_shape),
+                           dtype=dtype or params.dtype.base_dtype,
+                           validate_args=validate_args)
     dist = tfd.Independent(
-        tfd.Bernoulli(logits=tf.reshape(params, new_shape),
-                      dtype=dtype or params.dtype.base_dtype,
-                      validate_args=validate_args),
+        dist,
         reinterpreted_batch_ndims=tf.size(input=event_shape),
         name=name,
     )
@@ -76,8 +96,26 @@ class BernoulliLayer(tfl.DistributionLambda):
 
   @staticmethod
   def params_size(event_shape=(), name='BernoulliLayer_params_size'):
-    r"""The number of `params` needed to create a single distribution."""
+    """The number of `params` needed to create a single distribution."""
     return _event_size(event_shape, name=name)
+
+
+class ContinuousBernoulliLayer(BernoulliLayer):
+
+  def __init__(self,
+               event_shape=(),
+               convert_to_tensor_fn=tfd.Distribution.sample,
+               sample_dtype: Optional[tf.DType] = None,
+               lims=(0.499, 0.501),
+               validate_args: bool = False,
+               **kwargs):
+    super().__init__(event_shape=event_shape,
+                     convert_to_tensor_fn=convert_to_tensor_fn,
+                     sample_dtype=sample_dtype,
+                     validate_args=validate_args,
+                     continuous=True,
+                     lims=lims,
+                     **kwargs)
 
 
 class ZIBernoulliLayer(tfl.DistributionLambda):

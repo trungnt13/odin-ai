@@ -81,7 +81,7 @@ class BioDataset(IterableDataset):
     return False
 
   def create_dataset(self,
-                     batch_size: int = 64,
+                     batch_size: int = 32,
                      drop_remainder: bool = False,
                      shuffle: Optional[int] = 1000,
                      prefetch: int = tf.data.experimental.AUTOTUNE,

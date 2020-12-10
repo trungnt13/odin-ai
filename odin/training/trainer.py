@@ -484,10 +484,6 @@ class Trainer(object):
     return metrics
 
   @property
-  def current_valid_loss(self) -> List[float]:
-    return self._current_valid_loss
-
-  @property
   def summary_writer(self) -> tf.summary.SummaryWriter:
     if self._summary_writer is None:
       self._summary_writer = tf.summary.create_file_writer(self.logdir)
@@ -507,10 +503,14 @@ class Trainer(object):
     (self.logdir, self.trace_on, self._n_iter, self._early_stopping) = states
     # default attributes
     self._summary_writer = None
-    self._current_valid_loss = []
     self._current_train_progress = None
     self._cached_tensorboard = None
     self._is_training = False
+    # default attributes
+    self._last_valid_loss = None
+    self._last_valid_metrics = {}
+    self._last_train_loss = None
+    self._last_train_metrics = {}
 
   def fit(self,
           train_ds: DatasetV2,
@@ -568,7 +568,6 @@ class Trainer(object):
       func_obj = None
     func_name = func_name.__name__
     # reset last stored valid losses
-    self._current_valid_loss = []
     if len(log_tag) > 0:
       log_tag += " "
     if hasattr(train_ds, '__len__') and max_iter <= 0:
@@ -724,7 +723,6 @@ class Trainer(object):
       self.write_keras_graph(func_obj, name=func_obj.__class__.__name__)
     self.summary_writer.flush()
     self._current_train_progress = None
-    self._current_valid_loss = []
     return self
 
   def print(self, msg: str):

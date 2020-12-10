@@ -2,7 +2,8 @@ import os
 
 import numpy as np
 import tensorflow as tf
-from odin.fuel.image_data._base import ImageDataset, get_partition
+from odin.fuel.image_data._base import ImageDataset
+from odin.fuel.dataset_base import get_partition
 from odin.utils.crypto import md5_checksum
 
 

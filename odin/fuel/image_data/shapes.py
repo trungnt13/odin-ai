@@ -6,7 +6,8 @@ from typing_extensions import Literal
 import numpy as np
 import tensorflow as tf
 from bigarray import MmapArray, MmapArrayWriter
-from odin.fuel.image_data._base import ImageDataset, get_partition
+from odin.fuel.image_data._base import ImageDataset
+from odin.fuel.dataset_base import get_partition
 from odin.utils import batching
 from tqdm import tqdm
 from typeguard import typechecked

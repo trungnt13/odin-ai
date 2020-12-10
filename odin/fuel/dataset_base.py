@@ -106,7 +106,7 @@ class IterableDataset:
     raise NotImplementedError()
 
   def create_dataset(self,
-                     batch_size: int = 64,
+                     batch_size: int = 32,
                      drop_remainder: bool = False,
                      shuffle: int = 1000,
                      prefetch: int = tf.data.experimental.AUTOTUNE,
@@ -119,7 +119,7 @@ class IterableDataset:
     raise NotImplementedError()
 
   def numpy(self,
-            batch_size: int = 64,
+            batch_size: int = 32,
             drop_remainder: bool = False,
             shuffle: int = 1000,
             prefetch: int = tf.data.experimental.AUTOTUNE,

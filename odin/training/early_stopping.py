@@ -1,6 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
-from typing import Callable, List, Union
+from typing import Callable, List, Union, Optional
 import inspect
 
 import numpy as np
@@ -262,7 +262,7 @@ class EarlyStopping:
       return max(0, decision)
     return decision
 
-  def plot_losses(self, save_path=None, ax=None):
+  def plot_losses(self, path: Optional[str] = None, ax=None):
     losses = self.losses
     if len(losses) < 2:
       return None
@@ -306,6 +306,6 @@ class EarlyStopping:
     ax.tick_params(axis='y', colors='blue')
     ax.grid(False)
     ax.legend(legends, [i.get_label() for i in legends], fontsize=6)
-    if save_path is not None:
-      fig.savefig(save_path, dpi=200)
+    if path is not None:
+      fig.savefig(path, dpi=200)
     return ax

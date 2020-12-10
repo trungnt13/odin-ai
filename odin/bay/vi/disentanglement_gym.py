@@ -105,10 +105,10 @@ def _process_labels(y: tf.Tensor, dsname: str,
   """Return categorical labels and factors-based label"""
   y_categorical = None
   y_discrete = None
-  if dsname == 'mnist':
+  if dsname == 'mnist' or dsname == 'fashionmnist':
     y_categorical = tf.argmax(y, axis=-1)
     y_discrete = y
-    names = [f'#{i}' for i in range(10)]
+    names = [labels[i] for i in range(10)]
   elif 'celeba' in dsname:
     y = tf.argmax(y, axis=-1)
     raise NotImplementedError
@@ -122,6 +122,8 @@ def _process_labels(y: tf.Tensor, dsname: str,
     y_categorical = y[:, 2]
     y_discrete = discretizing(y, n_bins=[10, 6, 3, 8, 8], strategy='uniform')
     names = ['square', 'ellipse', 'heart']
+  else:
+    raise RuntimeError(f'No support for dataset: {dsname}')
   return np.asarray([names[int(i)] for i in y_categorical]), \
     tf.cast(y_discrete, tf.int32).numpy()
 
@@ -276,7 +278,7 @@ class DisentanglementGym:
   def __init__(self,
                dataset: Literal['shapes3d', 'shapes3dsmall', 'dsprites',
                                 'dspritessmall', 'celeba', 'celebasmall',
-                                'mnist'],
+                                'fashionmnist', 'mnist'],
                vae: VariationalAutoencoder,
                max_valid_samples: int = 2000,
                max_test_samples: int = 20000,
@@ -485,7 +487,7 @@ class DisentanglementGym:
     grids = (int(sqrt(_n_visual)), int(sqrt(_n_visual)))
     outputs = dict()
     ds, x, y = self.data_info[self.mode]
-    n_score_samples = (20000 if self.mode == 'test' else 10000)
+    n_score_samples = (10000 if self.mode == 'test' else 5000)
     n_batches = int((self._max_test_samples if self.mode == 'test' else
                      self._max_valid_samples) / self.batch_size)
     ## prepare

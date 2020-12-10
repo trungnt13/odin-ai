@@ -77,6 +77,7 @@ def create_gym(dsname: str, vae: VariationalAutoencoder) -> DisentanglementGym:
       Correlation.Spearman | Correlation.MutualInfo,
       dimension_reduction=DimReduce.UMAP | DimReduce.TSNE | DimReduce.PCA,
       latents_pairs=Correlation.Lasso | Correlation.MutualInfo,
+      elbo=True,
       sap_score=True,
       dci_score=True,
       beta_vae=True,
@@ -99,15 +100,15 @@ def main(cfg: dict):
   assert cfg.ds is not None, \
     ('No dataset given, select one of the following: '
      'mnist, dsprites, shapes3d, celeba, cortex, newsgroup20, newsgroup5, ...')
-  ### paths
-  output_dir = get_output_dir()
+  ### load dataset
+  ds = get_dataset(name=cfg.ds)
+  ds_kw = dict(batch_size=batch_size, drop_remainder=True)
+  ### path, save the output to the subfolder with dataset name
+  output_dir = get_output_dir(subfolder=cfg.ds.lower())
   gym_train_path = os.path.join(output_dir, 'gym_train')
   gym_valid_path = os.path.join(output_dir, 'gym_valid')
   gym_test_path = os.path.join(output_dir, 'gym_test')
   model_path = os.path.join(output_dir, 'model')
-  ### load dataset
-  ds = get_dataset(name=cfg.ds)
-  ds_kw = dict(batch_size=batch_size, drop_remainder=True)
   ### prepare model init
   model = get_vae(cfg.vae)
   model_kw = inspect.getfullargspec(model.__init__).args[1:]
@@ -134,26 +135,21 @@ def main(cfg: dict):
   ### fit the network
   def callback():
     signal = vae.early_stopping(verbose=True)
-    if signal < 0:
-      vae.trainer.terminate()
-    elif signal > 0:
+    if signal > 0:
       vae.save_weights(overwrite=True)
     # create the return metrics
-    tra = gym.train()(save_path=gym_train_path,
-                      remove_saved_image=True,
-                      prefix='train/',
-                      dpi=150)
-    val = gym.valid()(save_path=gym_valid_path,
-                      remove_saved_image=True,
-                      prefix='valid/',
-                      dpi=150)
-    return dict(**tra, **val)
+    return dict(**gym.train()(prefix='train/', dpi=150),
+                **gym.valid()(prefix='valid/', dpi=150))
 
   ### evaluation
   if cfg.eval:
     vae.load_weights()
+    gym.train()
+    gym(save_path=gym_train_path, dpi=200, verbose=True)
+    gym.valid()
+    gym(save_path=gym_valid_path, dpi=200, verbose=True)
     gym.test()
-    gym(save_path=gym_test_path, remove_saved_image=True, dpi=200, verbose=True)
+    gym(save_path=gym_test_path, dpi=200, verbose=True)
   ### fit
   else:
     vae.early_stopping.warmup_epochs = 10
@@ -165,7 +161,7 @@ def main(cfg: dict):
             epochs=-1,
             clipnorm=100,
             max_iter=max_iter,
-            valid_freq=1000,
+            valid_freq=int(0.1 * max_iter),
             logging_interval=2,
             skip_fitted=True,
             callback=callback,
@@ -173,7 +169,8 @@ def main(cfg: dict):
             compile_graph=True,
             track_gradients=True)
     vae.early_stopping.plot_losses(
-        save_path=os.path.join(output_dir, 'early_stopping.png'))
+        path=os.path.join(output_dir, 'early_stopping.png'))
+    vae.plot_learning_curves(os.path.join(output_dir, 'learning_curves.png'))
 
 
 # ===========================================================================

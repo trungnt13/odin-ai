@@ -99,7 +99,8 @@ _dist_mapping = multikeysdict({
     ('dirimultinomial', 'dirichletmultinomial'):
         (obl.DirichletMultinomialLayer, tfd.DirichletMultinomial),
     # ====== Gumbel ====== #
-    ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),
+    'bernoulli': (obl.BernoulliLayer, tfd.Bernoulli),
+    'cbernoulli': (obl.ContinuousBernoulliLayer, tfd.ContinuousBernoulli),
     ('zibernoulli', 'zeroinflatedbernoulli'):
         (obl.ZIBernoulliLayer, tfd.Bernoulli),
     ('relaxedbern', 'relaxedsigmoid', 'relaxedbernoulli'):

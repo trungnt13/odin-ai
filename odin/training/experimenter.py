@@ -148,7 +148,7 @@ def flatten_config(cfg: dict, base='', max_depth=-1) -> dict:
 def hash_config(cfg: DictConfig,
                 exclude_keys: Optional[List[str]] = None,
                 length=6) -> str:
-  r""" Create an unique hash code from `DictConfig`
+  """Create an unique hash code from `DictConfig`
 
   Arguments:
     cfg : {dict}
@@ -213,13 +213,20 @@ def get_hydra_config() -> DictConfig:
 
 
 def get_overrides() -> str:
-  r""" Return the configuration overrides """
+  """Return the configuration overrides"""
   return HydraConfig.get().job.override_dirname
 
 
-def get_output_dir() -> str:
-  r""" Return an unique output dir based on the configuration overrides """
-  return HydraConfig.get().run.dir
+def get_output_dir(subfolder: Optional[str] = None) -> str:
+  """Return an unique output dir based on the configuration overrides"""
+  path = HydraConfig.get().run.dir
+  if subfolder is not None:
+    name = os.path.basename(path)
+    path = os.path.dirname(path)
+    path = os.path.join(path, subfolder, name)
+    if not os.path.exists(path):
+      os.makedirs(path)
+  return path
 
 
 def get_sweep_dir() -> str:
@@ -231,7 +238,7 @@ def get_sweep_dir() -> str:
 # ===========================================================================
 def run_hydra(output_dir: str = '/tmp/outputs',
               exclude_keys: List[str] = []) -> Callable[[TaskFunction], Any]:
-  r""" A modified main function of Hydra-core for flexibility
+  """ A modified main function of Hydra-core for flexibility
   Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 
   Useful commands:
