@@ -18,6 +18,8 @@ class BinarizedMNIST(ImageDataset):
     self.train, self.valid, self.test = tfds.load(
         name='binarized_mnist',
         split=['train', 'validation', 'test'],
+        read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                    shuffle_reshuffle_each_iteration=True),
         as_supervised=False)
     self._normalize = bool(normalize)
 
@@ -223,6 +225,8 @@ class BinarizedAlphaDigits(BinarizedMNIST):
         name='binary_alpha_digits',
         split=['train[:70%]', 'train[70%:80%]', 'train[80%:]'],
         as_supervised=True,
+        read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                    shuffle_reshuffle_each_iteration=True),
         shuffle_files=True,
     )
 
@@ -239,6 +243,8 @@ class FashionMNIST(BinarizedMNIST):
         name='fashion_mnist',
         split=['train[:70%]', 'train[70%:80%]', 'train[80%:]'],
         as_supervised=True,
+        read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                    shuffle_reshuffle_each_iteration=True),
         shuffle_files=True,
         with_info=False,
     )

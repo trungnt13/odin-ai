@@ -27,7 +27,6 @@ except ImportError:
   Encoding = "Encoding"
   BaseTokenizer = object
 
-
 # ===========================================================================
 # Helpers
 # ===========================================================================
@@ -443,8 +442,18 @@ class ImdbReview(NLPDataset):
 
   def __init__(self):
     import tensorflow_datasets as tfds
-    train = tfds.load('imdb_reviews', split='train')
-    test = tfds.load('imdb_reviews', split='test')
+    train = tfds.load(
+        'imdb_reviews',
+        split='train',
+        read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                    shuffle_reshuffle_each_iteration=True),
+    )
+    test = tfds.load(
+        'imdb_reviews',
+        split='test',
+        read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                    shuffle_reshuffle_each_iteration=True),
+    )
     print(train)
 
 
@@ -455,7 +464,11 @@ class TinyShakespear(NLPDataset):
     'test'
     'train'
     'validation'
-    d = tfds.load(name='tiny_shakespeare')['train']
+    d = tfds.load(
+        name='tiny_shakespeare',
+        read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                    shuffle_reshuffle_each_iteration=True),
+    )['train']
     d = d.map(lambda x: tf.strings.unicode_split(x['text'], 'UTF-8'))
     # train split includes vocabulary for other splits
     vocabulary = sorted(set(next(iter(d)).numpy()))
@@ -471,6 +484,9 @@ class MathArithmetic(NLPDataset):
 
   def __init__(self):
     import tensorflow_datasets as tfds
-    train_examples, val_examples = tfds.load('math_dataset/arithmetic__mul',
-                                             split=['train', 'test'],
-                                             as_supervised=True)
+    train_examples, val_examples = tfds.load(
+        'math_dataset/arithmetic__mul',
+        split=['train', 'test'],
+        read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                    shuffle_reshuffle_each_iteration=True),
+        as_supervised=True)

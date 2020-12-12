@@ -105,7 +105,7 @@ def _process_labels(y: tf.Tensor, dsname: str,
   """Return categorical labels and factors-based label"""
   y_categorical = None
   y_discrete = None
-  if dsname == 'mnist' or dsname == 'fashionmnist':
+  if dsname in ('mnist', 'fashionmnist', 'cifar10', 'cifar100'):
     y_categorical = tf.argmax(y, axis=-1)
     y_discrete = y
     names = [labels[i] for i in range(10)]
@@ -278,7 +278,7 @@ class DisentanglementGym:
   def __init__(self,
                dataset: Literal['shapes3d', 'shapes3dsmall', 'dsprites',
                                 'dspritessmall', 'celeba', 'celebasmall',
-                                'fashionmnist', 'mnist'],
+                                'fashionmnist', 'mnist', 'cifar10', 'cifar100'],
                vae: VariationalAutoencoder,
                max_valid_samples: int = 2000,
                max_test_samples: int = 20000,
@@ -292,6 +292,8 @@ class DisentanglementGym:
     self._batch_size = int(batch_size)
     self._max_valid_samples = int(max_valid_samples)
     self._max_test_samples = int(max_test_samples)
+    ## set seed is importance for comparable results
+    tf.random.set_seed(1)
     self._train = self.ds.create_dataset(batch_size=batch_size,
                                          partition='train',
                                          inc_labels=True,
@@ -490,6 +492,7 @@ class DisentanglementGym:
     n_score_samples = (10000 if self.mode == 'test' else 5000)
     n_batches = int((self._max_test_samples if self.mode == 'test' else
                      self._max_valid_samples) / self.batch_size)
+    is_semi_supervised = type(vae).is_semi_supervised
     ## prepare
     P, Q = vae(x, training=False)
     P, Q = as_tuple(P), as_tuple(Q)
@@ -501,6 +504,7 @@ class DisentanglementGym:
     if self._reconstruction:
       px = P[0]
       image_reconstructed = _to_image(px.mean().numpy(), grids=grids, dpi=dpi)
+      outputs['original'] = _to_image(x, grids=grids, dpi=dpi)
       outputs['reconstruction'] = image_reconstructed
     ## ELBO
     if self._elbo:

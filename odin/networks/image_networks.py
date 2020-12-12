@@ -125,6 +125,7 @@ def mnist_networks(
     skip_generator: bool = False,
     **kwargs,
 ) -> Dict[str, Layer]:
+  """Network for MNIST dataset image size (28, 28, 1)"""
   from odin.bay.random_variable import RVmeta
   n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (28, 28, n_channels)
@@ -172,6 +173,76 @@ def mnist_networks(
 
 
 fashionmnist_networks = mnist_networks
+
+
+# ===========================================================================
+# CIFAR10
+# ===========================================================================
+@typechecked
+def cifar_networks(
+    qz: str = 'mvndiag',
+    zdim: int = 16,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
+    is_semi_supervised: bool = False,
+    centerize_image: bool = True,
+    skip_generator: bool = False,
+    **kwargs,
+) -> Dict[str, Layer]:
+  """Network for CIFAR dataset image size (32, 32, 3)"""
+  from odin.bay.random_variable import RVmeta
+  n_channels = int(kwargs.get('n_channels', 3))
+  input_shape = (32, 32, n_channels)
+  conv, deconv = _prepare_cnn(activation=activation)
+  n_classes = kwargs.get('n_classes', 10)
+  encoder = keras.Sequential(
+      [
+          CenterAt0(enable=centerize_image),
+          conv(32, 5, strides=1, name='encoder0'),
+          conv(32, 5, strides=2, name='encoder1'),
+          conv(64, 5, strides=1, name='encoder2'),
+          conv(64, 5, strides=2, name='encoder3'),
+          conv(4 * zdim, 7, strides=1, padding='valid', name='encoder4'),
+          keras.layers.Flatten()
+      ],
+      name='encoder',
+  )
+  layers = [
+      keras.layers.Lambda(  # assume that n_mcmc_sample=()
+          lambda x: tf.reshape(x, [-1, 1, 1, x.shape[-1]])),
+      deconv(64, 8, strides=1, padding='valid', name='decoder0'),
+      deconv(64, 5, strides=1, name='decoder1'),
+      deconv(64, 5, strides=2, name='decoder2'),
+      deconv(32, 5, strides=1, name='decoder3'),
+      deconv(32, 5, strides=2, name='decoder4'),
+      deconv(32, 5, strides=1, name='decoder5'),
+      conv(n_channels, 5, strides=1, activation=None, name='decoder6'),
+      keras.layers.Flatten()
+  ]
+  if skip_generator:
+    decoder = SkipSequential(layers=layers, name='skipdecoder')
+  else:
+    decoder = keras.Sequential(layers=layers, name='decoder')
+  latents = RVmeta((zdim,), qz, projection=True,
+                   name="latents").create_posterior()
+  observation = RVmeta(input_shape,
+                       "cbernoulli",
+                       projection=False,
+                       name="image").create_posterior()
+  networks = dict(encoder=encoder,
+                  decoder=decoder,
+                  observation=observation,
+                  latents=latents)
+  if is_semi_supervised:
+    networks['labels'] = RVmeta(n_classes,
+                                'onehot',
+                                projection=True,
+                                name='digits').create_posterior()
+  return networks
+
+
+cifar10_networks = partial(cifar_networks, n_classes=10)
+cifar20_networks = partial(cifar_networks, n_classes=20)
+cifar100_networks = partial(cifar_networks, n_classes=100)
 
 
 # ===========================================================================
@@ -409,7 +480,8 @@ def get_networks(dataset_name: str,
                  **kwargs) -> Dict[str, Layer]:
   dataset_name = str(dataset_name).lower().strip()
   for k, fn in globals().items():
-    if isinstance(k, string_types) and inspect.isfunction(fn):
+    if isinstance(k, string_types) and (inspect.isfunction(fn) or
+                                        isinstance(fn, partial)):
       k = k.split('_')[0]
       if k == dataset_name:
         return fn(qz=qz,
@@ -441,6 +513,10 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
     max_iter = 30000
     init_lr = 1e-3
     decay_steps = 2500
+  elif 'cifar' in dataset_name:
+    max_iter = 80000
+    init_lr = 1e-4
+    decay_steps = 5000
   elif 'dsprites' in dataset_name:
     max_iter = 100000
     init_lr = 1e-3

@@ -20,7 +20,11 @@ np.random.seed(8)
 # Load data
 # ===========================================================================
 train, valid, test = tfds.load('fashion_mnist:3.0.0',
-                               split=['train[:80%]', 'train[80%:]', 'test'])
+                               split=['train[:80%]', 'train[80%:]', 'test'],
+                               read_config=tfds.ReadConfig(
+                                   shuffle_seed=1,
+                                   shuffle_reshuffle_each_iteration=True))
+
 input_shape = tf.data.experimental.get_structure(train)['image'].shape
 
 

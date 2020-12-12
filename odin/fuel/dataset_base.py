@@ -106,14 +106,14 @@ class IterableDataset:
     raise NotImplementedError()
 
   def create_dataset(self,
+                     partition: Literal['train', 'valid', 'test',
+                                        'unlabelled'] = 'train',
                      batch_size: int = 32,
                      drop_remainder: bool = False,
                      shuffle: int = 1000,
                      prefetch: int = tf.data.experimental.AUTOTUNE,
                      cache: str = '',
                      parallel: Optional[int] = None,
-                     partition: Literal['train', 'valid', 'test',
-                                        'unlabelled'] = 'train',
                      inc_labels: bool = False,
                      seed: int = 1) -> tf.data.Dataset:
     raise NotImplementedError()

@@ -15,6 +15,7 @@ from collections import (Iterable, Iterator, Mapping, OrderedDict, defaultdict,
                          deque)
 from contextlib import contextmanager
 from datetime import datetime
+from typing import List, Callable, Any
 
 import numpy as np
 from six import add_metaclass, string_types
@@ -460,8 +461,15 @@ def is_primitive(x, inc_ndarray=True, exception_types=[]):
 # ===========================================================================
 # IO utilities
 # ===========================================================================
-def get_all_files(path, filter_func=None):
-  ''' Recurrsively get all files in the given path '''
+def get_all_folder(path: str,
+                   filter_func: Callable[[str], bool] = None) -> List[str]:
+  return get_all_files(path=path, filter_func=filter_func, only_folder=True)
+
+
+def get_all_files(path: str,
+                  filter_func: Callable[[str], bool] = None,
+                  only_folder: bool = False) -> List[str]:
+  """Recurrsively get all files in the given path"""
   file_list = []
   if os.access(path, os.R_OK):
     for p in os.listdir(path):
@@ -476,6 +484,10 @@ def get_all_files(path, filter_func=None):
             '._' == os.path.basename(p)[:2]:
           continue
         file_list.append(p)
+  else:
+    raise RuntimeError(f"No access to the path '{path}'")
+  if only_folder:
+    file_list = [i for i in file_list if os.path.isdir(i)]
   return file_list
 
 

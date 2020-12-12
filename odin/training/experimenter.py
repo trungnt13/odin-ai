@@ -12,7 +12,7 @@ from typing import Any, Callable, List, Optional, Union
 import logging
 
 import numpy as np
-from odin.utils import as_tuple, clean_folder, clear_folder
+from odin.utils import as_tuple, clean_folder, clear_folder, get_all_folder
 from odin.utils.crypto import md5_checksum
 from six import string_types
 
@@ -354,11 +354,11 @@ def run_hydra(output_dir: str = '/tmp/outputs',
       else:
         override_id = r"default"
       ### check if enable remove exists experiment
-      remove_exists_exp = False
+      remove_exists = False
       for i, a in enumerate(list(sys.argv)):
         match = REMOVE_EXIST_PATTERN.match(a)
         if match:
-          remove_exists_exp = True
+          remove_exists = True
           sys.argv.pop(i)
           break
       ### parallel jobs provided
@@ -398,8 +398,14 @@ def run_hydra(output_dir: str = '/tmp/outputs',
       ## run hydra
       @functools.wraps(task_function)
       def _task_function(_cfg):
-        if remove_exists_exp:
-          clear_folder(get_output_dir(), verbose=True)
+        if remove_exists:
+          output_dir = get_output_dir()
+          dir_base = os.path.dirname(output_dir)
+          dir_name = os.path.basename(output_dir)
+          for folder in get_all_folder(dir_base):
+            name = os.path.basename(folder)
+            if dir_name == name:
+              clear_folder(folder, verbose=True)
         # catch exception, continue running in case
         try:
           task_function(_cfg)

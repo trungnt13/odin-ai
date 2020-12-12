@@ -35,9 +35,12 @@ class _ShapeDataset(ImageDataset):
     import tensorflow_datasets as tfds
     tf.random.set_seed(seed)
     try:
+
       self.train, self.valid, self.test = tfds.load(
           name,
           split=["train[:85%]", "train[85%:90%]", "train[90%:]"],
+          read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                      shuffle_reshuffle_each_iteration=True),
           shuffle_files=True)
     except Exception as e:
       import traceback
