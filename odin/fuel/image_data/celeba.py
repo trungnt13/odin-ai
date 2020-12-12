@@ -2,6 +2,7 @@ import glob
 import os
 import zipfile
 from typing import Optional, Union
+from typing_extensions import Literal
 
 import numpy as np
 import tensorflow as tf
@@ -131,15 +132,16 @@ class CelebA(ImageDataset):
     return self._header
 
   def create_dataset(self,
-                     batch_size=32,
-                     drop_remainder=False,
-                     shuffle=1000,
-                     prefetch=tf.data.experimental.AUTOTUNE,
-                     cache='',
-                     parallel=tf.data.experimental.AUTOTUNE,
-                     partition='train',
-                     inc_labels=True,
-                     seed=1) -> tf.data.Dataset:
+                     partition: Literal['train', 'valid', 'test'] = 'train',
+                     *,
+                     batch_size: int = 32,
+                     drop_remainder: bool = False,
+                     shuffle: int = 1000,
+                     cache: Optional[str] = '',
+                     prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
+                     parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
+                     inc_labels: Union[bool, float] = False,
+                     seed: int = 1) -> tf.data.Dataset:
     r""" The default argument will downsize and crop the image to square size
     (64, 64)
 

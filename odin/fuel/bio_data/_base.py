@@ -81,13 +81,14 @@ class BioDataset(IterableDataset):
     return False
 
   def create_dataset(self,
+                     partition: str = 'train',
+                     *,
                      batch_size: int = 32,
                      drop_remainder: bool = False,
                      shuffle: Optional[int] = 1000,
                      prefetch: int = tf.data.experimental.AUTOTUNE,
                      cache: str = '',
                      parallel: Optional[int] = None,
-                     partition: str = 'train',
                      inc_labels: bool = False,
                      seed: int = 1) -> tf.data.Dataset:
     for attr in ('x', 'y', 'xvar', 'yvar'):

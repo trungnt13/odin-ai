@@ -470,6 +470,7 @@ def get_all_files(path: str,
                   filter_func: Callable[[str], bool] = None,
                   only_folder: bool = False) -> List[str]:
   """Recurrsively get all files in the given path"""
+  org_path = path
   file_list = []
   if os.access(path, os.R_OK):
     for p in os.listdir(path):
@@ -487,7 +488,8 @@ def get_all_files(path: str,
   else:
     raise RuntimeError(f"No access to the path '{path}'")
   if only_folder:
-    file_list = [i for i in file_list if os.path.isdir(i)]
+    file_list = set([os.path.dirname(i) for i in file_list])
+    file_list.discard(org_path)
   return file_list
 
 

@@ -750,7 +750,7 @@ class Trainer(object):
 
   def plot_learning_curves(self,
                            path: str = "/tmp/tmp.png",
-                           summary_steps: Tuple[int, int] = [10, 5],
+                           summary_steps: Tuple[int, int] = [10, 1],
                            show_validation: bool = True,
                            dpi: int = 200,
                            title: Optional[str] = None):

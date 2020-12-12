@@ -139,9 +139,10 @@ class miVAE(betaVAE):
                                              projection=True,
                                              name='Codes'),
                steps_without_mi: int = 100,
+               name='miVAE',
                **kwargs):
     self.is_binary_code = mutual_codes.is_binary
-    super().__init__(beta=beta, latents=latents, **kwargs)
+    super().__init__(beta=beta, latents=latents, name=name, **kwargs)
     self.mutual_codes = mutual_codes.create_posterior()
     self.mi_coef = float(mi_coef)
     self.kl_codes_coef = float(kl_codes_coef)

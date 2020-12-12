@@ -403,8 +403,7 @@ def run_hydra(output_dir: str = '/tmp/outputs',
           dir_base = os.path.dirname(output_dir)
           dir_name = os.path.basename(output_dir)
           for folder in get_all_folder(dir_base):
-            name = os.path.basename(folder)
-            if dir_name == name:
+            if dir_name == os.path.basename(folder):
               clear_folder(folder, verbose=True)
         # catch exception, continue running in case
         try:

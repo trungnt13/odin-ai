@@ -6,6 +6,7 @@ from itertools import chain
 from numbers import Number
 from types import MethodType
 from typing import Dict, Generator, Iterable, List, Optional, Tuple, Union
+from typing_extensions import Literal
 from urllib.request import urlretrieve
 
 import numpy as np
@@ -356,15 +357,16 @@ class NLPDataset(IterableDataset):
     return outputs if is_batch else outputs[0]
 
   def create_dataset(self,
-                     batch_size=32,
-                     drop_remainder=False,
-                     shuffle=1000,
-                     prefetch=tf.data.experimental.AUTOTUNE,
-                     cache='',
-                     parallel=None,
-                     partition='train',
-                     inc_labels=False,
-                     seed=1) -> tf.data.Dataset:
+                     partition: Literal['train', 'valid', 'test'] = 'train',
+                     *,
+                     batch_size: int = 32,
+                     drop_remainder: bool = False,
+                     shuffle: int = 1000,
+                     cache: Optional[str] = '',
+                     prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
+                     parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
+                     inc_labels: Union[bool, float] = False,
+                     seed: int = 1) -> tf.data.Dataset:
     r"""
     Arguments:
       partition : {'train', 'valid', 'test'}
