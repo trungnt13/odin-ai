@@ -39,8 +39,8 @@ class multitaskVAE(betaVAE):
                                                             'onehot',
                                                             projection=True,
                                                             name="digits"),
-               skip_decoder: bool = False,
                alpha: float = 10.,
+               skip_decoder: bool = False,
                name: str = 'MultitaskVAE',
                **kwargs):
     super().__init__(name=name, **kwargs)
@@ -124,10 +124,11 @@ class skiptaskVAE(multitaskVAE):
 
 
 class multiheadVAE(multitaskVAE):
+  """Similar to skiptaskVAE, the supervised outputs, skip the decoder,
+  and directly connect to the via non-linear layers latents"""
 
   def __init__(self,
-               decoder_y: LayerCreator = NetworkConfig([512, 512, 512],
-                                                       batchnorm=True,
+               decoder_y: LayerCreator = NetworkConfig([256, 256],
                                                        name='decoder_y'),
                name: str = 'MultiheadVAE',
                **kwargs):
@@ -144,7 +145,9 @@ class multiheadVAE(multitaskVAE):
     px_z = self.observation(h_d, training=training, mask=mask)
     if isinstance(latents, (tuple, list)):
       latents = tf.concat(latents, axis=-1)
-    h_y = self.decoder_y(latents, training=training, mask=mask)
+    h_y = self.decoder_y(tf.convert_to_tensor(latents),
+                         training=training,
+                         mask=mask)
     py_z = [fy(h_y, training=training, mask=mask) for fy in self.labels]
     return (px_z,) + tuple(py_z)
 

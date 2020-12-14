@@ -1,5 +1,5 @@
 from functools import partial
-from typing import Callable, List, Union
+from typing import Callable, List, Union, Optional
 
 import numpy as np
 import tensorflow as tf
@@ -134,15 +134,15 @@ class miVAE(betaVAE):
                                         'mvndiag',
                                         projection=True,
                                         name='Latents'),
-               mutual_codes: RVmeta = RVmeta(32,
-                                             'mvndiag',
-                                             projection=True,
-                                             name='Codes'),
+               mutual_codes: Optional[RVmeta] = None,
                steps_without_mi: int = 100,
                name='miVAE',
                **kwargs):
-    self.is_binary_code = mutual_codes.is_binary
     super().__init__(beta=beta, latents=latents, name=name, **kwargs)
+    if mutual_codes is None:
+      zdim = sum(sum(q.event_shape) for q in as_tuple(self.latents))
+      mutual_codes = RVmeta(zdim, 'mvndiag', projection=True, name='Codes')
+    self.is_binary_code = mutual_codes.is_binary
     self.mutual_codes = mutual_codes.create_posterior()
     self.mi_coef = float(mi_coef)
     self.kl_codes_coef = float(kl_codes_coef)
@@ -196,9 +196,12 @@ class miVAE(betaVAE):
     qz_xprime, qc_xprime = self.encode(x, training=training)
     #' mutual information (we want to maximize this, hence, add it to the llk)
     mi_c = qc_xprime.log_prob(c_prime)
-    llk['mi_codes'] = tf.cond(self.step > self.steps_without_mi,
-                              true_fn=lambda: self.mi_coef * mi_c,
-                              false_fn=lambda: 0.)
+    if training:
+      llk['mi_codes'] = tf.cond(self.step > self.steps_without_mi,
+                                true_fn=lambda: self.mi_coef * mi_c,
+                                false_fn=lambda: 0.)
+    else:
+      llk['mi_codes'] = self.mi_coef * mi_c
     ## this value is just for monitoring
     mi_z = qz_xprime.log_prob(z_prime)
     llk['mi_latents'] = tf.stop_gradient(mi_z)
@@ -209,7 +212,7 @@ class miVAE(betaVAE):
       kl_c = 0.
     if self.kl_codes_coef == 0.:
       kl_c = tf.stop_gradient(kl_c)
-    else:
+    if training:
       kl_c = self.kl_codes_coef * kl_c
     kl['kl_codes'] = kl_c
     return llk, kl

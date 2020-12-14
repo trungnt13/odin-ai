@@ -1,10 +1,13 @@
 from __future__ import absolute_import, division, print_function
 
-from typing import Callable, List, Union, Optional
 import inspect
+from collections import defaultdict
+from numbers import Number
+from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 
 import numpy as np
 import tensorflow as tf
+from matplotlib import pyplot as plt
 from scipy import signal
 from typeguard import typechecked
 from typing_extensions import Literal
@@ -111,8 +114,8 @@ class EarlyStopping:
                reward: float = 0.5,
                progression_length: int = 0,
                mode: Literal['min', 'max'] = 'min',
+               smooth: float = 0.4,
                batch_size: int = 1,
-               smooth: float = 0.0,
                reduce_method: Callable[[np.ndarray, int],
                                        np.ndarray] = np.mean):
     self._losses = list(losses)
@@ -121,19 +124,25 @@ class EarlyStopping:
     self.patience = patience
     self.reward = reward
     self.progression_length = progression_length
-    self.mode = str(mode.lower())
-    assert self.mode in ('min', 'max'), \
-      f'only support min or max mode, given {self.mode}'
+    self._mode = str(mode.lower())
     self.batch_size = int(batch_size)
     self.smooth = float(smooth)
     assert self.smooth < 1.0, \
       f'smoothing must be smaller than 1.0 but given {self.smooth}'
     self.reduce_method = reduce_method
     self._is_disabled = False
-    # history
-    self._patience_history = None
-    self._generalization_history = None
-    self._progress_history = None
+    # history: Dict[str, Dict[int, float]]
+    self._history = defaultdict(dict)
+
+  @property
+  def mode(self) -> str:
+    return self._mode
+
+  @mode.setter
+  def mode(self, mode):
+    assert mode in ('min', 'max'), \
+      f'only support min or max mode, given {mode}'
+    self._mode = mode
 
   def enable(self) -> 'EarlyStopping':
     self._is_disabled = False
@@ -144,43 +153,31 @@ class EarlyStopping:
     self._is_disabled = True
     return self
 
-  def __str__(self):
-    s = 'EarlyStopping\n'
-    for k, v in sorted(self.__dict__.items()):
-      if not inspect.ismethod(v) and k[0] != '_':
-        s += f' {k}:{v}\n'
-    return s[:-1]
-
   @property
   def n_epochs(self) -> int:
     return len(self._losses)
 
   @property
-  def patience_history(self) -> List[float]:
-    if self._patience_history is None:
-      n = max(self.warmup_epochs, self.n_epochs) + 1
-      self._patience_history = [self.patience] * n
-    return self._patience_history
+  def patience_history(self) -> Dict[int, float]:
+    return self._history['patience']
 
   @property
-  def generalization_history(self) -> List[float]:
-    if self._generalization_history is None:
-      n = max(self.warmup_epochs, self.n_epochs) + 1
-      self._generalization_history = [0.] * n
-    return self._generalization_history
+  def generalization_history(self) -> Dict[int, float]:
+    return self._history['generalization']
 
   @property
-  def progress_history(self) -> List[float]:
-    if self._progress_history is None:
-      n = max(self.warmup_epochs, self.n_epochs) + 1
-      self._progress_history = [0.] * n
-    return self._progress_history
+  def progress_history(self) -> Dict[int, float]:
+    return self._history['progress']
+
+  @property
+  def decision_history(self) -> Dict[int, float]:
+    return self._history['decision']
 
   @property
   def losses(self) -> np.ndarray:
     """1D ndarray of the losses, smaller is better"""
-    if len(self._losses) == 0:
-      return []
+    if len(self._losses) <= self.batch_size:
+      return self._losses
     if self.mode == 'min':
       L = self._losses
     else:
@@ -197,7 +194,9 @@ class EarlyStopping:
     self._ema_L = L
     return L
 
-  def update(self, loss: float) -> 'EearlyStopping':
+  def update(self, loss: Number) -> 'EearlyStopping':
+    if hasattr(loss, 'numpy'):
+      loss = loss.numpy()
     self._losses.append(loss)
     return self
 
@@ -222,10 +221,10 @@ class EarlyStopping:
       if verbose:
         print(f"[EarlyStop] current epochs:{self.n_epochs} "
               f"warmup epochs:{self.warmup_epochs}")
-      return False
+      return 0
     # generalization error (smaller is better)
     current = losses[-1]
-    last_best = np.min(losses[:-1])
+    last_best = np.min(losses[:-1]) + 1e-8
     # >0 <=> improvement (bigger is better)
     generalization = 1 - current / last_best
     # progression (bigger is better)
@@ -248,9 +247,12 @@ class EarlyStopping:
     else:  # unchanged
       ...
     # store history
-    self.patience_history.append(self.patience)
-    self.generalization_history.append(generalization)
-    self.progress_history.append(progress)
+    curr_iter = len(self._losses) - 1
+    self.patience_history[curr_iter] = self.patience
+    self.generalization_history[curr_iter] = generalization
+    self.progress_history[curr_iter] = progress
+    self.decision_history[curr_iter] = decision
+    self._history['losses'][curr_iter] = (self._org_L[-1], self._ema_L[-1])
     if verbose:
       print(
           f"[EarlyStop] disable:{self._is_disabled} "
@@ -262,50 +264,110 @@ class EarlyStopping:
       return max(0, decision)
     return decision
 
-  def plot_losses(self, path: Optional[str] = None, ax=None):
+  def plot_losses(self,
+                  path: Optional[str] = None,
+                  fig: Optional[plt.Figure] = None):
     losses = self.losses
     if len(losses) < 2:
       return None
-    from matplotlib import pyplot as plt
+    ## use seaborn style
     try:
       import seaborn as sns
       sns.set()
     except ImportError:
       pass
-    if ax is None:
-      fig = plt.figure()
-      ax = fig.gca()
+    ## prepare the figure
+    if fig is None:
+      fig = plt.figure(figsize=(12, 4))
     legends = []
     ## plotting
     min_idx = np.argmin(self._ema_L)
     min_val = self._ema_L[min_idx]
-    # legends += ax.plot(self._losses, label='losses', color='red')
-    legends += ax.plot(self._org_L, label='losses', color='red')
-    legends += ax.plot(self._ema_L,
-                       label=f'smoothed-{self.smooth}',
-                       linestyle='--',
-                       color='salmon')
-    legends += ax.plot(min_idx,
-                       min_val,
-                       marker='.',
-                       markersize=15,
-                       alpha=0.5,
-                       linewidth=0.0,
-                       label='min')
-    ## plot the history
+    org_losses = self._losses
+    iter_ticks = np.linspace(1, len(org_losses), num=min(5, len(org_losses)))
+    iter_ticklabels = [int(i) for i in iter_ticks]
+    marker_styles = dict(markersize=15, linewidth=0.0, alpha=0.5)
+    ax_finalize = lambda axis, title: (
+        ax.set_xticks(iter_ticks),
+        ax.set_xticklabels(iter_ticklabels),
+        ax.tick_params(axis='both', labelsize=8),
+        ax.legend(fontsize=8),
+        ax.set_title(title),
+    )
+    ## plot the original losses
+    ax = fig.add_subplot(1, 3, 1)
+    ax.plot(np.arange(len(org_losses)) + 1, org_losses, color='red')
+    styles = dict(marker_styles)
+    for it, decision in self.decision_history.items():
+      if decision > 0:
+        ax.plot(it + 1,
+                org_losses[it],
+                marker='.',
+                color='blue',
+                **marker_styles)
+      elif decision < 0:
+        ax.plot(it + 1,
+                org_losses[it],
+                marker='x',
+                color='red',
+                **marker_styles)
+    ax_finalize(ax, 'Original Losses (O: save, X: stop)')
+    ## plot the aggregated losses
+    ax = fig.add_subplot(1, 3, 2)
+    x, y1, y2 = [], [], []
+    for it, (l, l_smooth) in self._history['losses'].items():
+      x.append(it)
+      y1.append(l)
+      y2.append(l_smooth)
+    ax.plot(x, y1, label=f'aggregated-{self.batch_size}')
+    ax.plot(x, y2, label=f'smoothed-{self.smooth}', linestyle='--')
+    ax.plot(min_idx, min_val, marker='.', label='min', **marker_styles)
+    ax_finalize(ax, 'Smoothed Losses')
+    ## plot the patience
+    ax = fig.add_subplot(1, 3, 3)
+    l1 = ax.plot(list(self.patience_history.keys()),
+                 list(self.patience_history.values()),
+                 color='red',
+                 label='patience',
+                 linewidth=1.0,
+                 alpha=0.6)
+    ax_finalize(ax, 'Events')
+    org_ax = ax
     ax = ax.twinx()
-    styles = dict(linestyle='-.', linewidth=1., alpha=0.6)
-    legends += ax.plot(self.patience_history,
-                       label='patience',
-                       color='blue',
-                       **styles)
-    # legends += ax.plot(self._generalization_history,
-    #                    label='improvement',
-    #                    **styles)
-    # legends += ax.plot(self._progress_history, label='progress', **styles)
-    ax.tick_params(axis='y', colors='blue')
+    l2 = ax.plot(list(self.generalization_history.keys()),
+                 list(self.generalization_history.values()),
+                 color='blue',
+                 label='improvement',
+                 linewidth=1.0,
+                 alpha=0.6)
+    l3 = ax.plot(list(self.progress_history.keys()),
+                 list(self.progress_history.values()),
+                 color='blue',
+                 linestyle='--',
+                 label='progress',
+                 linewidth=1.0,
+                 alpha=0.6)
     ax.grid(False)
-    ax.legend(legends, [i.get_label() for i in legends], fontsize=6)
+    legends = l1 + l2 + l3
+    labels = [l.get_label() for l in legends]
+    org_ax.legend(legends, labels, fontsize=8)
+    ax.tick_params(axis='y', labelcolor='blue', labelsize=8)
+    ## save the axis
+    plt.tight_layout()
     if path is not None:
       fig.savefig(path, dpi=200)
     return ax
+
+  def __str__(self):
+    s = 'EarlyStopping:\n'
+    s += f' min_improvement: {self.min_improvement}\n'
+    s += f' warmup_epochs: {self.warmup_epochs}\n'
+    s += f' patience: {self.patience}\n'
+    s += f' reward: {self.reward}\n'
+    s += f' progression_length: {self.progression_length}\n'
+    s += f' mode: {self.mode}\n'
+    s += f' smooth: {self.smooth}\n'
+    s += f' batch_size: {self.batch_size}\n'
+    s += f' reduce_method: {self.reduce_method}\n'
+    s += f' losses: {self._losses}\n'
+    return s[:-1]

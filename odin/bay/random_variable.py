@@ -216,7 +216,7 @@ class RVmeta:
     dist = x.create_posterior()
   """
   event_shape: List[int] = ()
-  posterior: Union[str] = 'gaus'
+  posterior: Union[str] = 'normal'
   projection: bool = False
   dropout: float = 0.0
   name: Optional[str] = None

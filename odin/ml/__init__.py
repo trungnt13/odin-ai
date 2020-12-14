@@ -4,6 +4,7 @@ from typing import Optional, Union
 import numpy as np
 from odin.ml.base import evaluate
 from odin.ml.cluster import fast_dbscan, fast_kmeans, fast_knn
+from odin.ml.tree import *
 from odin.ml.decompositions import *
 from odin.ml.fast_lda_topics import fast_lda_topics, get_topics_string
 from odin.ml.fast_tsne import fast_tsne

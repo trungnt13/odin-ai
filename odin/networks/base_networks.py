@@ -195,7 +195,7 @@ class Networks(keras.Model, MD5object):
     with trackable.no_automatic_dependency_tracking_scope(self):
       self._last_outputs = None
       self._trainer = None
-      self._early_stopping = None
+      self._early_stopping = EarlyStopping()
 
   def build(self, input_shape: List[Union[None, int]]) -> 'Networks':
     """Build the networks for given input or list of inputs
@@ -230,12 +230,23 @@ class Networks(keras.Model, MD5object):
     return self._trainer
 
   @property
+  def last_train_loss(self) -> Optional[float]:
+    return self.trainer.last_train_loss
+
+  @property
+  def last_valid_loss(self) -> Optional[float]:
+    return self.trainer.last_valid_loss
+
+  @property
+  def last_train_metrics(self) -> Dict[str, Any]:
+    return self.trainer.last_train_metrics
+
+  @property
+  def last_valid_metrics(self) -> Dict[str, Any]:
+    return self.trainer.last_valid_metrics
+
+  @property
   def early_stopping(self) -> EarlyStopping:
-    if self._early_stopping is None:
-      if self.trainer is None:
-        self._early_stopping = EarlyStopping()
-      else:
-        self._early_stopping = self.trainer.early_stopping
     return self._early_stopping
 
   @property
@@ -303,7 +314,7 @@ class Networks(keras.Model, MD5object):
           print(f"Loading trainer at path: {trainer_path}")
         with trackable.no_automatic_dependency_tracking_scope(self):
           with open(trainer_path, 'rb') as f:
-            self._trainer = pickle.load(f)
+            self._trainer, self._early_stopping = pickle.load(f)
     self._save_path = filepath
     return self
 
@@ -318,7 +329,7 @@ class Networks(keras.Model, MD5object):
       filepath = self.save_path
     assert filepath is not None
     with open(filepath + '.trainer', 'wb') as f:
-      pickle.dump(self._trainer, f)
+      pickle.dump([self._trainer, self._early_stopping], f)
     logging.get_logger().disabled = True
     super().save_weights(filepath=filepath,
                          overwrite=overwrite,
@@ -524,8 +535,6 @@ class Networks(keras.Model, MD5object):
       with trackable.no_automatic_dependency_tracking_scope(self):
         trainer = Trainer(logdir=logdir)
         self._trainer = trainer
-        if self._early_stopping is not None:
-          trainer._early_stopping = self._early_stopping
     trainer = self.trainer
     ## if already called repeat, then no need to repeat more
     if hasattr(train, 'repeat'):

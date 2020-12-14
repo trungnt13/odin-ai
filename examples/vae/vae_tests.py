@@ -129,11 +129,15 @@ def main(cfg: dict):
               **model_kw)
   vae.build((None,) + ds.shape)
   vae.load_weights(raise_notfound=False, verbose=True)
+  vae.early_stopping.mode = 'max'
   gym = create_gym(dsname=cfg.ds, vae=vae)
-  gym.train()
 
   ### fit the network
   def callback():
+    metrics = vae.trainer.last_valid_metrics
+    llk = metrics['llk_image'] if 'llk_image' in metrics else metrics[
+        'llk_dense_type']
+    vae.early_stopping.update(llk)
     signal = vae.early_stopping(verbose=True)
     if signal > 0:
       vae.save_weights(overwrite=True)
@@ -152,7 +156,6 @@ def main(cfg: dict):
     gym(save_path=gym_test_path, dpi=200, verbose=True)
   ### fit
   else:
-    vae.early_stopping.warmup_epochs = 10
     vae.early_stopping.patience = 10
     max_iter, learning_rate = get_optimizer_info(cfg.ds)
     vae.fit(train,
@@ -161,7 +164,7 @@ def main(cfg: dict):
             epochs=-1,
             clipnorm=100,
             max_iter=max_iter,
-            valid_freq=int(0.1 * max_iter),
+            valid_freq=int(0.05 * max_iter),
             logging_interval=2,
             skip_fitted=True,
             callback=callback,

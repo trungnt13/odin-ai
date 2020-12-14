@@ -212,7 +212,7 @@ class factorVAE(betaVAE):
     llk, kl = super().elbo_components(inputs, mask=mask, training=training)
     px_z, qz_x = self.last_outputs
     # by default, this support multiple latents by concatenating all latents
-    if self.is_pretraining:
+    if self.is_pretraining and training:
       tc = 0.
     else:
       tc = self.total_correlation(qz_x=qz_x, training=training)

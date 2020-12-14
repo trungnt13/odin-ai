@@ -15,7 +15,7 @@ from odin.bay.vi.utils import discretizing
 from odin.stats import is_discrete
 from odin.utils import fifodict
 from sklearn.base import BaseEstimator
-from sklearn.ensemble import GradientBoostingClassifier
+from odin.ml.tree import fast_gbtree_classifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
 from sklearn.model_selection import train_test_split
@@ -83,10 +83,9 @@ def importance_matrix(
     repr_test: Optional[Union[Distribution, tf.Tensor, np.ndarray]] = None,
     factor_test: Optional[Union[tf.Tensor, np.ndarray]] = None,
     test_size: float = 0.2,
-    n_iter_no_change: int = 10,
-    algo: Type[BaseEstimator] = GradientBoostingClassifier,
     seed: int = 1,
     verbose: bool = False,
+    n_jobs: Optional[int] = 4,
     cache_key: Optional[str] = None,
 ):
   """Using Tree Classifier to estimate the importance of each
@@ -98,15 +97,6 @@ def importance_matrix(
     input features for training the classifier
   factor_train, factor_test : a Matrix `(n_samples, n_factors)`
     discrete labels for the classifier
-  algo : `sklearn.Estimator`, a classifier with `feature_importances_`
-    attribute, for example:
-      averaging methods:
-      - `sklearn.ensemble.ExtraTreesClassifier`
-      - `sklearn.ensemble.RandomForestClassifier`
-      - `sklearn.ensemble.IsolationForest`
-      and boosting methods:
-      - `sklearn.ensemble.GradientBoostingClassifier`
-      - `sklearn.ensemble.AdaBoostClassifier`
 
   Returns
   --------
@@ -123,8 +113,6 @@ def importance_matrix(
     repr_test = _to_numpy(repr_test)
   n_latents = repr_train.shape[1]
   n_factors = factor_train.shape[1]
-  assert hasattr(algo, 'feature_importances_'), \
-    "The class must contain 'feature_importances_' attribute"
   ## split the datasets
   if repr_test is None or factor_test is None:
     repr_train, repr_test, factor_train, factor_test = train_test_split(
@@ -133,8 +121,10 @@ def importance_matrix(
   factor_train = np.asarray(factor_train)
 
   def _train(factor_idx):
-    model = algo(random_state=seed, n_iter_no_change=n_iter_no_change)
-    model.fit(repr_train, factor_train[:, factor_idx])
+    model = fast_gbtree_classifier(X=repr_train,
+                                   y=factor_train[:, factor_idx],
+                                   random_state=seed,
+                                   n_jobs=n_jobs)
     feat = np.abs(model.feature_importances_)
     train = np.mean(model.predict(repr_train) == factor_train[:, factor_idx])
     test = np.mean(model.predict(repr_test) == factor_test[:, factor_idx])
@@ -146,7 +136,7 @@ def importance_matrix(
   test_acc = list(range(n_factors))
   progress = list(range(n_factors))
   if verbose:
-    progress = tqdm(progress, desc=f'Fitting {algo.__name__}', unit='model')
+    progress = tqdm(progress, desc=f'Fitting GBT', unit='model')
   for factor_idx in progress:
     i, feat, train, test = _train(factor_idx)
     matrix[:, i] = feat
