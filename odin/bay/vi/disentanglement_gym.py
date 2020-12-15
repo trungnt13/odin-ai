@@ -20,12 +20,11 @@ from odin.bay.vi.metrics import (Correlation, beta_vae_score, dci_scores,
 from odin.bay.vi.posterior import GroundTruth, Posterior
 from odin.bay.vi.utils import discretizing, traverse_dims
 from odin.fuel import get_dataset
-from odin.ml import DimReduce
+from odin.ml import DimReduce, fast_kmeans
 from odin.utils import as_tuple, uuid
 from scipy import stats
 from six import string_types
 from sklearn import metrics
-from sklearn.cluster import KMeans
 from tqdm import tqdm
 from typeguard import typechecked
 from typing_extensions import Literal
@@ -604,9 +603,10 @@ class DisentanglementGym:
       if self._is_clustering():
         for z_idx, z in qz.items():
           z = z.mean().numpy()
-          labels_pred = KMeans(n_clusters=len(np.unique(labels)),
-                               n_init=200,
-                               random_state=self.seed).fit_predict(z)
+          labels_pred = fast_kmeans(z,
+                                    n_clusters=len(np.unique(labels)),
+                                    n_init=200,
+                                    random_state=self.seed).predict(z)
           if self._adjusted_rand_score:
             outputs[f'ari{z_idx}'] = metrics.adjusted_rand_score(
                 labels, labels_pred)

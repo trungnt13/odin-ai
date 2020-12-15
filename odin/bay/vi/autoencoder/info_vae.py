@@ -218,13 +218,102 @@ class miVAE(betaVAE):
     return llk, kl
 
 
-class SemiInfoVAE(miVAE):
-  r""" This idea combining factorVAE (Kim et al. 2018) and
-  miVAE (Ducau et al. 2017)
-
-  # TODO
+class semifoVAE(betaVAE):
+  """A semaphore is a variable or abstract data type used to control access to
+  a common resource by multiple processes and avoid critical section problems in
+  a concurrent system
   """
-  ...
+
+  def __init__(self,
+               latents: RVmeta = RVmeta(32,
+                                        'mvndiag',
+                                        projection=True,
+                                        name='Latents'),
+               mutual_codes: Optional[RVmeta] = None,
+               beta: float = 1.0,
+               mi_coef: float = 1.0,
+               kl_codes_coef: float = 0.,
+               steps_without_mi: int = 100,
+               name='semifoVAE',
+               **kwargs):
+    super().__init__(beta=beta, latents=latents, name=name, **kwargs)
+    if mutual_codes is None:
+      zdim = sum(sum(q.event_shape) for q in as_tuple(self.latents))
+      mutual_codes = RVmeta(zdim, 'mvndiag', projection=True, name='Codes')
+    self.is_binary_code = mutual_codes.is_binary
+    self.mutual_codes = mutual_codes.create_posterior()
+    self.mi_coef = float(mi_coef)
+    self.kl_codes_coef = float(kl_codes_coef)
+    self.steps_without_mi = int(steps_without_mi)
+
+  def sample_prior(self,
+                   sample_shape: Union[int, List[int]] = (),
+                   seed: int = 1) -> Tensor:
+    """Sampling from prior distribution """
+    z1 = super().sample_prior(sample_shape=sample_shape, seed=seed)
+    z2 = self.mutual_codes.prior.sample(sample_shape, seed=seed)
+    return (z1, z2)
+
+  def encode(self, inputs, **kwargs):
+    h_e = self.encoder(inputs, **kwargs)
+    # create the latents distribution
+    qz_x = self.latents(h_e, **kwargs)
+    qc_x = self.mutual_codes(h_e, **kwargs)
+    # need to keep the keras mask
+    mask = kwargs.get('mask', None)
+    qz_x._keras_mask = mask
+    qc_x._keras_mask = mask
+    return (qz_x, qc_x)
+
+  def decode(self, latents, **kwargs):
+    latents = tf.concat(latents, axis=-1)
+    return super().decode(latents, **kwargs)
+
+  def elbo_components(self, inputs, training=None, mask=None):
+    # NOTE: the original implementation does not take KL(qC_X||pC),
+    # only maximize the mutual information of q(c|X)
+    llk, kl = super().elbo_components(inputs, mask=mask, training=training)
+    px_z, (qz_x, qc_x) = self.last_outputs
+    ## This approach is not working!
+    # z_prime = tf.stop_gradient(tf.convert_to_tensor(qz_x))
+    # batch_shape = z_prime.shape[:-1]
+    # c_prime = qc_x.KL_divergence.prior.sample(batch_shape)
+    ##
+    batch_shape = px_z.batch_shape
+    z_prime = qz_x.KL_divergence.prior.sample(batch_shape)
+    c_prime = qc_x.KL_divergence.prior.sample(batch_shape)
+    ## clip to prevent underflow for relaxed-bernoulli
+    if self.is_binary_code:
+      c_prime = _clip_binary(c_prime)
+    ## decoding
+    px = self.decode([z_prime, c_prime], training=training)
+    if px.reparameterization_type == NOT_REPARAMETERIZED:
+      x = px.mean()
+    else:
+      x = tf.convert_to_tensor(px)
+    qz_xprime, qc_xprime = self.encode(x, training=training)
+    #' mutual information (we want to maximize this, hence, add it to the llk)
+    mi_c = qc_xprime.log_prob(c_prime)
+    if training:
+      llk['mi_codes'] = tf.cond(self.step > self.steps_without_mi,
+                                true_fn=lambda: self.mi_coef * mi_c,
+                                false_fn=lambda: 0.)
+    else:
+      llk['mi_codes'] = self.mi_coef * mi_c
+    ## this value is just for monitoring
+    mi_z = qz_xprime.log_prob(z_prime)
+    llk['mi_latents'] = tf.stop_gradient(mi_z)
+    ## factorizing the mutual codes if required
+    if hasattr(qc_x, 'KL_divergence'):
+      kl_c = qc_x.KL_divergence()
+    else:
+      kl_c = 0.
+    if self.kl_codes_coef == 0.:
+      kl_c = tf.stop_gradient(kl_c)
+    if training:
+      kl_c = self.kl_codes_coef * kl_c
+    kl['kl_codes'] = kl_c
+    return llk, kl
 
 
 class InfoNCEVAE(betaVAE):

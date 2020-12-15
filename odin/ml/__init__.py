@@ -99,27 +99,27 @@ def linear_classifier(X: np.ndarray,
 def clustering(X,
                algo,
                n_clusters=8,
-               force_sklearn=False,
-               random_state=1234,
+               random_state=1,
+               framework='auto',
                **kwargs):
   algo = str(algo).strip().lower()
   if 'kmean' in algo:
     return fast_kmeans(X,
                        n_clusters=n_clusters,
                        random_state=random_state,
-                       force_sklearn=force_sklearn,
+                       framework=framework,
                        **kwargs)
   elif 'knn' in algo:
     return fast_knn(X,
                     n_clusters=n_clusters,
                     random_state=random_state,
-                    force_sklearn=force_sklearn,
+                    framework=framework,
                     **kwargs)
   elif 'dbscan' in algo:
     return fast_dbscan(X,
                        n_clusters=n_clusters,
                        random_state=random_state,
-                       force_sklearn=force_sklearn,
+                       framework=framework,
                        **kwargs)
   raise ValueError("No support for clustering algorithm with name: '%s'" % algo)
 
