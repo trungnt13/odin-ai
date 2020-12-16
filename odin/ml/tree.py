@@ -4,8 +4,13 @@ from warnings import warn
 
 import numpy as np
 from typing_extensions import Literal
+from sklearn.ensemble import GradientBoostingClassifier
+from sklearn.ensemble import RandomForestClassifier
 
-__all__ = ['fast_gbtree_classifier', 'fast_rf_classifier']
+__all__ = [
+    'fast_gbtree_classifier',
+    'fast_rf_classifier',
+]
 
 Objectives = Literal['reg:squarederror', 'reg:squaredlogerror', 'reg:logistic',
                      'reg:pseudohubererror', 'binary:logistic',
@@ -37,7 +42,7 @@ def fast_gbtree_classifier(
     n_jobs: Optional[int] = None,
     framework: Literal['auto', 'xgboost', 'sklearn'] = 'auto',
     **kwargs,
-):
+) -> GradientBoostingClassifier:
   """Shared interface for XGBoost and sklearn Gradient Boosting Tree Classifier"""
   kw = dict(locals())
   kwargs = kw.pop('kwargs')
@@ -47,21 +52,16 @@ def fast_gbtree_classifier(
   framework = kw.pop('framework')
   ### XGBOOST
   is_xgboost = False
-  if framework == 'auto':
+  if framework == 'sklearn':
+    XGB = GradientBoostingClassifier
+  else:
     try:
       from xgboost import XGBRFClassifier as XGB
       is_xgboost = True
     except ImportError as e:
       warn('Run `pip install xgboost` to get significant '
            'faster GradientBoostingTree')
-      from sklearn.ensemble import GradientBoostingClassifier as XGB
-  elif framework == 'xgboost':
-    from xgboost import XGBRFClassifier as XGB
-    is_xgboost = True
-  elif framework == 'sklearn':
-    from sklearn.ensemble import GradientBoostingClassifier as XGB
-  else:
-    raise ValueError(f'No support for framework "{framework}"')
+      XGB = GradientBoostingClassifier
   ### fine-tune the keywords for sklearn
   if not is_xgboost:
     org = dict(kw)
@@ -111,17 +111,14 @@ def fast_rf_classifier(
   framework = kw.pop('framework')
   ### import
   is_cuml = False
-  if framework == 'auto':
+  if framework == 'sklearn':
+    RFC = RandomForestClassifier
+  else:
     try:
       from cuml.ensemble import RandomForestClassifier as RFC
       is_cuml = True
     except ImportError as e:
-      from sklearn.ensemble import RandomForestClassifier as RFC
-  elif framework == 'cuml':
-    from cuml.ensemble import RandomForestClassifier as RFC
-    is_cuml = True
-  else:
-    from sklearn.ensemble import RandomForestClassifier as RFC
+      RFC = RandomForestClassifier
   ### fine-tune keywords
   if is_cuml:
     kw['output_type'] = 'numpy'

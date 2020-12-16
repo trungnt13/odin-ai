@@ -488,9 +488,11 @@ class DisentanglementGym:
     grids = (int(sqrt(_n_visual)), int(sqrt(_n_visual)))
     outputs = dict()
     ds, x, y = self.data_info[self.mode]
+    ## n_samples
     n_score_samples = (10000 if self.mode == 'test' else 5000)
-    n_batches = int((self._max_test_samples if self.mode == 'test' else
-                     self._max_valid_samples) / self.batch_size)
+    n_samples = (self._max_test_samples
+                 if self.mode == 'test' else self._max_valid_samples)
+    n_batches = int(n_samples / self.batch_size)
     is_semi_supervised = type(vae).is_semi_supervised
     ## prepare
     P, Q = vae(x, training=False)
@@ -563,12 +565,12 @@ class DisentanglementGym:
                                              self.name,
                                              verbose=verbose,
                                              labels=self.ds.labels)
+      qz_mean = {idx: q.mean().numpy() for idx, q in qz.items()}
       # latents pairs
       if self._latents_pairs is not None:
         for method in self._latents_pairs:
           name = method.name.lower()
-          for z_idx, z in qz.items():
-            z = z.mean()
+          for z_idx, z in qz_mean.items():
             matrix = method(z, factors, cache_key=unique_key, verbose=verbose)
             _plot_latents_pairs(z=z,
                                 f=py,
@@ -580,11 +582,8 @@ class DisentanglementGym:
       if self._correlation_methods is not None:
         for method in self._correlation_methods:
           name = method.name.lower()
-          for z_idx, z in qz.items():
-            matrix = method(z.mean(),
-                            factors,
-                            cache_key=unique_key,
-                            verbose=verbose)
+          for z_idx, z in qz_mean.items():
+            matrix = method(z, factors, cache_key=unique_key, verbose=verbose)
             _plot_correlation(matrix,
                               factors=self.ds.labels,
                               data_type=name,
@@ -594,15 +593,17 @@ class DisentanglementGym:
       if self._dimension_reduction is not None:
         for method in self._dimension_reduction:
           name = method.name.lower()
-          for z_idx, z in qz.items():
-            z = method(z.mean().numpy(), n_components=2)
+          for z_idx, z in qz_mean.items():
+            _x, _y = z, labels
+            if method == DimReduce.TSNE:
+              _x, _y = _x[:10000], _y[:10000]  # maximum 10000 data points
+            _x = method(_x, n_components=2)
             fig = plt.figure(figsize=(8, 8), dpi=150)
-            vs.plot_scatter(z, color=labels, size=10.0, alpha=0.6, grid=False)
+            vs.plot_scatter(_x, color=_y, size=10.0, alpha=0.6, grid=False)
             outputs[f'{name}{z_idx}'] = vs.plot_to_image(fig, dpi=dpi)
       # clustering scores
       if self._is_clustering():
-        for z_idx, z in qz.items():
-          z = z.mean().numpy()
+        for z_idx, z in qz_mean.items():
           labels_pred = fast_kmeans(z,
                                     n_clusters=len(np.unique(labels)),
                                     n_init=200,
@@ -626,16 +627,12 @@ class DisentanglementGym:
           z = tf.reshape(z, (-1, z.shape[-1]))
           outputs[f'mig{z_idx}'] = mutual_info_gap(z, np.tile(factors, (10, 1)))
       if self._sap_score:
-        for z_idx, z in qz.items():
-          outputs[f'sap{z_idx}'] = separated_attr_predictability(
-              z.mean(), factors)
+        for z_idx, z in qz_mean.items():
+          outputs[f'sap{z_idx}'] = separated_attr_predictability(z, factors)
       if self._dci_score:
-        for z_idx, z in qz.items():
+        for z_idx, z in qz_mean.items():
           outputs[f'dci{z_idx}'] = np.mean(
-              dci_scores(z.mean(),
-                         factors,
-                         cache_key=unique_key,
-                         verbose=verbose))
+              dci_scores(z, factors, cache_key=unique_key, verbose=verbose))
       if self._beta_vae:
         for z_idx, z in qz.items():
           outputs[f'betavae{z_idx}'] = beta_vae_score(representations=z,

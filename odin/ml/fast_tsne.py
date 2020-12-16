@@ -7,8 +7,11 @@ from typing_extensions import Literal
 import numpy as np
 from odin.utils.crypto import md5_checksum
 from odin.utils.mpi import MPI, cpu_count
+from sklearn.decomposition import PCA
 
 _cached_values = {}
+
+__all__ = ['fast_tsne']
 
 
 # ===========================================================================
@@ -21,31 +24,35 @@ def _create_key(framework, kwargs, md5):
   return framework + str(list(sorted(key.items(), key=lambda x: x[0])))
 
 
-def fast_tsne(*X,
-              n_components: int = 2,
-              n_samples: Optional[int] = None,
-              perplexity: float = 30.0,
-              early_exaggeration: float = 8.0,
-              learning_rate: float = 200.0,
-              n_iter: int = 1000,
-              n_iter_without_progress: int = 300,
-              min_grad_norm: float = 1e-7,
-              metric="euclidean",
-              init="random",
-              verbose: int = 0,
-              random_state: int = 1,
-              method='barnes_hut',
-              angle: float = 0.5,
-              n_jobs: Optional[int] = 4,
-              combined: bool = True,
-              return_model: bool = False,
-              framework: Literal['auto', 'sklearn', 'cuml'] = 'auto'):
-  r"""
+def fast_tsne(
+    *X,
+    n_components: int = 2,
+    max_samples: Optional[int] = None,
+    perplexity: float = 30.0,
+    early_exaggeration: float = 12.0,
+    learning_rate: float = 200.0,
+    n_iter: int = 1000,
+    n_iter_without_progress: int = 300,
+    min_grad_norm: float = 1e-7,
+    method: str = 'barnes_hut',
+    metric: str = "euclidean",
+    init: str = "random",
+    verbose: int = 0,
+    angle: float = 0.5,
+    n_jobs: Optional[int] = 4,
+    combined: bool = True,
+    pca_preprocessing: bool = True,
+    return_model: bool = False,
+    random_state: int = 1,
+    framework: Literal['auto', 'sklearn', 'cuml'] = 'auto',
+):
+  """ t-Stochastic Nearest Neighbors
+
   Parameters
   ----------
   n_components : int, optional (default: 2)
       Dimension of the embedded space.
-  n_samples : {int, None}
+  max_samples : {int, None}
       if given, downsampling the data to given number of sample
   perplexity : float, optional (default: 30)
       The perplexity is related to the number of nearest neighbors that
@@ -133,18 +140,19 @@ def fast_tsne(*X,
   del kwargs['X']
   kwargs.pop('combined')
   kwargs.pop('return_model')
-  kwargs.pop('n_samples')
+  kwargs.pop('max_samples')
   kwargs.pop('framework')
+  kwargs.pop('pca_preprocessing')
   # ====== downsampling ====== #
-  if n_samples is not None:
-    n_samples = int(n_samples)
-    assert n_samples > 0
+  if max_samples is not None:
+    max_samples = int(max_samples)
+    assert max_samples > 0
     new_X = []
     rand = random_state if isinstance(random_state, np.random.RandomState) else \
     np.random.RandomState(seed=random_state)
     for x in X:
-      if x.shape[0] > n_samples:
-        ids = rand.permutation(x.shape[0])[:n_samples]
+      if x.shape[0] > max_samples:
+        ids = rand.permutation(x.shape[0])[:max_samples]
         x = x[ids]
       new_X.append(x)
     X = new_X
@@ -155,18 +163,13 @@ def fast_tsne(*X,
       from cuml.manifold import TSNE
       tsne_version = 'cuda'
     except ImportError:
-      warnings.warn(
-          "Install GPUs-accelerated t-SNE from `https://github.com/rapidsai/cuml` "
-          "using `conda install -c rapidsai -c nvidia -c conda-forge -c defaults cuml=0.10 python=3.6 cudatoolkit=10.0`"
-      )
+      warnings.warn("Install RAPIDSAI cuML GPUs-accelerated t-SNE")
       try:
         from MulticoreTSNE import MulticoreTSNE as TSNE
         tsne_version = 'multicore'
       except ImportError:
-        warnings.warn(
-            "Install MulticoreTSNE from "
-            "pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git"
-            " to accelerate the T-SNE on multiple CPU cores.")
+        warnings.warn("pip install "
+                      "git+https://github.com/DmitryUlyanov/Multicore-TSNE.git")
   if tsne_version is None:
     from sklearn.manifold import TSNE
     tsne_version = 'sklearn'
@@ -202,6 +205,8 @@ def fast_tsne(*X,
   # ====== perform T-SNE ====== #
   def apply_tsne(j):
     idx, md5, x = j
+    if pca_preprocessing:
+      x = PCA(n_components=None, random_state=random_state).fit_transform(x)
     tsne = TSNE(**kwargs)
     return (idx, md5, tsne.fit_transform(x), tsne if return_model else None)
 
@@ -232,4 +237,5 @@ def fast_tsne(*X,
   results = results[0] if len(results) == 1 else results
   if return_model:
     return results, model
+  del model
   return results

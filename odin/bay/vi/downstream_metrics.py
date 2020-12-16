@@ -19,7 +19,8 @@ from odin.ml.tree import fast_gbtree_classifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
 from sklearn.model_selection import train_test_split
-from sklearn.svm import LinearSVC
+from sklearn.preprocessing import StandardScaler
+from sklearn.svm import LinearSVC, SVC
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.distributions import Distribution
 from tqdm import tqdm
@@ -212,7 +213,9 @@ def separated_attr_predictability(
     factor_test: Optional[Union[tf.Tensor, np.ndarray]] = None,
     test_size: float = 0.2,
     continuous_factors: bool = False,
-    seed: int = 1234):
+    seed: int = 1,
+    max_iter: int = 2000,
+):
   """The SAP score
 
   Parameters
@@ -259,13 +262,22 @@ def separated_attr_predictability(
         # Attribute is considered discrete.
         x_i_test = repr_test[:, i]
         y_j_test = factor_test[:, j]
-        classifier = LinearSVC(C=0.01,
-                               max_iter=8000,
-                               class_weight="balanced",
-                               random_state=seed)
-        classifier.fit(np.expand_dims(x_i, axis=-1), y_j)
-        pred = classifier.predict(np.expand_dims(x_i_test, axis=-1))
+        classifier = SVC(kernel='linear',
+                         C=0.01,
+                         max_iter=max_iter,
+                         class_weight='balanced',
+                         random_state=seed)
+        # LinearSVC(C=0.01,
+        #                        max_iter=max_iter,
+        #                        class_weight="balanced",
+        #                        random_state=seed)
+        normalizer = StandardScaler()
+        classifier.fit(normalizer.fit_transform(np.expand_dims(x_i, axis=-1)),
+                       y_j)
+        pred = classifier.predict(
+            normalizer.transform(np.expand_dims(x_i_test, axis=-1)))
         score_matrix[i, j] = np.mean(pred == y_j_test)
+        del classifier
   # ====== compute_avg_diff_top_two ====== #
   # [n_latents, n_factors]
   sorted_matrix = np.sort(score_matrix, axis=0)
@@ -389,10 +401,11 @@ def _sampling_helper(representations: tfd.Distribution,
 def beta_vae_score(representations: tfd.Distribution,
                    factors: Union[tf.Tensor, np.ndarray],
                    n_mcmc: int = 10,
-                   batch_size: int = 16,
+                   batch_size: int = 10,
                    n_samples: int = 10000,
                    seed: int = 1,
                    return_model: bool = False,
+                   n_jobs: Optional[int] = None,
                    verbose: bool = False) -> float:
   """ The Beta-VAE score train a logistic regression to detect the invariant
   factor based on the absolute difference in the representations.
@@ -407,7 +420,9 @@ def beta_vae_score(representations: tfd.Distribution,
   rand = RandomState(seed=seed)
   features, labels = _sampling_helper(**locals())
   ## train the classifier
-  model = LogisticRegression(max_iter=2000, random_state=rand.randint(1e8))
+  model = LogisticRegression(max_iter=2000,
+                             random_state=rand.randint(1e8),
+                             n_jobs=n_jobs)
   model.fit(features, labels)
   score = model.score(features, labels)
   if return_model:

@@ -58,6 +58,15 @@ RE_NUMBER = re.compile(r'^[+-]*((\d*\.\d+)|(\d+))$')
 
 
 # ===========================================================================
+# Data Function tools
+# ===========================================================================
+def get_function_arguments(func: Callable[..., Any]) -> List[str]:
+  """Get all arguments' name of a function"""
+  spec = inspect.getfullargspec(func)
+  return spec.args + spec.kwonlyargs
+
+
+# ===========================================================================
 # Data structure
 # ===========================================================================
 class IndexedList(list):

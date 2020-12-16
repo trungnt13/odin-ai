@@ -1,11 +1,15 @@
 from functools import partial
-from typing import Callable, List, Union, Optional
+from typing import Callable, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
+                                                             NetworkConfig,
+                                                             _parse_layers)
 from odin.bay.vi.losses import maximum_mean_discrepancy
+from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
 from tensorflow import Tensor
 from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
@@ -133,7 +137,7 @@ class miVAE(betaVAE):
                latents: RVmeta = RVmeta(32,
                                         'mvndiag',
                                         projection=True,
-                                        name='Latents'),
+                                        name='latents'),
                mutual_codes: Optional[RVmeta] = None,
                steps_without_mi: int = 100,
                name='miVAE',
@@ -228,91 +232,105 @@ class semifoVAE(betaVAE):
                latents: RVmeta = RVmeta(32,
                                         'mvndiag',
                                         projection=True,
-                                        name='Latents'),
-               mutual_codes: Optional[RVmeta] = None,
+                                        name='latents'),
+               labels: RVmeta = RVmeta(10,
+                                       'onehot',
+                                       projection=True,
+                                       name="digits"),
+               decoder_y: LayerCreator = NetworkConfig([256, 256],
+                                                       name='decoder_y'),
                beta: float = 1.0,
-               mi_coef: float = 1.0,
-               kl_codes_coef: float = 0.,
-               steps_without_mi: int = 100,
+               alpha: float = 10.0,
+               mi_coef: float = 0.1,
+               steps_without_mi: int = 1000,
                name='semifoVAE',
                **kwargs):
     super().__init__(beta=beta, latents=latents, name=name, **kwargs)
-    if mutual_codes is None:
-      zdim = sum(sum(q.event_shape) for q in as_tuple(self.latents))
-      mutual_codes = RVmeta(zdim, 'mvndiag', projection=True, name='Codes')
-    self.is_binary_code = mutual_codes.is_binary
-    self.mutual_codes = mutual_codes.create_posterior()
+    self.labels = _parse_layers(labels)
+    self.decoder_y = _parse_layers(decoder_y)
     self.mi_coef = float(mi_coef)
-    self.kl_codes_coef = float(kl_codes_coef)
     self.steps_without_mi = int(steps_without_mi)
+    self.alpha = alpha
 
-  def sample_prior(self,
-                   sample_shape: Union[int, List[int]] = (),
-                   seed: int = 1) -> Tensor:
-    """Sampling from prior distribution """
-    z1 = super().sample_prior(sample_shape=sample_shape, seed=seed)
-    z2 = self.mutual_codes.prior.sample(sample_shape, seed=seed)
-    return (z1, z2)
+  @classmethod
+  def is_semi_supervised(cls) -> bool:
+    return True
 
-  def encode(self, inputs, **kwargs):
-    h_e = self.encoder(inputs, **kwargs)
-    # create the latents distribution
-    qz_x = self.latents(h_e, **kwargs)
-    qc_x = self.mutual_codes(h_e, **kwargs)
-    # need to keep the keras mask
-    mask = kwargs.get('mask', None)
-    qz_x._keras_mask = mask
-    qc_x._keras_mask = mask
-    return (qz_x, qc_x)
+  def encode(self, inputs, training=None, mask=None, **kwargs):
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    # don't condition on the labels, only accept inputs
+    X = X[0]
+    return super().encode(X, training=training, mask=None, **kwargs)
 
-  def decode(self, latents, **kwargs):
-    latents = tf.concat(latents, axis=-1)
-    return super().decode(latents, **kwargs)
+  def decode(self,
+             latents,
+             training=None,
+             mask=None,
+             predict_labels=True,
+             **kwargs):
+    h_d = super().decode(latents,
+                         training=training,
+                         mask=mask,
+                         only_decoding=True,
+                         **kwargs)
+    px_z = self.observation(h_d, training=training, mask=mask)
+    if not predict_labels:
+      return px_z
+    if isinstance(latents, (tuple, list)):
+      latents = tf.concat(latents, axis=-1)
+    h_y = self.decoder_y(tf.convert_to_tensor(latents),
+                         training=training,
+                         mask=mask)
+    py_z = self.labels(h_y, training=training, mask=mask)
+    return (px_z, py_z)
 
   def elbo_components(self, inputs, training=None, mask=None):
-    # NOTE: the original implementation does not take KL(qC_X||pC),
-    # only maximize the mutual information of q(c|X)
-    llk, kl = super().elbo_components(inputs, mask=mask, training=training)
-    px_z, (qz_x, qc_x) = self.last_outputs
-    ## This approach is not working!
-    # z_prime = tf.stop_gradient(tf.convert_to_tensor(qz_x))
-    # batch_shape = z_prime.shape[:-1]
-    # c_prime = qc_x.KL_divergence.prior.sample(batch_shape)
-    ##
+    ## unsupervised ELBO
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    if mask is not None:
+      mask = tf.reshape(mask, (-1,))
+    llk, kl = super().elbo_components(X[0], mask=mask, training=training)
+    (px_z, qy_z), qz_x = self.last_outputs
+    ## supervised loss
+    if len(y) > 0:
+      llk_y = qy_z.log_prob(y[0])
+      if mask is not None:
+        llk_y = tf.cond(
+            tf.reduce_all(tf.logical_not(mask)),
+            lambda: 0.,
+            lambda: tf.transpose(
+                tf.boolean_mask(tf.transpose(llk_y), mask, axis=0)),
+        )
+      llk_y = tf.reduce_mean(self.alpha * llk_y)
+      llk_y = tf.cond(tf.abs(llk_y) < 1e-8,
+                      true_fn=lambda: tf.stop_gradient(llk_y),
+                      false_fn=lambda: llk_y)
+      llk[f"llk_{self.labels.name}"] = llk_y
+    ## sample the prior
     batch_shape = px_z.batch_shape
     z_prime = qz_x.KL_divergence.prior.sample(batch_shape)
-    c_prime = qc_x.KL_divergence.prior.sample(batch_shape)
-    ## clip to prevent underflow for relaxed-bernoulli
-    if self.is_binary_code:
-      c_prime = _clip_binary(c_prime)
     ## decoding
-    px = self.decode([z_prime, c_prime], training=training)
+    px = self.decode(z_prime, training=training, predict_labels=False)
     if px.reparameterization_type == NOT_REPARAMETERIZED:
       x = px.mean()
     else:
       x = tf.convert_to_tensor(px)
-    qz_xprime, qc_xprime = self.encode(x, training=training)
+    qz_xprime = self.encode(x, training=training)
     #' mutual information (we want to maximize this, hence, add it to the llk)
-    mi_c = qc_xprime.log_prob(c_prime)
+    py = self.labels(self.decoder_y(tf.convert_to_tensor(qz_xprime),
+                                    training=training),
+                     training=training)
+    y = tf.convert_to_tensor(py)
+    mi_y = py.log_prob(y) - qy_z.log_prob(y)
     if training:
-      llk['mi_codes'] = tf.cond(self.step > self.steps_without_mi,
-                                true_fn=lambda: self.mi_coef * mi_c,
-                                false_fn=lambda: 0.)
+      llk['mi_labels'] = tf.cond(self.step > self.steps_without_mi,
+                                 true_fn=lambda: self.mi_coef * mi_y,
+                                 false_fn=lambda: 0.)
     else:
-      llk['mi_codes'] = self.mi_coef * mi_c
+      llk['mi_labels'] = self.mi_coef * mi_y
     ## this value is just for monitoring
     mi_z = qz_xprime.log_prob(z_prime)
     llk['mi_latents'] = tf.stop_gradient(mi_z)
-    ## factorizing the mutual codes if required
-    if hasattr(qc_x, 'KL_divergence'):
-      kl_c = qc_x.KL_divergence()
-    else:
-      kl_c = 0.
-    if self.kl_codes_coef == 0.:
-      kl_c = tf.stop_gradient(kl_c)
-    if training:
-      kl_c = self.kl_codes_coef * kl_c
-    kl['kl_codes'] = kl_c
     return llk, kl
 
 

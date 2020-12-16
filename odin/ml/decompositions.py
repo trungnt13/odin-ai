@@ -4,6 +4,8 @@ from __future__ import absolute_import, division, print_function
 import math
 from multiprocessing import Array, Value
 from numbers import Number
+from typing import Optional
+from typing_extensions import Literal
 
 import numpy as np
 from scipy import linalg
@@ -27,13 +29,15 @@ __all__ = [
 ]
 
 
-def fast_pca(*x,
-             n_components=None,
-             algo='pca',
-             y=None,
-             batch_size=1024,
-             return_model=False,
-             random_state=1234):
+def fast_pca(
+    *x,
+    n_components: Optional[int] = None,
+    algo: Literal['pca', 'ipca', 'ppca', 'sppca', 'plda', 'rpca'] = 'pca',
+    y=None,
+    batch_size: int = 1024,
+    return_model: bool = False,
+    random_state: int = 1,
+):
   r""" A shortcut for many different PCA algorithms
 
   Arguments:
@@ -127,8 +131,10 @@ def fast_pca(*x,
   # return the results
   if len(x_test) == 0:
     return x_train if not return_model else (pca, x_train)
-  return tuple([x_train] +
-               x_test) if not return_model else tuple([pca, x_train] + x_test)
+  if return_model:
+    return tuple([pca, x_train] + x_test)
+  del pca
+  return tuple([x_train] + x_test)
 
 
 # ===========================================================================
@@ -996,8 +1002,8 @@ class MiniBatchPCA(IncrementalPCA):
         self._nb_cached_samples = 0
     n_samples = X.shape[0]
     # ====== fit the model ====== #
-    if (self.components_ is not None) and (self.components_.shape[0] !=
-                                           self.n_components_):
+    if (self.components_
+        is not None) and (self.components_.shape[0] != self.n_components_):
       raise ValueError("Number of input features has changed from %i "
                        "to %i between calls to partial_fit! Try "
                        "setting n_components to a fixed value." %

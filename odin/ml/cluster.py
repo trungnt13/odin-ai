@@ -9,8 +9,14 @@ from typing_extensions import Literal
 import numpy as np
 from scipy import sparse, stats
 from scipy.sparse import csr_matrix
+from sklearn.neighbors import NearestNeighbors
+from sklearn.cluster import MiniBatchKMeans
 
-__all__ = ['fast_kmeans', 'fast_knn', 'fast_dbscan']
+__all__ = [
+    'fast_kmeans',
+    'fast_knn',
+    'fast_dbscan',
+]
 
 
 # ===========================================================================
@@ -74,7 +80,6 @@ def nn_fit_transform(self, X, y=None):
 
 def nn_predict(self, X):
   from sklearn.utils.validation import check_array
-  from sklearn.neighbors import NearestNeighbors
   ## prepare inputs
   cluster_mode = self._cluster_mode
   n_clusters = self._n_clusters
@@ -133,18 +138,20 @@ def dbscan_predict(self, X=None):
 # ===========================================================================
 # Main method
 # ===========================================================================
-def fast_kmeans(X,
-                *,
-                n_clusters: int = 8,
-                max_iter: int = 300,
-                tol: float = 0.0001,
-                n_init: int = 10,
-                random_state: int = 1,
-                init: Literal['scalable-kmeans++', 'k-means||',
-                              'random'] = 'scalable-k-means++',
-                oversampling_factor: float = 2.0,
-                max_samples_per_batch: int = 32768,
-                framework: Literal['auto', 'cuml', 'sklearn'] = 'auto'):
+def fast_kmeans(
+    X,
+    *,
+    n_clusters: int = 8,
+    max_iter: int = 300,
+    tol: float = 0.0001,
+    n_init: int = 10,
+    random_state: int = 1,
+    init: Literal['scalable-kmeans++', 'k-means||',
+                  'random'] = 'scalable-k-means++',
+    oversampling_factor: float = 2.0,
+    max_samples_per_batch: int = 32768,
+    framework: Literal['auto', 'cuml', 'sklearn'] = 'auto',
+) -> MiniBatchKMeans:
   """KMeans clustering
 
   Parameters
@@ -190,7 +197,6 @@ def fast_kmeans(X,
     from cuml.cluster import KMeans
     kwargs.pop('n_init')
   else:
-    from sklearn.cluster import MiniBatchKMeans
     kwargs.pop('oversampling_factor')
     kwargs.pop('max_samples_per_batch')
     if kwargs['init'] in ('scalable-k-means++', 'k-means||'):
@@ -209,16 +215,19 @@ def fast_kmeans(X,
   return kmean
 
 
-def fast_knn(X,
-             n_clusters: int = 5,
-             n_neighbors: Optional[int] = None,
-             graph_mode='distance',
-             cluster_mode='spectral',
-             algorithm='brute',
-             n_jobs=1,
-             random_state=1,
-             framework: Literal['auto', 'cuml', 'sklearn'] = 'auto'):
-  r"""
+def fast_knn(
+    X,
+    *,
+    n_clusters: int = 5,
+    n_neighbors: Optional[int] = None,
+    graph_mode='distance',
+    cluster_mode='spectral',
+    algorithm='brute',
+    n_jobs: Optional[int] = None,
+    random_state: int = 1,
+    framework: Literal['auto', 'cuml', 'sklearn'] = 'auto',
+) -> NearestNeighbors:
+  """
   Parameters
   ----------
   X : `ndarray` or tuple of (X, y)
@@ -264,14 +273,13 @@ def fast_knn(X,
   ## fine-tuning the kwargs
   use_cuml = _check_cuml(framework)
   if use_cuml:
-    from cuml.neighbors import NearestNeighbors
-    kwargs['n_gpus'] = kwargs['n_jobs']
+    from cuml.neighbors import NearestNeighbors as KNN
     kwargs.pop('n_jobs')
     kwargs.pop('algorithm')
   else:
-    from sklearn.neighbors import NearestNeighbors
+    KNN = NearestNeighbors
   ## fitting
-  knn = NearestNeighbors(**kwargs)
+  knn = KNN(**kwargs)
   knn.fit(X)
   knn._fitid = id(X)
   ## Transform mode

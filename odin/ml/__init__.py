@@ -7,6 +7,7 @@ from odin.ml.cluster import fast_dbscan, fast_kmeans, fast_knn
 from odin.ml.tree import *
 from odin.ml.decompositions import *
 from odin.ml.fast_lda_topics import fast_lda_topics, get_topics_string
+from odin.ml.linear_model import *
 from odin.ml.fast_tsne import fast_tsne
 from odin.ml.fast_umap import fast_umap
 from odin.ml.gmm_classifier import GMMclassifier
@@ -18,6 +19,7 @@ from odin.ml.neural_nlp import *
 from odin.ml.plda import PLDA
 from odin.ml.scoring import (Scorer, VectorNormalizer, compute_class_avg,
                              compute_wccn, compute_within_cov)
+from odin.utils import get_function_arguments
 from sklearn.base import ClassifierMixin
 from typing_extensions import Literal
 from enum import IntFlag, auto
@@ -128,6 +130,7 @@ def dimension_reduce(*X,
                      algo: Literal['pca', 'umap', 'tsne', 'knn',
                                    'kmean'] = 'pca',
                      n_components: int = 2,
+                     max_samples: Optional[int] = None,
                      return_model: bool = False,
                      random_state: int = 1,
                      **kwargs) -> np.ndarray:
@@ -158,36 +161,41 @@ def dimension_reduce(*X,
       Invalid algorithm
   """
   algo = str(algo).strip().lower()
+  X_train = X
   if 'pca' in algo:
-    outputs = fast_pca(*X,
-                       n_components=n_components,
-                       random_state=random_state,
-                       return_model=return_model,
-                       **kwargs)
+    fn = fast_pca
   elif 'umap' in algo:
-    outputs = fast_umap(*X,
-                        n_components=n_components,
-                        random_state=random_state,
-                        return_model=return_model,
-                        **kwargs)
+    fn = fast_umap
   elif 'tsne' in algo:
-    outputs = fast_tsne(*X,
-                        n_components=n_components,
-                        random_state=random_state,
-                        return_model=return_model,
-                        **kwargs)
+    fn = fast_tsne
   elif 'knn' in algo:
-    model = fast_knn(X[0], n_neighbors=n_components, **kwargs)
-    outputs = [model.kneighbors(x) for x in X]
+    fn = fast_knn
+    X_train = X[0]
   elif 'kmean' in algo:
-    model = fast_kmeans(X[0],
-                        n_clusters=n_components,
-                        random_state=random_state,
-                        **kwargs)
-    outputs = [model.transform(x) for x in X]
+    fn = fast_kmeans
+    X_train = X[0]
   else:
     raise ValueError(
-        "No support for dimension reduction algorithm with name: '%s'" % algo)
+        f"No support for dimension reduction algorithm with name: '{algo}'")
+  ## prepare k
+  kw = dict(n_components=n_components,
+            n_neighbors=n_components,
+            max_samples=max_samples,
+            return_model=return_model,
+            random_state=random_state)
+  kw.update(kwargs)
+  args = set(get_function_arguments(fn))
+  kw = {k: v for k, v in kw.items() if k in args}
+  ## train and predict
+  outputs = fn(X_train, **kw)
+  if algo == 'knn':  #TODO: no exactly a dimension reduction method here
+    outputs = [outputs.kneighbors(x) for x in X]
+    if len(X) == 1:
+      outputs = outputs[0]
+  elif 'kmean' in algo:
+    outputs = [outputs.transform(x) for x in X]
+    if len(X) == 1:
+      outputs = outputs[0]
   return outputs
 
 
@@ -232,6 +240,7 @@ class DimReduce(IntFlag):
   def __call__(self,
                *X,
                n_components: int = 2,
+               max_samples: Optional[int] = None,
                return_model: bool = False,
                random_state: int = 1,
                **kwargs) -> np.ndarray:
@@ -239,6 +248,7 @@ class DimReduce(IntFlag):
       return [
           method(*X,
                  n_components=n_components,
+                 max_samples=max_samples,
                  return_model=return_model,
                  random_state=random_state,
                  **kwargs) for method in self
@@ -246,6 +256,7 @@ class DimReduce(IntFlag):
     return dimension_reduce(*X,
                             algo=self.name.lower(),
                             n_components=n_components,
+                            max_samples=max_samples,
                             return_model=return_model,
                             random_state=random_state,
                             **kwargs)
