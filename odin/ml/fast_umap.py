@@ -5,34 +5,36 @@ from typing import Optional, Any, Dict, Union, Callable
 from typing_extensions import Literal
 
 
-def fast_umap(*X,
-              n_components: int = 2,
-              n_neighbors: int = 12,
-              max_samples: Optional[int] = None,
-              metric: str = "euclidean",
-              n_epochs: Optional[int] = None,
-              learning_rate: float = 1.0,
-              init: Literal['spectral', 'random'] = "spectral",
-              min_dist: float = 0.1,
-              spread: float = 1.0,
-              set_op_mix_ratio: float = 1.0,
-              local_connectivity: float = 1.0,
-              repulsion_strength: float = 1.0,
-              negative_sample_rate: int = 5,
-              transform_queue_size: float = 4.0,
-              a: float = None,
-              b: float = None,
-              metric_kwds: Dict[str, Any] = None,
-              angular_rp_forest: bool = False,
-              target_n_neighbors: int = -1,
-              target_metric: Union[str, Callable] = "categorical",
-              target_metric_kwds: Dict[str, Any] = None,
-              target_weight: float = 0.5,
-              transform_seed: int = 42,
-              random_state: int = 1,
-              return_model: bool = False,
-              framework: Literal['auto', 'cuml', 'umap'] = 'cuml',
-              verbose: bool = False):
+def fast_umap(
+    *X,
+    n_components: int = 2,
+    n_neighbors: int = 15,
+    max_samples: Optional[int] = None,
+    metric: str = "euclidean",
+    n_epochs: Optional[int] = None,
+    learning_rate: float = 1.0,
+    init: Literal['spectral', 'random'] = "spectral",
+    min_dist: float = 0.1,
+    spread: float = 1.0,
+    set_op_mix_ratio: float = 1.0,
+    local_connectivity: float = 1.0,
+    repulsion_strength: float = 1.0,
+    negative_sample_rate: int = 5,
+    transform_queue_size: float = 4.0,
+    a: float = None,
+    b: float = None,
+    metric_kwds: Dict[str, Any] = None,
+    angular_rp_forest: bool = False,
+    target_n_neighbors: int = -1,
+    target_metric: Union[str, Callable] = "categorical",
+    target_metric_kwds: Dict[str, Any] = None,
+    target_weight: float = 0.5,
+    transform_seed: int = 42,
+    random_state: int = 1,
+    return_model: bool = False,
+    framework: Literal['auto', 'cuml', 'umap'] = 'umap',
+    verbose: bool = False,
+):
   """Uniform Manifold Approximation and Projection
 
   Finds a low dimensional embedding of the data that approximates
@@ -181,9 +183,9 @@ def fast_umap(*X,
   # ====== kwarg for creating UMAP class ====== #
   kwargs = dict(locals())
   del kwargs['X']
-  kwargs.pop('max_samples', None)
-  kwargs.pop('return_model', False)
-  kwargs.pop('framework', False)
+  kwargs.pop('max_samples')
+  kwargs.pop('return_model')
+  kwargs.pop('framework')
   # check X
   if isinstance(X[0], (tuple, list)):
     X = X[0]
@@ -209,7 +211,7 @@ def fast_umap(*X,
       from umap import UMAP
     except ImportError:
       raise ImportError(msg)
-  else:
+  else: # use cuML
     try:
       from cuml import UMAP
       for key in ('angular_rp_forest', 'metric', 'metric_kwds',

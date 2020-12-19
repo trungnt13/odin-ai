@@ -73,17 +73,17 @@ def create_gym(dsname: str, vae: VariationalAutoencoder) -> DisentanglementGym:
   gym.set_config(track_gradients=True, mode='train', **cfg)
   gym.set_config(track_gradients=False, mode='valid', **cfg)
   gym.set_config(
-      # correlation_methods=Correlation.Lasso | Correlation.Importance |
-      # Correlation.Spearman | Correlation.MutualInfo,
+      correlation_methods=Correlation.Lasso | Correlation.Importance |
+      Correlation.Spearman | Correlation.MutualInfo,
       dimension_reduction=DimReduce.UMAP | DimReduce.TSNE | DimReduce.PCA,
-      # latents_pairs=Correlation.Lasso | Correlation.MutualInfo,
-      # elbo=True,
-      # sap_score=True,
-      # dci_score=True,
-      # beta_vae=True,
-      # factor_vae=True,
-      # adjusted_mutual_info=True,
-      # normalized_mutual_info=True,
+      latents_pairs=Correlation.Lasso | Correlation.MutualInfo,
+      elbo=True,
+      sap_score=True,
+      dci_score=True,
+      beta_vae=True,
+      factor_vae=True,
+      adjusted_mutual_info=True,
+      normalized_mutual_info=True,
       mode='test',
       **cfg)
   return gym
@@ -148,10 +148,10 @@ def main(cfg: dict):
   ### evaluation
   if cfg.eval:
     vae.load_weights()
-    # gym.train()
-    # gym(save_path=gym_train_path, dpi=200, verbose=True)
-    # gym.valid()
-    # gym(save_path=gym_valid_path, dpi=200, verbose=True)
+    gym.train()
+    gym(save_path=gym_train_path, dpi=200, verbose=True)
+    gym.valid()
+    gym(save_path=gym_valid_path, dpi=200, verbose=True)
     gym.test()
     gym(save_path=gym_test_path, dpi=200, verbose=True)
   ### fit

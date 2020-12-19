@@ -33,20 +33,25 @@ def fast_tsne(
     learning_rate: float = 200.0,
     n_iter: int = 1000,
     n_iter_without_progress: int = 300,
+    exaggeration_iter: int = 250,
+    perplexity_max_iter: int = 100,
     min_grad_norm: float = 1e-7,
     method: str = 'barnes_hut',
     metric: str = "euclidean",
     init: str = "random",
-    verbose: int = 0,
     angle: float = 0.5,
     n_jobs: Optional[int] = 4,
-    combined: bool = True,
+    merge_inputs: bool = True,
     pca_preprocessing: bool = True,
     return_model: bool = False,
     random_state: int = 1,
+    verbose: int = 0,
     framework: Literal['auto', 'sklearn', 'cuml'] = 'auto',
 ):
-  """ t-Stochastic Nearest Neighbors
+  """ t-Stochastic Nearest Neighbors.
+  If the algorithm take unexpected long time for running, lower the
+  `exaggeration_iter`, or reduce the amount of samples by downsampling
+  the dataset.
 
   Parameters
   ----------
@@ -83,6 +88,10 @@ def fast_tsne(
       optimization, used after 250 initial iterations with early
       exaggeration. Note that progress is only checked every 50 iterations so
       this value is rounded to the next multiple of 50.
+  perplexity_max_iter : int, (default 100)
+      The number of epochs the best gaussian bands are found for.
+  exaggeration_iter : int, (default 250)
+      To promote the growth of clusters, set this higher.
   min_grad_norm : float, optional (default: 1e-7)
       If the gradient norm is below this threshold, the optimization will
       be stopped.
@@ -103,7 +112,7 @@ def fast_tsne(
       PCA initialization cannot be used with precomputed distances and is
       usually more globally stable than random initialization.
   verbose : int, optional (default: 0)
-      Verbosity level.
+      Verbosity level, a number from 0 to 6.
   random_state : int, RandomState instance or None, optional (default: None)
       If int, random_state is the seed used by the random number generator;
       If RandomState instance, random_state is the random number generator;
@@ -126,9 +135,11 @@ def fast_tsne(
       This method is not very sensitive to changes in this parameter
       in the range of 0.2 - 0.8. Angle less than 0.2 has quickly increasing
       computation time and angle greater 0.8 has quickly increasing error.
-  return_model : a Boolean, if `True`, return the trained t-SNE model
-  combined : a Boolean, if `True`, combined all arrays into a single array
-    for training t-SNE.
+  return_model : a Boolean, if `True`,
+      return the trained t-SNE model
+  merge_inputs : a Boolean, if `True`,
+      merge all arrays into a single array
+      for training t-SNE.
   """
   assert len(X) > 0, "No input is given!"
   if isinstance(X[0], (tuple, list)):
@@ -138,7 +149,7 @@ def fast_tsne(
   # ====== kwarg for creating T-SNE class ====== #
   kwargs = dict(locals())
   del kwargs['X']
-  kwargs.pop('combined')
+  kwargs.pop('merge_inputs')
   kwargs.pop('return_model')
   kwargs.pop('max_samples')
   kwargs.pop('framework')
@@ -177,14 +188,17 @@ def fast_tsne(
   if tsne_version == 'cuda':
     del kwargs['n_jobs']
   elif tsne_version == 'multicore':
-    pass
+    del kwargs['perplexity_max_iter']
+    del kwargs['exaggeration_iter']
   else:
     del kwargs['n_jobs']
+    del kwargs['perplexity_max_iter']
+    del kwargs['exaggeration_iter']
   # ====== getting cached values ====== #
   results = []
   X_new = []
   X_size = []
-  if combined:
+  if merge_inputs:
     X_size = [x.shape[0] for x in X]
     x = np.vstack(X) if len(X) > 1 else X[0]
     md5 = md5_checksum(x)
@@ -228,7 +242,7 @@ def fast_tsne(
       _cached_values[_create_key(tsne_version, kwargs, md5)] = x
       model.append(m)
   # ====== return and clean ====== #
-  if combined and len(X_size) > 1:
+  if merge_inputs and len(X_size) > 1:
     indices = [0] + np.cumsum(X_size).tolist()
     results = [results[0][1][s:e] for s, e in zip(indices, indices[1:])]
   else:

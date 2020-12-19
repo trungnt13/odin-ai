@@ -20,7 +20,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import f1_score
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import StandardScaler
-from sklearn.svm import LinearSVC, SVC
+from sklearn.svm import LinearSVC
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.distributions import Distribution
 from tqdm import tqdm
@@ -214,7 +214,7 @@ def separated_attr_predictability(
     test_size: float = 0.2,
     continuous_factors: bool = False,
     seed: int = 1,
-    max_iter: int = 2000,
+    max_iter: int = 4000,
 ):
   """The SAP score
 
@@ -262,15 +262,10 @@ def separated_attr_predictability(
         # Attribute is considered discrete.
         x_i_test = repr_test[:, i]
         y_j_test = factor_test[:, j]
-        classifier = SVC(kernel='linear',
-                         C=0.01,
-                         max_iter=max_iter,
-                         class_weight='balanced',
-                         random_state=seed)
-        # LinearSVC(C=0.01,
-        #                        max_iter=max_iter,
-        #                        class_weight="balanced",
-        #                        random_state=seed)
+        classifier = LinearSVC(C=0.01,
+                               max_iter=max_iter,
+                               class_weight="balanced",
+                               random_state=seed)
         normalizer = StandardScaler()
         classifier.fit(normalizer.fit_transform(np.expand_dims(x_i, axis=-1)),
                        y_j)
@@ -347,7 +342,6 @@ def _sampling_helper(representations: tfd.Distribution,
     get_x = lambda ids: _X[rand.randint(0, n_mcmc)][ids]
   ### prepare the sampling progress
   if verbose:
-    from tqdm import tqdm
     prog = tqdm(total=n_samples, desc=str(desc), unit='sample')
   count = 0
   while count < n_samples:
@@ -420,7 +414,7 @@ def beta_vae_score(representations: tfd.Distribution,
   rand = RandomState(seed=seed)
   features, labels = _sampling_helper(**locals())
   ## train the classifier
-  model = LogisticRegression(max_iter=2000,
+  model = LogisticRegression(max_iter=5000,
                              random_state=rand.randint(1e8),
                              n_jobs=n_jobs)
   model.fit(features, labels)

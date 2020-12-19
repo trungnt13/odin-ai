@@ -116,7 +116,7 @@ def _process_labels(y: tf.Tensor, dsname: str,
     y_discrete = discretizing(y,
                               n_bins=[15, 8, 4, 10, 10, 10],
                               strategy='uniform')
-    names = [f'shape{i}' for i in range(4)]
+    names = ['cube', 'cylinder', 'sphere', 'round']
   elif 'dsprites' in dsname:
     y_categorical = y[:, 2]
     y_discrete = discretizing(y, n_bins=[10, 6, 3, 8, 8], strategy='uniform')
@@ -525,7 +525,7 @@ class DisentanglementGym:
       }
       outputs.update(elbo_llk)
       outputs.update(elbo_kl)
-    ## latents stats
+    ## latents statsss
     if self._latents_stats:
       w_d = vae.decoder.trainable_variables[0]
       if w_d.shape.ndims == 2:  # dense weights
@@ -596,8 +596,8 @@ class DisentanglementGym:
           for z_idx, z in qz_mean.items():
             _x, _y = z, labels
             if method == DimReduce.TSNE:
-              _x, _y = _x[:10000], _y[:10000]  # maximum 10000 data points
-            _x = method(_x, n_components=2)
+              _x, _y = _x[:10000], _y[:10000]  # maximum 8000 data points
+            _x = method(_x, n_components=2, exaggeration_iter=80)
             fig = plt.figure(figsize=(8, 8), dpi=150)
             vs.plot_scatter(_x, color=_y, size=10.0, alpha=0.6, grid=False)
             outputs[f'{name}{z_idx}'] = vs.plot_to_image(fig, dpi=dpi)

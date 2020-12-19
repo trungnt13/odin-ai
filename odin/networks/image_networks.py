@@ -514,13 +514,13 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
     init_lr = 1e-3
     decay_steps = 2500
   elif 'cifar' in dataset_name:
-    max_iter = 80000
-    init_lr = 1e-4
-    decay_steps = 5000
-  elif 'dsprites' in dataset_name:
     max_iter = 100000
-    init_lr = 1e-3
-    decay_steps = 5000
+    init_lr = 1e-4
+    decay_steps = 8000
+  elif 'dsprites' in dataset_name:
+    max_iter = 120000
+    init_lr = 2e-4
+    decay_steps = 10000
   elif 'shapes3dsmall' in dataset_name:
     max_iter = 150000
     init_lr = 5e-4

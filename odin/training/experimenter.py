@@ -31,9 +31,15 @@ except ImportError as e:
   print(e)
 
 __all__ = [
-    'pretty_print', 'flatten_config', 'hash_config', 'save_to_yaml', \
-    'get_hydra_config', 'get_overrides', 'get_output_dir', 'get_sweep_dir', \
-    'run_hydra'
+    'pretty_print',
+    'flatten_config',
+    'hash_config',
+    'save_to_yaml',
+    'get_hydra_config',
+    'get_overrides',
+    'get_output_dir',
+    'get_sweep_dir',
+    'run_hydra',
 ]
 
 # ===========================================================================

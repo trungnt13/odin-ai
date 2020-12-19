@@ -635,6 +635,7 @@ class Trainer(object):
       start_time = progress.start_t
       last_print_time = 0
       last_valid_time = start_time
+      is_nan = False
       for cur_iter, inputs in enumerate(progress):
         self._n_iter += 1
         tf.summary.experimental.set_step(self.n_iter)
@@ -652,6 +653,7 @@ class Trainer(object):
         # do not record the loss and metrics at every iteration, the
         # performance will drop about 40%
         if terminate_on_nan and np.isnan(loss) or np.isinf(loss):
+          is_nan = True
           progress.write(
               f" *Terminated on NaN loss at iteration #{int(self.n_iter)}")
           for k, v in metrics.items():
@@ -693,7 +695,8 @@ class Trainer(object):
         #########
       # Final callback to signal train ended
       self._is_training = False
-      _process_callback_returns(progress, log_tag, self.n_iter, callback())
+      if not is_nan:
+        _process_callback_returns(progress, log_tag, self.n_iter, callback())
       # end the progress
       progress.clear()
       progress.close()
