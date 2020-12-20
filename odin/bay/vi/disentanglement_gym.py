@@ -566,6 +566,9 @@ class DisentanglementGym:
                                              verbose=verbose,
                                              labels=self.ds.labels)
       qz_mean = {idx: q.mean().numpy() for idx, q in qz.items()}
+      # qz_sample = {
+      #     idx: q.sample(seed=self.seed).numpy() for idx, q in qz.items()
+      # }
       # latents pairs
       if self._latents_pairs is not None:
         for method in self._latents_pairs:
@@ -591,12 +594,13 @@ class DisentanglementGym:
             outputs[f'{name}{z_idx}'] = vs.plot_to_image(plt.gcf(), dpi=dpi)
       # dimension reduction
       if self._dimension_reduction is not None:
+        from odin.ml import fast_tsne, fast_umap, fast_pca
         for method in self._dimension_reduction:
           name = method.name.lower()
           for z_idx, z in qz_mean.items():
             _x, _y = z, labels
             if method == DimReduce.TSNE:
-              _x, _y = _x[:10000], _y[:10000]  # maximum 8000 data points
+              _x, _y = _x[:10000], _y[:10000]  # maximum 10000 data points
             _x = method(_x, n_components=2, exaggeration_iter=80)
             fig = plt.figure(figsize=(8, 8), dpi=150)
             vs.plot_scatter(_x, color=_y, size=10.0, alpha=0.6, grid=False)

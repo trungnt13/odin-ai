@@ -178,17 +178,19 @@ def dimension_reduce(*X,
     raise ValueError(
         f"No support for dimension reduction algorithm with name: '{algo}'")
   ## prepare k
-  kw = dict(n_components=n_components,
-            n_neighbors=n_components,
-            max_samples=max_samples,
+  kw = dict(max_samples=max_samples,
             return_model=return_model,
             random_state=random_state)
+  if algo == 'knn':
+    kw['n_neighbors'] = n_components
+  else:
+    kw['n_components'] = n_components
   kw.update(kwargs)
   args = set(get_function_arguments(fn))
   kw = {k: v for k, v in kw.items() if k in args}
   ## train and predict
   outputs = fn(X_train, **kw)
-  if algo == 'knn':  #TODO: no exactly a dimension reduction method here
+  if algo == 'knn':
     outputs = [outputs.kneighbors(x) for x in X]
     if len(X) == 1:
       outputs = outputs[0]

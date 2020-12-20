@@ -8,7 +8,7 @@ from typing_extensions import Literal
 def fast_umap(
     *X,
     n_components: int = 2,
-    n_neighbors: int = 15,
+    n_neighbors: int = 12,
     max_samples: Optional[int] = None,
     metric: str = "euclidean",
     n_epochs: Optional[int] = None,
@@ -42,17 +42,17 @@ def fast_umap(
 
   Parameters
   ----------
-  n_neighbors: float (optional, default 15)
+  n_components: int (optional, default 2)
+      The dimension of the space to embed into. This defaults to 2 to
+      provide easy visualization, but can reasonably be set to any
+      integer value in the range 2 to 100.
+  n_neighbors: float (optional, default 12)
       The size of local neighborhood (in terms of number of neighboring
       sample points) used for manifold approximation. Larger values
       result in more global views of the manifold, while smaller
       values result in more local data being preserved. In general
       values should be in the range 2 to 100.
       Note: try to reduce `n_neighbors` for big dataset
-  n_components: int (optional, default 2)
-      The dimension of the space to embed into. This defaults to 2 to
-      provide easy visualization, but can reasonably be set to any
-      integer value in the range 2 to 100.
   metric: string or function (optional, default 'euclidean')
       The metric to use to compute distances in high dimensional space.
       If a string is passed it must match a valid predefined metric. If
@@ -190,14 +190,14 @@ def fast_umap(
   if isinstance(X[0], (tuple, list)):
     X = X[0]
   if not all(isinstance(x, np.ndarray) for x in X):
-    raise ValueError("`X` can only be list of numpy.ndarray or numpy.ndarray")
+    raise ValueError("`X` can only be list of numpy.ndarray")
   # ====== downsampling ====== #
   if max_samples is not None:
     max_samples = int(max_samples)
     assert max_samples > 0
     new_X = []
-    rand = random_state if isinstance(random_state, np.random.RandomState) else \
-    np.random.RandomState(seed=random_state)
+    rand = (random_state if isinstance(random_state, np.random.RandomState) else
+            np.random.RandomState(seed=random_state))
     for x in X:
       if x.shape[0] > max_samples:
         ids = rand.permutation(x.shape[0])[:max_samples]
@@ -211,7 +211,7 @@ def fast_umap(
       from umap import UMAP
     except ImportError:
       raise ImportError(msg)
-  else: # use cuML
+  else:  # use cuML
     try:
       from cuml import UMAP
       for key in ('angular_rp_forest', 'metric', 'metric_kwds',

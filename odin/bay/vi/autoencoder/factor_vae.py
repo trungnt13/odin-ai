@@ -163,11 +163,12 @@ class factorVAE(betaVAE):
                beta: float = 1.0,
                lamda: float = 1.0,
                maximize_tc: bool = False,
+               name: str = 'FactorVAE',
                **kwargs):
     ss_strategy = kwargs.pop('ss_strategy', 'logsumexp')
     labels = kwargs.pop(
         'labels', RVmeta(1, 'bernoulli', projection=True, name="discriminator"))
-    super().__init__(beta=beta, **kwargs)
+    super().__init__(beta=beta, name=name, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     self.lamda = tf.convert_to_tensor(lamda, dtype=self.dtype, name='lamda')
     ## init discriminator
@@ -307,8 +308,8 @@ class factorVAE(betaVAE):
 # ===========================================================================
 # Same as Factor VAE but with multi-task semi-supervised extension
 # ===========================================================================
-class ssfactorVAE(factorVAE):
-  r""" Semi-supervised Factor VAE
+class semifactorVAE(factorVAE):
+  """Semi-supervised Factor VAE
 
   Note:
     The classifier won't be optimized during the training, with an unstable
@@ -318,16 +319,19 @@ class ssfactorVAE(factorVAE):
     the classifier for training, then it could reach > 90% accuracy easily.
   """
 
-  def __init__(self,
-               labels: RVmeta = RVmeta(10,
-                                       'onehot',
-                                       projection=True,
-                                       name="Labels"),
-               alpha: float = 10.,
-               ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
-                                    'min'] = 'logsumexp',
-               **kwargs):
-    super().__init__(ss_strategy=ss_strategy, labels=labels, **kwargs)
+  def __init__(
+      self,
+      labels: RVmeta = RVmeta(10, 'onehot', projection=True, name="Labels"),
+      alpha: float = 10.,
+      ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
+                           'min'] = 'logsumexp',
+      name: str = 'SemiFactorVAE',
+      **kwargs,
+  ):
+    super().__init__(ss_strategy=ss_strategy,
+                     labels=labels,
+                     name=name,
+                     **kwargs)
     self.n_labels = self.discriminator.n_outputs
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
 
@@ -408,7 +412,7 @@ class factor2VAE(factorVAE):
     return llk, div
 
 
-class ssfactor2VAE(ssfactorVAE, factor2VAE):
+class semifactor2VAE(semifactorVAE, factor2VAE):
   r""" Combination of Semi-supervised VAE and Factor-2 VAE which leverages
   both labelled samples and the use of 2 latents space (1 for contents, and
   1 for factors)

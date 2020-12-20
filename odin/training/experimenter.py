@@ -404,6 +404,12 @@ def run_hydra(output_dir: str = '/tmp/outputs',
       ## run hydra
       @functools.wraps(task_function)
       def _task_function(_cfg):
+        # print out the running config
+        cfg_text = '\n ----------- \n'
+        cfg_text += OmegaConf.to_yaml(_cfg)[:-1]
+        cfg_text += '\n -----------'
+        logger.info(cfg_text)
+        # remove the exists
         if remove_exists:
           output_dir = get_output_dir()
           dir_base = os.path.dirname(output_dir)
