@@ -31,7 +31,8 @@ dependencies:
       - tensorflow>=2.4.0
       - tensorflow-probability==0.12.0-rc4
       - tensorflow-datasets
-      - tensorflow-addons
+      # - tensorflow-addons
+      - tfa-nightly
       - transformers
       - kaggle
       - hydra-core>=1.0.0

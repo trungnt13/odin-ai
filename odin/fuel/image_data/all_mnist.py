@@ -240,7 +240,7 @@ class BinarizedAlphaDigits(BinarizedMNIST):
 
 class FashionMNIST(BinarizedMNIST):
 
-  def __init__(self, normalize: bool = True):
+  def __init__(self, normalize: bool = True, seed: int = 1):
     self._normalize = normalize
     self.train, self.valid, self.test = tfds.load(
         name='fashion_mnist',

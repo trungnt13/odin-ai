@@ -1265,7 +1265,7 @@ def plot_close():
 
 def plot_to_image(figure: plt.Figure,
                   close_figure: bool = True,
-                  dpi: int = 150) -> tf.Tensor:
+                  dpi: int = 150):
   """Convert the figure to png image for tensorboard"""
   # Save the plot to a PNG in memory.
   buf = io.BytesIO()

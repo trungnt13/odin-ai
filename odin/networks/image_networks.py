@@ -6,7 +6,7 @@
 import inspect
 from functools import partial
 from numbers import Number
-from typing import Callable, Dict, List, Union, Any, Tuple
+from typing import Callable, Dict, List, Union, Any, Tuple, Optional
 from typeguard import typechecked
 
 from six import string_types
@@ -53,6 +53,22 @@ class CenterAt0(keras.layers.Layer):
     return inputs
 
 
+class LogNorm(keras.layers.Layer):
+
+  def __init__(self, enable: bool = True, name: str = 'LogNorm'):
+    super().__init__(name=name)
+    self.scale_factor = 10000
+    self.eps = 1e-8
+    self.enable = bool(enable)
+
+  def call(self, x, **kwargs):
+    if self.enable:
+      x = x / (tf.reduce_sum(x, axis=-1, keepdims=True) + self.eps)
+      x = x * self.scale_factor
+      x = tf.math.log1p(x)
+    return x
+
+
 def _prepare_cnn(activation=tf.nn.leaky_relu):
   # he_uniform is better for leaky_relu
   if activation is tf.nn.leaky_relu:
@@ -72,7 +88,7 @@ def _prepare_cnn(activation=tf.nn.leaky_relu):
 
 class SkipSequential(keras.Model):
 
-  def __init__(self, layers=[], name='SkipGenerator'):
+  def __init__(self, layers: List[Layer] = [], name: str = 'SkipGenerator'):
     super().__init__(name=name)
     self.all_layers = list(layers)
     self.proj_layers = list()
@@ -118,7 +134,7 @@ class SkipSequential(keras.Model):
 @typechecked
 def mnist_networks(
     qz: str = 'mvndiag',
-    zdim: int = 16,
+    zdim: Optional[int] = 16,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
@@ -129,6 +145,8 @@ def mnist_networks(
   from odin.bay.random_variable import RVmeta
   n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (28, 28, n_channels)
+  if zdim is None:
+    zdim = 16
   conv, deconv = _prepare_cnn(activation=activation)
   encoder = keras.Sequential(
       [
@@ -181,7 +199,7 @@ fashionmnist_networks = mnist_networks
 @typechecked
 def cifar_networks(
     qz: str = 'mvndiag',
-    zdim: int = 16,
+    zdim: Optional[int] = 16,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
@@ -190,6 +208,8 @@ def cifar_networks(
 ) -> Dict[str, Layer]:
   """Network for CIFAR dataset image size (32, 32, 3)"""
   from odin.bay.random_variable import RVmeta
+  if zdim is None:
+    zdim = 16
   n_channels = int(kwargs.get('n_channels', 3))
   input_shape = (32, 32, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
@@ -267,7 +287,7 @@ def _dsprites_distribution(x: tf.Tensor) -> Blockwise:
 @typechecked
 def dsprites_networks(
     qz: str = 'mvndiag',
-    zdim: int = 10,
+    zdim: Optional[int] = 10,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
@@ -275,6 +295,8 @@ def dsprites_networks(
     **kwargs,
 ) -> Dict[str, Layer]:
   from odin.bay.random_variable import RVmeta
+  if zdim is None:
+    zdim = 10
   n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (64, 64, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
@@ -329,13 +351,15 @@ def dsprites_networks(
 
 def dspritessmall_networks(
     qz: str = 'mvndiag',
-    zdim: int = 10,
+    zdim: Optional[int] = 10,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
     **kwargs,
 ) -> Dict[str, Layer]:
+  if zdim is None:
+    zdim = 10
   networks = mnist_networks(qz=qz,
                             zdim=zdim,
                             activation=activation,
@@ -374,12 +398,14 @@ def _shapes3d_distribution(x: tf.Tensor) -> Blockwise:
 
 
 def shapes3dsmall_networks(qz: str = 'mvndiag',
-                           zdim: int = 6,
+                           zdim: Optional[int] = 6,
                            activation: Union[Callable, str] = tf.nn.leaky_relu,
                            is_semi_supervised: bool = False,
                            centerize_image: bool = True,
                            skip_generator: bool = False,
                            **kwargs) -> Dict[str, Layer]:
+  if zdim is None:
+    zdim = 6
   networks = mnist_networks(qz=qz,
                             zdim=zdim,
                             activation=activation,
@@ -398,12 +424,14 @@ def shapes3dsmall_networks(qz: str = 'mvndiag',
 
 
 def shapes3d_networks(qz: str = 'mvndiag',
-                      zdim: int = 6,
+                      zdim: Optional[int] = 6,
                       activation: Union[Callable, str] = tf.nn.leaky_relu,
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
                       skip_generator: bool = False,
                       **kwargs) -> Dict[str, Layer]:
+  if zdim is None:
+    zdim = 6
   networks = dsprites_networks(qz=qz,
                                zdim=zdim,
                                activation=activation,
@@ -424,12 +452,14 @@ def shapes3d_networks(qz: str = 'mvndiag',
 # CelebA
 # ===========================================================================
 def celebasmall_networks(qz: str = 'mvndiag',
-                         zdim: int = 10,
+                         zdim: Optional[int] = 10,
                          activation: Union[Callable, str] = tf.nn.leaky_relu,
                          is_semi_supervised: bool = False,
                          centerize_image: bool = True,
                          skip_generator: bool = False,
                          **kwargs):
+  if zdim is None:
+    zdim = 10
   networks = mnist_networks(qz=qz,
                             zdim=zdim,
                             activation=activation,
@@ -447,12 +477,14 @@ def celebasmall_networks(qz: str = 'mvndiag',
 
 
 def celeba_networks(qz: str = 'mvndiag',
-                    zdim: int = 10,
+                    zdim: Optional[int] = 10,
                     activation: Union[Callable, str] = tf.nn.leaky_relu,
                     is_semi_supervised: bool = False,
                     centerize_image: bool = True,
                     skip_generator: bool = False,
                     **kwargs):
+  if zdim is None:
+    zdim = 10
   networks = dsprites_networks(qz=qz,
                                zdim=zdim,
                                activation=activation,
@@ -469,14 +501,182 @@ def celeba_networks(qz: str = 'mvndiag',
 
 
 # ===========================================================================
+# Gene Networks
+# ===========================================================================
+@typechecked
+def cortex_networks(
+    qz: str = 'mvndiag',
+    zdim: Optional[int] = 10,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
+    is_semi_supervised: bool = False,
+    log_norm: bool = True,
+    cnn: bool = False,
+    units: List[int] = [256, 256, 256],
+    **kwargs,
+) -> Dict[str, Layer]:
+  """Network for Cortex mRNA sequencing datasets"""
+  from odin.bay.random_variable import RVmeta
+  input_shape = (558,)
+  n_labels = 7
+  if zdim is None:
+    zdim = 10
+  ## dense network
+  if not cnn:
+    encoder = keras.Sequential(
+        [LogNorm(enable=log_norm)] + [
+            keras.layers.Dense(u, activation=activation, name=f'encoder{i}')
+            for i, u in enumerate(units)
+        ],
+        name='encoder',
+    )
+    decoder = keras.Sequential(
+        [
+            keras.layers.Dense(u, activation=activation, name=f'decoder{i}')
+            for i, u in enumerate(units)
+        ],
+        name='decoder',
+    )
+  ## cnn
+  else:
+    Conv1D = partial(keras.layers.Conv1D,
+                     strides=2,
+                     padding='same',
+                     activation=activation)
+    Conv1DTranspose = partial(keras.layers.Conv1DTranspose,
+                              strides=2,
+                              padding='same',
+                              activation=activation)
+    encoder = keras.Sequential(
+        [
+            LogNorm(enable=log_norm),
+            keras.layers.Lambda(
+                lambda x: tf.expand_dims(x, axis=-1)),  # (n, 2019, 1)
+            Conv1D(32, 7, name='encoder0'),
+            Conv1D(64, 5, name='encoder1'),
+            Conv1D(128, 3, name='encoder2'),
+            keras.layers.Flatten()
+        ],
+        name='encoder',
+    )
+    decoder = keras.Sequential(
+        [
+            keras.layers.Dense(128, activation=activation, name='decoder0'),
+            keras.layers.Lambda(
+                lambda x: tf.expand_dims(x, axis=-1)),  # (n, 256, 1)
+            Conv1DTranspose(128, 3, strides=1, name='decoder1'),
+            Conv1DTranspose(64, 5, name='decoder3'),
+            Conv1DTranspose(32, 7, name='decoder4'),
+            Conv1DTranspose(1, 1, strides=1, name='decoder5'),
+            keras.layers.Flatten()
+        ],
+        name='decoder',
+    )
+  latents = RVmeta((zdim,), qz, projection=True,
+                   name="latents").create_posterior()
+  observation = RVmeta(input_shape, "nb", projection=True,
+                       name="mRNA").create_posterior()
+  networks = dict(encoder=encoder,
+                  decoder=decoder,
+                  observation=observation,
+                  latents=latents)
+  if is_semi_supervised:
+    networks['labels'] = RVmeta(7, 'onehot', projection=True,
+                                name='celltype').create_posterior()
+  return networks
+
+
+@typechecked
+def pbmc_networks(
+    qz: str = 'mvndiag',
+    zdim: Optional[int] = 32,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
+    is_semi_supervised: bool = False,
+    log_norm: bool = True,
+    cnn: bool = True,
+    units: List[int] = [512, 512, 512],
+    **kwargs,
+) -> Dict[str, Layer]:
+  """Network for Cortex mRNA sequencing datasets"""
+  from odin.bay.random_variable import RVmeta
+  input_shape = (2019,)
+  n_labels = 32
+  if zdim is None:
+    zdim = 32
+  ## dense network
+  if not cnn:
+    encoder = keras.Sequential(
+        [LogNorm(enable=log_norm)] + [
+            keras.layers.Dense(u, activation=activation, name=f'encoder{i}')
+            for i, u in enumerate(units)
+        ],
+        name='encoder',
+    )
+    decoder = keras.Sequential(
+        [
+            keras.layers.Dense(u, activation=activation, name=f'decoder{i}')
+            for i, u in enumerate(units)
+        ],
+        name='decoder',
+    )
+  ## conv network
+  else:
+    Conv1D = partial(keras.layers.Conv1D,
+                     strides=2,
+                     padding='same',
+                     activation=activation)
+    Conv1DTranspose = partial(keras.layers.Conv1DTranspose,
+                              strides=2,
+                              padding='same',
+                              activation=activation)
+    encoder = keras.Sequential(
+        [
+            LogNorm(enable=log_norm),
+            keras.layers.Lambda(
+                lambda x: tf.expand_dims(x, axis=-1)),  # (n, 2019, 1)
+            Conv1D(32, 7, name='encoder0'),
+            Conv1D(64, 5, name='encoder1'),
+            Conv1D(128, 3, name='encoder2'),
+            Conv1D(128, 3, name='encoder3'),
+            keras.layers.Flatten()
+        ],
+        name='encoder',
+    )
+    decoder = keras.Sequential(
+        [
+            keras.layers.Dense(256, activation=activation, name='decoder0'),
+            keras.layers.Lambda(
+                lambda x: tf.expand_dims(x, axis=-1)),  # (n, 256, 1)
+            Conv1DTranspose(128, 3, strides=1, name='decoder1'),
+            Conv1DTranspose(128, 3, name='decoder2'),
+            Conv1DTranspose(64, 5, name='decoder3'),
+            Conv1DTranspose(32, 7, name='decoder4'),
+            Conv1DTranspose(1, 1, strides=1, name='decoder5'),
+            keras.layers.Flatten()
+        ],
+        name='decoder',
+    )
+  latents = RVmeta((zdim,), qz, projection=True,
+                   name="latents").create_posterior()
+  observation = RVmeta(input_shape, "zinb", projection=True,
+                       name="mRNA").create_posterior()
+  networks = dict(encoder=encoder,
+                  decoder=decoder,
+                  observation=observation,
+                  latents=latents)
+  if is_semi_supervised:
+    networks['labels'] = RVmeta(n_labels, 'nb', projection=True,
+                                name='ADT').create_posterior()
+  return networks
+
+
+# ===========================================================================
 # Utils
 # ===========================================================================
 def get_networks(dataset_name: str,
+                 *,
                  qz: str = 'mvndiag',
-                 activation: Union[Callable, str] = tf.nn.leaky_relu,
+                 zdim: Optional[int] = None,
                  is_semi_supervised: bool = False,
-                 centerize_image: bool = True,
-                 skip_generator: bool = False,
                  **kwargs) -> Dict[str, Layer]:
   dataset_name = str(dataset_name).lower().strip()
   for k, fn in globals().items():
@@ -485,10 +685,8 @@ def get_networks(dataset_name: str,
       k = k.split('_')[0]
       if k == dataset_name:
         return fn(qz=qz,
-                  activation=activation,
+                  zdim=zdim,
                   is_semi_supervised=is_semi_supervised,
-                  centerize_image=centerize_image,
-                  skip_generator=skip_generator,
                   **kwargs)
   raise ValueError('Cannot find pre-implemented network for '
                    f'dataset with name="{dataset_name}"')
@@ -509,6 +707,7 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
 
   """
   dataset_name = str(dataset_name).strip().lower()
+  ### image networks
   if 'mnist' in dataset_name:
     max_iter = 30000
     init_lr = 1e-3
@@ -537,6 +736,15 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
     max_iter = 200000
     init_lr = 1e-4
     decay_steps = 10000
+  ### gene networks
+  elif 'cortex' in dataset_name:
+    max_iter = 30000
+    init_lr = 1e-4
+    decay_steps = 5000
+  elif 'pbmc' in dataset_name:
+    max_iter = 50000
+    init_lr = 1e-4
+    decay_steps = 8000
   else:
     raise NotImplementedError(
         f'No predefined optimizer information for dataset {dataset_name}')

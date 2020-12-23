@@ -37,8 +37,8 @@ class BioDataset(IterableDataset):
 
   def __str__(self):
     return (f"<{self.__class__.__name__} "
-            f"{self.x.shape} {self.y.shape} "
-            f"{self.xvar.shape} {self.yvar.shape}>")
+            f"X:{self.x.shape} y:{self.y.shape} "
+            f"labels:{self.labels}>")
 
   @property
   def genes_dictionary(self) -> Dict[int, str]:

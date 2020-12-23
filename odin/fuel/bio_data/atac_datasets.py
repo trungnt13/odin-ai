@@ -16,19 +16,22 @@ _URL = [
     r"https://github.com/aertslab/cisTopic/raw/3394de3fb57ba5a4e6ab557c7e948e98289ded2c/data/cellData_mel.RData",
 ]
 
+__all__ = ['Melanoma', 'Forebrain', 'Insilico', 'BreastTumor', 'Leukemia']
 
-class MelanomaATAC(BioDataset):
-  r""" melanoma ATAC data from (Bravo González-Blas, et al. 2019)
 
-  Reference:
-    Bravo González-Blas, C. et al. cisTopic: cis-regulatory topic modeling
+class Melanoma(BioDataset):
+  """melanoma ATAC data from (Bravo González-Blas, et al. 2019)
+
+  References
+  ----------
+  Bravo González-Blas, C. et al. cisTopic: cis-regulatory topic modeling
       on single-cell ATAC-seq data. Nat Methods 16, 397–400 (2019).
-    Verfaillie, A. et al. Decoding the regulatory landscape of melanoma
+  Verfaillie, A. et al. Decoding the regulatory landscape of melanoma
       reveals TEADS as regulators of the invasive cell state.
       Nat Commun 6, (2015).
   """
 
-  def __init__(self, path="~/tensorflow_datasets/melanoma_atac"):
+  def __init__(self, path: str = "~/tensorflow_datasets/melanoma_atac"):
     path = os.path.abspath(os.path.expanduser(path))
     if not os.path.exists(path):
       os.makedirs(path)
@@ -115,29 +118,29 @@ def _load_scale_dataset(path, dsname):
   return x, labels, peak, np.array(list(ids.keys()))
 
 
-class ForebrainATAC(BioDataset):
+class Forebrain(BioDataset):
 
-  def __init__(self, path="~/tensorflow_datasets/scale_atac"):
+  def __init__(self, path: str = "~/tensorflow_datasets/scale_atac"):
     self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
         path=path, dsname="forebrain")
 
 
-class InSilicoATAC(BioDataset):
+class Insilico(BioDataset):
 
-  def __init__(self, path="~/tensorflow_datasets/scale_atac"):
+  def __init__(self, path: str = "~/tensorflow_datasets/scale_atac"):
     self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
         path=path, dsname="insilico")
 
 
-class BreastTumorATAC(BioDataset):
+class BreastTumor(BioDataset):
 
-  def __init__(self, path="~/tensorflow_datasets/scale_atac"):
+  def __init__(self, path: str = "~/tensorflow_datasets/scale_atac"):
     self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
         path=path, dsname="breast_tumor")
 
 
-class LeukemiaATAC(BioDataset):
+class Leukemia(BioDataset):
 
-  def __init__(self, path="~/tensorflow_datasets/scale_atac"):
+  def __init__(self, path: str = "~/tensorflow_datasets/scale_atac"):
     self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
         path=path, dsname="leukemia")
