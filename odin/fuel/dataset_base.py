@@ -109,7 +109,7 @@ class IterableDataset:
                      partition: Literal['train', 'valid', 'test',
                                         'unlabelled'] = 'train',
                      *,
-                     batch_size: int = 32,
+                     batch_size: Optional[int] = 32,
                      drop_remainder: bool = False,
                      shuffle: int = 1000,
                      prefetch: int = tf.data.experimental.AUTOTUNE,

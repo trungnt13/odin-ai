@@ -409,7 +409,7 @@ class LegoFaces(ImageDataset):
   def create_dataset(self,
                      partition: Literal['train', 'valid', 'test'] = 'train',
                      *,
-                     batch_size: int = 32,
+                     batch_size: Optional[int] = 32,
                      drop_remainder: bool = False,
                      shuffle: int = 1000,
                      cache: Optional[str] = '',
@@ -453,13 +453,14 @@ class LegoFaces(ImageDataset):
     ds = tf.data.Dataset.from_tensor_slices(X)
     if inc_labels:
       ds = tf.data.Dataset.zip((ds, tf.data.Dataset.from_tensor_slices(y)))
-    ds = ds.map(_process)
     if cache is not None:
       ds = ds.cache(str(cache))
+    ds = ds.map(_process)
     # shuffle must be called after cache
     if shuffle is not None and shuffle > 0:
       ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
-    ds = ds.batch(batch_size, drop_remainder)
+    if batch_size is not None:
+      ds = ds.batch(batch_size, drop_remainder)
     if prefetch is not None:
       ds = ds.prefetch(prefetch)
     return ds

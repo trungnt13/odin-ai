@@ -3,8 +3,8 @@ from os import path
 from setuptools import find_packages, setup
 
 ODIN_VERSION = '1.3.0'
-TENSORFLOW_VERSION = '2.4.0'
-TFP_VERSION = '0.12.0'
+TENSORFLOW_VERSION = '2.3.1'
+TFP_VERSION = '0.11.1'
 PYTORCH_VERSION = '1.7.0'
 TORCHVISION_VERSION = '1.6.0'
 

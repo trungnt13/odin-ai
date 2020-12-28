@@ -574,7 +574,7 @@ def cortex_networks(
   latents = RVmeta((zdim,), qz, projection=True,
                    name="latents").create_posterior()
   observation = RVmeta(input_shape, "nb", projection=True,
-                       name="mRNA").create_posterior()
+                       name="mrna").create_posterior()
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,
@@ -658,14 +658,14 @@ def pbmc_networks(
   latents = RVmeta((zdim,), qz, projection=True,
                    name="latents").create_posterior()
   observation = RVmeta(input_shape, "zinb", projection=True,
-                       name="mRNA").create_posterior()
+                       name="mrna").create_posterior()
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,
                   latents=latents)
   if is_semi_supervised:
     networks['labels'] = RVmeta(n_labels, 'nb', projection=True,
-                                name='ADT').create_posterior()
+                                name='adt').create_posterior()
   return networks
 
 
@@ -713,7 +713,7 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
     init_lr = 1e-3
     decay_steps = 2500
   elif 'cifar' in dataset_name:
-    max_iter = 100000
+    max_iter = 180000
     init_lr = 1e-4
     decay_steps = 8000
   elif 'dsprites' in dataset_name:

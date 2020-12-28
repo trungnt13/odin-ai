@@ -25,21 +25,22 @@ __all__ = [
 
 
 def _gmm_discretizing_predict(self, X):
-  self._check_is_fitted()
+  # self._check_is_fitted()
   means = self.means_.ravel()
   ids = self._estimate_weighted_log_prob(X).argmax(axis=1)
   # sort by increasing order of means_
   return np.expand_dims(np.argsort(means)[ids], axis=1)
 
 
-def discretizing(
-    *factors: List[np.ndarray],
-    independent: bool = True,
-    n_bins: Union[int, List[int]] = 5,
-    strategy: Literal['uniform', 'quantile', 'kmeans', 'gmm'] = 'quantile',
-    return_model: bool = False,
-):
-  r""" Transform continuous value into discrete
+def discretizing(*factors: List[np.ndarray],
+                 independent: bool = True,
+                 n_bins: Union[int, List[int]] = 5,
+                 strategy: Literal['uniform', 'quantile', 'kmeans',
+                                   'gmm'] = 'quantile',
+                 return_model: bool = False,
+                 seed: int = 1,
+                 **gmm_kwargs):
+  """Transform continuous value into discrete
 
   Note: the histogram discretizer is equal to
     `KBinsDiscretizer(n_bins=n, encode='ordinal', strategy='uniform')`
@@ -69,11 +70,8 @@ def discretizing(
     strategy = 'uniform'
   # ====== GMM base discretizer ====== #
   if 'gmm' in strategy:
-    create_gmm = lambda: GaussianMixture(n_components=n_bins,
-                                         max_iter=800,
-                                         covariance_type='diag',
-                                         random_state=1)  # fix random state
-
+    create_gmm = lambda: GaussianMixture(
+        n_components=n_bins, random_state=seed, **gmm_kwargs)  # fix random state
     if independent:
       gmm = []
       for f in factors[0].T:

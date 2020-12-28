@@ -16,16 +16,16 @@ from functools import partial
 from multiprocessing import cpu_count
 from numbers import Number
 from typing import Dict, List, Optional, Union
+import types
 
 import numpy as np
 import torch
 from six import string_types
-from torch.utils import data
+import torch
+import tensorflow as tf
 from tqdm import tqdm
 
-from odin import backend as bk
-from odin.preprocessing.base import Extractor
-from odin.utils import as_tuple
+from sklearn.base import BaseEstimator
 
 __all__ = ['count_frames', 'KaldiFeaturesReader', 'KaldiDataset']
 
@@ -33,6 +33,36 @@ __all__ = ['count_frames', 'KaldiFeaturesReader', 'KaldiDataset']
 # ===========================================================================
 # Helper
 # ===========================================================================
+def as_tuple(x, N=None, t=None):
+  """ LICENSE: https://github.com/Lasagne/Lasagne/blob/master/LICENSE """
+  # special case numpy array
+  if not isinstance(x, tuple):
+    if isinstance(x, (types.GeneratorType, list)):
+      x = tuple(x)
+    else:
+      x = (x,)
+  # ====== check length ====== #
+  if N is not None and isinstance(N, numbers.Number):
+    N = int(N)
+    if len(x) == 1:
+      x = x * N
+    elif len(x) != N:
+      raise ValueError(f'x has length={len(x)}, but required length {N}')
+  # ====== check type ====== #
+  if t is None:
+    filter_func = lambda o: True
+  elif isinstance(t, type) or isinstance(t, (tuple, list)):
+    filter_func = lambda o: isinstance(o, t)
+  elif hasattr(t, '__call__'):
+    filter_func = t
+  else:
+    raise ValueError("Invalid value for `t`: %s" % str(t))
+  if not all(filter_func(v) for v in x):
+    raise TypeError("expected a single value or an iterable "
+                    "of {0}, got {1} instead".format(t.__name__, x))
+  return x
+
+
 def _collater(batch):
   """ In this "hack", batch is already formed in the DataSet object
   (batch consists of a single element, which is actually the batch itself).
@@ -117,7 +147,7 @@ def count_frames(specifiers: List[str],
 # ===========================================================================
 # Feature configurer
 # ===========================================================================
-class KaldiFeaturesReader(Extractor):
+class KaldiFeaturesReader(BaseEstimator):
   """ This class is used to read features extracted by KALDI recipe.
   After loading the features are post-procesessed using delta, shifted delta
   or sliding-window cepstral mean and/or variance normalization.
@@ -791,7 +821,7 @@ class KaldiDataset(data.Dataset):
       copy: bool = False,
       num_workers: Union[str, int] = 'max',
       seed=None,
-  ) -> data.DataLoader:
+  ) -> torch.utils.data.DataLoader:
     """ Since the `KaldiDataset` create and return the batch, not a single
     example, this function is utilized to create `pytorch.DataLoader` that
     is compatible.

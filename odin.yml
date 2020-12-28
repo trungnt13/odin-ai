@@ -12,8 +12,8 @@ channels:
 dependencies:
   - python=3.7
   - pip>=20.3
-  - cudatoolkit=11.0
-  - cudnn=8.0
+  - cudatoolkit=10.0
+  - cudnn=7.0
   - rapids=0.17
   - matplotlib
   - ipython
@@ -28,10 +28,11 @@ dependencies:
   - torchaudio
 
   - pip:
-      - tensorflow>=2.4.0
-      - tensorflow-probability==0.12.0-rc4
+      - tensorflow==2.3.1
+      - tensorflow-probability==0.11.1
       - tensorflow-datasets
-      # - tensorflow-addons
+      - tensorflow_io
+      - tensorflow-addons
       - tfa-nightly
       - transformers
       - kaggle

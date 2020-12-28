@@ -83,7 +83,7 @@ class BioDataset(IterableDataset):
   def create_dataset(self,
                      partition: str = 'train',
                      *,
-                     batch_size: int = 32,
+                     batch_size: Optional[int] = 32,
                      drop_remainder: bool = False,
                      shuffle: Optional[int] = 1000,
                      prefetch: int = tf.data.experimental.AUTOTUNE,
@@ -128,13 +128,14 @@ class BioDataset(IterableDataset):
     ds = x
     if inc_labels > 0.:
       ds = tf.data.Dataset.zip((x, y))
-    ds = ds.map(_process, parallel)
     if cache is not None:
       ds = ds.cache(str(cache))
+    ds = ds.map(_process, parallel)
     # shuffle must be called after cache
     if shuffle is not None and shuffle > 0:
       ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
-    ds = ds.batch(batch_size, drop_remainder)
+    if batch_size is not None:
+      ds = ds.batch(batch_size, drop_remainder)
     if prefetch is not None:
       ds = ds.prefetch(prefetch)
     return ds

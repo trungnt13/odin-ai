@@ -14,6 +14,7 @@ from odin import visual as vs
 from odin.bay.distributions import Batchwise
 from odin.bay.vi.autoencoder.variational_autoencoder import \
     VariationalAutoencoder
+from sklearn.mixture import GaussianMixture
 from odin.bay.vi.metrics import (Correlation, beta_vae_score, dci_scores,
                                  factor_vae_score, mutual_info_gap,
                                  separated_attr_predictability)
@@ -79,18 +80,6 @@ def _plot_latent_units(mean, std, w):
   return fig
 
 
-def _to_image(X, grids, dpi):
-  if X.shape[-1] == 1:  # grayscale image
-    X = np.squeeze(X, axis=-1)
-  else:  # color image
-    X = np.transpose(X, (0, 3, 1, 2))
-  nrows, ncols = grids
-  fig = vs.plot_figure(nrows=nrows, ncols=ncols)
-  vs.plot_images(X, grids=grids)
-  image = vs.plot_to_image(fig, dpi=dpi)
-  return image
-
-
 def _save_image(arr, path):
   from PIL import Image
   if hasattr(arr, 'numpy'):
@@ -102,12 +91,14 @@ def _save_image(arr, path):
 def _process_labels(y: tf.Tensor, dsname: str,
                     labels: List[str]) -> Tuple[np.ndarray, np.ndarray]:
   """Return categorical labels and factors-based label"""
+  if hasattr(y, 'numpy'):
+    y = y.numpy()
   y_categorical = None
   y_discrete = None
-  if dsname in ('mnist', 'fashionmnist', 'cifar10', 'cifar100'):
+  if dsname in ('mnist', 'fashionmnist', 'cifar10', 'cifar100', 'cortex'):
     y_categorical = tf.argmax(y, axis=-1)
     y_discrete = y
-    names = [labels[i] for i in range(10)]
+    names = labels
   elif 'celeba' in dsname:
     y = tf.argmax(y, axis=-1)
     raise NotImplementedError
@@ -121,10 +112,54 @@ def _process_labels(y: tf.Tensor, dsname: str,
     y_categorical = y[:, 2]
     y_discrete = discretizing(y, n_bins=[10, 6, 3, 8, 8], strategy='uniform')
     names = ['square', 'ellipse', 'heart']
+  elif 'pbmc' == dsname:
+    names = ['CD4', 'CD8', 'CD45RA', 'CD45RO']
+    y_probs = []
+    for x in [i for n in names for i, l in zip(y.T, labels) if n == l]:
+      x = x[:, np.newaxis]
+      gmm = GaussianMixture(n_components=2,
+                            covariance_type='full',
+                            n_init=2,
+                            random_state=1)
+      gmm.fit(x)
+      y_probs.append(gmm.predict_proba(x)[:, np.argmax(gmm.means_.ravel())])
+    y_categorical = np.argmax(np.vstack(y_probs).T, axis=1)
+    y_discrete = discretizing(y, n_bins=3, strategy='gmm')
   else:
     raise RuntimeError(f'No support for dataset: {dsname}')
   return np.asarray([names[int(i)] for i in y_categorical]), \
     tf.cast(y_discrete, tf.int32).numpy()
+
+
+def _to_image(X, y, grids, dpi, ds, dsname):
+  # single-cell
+  if dsname in ('cortex', 'pbmc'):
+    import scanpy as sc
+    if hasattr(X, 'numpy'):
+      X = X.numpy()
+    adata = sc.AnnData(X=X)
+    adata.var.index = ds.xvar
+    sc.pp.recipe_zheng17(adata, n_top_genes=50)
+    # no labels
+    adata.obs['celltype'] = _process_labels(y, dsname=dsname, labels=ds.yvar)[0]
+    axes = sc.pl.heatmap(adata,
+                         var_names=adata.var_names,
+                         groupby='celltype',
+                         show_gene_labels=True,
+                         show=False)
+    fig = axes['heatmap_ax'].get_figure()
+  # image
+  else:
+    if X.shape[-1] == 1:  # grayscale image
+      X = np.squeeze(X, axis=-1)
+    else:  # color image
+      X = np.transpose(X, (0, 3, 1, 2))
+    nrows, ncols = grids
+    fig = vs.plot_figure(nrows=nrows, ncols=ncols)
+    vs.plot_images(X, grids=grids)
+  # convert figure to image
+  image = vs.plot_to_image(fig, dpi=dpi)
+  return image
 
 
 def _predict(data, vae, dsname, labels, verbose):
@@ -199,14 +234,20 @@ def _plot_latents_pairs(
     f: np.ndarray,
     correlation: np.ndarray,
     labels: List[str],
+    dsname: str,
 ):
   n_latents, n_factors = correlation.shape
   # binomial_coefficient(n=n_factors, k=2)
-  n_pairs = n_factors * (n_factors - 1) // 2
   ## find the best latents for each labels
   f2z = {
       f_idx: z_idx for f_idx, z_idx in enumerate(np.argmax(correlation, axis=0))
   }
+  ## special cases
+  if dsname == 'pbmc':
+    selected_labels = set(['CD4', 'CD8', 'CD45RA', 'CD45RO', 'CD127', 'TIGIT'])
+  else:
+    selected_labels = set(labels)
+  n_pairs = len(selected_labels) * (len(selected_labels) - 1) // 2
   ## plotting each pairs
   ncol = 2
   nrow = n_pairs
@@ -223,6 +264,9 @@ def _plot_latents_pairs(
                 grid=False)
   for f1 in range(n_factors):
     for f2 in range(f1 + 1, n_factors):
+      if (labels[f1] not in selected_labels or
+          labels[f2] not in selected_labels):
+        continue
       z1 = f2z[f1]
       z2 = f2z[f2]
       vs.plot_scatter(x=z[:, z1],
@@ -249,9 +293,6 @@ def _plot_latents_pairs(
 # ===========================================================================
 # Disentanglement Gym
 # ===========================================================================
-_n_visual = 25
-
-
 class DisentanglementGym:
   """Disentanglement Gym
 
@@ -277,7 +318,8 @@ class DisentanglementGym:
   def __init__(self,
                dataset: Literal['shapes3d', 'shapes3dsmall', 'dsprites',
                                 'dspritessmall', 'celeba', 'celebasmall',
-                                'fashionmnist', 'mnist', 'cifar10', 'cifar100'],
+                                'fashionmnist', 'mnist', 'cifar10', 'cifar100',
+                                'cortex', 'pbmc'],
                vae: VariationalAutoencoder,
                max_valid_samples: int = 2000,
                max_test_samples: int = 20000,
@@ -288,9 +330,11 @@ class DisentanglementGym:
     self.allow_exception = allow_exception
     self.seed = seed
     self.ds = get_dataset(dataset)
+    self.dsname = str(dataset).lower().strip()
     self._batch_size = int(batch_size)
     self._max_valid_samples = int(max_valid_samples)
     self._max_test_samples = int(max_test_samples)
+    self._n_visual_samples = 25 if self.is_image else 625
     ## set seed is importance for comparable results
     tf.random.set_seed(1)
     self._train = self.ds.create_dataset(batch_size=batch_size,
@@ -306,17 +350,28 @@ class DisentanglementGym:
                                         inc_labels=True,
                                         shuffle=1000)
     self.vae = vae
-    self.z_samples = vae.sample_prior(sample_shape=_n_visual, seed=self.seed)
+    self.z_samples = vae.sample_prior(sample_shape=self._n_visual_samples,
+                                      seed=self.seed)
     ## prepare the samples
-    self.x_train, self.y_train = [
-        (x[:_n_visual], y[:_n_visual]) for x, y in self._train.take(1)
-    ][0]
-    self.x_valid, self.y_valid = [
-        (x[:_n_visual], y[:_n_visual]) for x, y in self._valid.take(1)
-    ][0]
-    self.x_test, self.y_test = [
-        (x[:_n_visual], y[:_n_visual]) for x, y in self._test.take(1)
-    ][0]
+    n_batches = int(np.ceil(self._n_visual_samples / batch_size))
+    # train
+    batches = list(self._train.take(n_batches))
+    self.x_train = tf.concat([x for x, y in batches],
+                             axis=0)[:self._n_visual_samples]
+    self.y_train = tf.concat([y for x, y in batches],
+                             axis=0)[:self._n_visual_samples]
+    # valid
+    batches = list(self._valid.take(n_batches))
+    self.x_valid = tf.concat([x for x, y in batches],
+                             axis=0)[:self._n_visual_samples]
+    self.y_valid = tf.concat([y for x, y in batches],
+                             axis=0)[:self._n_visual_samples]
+    # test
+    batches = list(self._test.take(n_batches))
+    self.x_test = tf.concat([x for x, y in batches],
+                            axis=0)[:self._n_visual_samples]
+    self.y_test = tf.concat([y for x, y in batches],
+                            axis=0)[:self._n_visual_samples]
     ## default configuration
     self._reconstruction = True
     self._elbo = False
@@ -407,6 +462,10 @@ class DisentanglementGym:
     return self
 
   @property
+  def is_image(self) -> bool:
+    return self.dsname not in ('cortex', 'pbmc')
+
+  @property
   def batch_size(self) -> int:
     return self._batch_size
 
@@ -485,7 +544,8 @@ class DisentanglementGym:
   def _call_safe(self, save_path, remove_saved_image, dpi, prefix, verbose):
     unique_key = uuid(20)
     vae = self.vae
-    grids = (int(sqrt(_n_visual)), int(sqrt(_n_visual)))
+    grids = (int(sqrt(self._n_visual_samples)),
+             int(sqrt(self._n_visual_samples)))
     outputs = dict()
     ds, x, y = self.data_info[self.mode]
     ## n_samples
@@ -504,8 +564,18 @@ class DisentanglementGym:
     ## reconstruction
     if self._reconstruction:
       px = P[0]
-      image_reconstructed = _to_image(px.mean().numpy(), grids=grids, dpi=dpi)
-      outputs['original'] = _to_image(x, grids=grids, dpi=dpi)
+      image_reconstructed = _to_image(px.mean().numpy(),
+                                      y=y,
+                                      grids=grids,
+                                      dpi=dpi,
+                                      ds=self.ds,
+                                      dsname=self.dsname)
+      outputs['original'] = _to_image(x,
+                                      y=y,
+                                      grids=grids,
+                                      dpi=dpi,
+                                      ds=self.ds,
+                                      dsname=self.dsname)
       outputs['reconstruction'] = image_reconstructed
     ## ELBO
     if self._elbo:
@@ -539,23 +609,32 @@ class DisentanglementGym:
     if self._latents_traverse:
       z = tf.concat([q.mean() for q in Q], axis=-1)
       sorted_indices = np.argsort(z_std)[:20]  # only top 20
-      z = traverse_dims(z,
-                        feature_indices=sorted_indices,
-                        n_random_samples=1,
-                        seed=self.seed,
-                        **self._traverse_config)
+      z, ids = traverse_dims(z,
+                             feature_indices=sorted_indices,
+                             n_random_samples=1,
+                             return_indices=True,
+                             seed=self.seed,
+                             **self._traverse_config)
       P = as_tuple(vae.decode(z[0] if len(z) == 1 else z, training=False))
       images = P[0].mean().numpy()
       n_indices = len(sorted_indices)  # do it here, just in case zdim < 20
       image_traverse = _to_image(images,
+                                 y=y.numpy()[ids],
                                  grids=(n_indices,
                                         int(images.shape[0] / n_indices)),
-                                 dpi=dpi)
+                                 dpi=dpi,
+                                 ds=self.ds,
+                                 dsname=self.dsname)
       outputs['latents_traverse'] = image_traverse
     ## latents sampling
-    if self._latents_sampling:
+    if self._latents_sampling and self.is_image:
       P = as_tuple(vae.decode(self.z_samples, training=False))
-      image_sampled = _to_image(P[0].mean().numpy(), grids=grids, dpi=dpi)
+      image_sampled = _to_image(P[0].mean().numpy(),
+                                y=None,
+                                grids=grids,
+                                dpi=dpi,
+                                ds=self.ds,
+                                dsname=self.dsname)
       outputs['latents_sampled'] = image_sampled
     ## latents clusters
     if self._is_predict():
@@ -578,7 +657,8 @@ class DisentanglementGym:
             _plot_latents_pairs(z=z,
                                 f=py,
                                 correlation=matrix,
-                                labels=self.ds.labels)
+                                labels=self.ds.labels,
+                                dsname=self.dsname)
             outputs[f'pairs_{name}{z_idx}'] = vs.plot_to_image(plt.gcf(),
                                                                dpi=dpi)
       # correlation

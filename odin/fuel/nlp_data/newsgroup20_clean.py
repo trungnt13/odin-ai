@@ -88,7 +88,7 @@ class Newsgroup20_clean(IterableDataset):
   def create_dataset(self,
                      partition: Literal['train', 'valid', 'test'] = 'train',
                      *,
-                     batch_size: int = 32,
+                     batch_size: Optional[int] = 32,
                      drop_remainder: bool = False,
                      shuffle: int = 1000,
                      cache: Optional[str] = '',
@@ -109,7 +109,8 @@ class Newsgroup20_clean(IterableDataset):
     # shuffle must be called after cache
     if shuffle is not None and shuffle > 0:
       x = x.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
-    x = x.batch(batch_size, drop_remainder)
+    if batch_size is not None:
+      x = x.batch(batch_size, drop_remainder)
     x = x.map(lambda y: tf.cast(tf.sparse.to_dense(y), tf.float32))
     if prefetch is not None:
       x = x.prefetch(prefetch)

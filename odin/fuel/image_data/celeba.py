@@ -134,7 +134,7 @@ class CelebA(ImageDataset):
   def create_dataset(self,
                      partition: Literal['train', 'valid', 'test'] = 'train',
                      *,
-                     batch_size: int = 32,
+                     batch_size: Optional[int] = 32,
                      drop_remainder: bool = False,
                      shuffle: int = 1000,
                      cache: Optional[str] = '',
@@ -196,21 +196,23 @@ class CelebA(ImageDataset):
     )
     # convert [-1, 1] to [0., 1.]
     attrs = (attrs + 1.) / 2
-    images = tf.data.Dataset.from_tensor_slices(images).map(read, parallel)
+    images = tf.data.Dataset.from_tensor_slices(images)
     if inc_labels:
       attrs = tf.data.Dataset.from_tensor_slices(attrs)
       images = tf.data.Dataset.zip((images, attrs))
-      if 0. < inc_labels < 1.:  # semi-supervised mask
-        images = images.map(mask)
-
+    # caching
     if cache is not None:
       images = images.cache(str(cache))
+    images = images.map(read, parallel)
+    if 0. < inc_labels < 1.:  # semi-supervised mask
+      images = images.map(mask)
     # shuffle must be called after cache
     if shuffle is not None and shuffle > 0:
       images = images.shuffle(int(shuffle),
                               seed=seed,
                               reshuffle_each_iteration=True)
-    images = images.batch(batch_size, drop_remainder)
+    if batch_size is not None:
+      images = images.batch(batch_size, drop_remainder)
     if prefetch is not None:
       images = images.prefetch(prefetch)
     return images
