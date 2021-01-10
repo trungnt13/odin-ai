@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union
 
 import numpy as np
+from scipy import signal
 import tensorflow as tf
 from odin.utils import as_tuple
 from six import string_types
@@ -36,6 +37,14 @@ _BEST_WEIGHTS = {}
 _BEST_OPTIMIZER = {}
 _CHECKPOINT_MANAGER = {}
 _CURRENT_TRAINER = None
+
+
+def _ema(x, w):
+  """`s[0] = x[0]` and `s[t] = w * x[t] + (1-w) * s[t-1]`"""
+  b = [w]
+  a = [1, w - 1]
+  zi = signal.lfilter_zi(b, a)
+  return signal.lfilter(b, a, x, zi=zi * x[0])[0]
 
 
 def _is_text(x):
@@ -441,7 +450,9 @@ class Trainer(object):
 
   @property
   def tensorboard(self) -> Dict[Text, Tuple[float, int, float]]:
-    r""" Return stored data from tensorboard """
+    """Return data stored in the Tensorboard
+    `Dict['metric_name', Tuple['time', 'step', 'values']]`
+    """
     if self._cached_tensorboard is None:
       if not os.path.exists(self.logdir):
         self._cached_tensorboard = dict()
@@ -744,83 +755,73 @@ class Trainer(object):
 
   def plot_learning_curves(self,
                            path: str = "/tmp/tmp.png",
-                           summary_steps: Tuple[int, int] = [10, 1],
-                           show_validation: bool = True,
+                           smooth: float = 0.3,
                            dpi: int = 200,
+                           n_col: int = 4,
                            title: Optional[str] = None):
-    r""" Plot learning curves
+    """ Plot learning curves
 
-    Arguments:
-      path: save path for the figure
-      summary_steps: a tuple of Integer.
-        Number of iteration for estimating the mean and variance for training
-        and validation.
+    Parameters
+    ----------
+    path : str, optional
+        path to save image file, by default "/tmp/tmp.png"
+    smooth : float, optional
+        exponential moving average smoothing, by default 0.3
+    dpi : int, optional
+        dot-per-inches, the resolution of the figures, by default 200
+    n_col : int, optional
+        number of subplot column, by default 2
+    title : Optional[str], optional
+        title of the figure, by default None
+
     """
     import seaborn as sns
     from matplotlib import pyplot as plt
     from odin import visual as vs
     sns.set()
-    summary_steps = as_tuple(summary_steps, N=2, t=int)
+    smooth = float(smooth)
+    assert 0. < smooth < 1., f"EMA smooth must be in [0, 1] but given {smooth}"
     # prepare
-    train_losses = self.get_train_losses()
-    train_metrics = self.get_train_metrics()
-    valid_losses = self.get_valid_losses()
-    valid_metrics = self.get_valid_metrics()
-    is_validated = bool(len(valid_losses) > 0) and bool(show_validation)
-    metrics_name = list(train_metrics.keys())
-    metrics_name = ["loss"] + metrics_name
-    # gather the results
-    train = [train_losses] + [train_metrics[name] for name in metrics_name[1:]]
-    train_name = list(metrics_name)
-    all_data = list(zip(train_name, train))
-    if is_validated:
-      all_data.append(('val_loss', valid_losses))
-      for name, values in valid_metrics.items():
-        if name[:4] != 'val_':
-          name = f'val_{name}'
-        all_data.append((name, values))
+    all_data = []
+    for name, data in sorted(self.tensorboard.items(),
+                             key=lambda x: x[0].split('/')[-1]):
+      if data[0][-1].ndim != 0:  # skip non-scalar metrics
+        continue
+      x, y = [], []
+      for _, step, val in data:
+        x.append(step)
+        y.append(val)
+      all_data.append((name, np.array(x, dtype=np.int32), np.array(y)))
     # create the figure
-    all_data = [(name, data) for name, data in all_data if data[0].ndim == 0]
-    all_data = sorted(all_data, key=lambda x: x[0].replace('val_', ''))
     n_metrics = len(all_data)
-    ncol = 6 if is_validated else 1
+    ncol = int(n_col)
     nrow = int(np.ceil(n_metrics / ncol))
     fig = plt.figure(figsize=(ncol * 3, nrow * 3), dpi=dpi)
     # plotting
     subplots = []
-    for idx, (name, data) in enumerate(all_data):
+    for idx, (name, x, y) in enumerate(all_data):
       ax = plt.subplot(nrow, ncol, idx + 1)
       subplots.append(ax)
-      is_val = ('val_' == name[:4])
-      batch_size = summary_steps[1 if is_val else 0]
-      if batch_size > len(data):
-        warnings.warn(f"Given summary_steps={batch_size} but only "
-                      f"has {len(data)} data points, skip plot!")
-        return self
-      data = [batch for batch in tf.data.Dataset.from_tensor_slices(\
-        data).batch(batch_size)]
-      avg = np.array([np.mean(i) for i in data])
-      std = np.array([np.std(i) for i in data])
-      vmin, vmax = np.min(avg), np.max(avg)
-      plt.plot(avg, label='Avg.')
-      plt.plot(np.argmin(avg),
+      vmin, vmax = np.min(y), np.max(y)
+      y = _ema(y, w=1 - smooth)
+      plt.plot(x, y)
+      plt.plot(x[np.argmin(y)],
                vmin,
                marker='o',
                color='green',
                alpha=0.5,
                label=f'Min:{vmin:.2f}')
-      plt.plot(np.argmax(avg),
+      plt.plot(x[np.argmax(y)],
                vmax,
                marker='o',
                color='red',
                alpha=0.5,
                label=f'Max:{vmax:.2f}')
-      plt.fill_between(np.arange(len(avg)), avg + std, avg - std, alpha=0.3)
       plt.title(name)
-      plt.legend(fontsize=10)
+      plt.legend(fontsize=8)
       plt.tick_params(axis='both', labelsize=8)
-      ticks = np.linspace(0, len(data), num=5)
-      plt.xticks(ticks, (ticks * batch_size).astype(int))
+      ticks = np.linspace(x[0], x[-1], num=5, dtype=np.int32)
+      plt.xticks(ticks, ticks)
     # set the title
     if title is not None:
       fig.suptitle(str(title))

@@ -567,16 +567,14 @@ class Networks(keras.Model, MD5object):
 
   def plot_learning_curves(self,
                            path: Optional[str] = None,
-                           summary_steps: Tuple[int, int] = [10, 1],
-                           show_validation: bool = True,
+                           smooth: float = 0.3,
                            dpi: int = 200,
                            title: Optional[str] = None) -> 'Networks':
     """Plot the learning curves on train and validation sets."""
     assert self.trainer is not None, \
       "fit method must be called before plotting learning curves"
     fig = self.trainer.plot_learning_curves(path=path,
-                                            summary_steps=summary_steps,
-                                            show_validation=show_validation,
+                                            smooth=smooth,
                                             dpi=dpi,
                                             title=title)
     if path is None:

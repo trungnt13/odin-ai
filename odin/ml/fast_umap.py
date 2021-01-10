@@ -8,7 +8,7 @@ from typing_extensions import Literal
 def fast_umap(
     *X,
     n_components: int = 2,
-    n_neighbors: int = 12,
+    n_neighbors: int = 15,
     max_samples: Optional[int] = None,
     metric: str = "euclidean",
     n_epochs: Optional[int] = None,
@@ -46,7 +46,7 @@ def fast_umap(
       The dimension of the space to embed into. This defaults to 2 to
       provide easy visualization, but can reasonably be set to any
       integer value in the range 2 to 100.
-  n_neighbors: float (optional, default 12)
+  n_neighbors: float (optional, default 15)
       The size of local neighborhood (in terms of number of neighboring
       sample points) used for manifold approximation. Larger values
       result in more global views of the manifold, while smaller
