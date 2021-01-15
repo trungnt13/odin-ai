@@ -16,7 +16,7 @@ from odin.backend.keras_helpers import layer2text
 from odin.bay.distributions import (Bernoulli, Categorical, Distribution, Gamma,
                                     JointDistributionSequential, Normal,
                                     Blockwise, VonMises, ContinuousBernoulli)
-from odin.networks.base_networks import NetworkConfig, SequentialNetwork
+from odin.networks.base_networks import NetConf, SequentialNetwork
 from odin.networks.skip_connection import SkipConnection
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer

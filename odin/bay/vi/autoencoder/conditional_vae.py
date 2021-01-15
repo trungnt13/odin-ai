@@ -12,7 +12,7 @@ from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              _parse_layers)
 from odin.bay.vi.utils import (marginalize_categorical_labels,
                                prepare_ssl_inputs, split_ssl_inputs)
-from odin.networks import NetworkConfig
+from odin.networks import NetConf
 from odin.networks.conditional_embedding import get_embedding
 from odin.utils import as_tuple
 from tensorflow.python import keras
@@ -106,17 +106,17 @@ class conditionalM2VAE(betaVAE):
                                    projection=True,
                                    name='image'),
       latents: RVmeta = RVmeta(64, 'mvndiag', projection=True, name='latents'),
-      classifier: LayerCreator = NetworkConfig([128, 128],
+      classifier: LayerCreator = NetConf([128, 128],
                                                flatten_inputs=True,
                                                name='classifier'),
-      encoder: LayerCreator = NetworkConfig([512, 512],
+      encoder: LayerCreator = NetConf([512, 512],
                                             flatten_inputs=True,
                                             name='encoder'),
-      decoder: LayerCreator = NetworkConfig([512, 512],
+      decoder: LayerCreator = NetConf([512, 512],
                                             flatten_inputs=True,
                                             name='decoder'),
-      xy_to_qz: LayerCreator = NetworkConfig([128, 128], name='xy_to_qz'),
-      zy_to_px: LayerCreator = NetworkConfig([128, 128], name='zy_to_px'),
+      xy_to_qz: LayerCreator = NetConf([128, 128], name='xy_to_qz'),
+      zy_to_px: LayerCreator = NetConf([128, 128], name='zy_to_px'),
       embedding_dim: int = 128,
       embedding_method: Literal['repetition', 'projection', 'dictionary',
                                 'sequential', 'identity'] = 'sequential',

@@ -5,7 +5,7 @@ import tensorflow as tf
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
-                                                             NetworkConfig,
+                                                             NetConf,
                                                              _parse_layers)
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
@@ -128,7 +128,7 @@ class multiheadVAE(multitaskVAE):
   and directly connect to the via non-linear layers latents"""
 
   def __init__(self,
-               decoder_y: LayerCreator = NetworkConfig([256, 256],
+               decoder_y: LayerCreator = NetConf([256, 256],
                                                        name='decoder_y'),
                name: str = 'MultiheadVAE',
                **kwargs):

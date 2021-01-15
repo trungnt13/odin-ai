@@ -12,7 +12,7 @@ from matplotlib import pyplot as plt
 from odin import backend as bk
 from odin import visual as vs
 from odin.backend import interpolation
-from odin.bay.vi import (DisentanglementGym, GroundTruth, NetworkConfig, RVmeta,
+from odin.bay.vi import (DisentanglementGym, GroundTruth, NetConf, RVmeta,
                          VariationalAutoencoder, VariationalPosterior, get_vae,
                          traverse_dims, DimReduce, Correlation)
 from odin.fuel import IterableDataset, get_dataset

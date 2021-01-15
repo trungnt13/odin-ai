@@ -6,7 +6,7 @@ import tensorflow as tf
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
-                                                             NetworkConfig,
+                                                             NetConf,
                                                              _parse_layers)
 from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.bay.vi.utils import prepare_ssl_inputs
@@ -237,7 +237,7 @@ class semifoVAE(betaVAE):
                                        'onehot',
                                        projection=True,
                                        name="digits"),
-               decoder_y: LayerCreator = NetworkConfig([256, 256],
+               decoder_y: LayerCreator = NetConf([256, 256],
                                                        name='decoder_y'),
                beta: float = 1.0,
                alpha: float = 10.0,

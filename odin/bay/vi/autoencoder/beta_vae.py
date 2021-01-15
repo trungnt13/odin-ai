@@ -1,5 +1,7 @@
 import tensorflow as tf
+from typing import Union
 from odin.backend import interpolation as interp
+from odin.backend.interpolation import Interpolation
 from odin.bay.vi.autoencoder.variational_autoencoder import VariationalAutoencoder
 from odin.bay.vi.losses import total_correlation
 from odin.utils import as_tuple
@@ -20,9 +22,12 @@ class betaVAE(VariationalAutoencoder):
       ICLR'17
   """
 
-  def __init__(self, beta: float = 1.0, name='BetaVAE', **kwargs):
+  def __init__(self,
+               beta: Union[float, Interpolation] = 1.0,
+               name='BetaVAE',
+               **kwargs):
     super().__init__(name=name, **kwargs)
-    self.beta = beta
+    self._beta = beta
 
   @property
   def beta(self):

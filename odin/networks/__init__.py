@@ -10,7 +10,6 @@ from odin.networks.skip_connection import SkipConnection, skip_connect
 from odin.networks.time_delay import *
 from odin.networks.util_layers import *
 from odin.networks.image_networks import *
-from odin.networks.gene_networks import *
 
 
 def register_new_keras_layers(extras=None):

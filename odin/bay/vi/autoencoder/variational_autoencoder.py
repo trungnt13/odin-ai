@@ -23,7 +23,7 @@ from odin.bay.layers import DistributionDense, VectorDeterministicLayer
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi._base import VariationalModel
 from odin.training.trainer import Trainer
-from odin.networks import Identity, NetworkConfig, TrainStep
+from odin.networks import Identity, NetConf, TrainStep
 from odin.backend import TensorTypes
 from odin.utils import as_tuple
 from odin.utils.python_utils import classproperty
@@ -51,7 +51,7 @@ __all__ = [
 # Types
 # ===========================================================================
 LayerCreator = Union[str, Layer, Type[Layer], \
-                     NetworkConfig, RVmeta, \
+                     NetConf, RVmeta, \
                      Callable[[Optional[List[int]]], Layer]]
 
 
@@ -92,8 +92,8 @@ def _parse_layers(network, is_decoding=False, name=None) -> Layer:
   ## RVmeta
   elif isinstance(cfg, RVmeta):
     layer = cfg.create_posterior(name=name if cfg.name is None else None)
-  ## the NetworkConfig
-  elif isinstance(cfg, NetworkConfig):
+  ## the NetConf
+  elif isinstance(cfg, NetConf):
     layer = cfg.create_network(name=name)
   ## Layer
   elif isinstance(cfg, Layer):
@@ -143,9 +143,9 @@ class VariationalAutoencoder(VariationalModel):
   Parameters
   ----------
   encoder : LayerCreator, optional
-      the encoder network, by default NetworkConfig()
+      the encoder network, by default NetConf()
   decoder : LayerCreator, optional
-      the decoder network, by default NetworkConfig()
+      the decoder network, by default NetConf()
   outputs : LayerCreator, optional
       a descriptor for the input/output, by default
       `RVmeta(64, 'gaus', projection=True, name="Input")`
@@ -180,10 +180,10 @@ class VariationalAutoencoder(VariationalModel):
                                          'bernoulli',
                                          projection=True,
                                          name='image'),
-      encoder: LayerCreator = NetworkConfig([512, 512],
+      encoder: LayerCreator = NetConf([512, 512],
                                             flatten_inputs=True,
                                             name="encoder"),
-      decoder: LayerCreator = NetworkConfig([512, 512],
+      decoder: LayerCreator = NetConf([512, 512],
                                             flatten_inputs=True,
                                             name="decoder"),
       latents: LayerCreator = RVmeta(64,

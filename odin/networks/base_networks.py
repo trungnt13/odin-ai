@@ -41,7 +41,7 @@ __all__ = [
     'dense_network',
     'conv_network',
     'deconv_network',
-    'NetworkConfig',
+    'NetConf',
 ]
 
 
@@ -434,6 +434,7 @@ class Networks(keras.Model, MD5object):
   def fit(
       self,
       train: Union[TensorTypes, DatasetV2],
+      *,
       valid: Optional[Union[TensorTypes, DatasetV2]] = None,
       valid_freq: int = 500,
       valid_interval: float = 0,
@@ -887,7 +888,7 @@ def deconv_network(units: List[int],
                        order=False,
                        unsafe_hash=False,
                        frozen=False)
-class NetworkConfig(dict):
+class NetConf(dict):
   r""" A dataclass for storing the autoencoder networks (encoder and decoder)
   configuration. Number of layers is determined by length of `units`
 

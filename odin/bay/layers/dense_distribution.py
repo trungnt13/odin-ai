@@ -14,7 +14,7 @@ from odin.bay.helpers import (KLdivergence, coercible_tensor,
                               is_mixture_distribution,
                               is_zeroinflated_distribution, kl_divergence)
 from odin.bay.layers.distribution_util_layers import Moments, Sampling
-from odin.networks import NetworkConfig
+from odin.networks import NetConf
 from odin.utils import as_tuple
 from six import string_types
 from tensorflow import Tensor
@@ -660,7 +660,7 @@ class DistributionNetwork(Model):
   ----------
   distributions : List[Layer]
       List of output Layers that parameterize the Distrubtions
-  network : Union[Layer, NetworkConfig], optional
+  network : Union[Layer, NetConf], optional
       a network
   name : str, optional
       by default 'DistributionNetwork'
@@ -669,13 +669,13 @@ class DistributionNetwork(Model):
   def __init__(
       self,
       distributions: List[Layer],
-      network: Union[Layer, NetworkConfig] = NetworkConfig([128, 128],
+      network: Union[Layer, NetConf] = NetConf([128, 128],
                                                            flatten_inputs=True),
       name: str = 'DistributionNetwork',
   ):
     super().__init__(name=name)
     ## prepare the preprocessing layers
-    if isinstance(network, NetworkConfig):
+    if isinstance(network, NetConf):
       network = network.create_network()
     assert isinstance(network, Layer), \
       f'network must be instance of keras.layers.Layer but given {network}'

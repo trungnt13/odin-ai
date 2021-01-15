@@ -21,7 +21,7 @@ from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              VAEStep)
 from odin.backend import TensorTypes
-from odin.networks import NetworkConfig
+from odin.networks import NetConf
 from scipy import sparse
 from tensorflow import Tensor, Variable
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
@@ -385,7 +385,7 @@ class amortizedLDA(betaVAE):
   def __init__(
       self,
       ldd: LatentDirichletDecoder,
-      encoder: LayerCreator = NetworkConfig([300, 300, 300],
+      encoder: LayerCreator = NetConf([300, 300, 300],
                                             flatten_inputs=True,
                                             name="Encoder"),
       decoder: LayerCreator = 'identity',
@@ -476,10 +476,10 @@ class auxiliaryLDA(amortizedLDA):
   def __init__(
       self,
       ldd: LatentDirichletDecoder,
-      encoder: LayerCreator = NetworkConfig([300, 300, 300],
+      encoder: LayerCreator = NetConf([300, 300, 300],
                                             flatten_inputs=True,
                                             name="Encoder"),
-      decoder: LayerCreator = NetworkConfig([300, 300, 300],
+      decoder: LayerCreator = NetConf([300, 300, 300],
                                             flatten_inputs=True,
                                             name="Decoder"),
       latents: LayerCreator = RVmeta(10, 'mvndiag', True, name='Latents'),
@@ -500,9 +500,9 @@ class nonlinearLDA(amortizedLDA):
   def __init__(
       self,
       ldd: LatentDirichletDecoder,
-      encoder: LayerCreator = NetworkConfig(flatten_inputs=True,
+      encoder: LayerCreator = NetConf(flatten_inputs=True,
                                             name="Encoder"),
-      decoder: LayerCreator = NetworkConfig(flatten_inputs=True,
+      decoder: LayerCreator = NetConf(flatten_inputs=True,
                                             name="Decoder"),
       latents: LayerCreator = RVmeta(10,
                                      posterior='mvndiag',

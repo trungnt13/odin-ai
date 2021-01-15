@@ -28,8 +28,8 @@ output_dir = '/tmp/vae_pp'
 # network configuration
 batch_size = 32
 max_iter = 50000
-encoder = vi.NetworkConfig([256, 256, 256], flatten_inputs=True, name='Encoder')
-decoder = vi.NetworkConfig([256, 256, 256], flatten_inputs=True, name='Decoder')
+encoder = vi.NetConf([256, 256, 256], flatten_inputs=True, name='Encoder')
+decoder = vi.NetConf([256, 256, 256], flatten_inputs=True, name='Decoder')
 encoded_size = 16
 posteriors_info = [
     ('gaussian', 'mvndiag', 'mvntril'),

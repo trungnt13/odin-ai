@@ -27,34 +27,38 @@ def get(name=None):
 # Base class
 # ===========================================================================
 class Interpolation(object):
-  r""" Interpolation algorithm
+  """ Interpolation algorithm
 
-  Arguments:
-    vmin : Scalar (default: 0). Minimum value for the interpolation output,
-      the return range is [vmin, vmax]
-    vmax : Scalar (default: 1). Maximum value for the interpolation output,
-      the return range is [vmin, vmax]
-    norm : Scalar (optional). Normalization constant for the input value,
-      the repeat cycle in case of cyclical scheduling.
-    cyclical : Boolean. Enable cyclical scheduling, `norm` determines the
-      cycle periodic.
-    delayIn : Scalar. The amount of delay at the beginning of each cycle.
-    delayOut : Scalar. The amount of delay at the end of each cycle.
+  Parameters
+  ----------
+  vmin : Scalar (default: 0).
+    Minimum value for the interpolation output, the return range is [vmin, vmax]
+  vmax : Scalar (default: 1).
+    Maximum value for the interpolation output, the return range is [vmin, vmax]
+  length : Scalar (optional).
+    Normalization constant for the input value,
+    the repeat cycle in case of cyclical scheduling.
+  cyclical : Boolean.
+    Enable cyclical scheduling, `length` determines the cycle periodic.
+  delay_in : Scalar.
+    The amount of delay at the beginning of each cycle.
+  delay_out : Scalar.
+    The amount of delay at the end of each cycle.
   """
 
   def __init__(self,
-               vmin=0.,
-               vmax=1.,
-               norm=1,
-               cyclical=False,
-               delayIn=0,
-               delayOut=0):
+               vmin: float = 0.,
+               vmax: float = 1.,
+               length: float = 1,
+               delay_in: float = 0,
+               delay_out: float = 0,
+               cyclical: bool = False):
     self.vmin = vmin
     self.vmax = vmax
-    self.norm = norm
+    self.length = length
     self.cyclical = cyclical
-    self.delayIn = max(delayIn, 0)
-    self.delayOut = max(delayOut, 0)
+    self.delay_in = max(delay_in, 0)
+    self.delay_out = max(delay_out, 0)
 
   @property
   def mean(self):
@@ -70,7 +74,7 @@ class Interpolation(object):
   def __str__(self):
     return "<%s(%.2f,%.2f,%d) cyclical:%s delay:(%d,%d)>" % \
       (self.__class__.__name__, self.vmin, self.vmax,
-       self.norm, self.cyclical, self.delayIn, self.delayOut)
+       self.length, self.cyclical, self.delay_in, self.delay_out)
 
   def __call__(self, a):
     return self.apply(a)
@@ -84,10 +88,12 @@ class Interpolation(object):
     """
     a = tf.maximum(tf.cast(a, 'float32'), 1e-8)
     if self.cyclical:
-      a = a % (self.delayIn + self.norm + self.delayOut) + 1
-      a = a - self.delayIn
-      a = tf.maximum(tf.minimum(a, self.norm), 0.)
-    a = a / self.norm
+      a = a % (self.delay_in + self.length + self.delay_out) + 1
+      a = a - self.delay_in
+      a = tf.maximum(tf.minimum(a, self.length), 0.)
+    else:
+      a = a - self.delay_in
+    a = a / self.length
     a = tf.maximum(0., tf.minimum(a, 1.))
     return (self.vmax - self.vmin) * self._alpha(a) + self.vmin
 
@@ -140,18 +146,18 @@ class power(Interpolation):
   def __init__(self,
                vmin=0.,
                vmax=1.,
-               norm=1,
+               length=1,
                cyclical=False,
-               delayIn=0,
-               delayOut=0,
+               delay_in=0,
+               delay_out=0,
                power=2.,
                inverse=False):
     super().__init__(vmin=vmin,
                      vmax=vmax,
-                     norm=norm,
+                     length=length,
                      cyclical=cyclical,
-                     delayIn=delayIn,
-                     delayOut=delayOut)
+                     delay_in=delay_in,
+                     delay_out=delay_out)
     self.power = power
     self.inverse = bool(inverse)
 
@@ -229,16 +235,16 @@ class swing(Interpolation):
                scale=3,
                vmin=0.,
                vmax=1.,
-               norm=1,
+               length=1,
                cyclical=False,
-               delayIn=0,
-               delayOut=0):
+               delay_in=0,
+               delay_out=0):
     super().__init__(vmin=vmin,
                      vmax=vmax,
-                     norm=norm,
+                     length=length,
                      cyclical=cyclical,
-                     delayIn=delayIn,
-                     delayOut=delayOut)
+                     delay_in=delay_in,
+                     delay_out=delay_out)
     self.scale = scale
 
   def _alpha(self, a):
@@ -256,17 +262,17 @@ class swingIn(swing):
                scale=2,
                vmin=0.,
                vmax=1.,
-               norm=1,
+               length=1,
                cyclical=False,
-               delayIn=0,
-               delayOut=0):
+               delay_in=0,
+               delay_out=0):
     super().__init__(scale=scale,
                      vmin=vmin,
                      vmax=vmax,
-                     norm=norm,
+                     length=length,
                      cyclical=cyclical,
-                     delayIn=delayIn,
-                     delayOut=delayOut)
+                     delay_in=delay_in,
+                     delay_out=delay_out)
 
   def _alpha(self, a):
     scale = self.scale
@@ -289,18 +295,18 @@ class exp(Interpolation):
   def __init__(self,
                vmin=0.,
                vmax=1.,
-               norm=1,
+               length=1,
                cyclical=False,
-               delayIn=0,
-               delayOut=0,
+               delay_in=0,
+               delay_out=0,
                base=2.,
                power=5.):
     super().__init__(vmin=vmin,
                      vmax=vmax,
-                     norm=norm,
+                     length=length,
                      cyclical=cyclical,
-                     delayIn=delayIn,
-                     delayOut=delayOut)
+                     delay_in=delay_in,
+                     delay_out=delay_out)
     self.base = base
     self.power = power
     self.min_val = tf.pow(base, -power)
@@ -345,20 +351,20 @@ class elastic(Interpolation):
   def __init__(self,
                vmin=0.,
                vmax=1.,
-               norm=1,
+               length=1,
                cyclical=False,
-               delayIn=0,
-               delayOut=0,
+               delay_in=0,
+               delay_out=0,
                base=2.,
                power=10.,
                scale=1.,
                bounces=7.):
     super().__init__(vmin=vmin,
                      vmax=vmax,
-                     norm=norm,
+                     length=length,
                      cyclical=cyclical,
-                     delayIn=delayIn,
-                     delayOut=delayOut)
+                     delay_in=delay_in,
+                     delay_out=delay_out)
     self.base = base
     self.power = power
     self.scale = scale

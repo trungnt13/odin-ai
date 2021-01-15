@@ -13,7 +13,7 @@ import scipy as sp
 import tensorflow as tf
 from odin.bay import concat_distributions
 from odin.bay.layers import DistributionDense
-from odin.bay.vi import (AmortizedLDA, LatentDirichletDecoder, NetworkConfig,
+from odin.bay.vi import (AmortizedLDA, LatentDirichletDecoder, NetConf,
                          RVmeta, TwoStageLDA, VariationalAutoencoder,
                          betaVAE, factorVAE, miVAE)
 from odin.training import Trainer, get_current_trainer
@@ -192,7 +192,7 @@ def main(cfg):
   ######## AmortizedLDA
   if cfg.model == 'lda':
     vae = AmortizedLDA(lda=lda,
-                       encoder=NetworkConfig([300, 300, 300], name='Encoder'),
+                       encoder=NetConf([300, 300, 300], name='Encoder'),
                        decoder='identity',
                        latents='identity',
                        path=model_path)
@@ -205,8 +205,8 @@ def main(cfg):
   elif cfg.model == 'vda':
     vae = betaVAE(
         beta=cfg.beta,
-        encoder=NetworkConfig([300, 150], name='Encoder'),
-        decoder=NetworkConfig([150, 300], name='Decoder'),
+        encoder=NetConf([300, 150], name='Encoder'),
+        decoder=NetConf([150, 300], name='Decoder'),
         latents=RVmeta(cfg.n_topics,
                                'dirichlet',
                                projection=True,
@@ -227,8 +227,8 @@ def main(cfg):
   ######## VAE
   elif cfg.model == 'vae':
     vae = betaVAE(beta=cfg.beta,
-                  encoder=NetworkConfig([300, 300], name='Encoder'),
-                  decoder=NetworkConfig([300], name='Decoder'),
+                  encoder=NetConf([300, 300], name='Encoder'),
+                  decoder=NetConf([300], name='Decoder'),
                   latents=latent_dist,
                   outputs=output_dist,
                   path=model_path,
@@ -245,8 +245,8 @@ def main(cfg):
   elif cfg.model == 'fvae':
     vae = factorVAE(gamma=6.0,
                     beta=cfg.beta,
-                    encoder=NetworkConfig([300, 150], name='Encoder'),
-                    decoder=NetworkConfig([150, 300], name='Decoder'),
+                    encoder=NetConf([300, 150], name='Encoder'),
+                    decoder=NetConf([150, 300], name='Decoder'),
                     latents=latent_dist,
                     outputs=output_dist,
                     path=model_path)
@@ -268,8 +268,8 @@ def main(cfg):
   elif cfg.model == 'lda2':
     vae0_iter = 10000
     vae0 = betaVAE(beta=1.0,
-                   encoder=NetworkConfig(units=[300], name='Encoder'),
-                   decoder=NetworkConfig(units=[300, 300], name='Decoder'),
+                   encoder=NetConf(units=[300], name='Encoder'),
+                   decoder=NetConf(units=[300, 300], name='Decoder'),
                    outputs=DistributionDense(
                        (n_words,),
                        posterior='onehot',
