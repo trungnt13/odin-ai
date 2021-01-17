@@ -181,11 +181,11 @@ class VariationalAutoencoder(VariationalModel):
                                          projection=True,
                                          name='image'),
       encoder: LayerCreator = NetConf([512, 512],
-                                            flatten_inputs=True,
-                                            name="encoder"),
+                                      flatten_inputs=True,
+                                      name="encoder"),
       decoder: LayerCreator = NetConf([512, 512],
-                                            flatten_inputs=True,
-                                            name="decoder"),
+                                      flatten_inputs=True,
+                                      name="decoder"),
       latents: LayerCreator = RVmeta(64,
                                      'mvndiag',
                                      projection=True,
@@ -195,14 +195,46 @@ class VariationalAutoencoder(VariationalModel):
     ### keras want this supports_masking on to enable support masking
     super().__init__(**kwargs)
     ### create layers
-    self._encoder = _parse_layers(network=encoder, name="encoder")
-    self._encoder_args = _get_args(self.encoder)
-    self._latents = _parse_layers(network=latents, name="latents")
-    self._latents_args = _get_args(self.latents)
-    self._decoder = _parse_layers(network=decoder, name="decoder")
-    self._decoder_args = _get_args(self.decoder)
-    self._observation = _parse_layers(network=observation, name="observation")
-    self._observation_args = _get_args(self.observation)
+    # encoder
+    if isinstance(encoder, (tuple, list)):
+      self._encoder = [
+          _parse_layers(network=e, name=f"encoder{i}")
+          for i, e in enumerate(encoder)
+      ]
+      self._encoder_args = [_get_args(e) for e in self._encoder]
+    else:
+      self._encoder = _parse_layers(network=encoder, name="encoder")
+      self._encoder_args = _get_args(self.encoder)
+    # latents
+    if isinstance(latents, (tuple, list)):
+      self._latents = [
+          _parse_layers(network=z, name=f"latents{i}")
+          for i, z in enumerate(latents)
+      ]
+      self._latents_args = [_get_args(z) for z in self.latents]
+    else:
+      self._latents = _parse_layers(network=latents, name="latents")
+      self._latents_args = _get_args(self.latents)
+    # decoder
+    if isinstance(decoder, (tuple, list)):
+      self._decoder = [
+          _parse_layers(network=d, name=f"decoder{i}")
+          for i, d in enumerate(decoder)
+      ]
+      self._decoder_args = [_get_args(d) for d in self.decoder]
+    else:
+      self._decoder = _parse_layers(network=decoder, name="decoder")
+      self._decoder_args = _get_args(self.decoder)
+    # observation
+    if isinstance(observation, (tuple, list)):
+      self._observation = [
+          _parse_layers(network=observation, name=f"observation{i}")
+          for i, o in enumerate(observation)
+      ]
+      self._observation_args = [_get_args(o) for o in self.observation]
+    else:
+      self._observation = _parse_layers(network=observation, name="observation")
+      self._observation_args = _get_args(self.observation)
 
   @property
   def encoder(self) -> Layer:

@@ -8,7 +8,7 @@ from odin.utils import as_tuple
 
 
 class betaVAE(VariationalAutoencoder):
-  r""" Implementation of beta-VAE
+  """ Implementation of beta-VAE
 
   Parameters
   ----------
