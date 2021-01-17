@@ -25,13 +25,9 @@ from tensorflow.python.keras.layers import Dense, Lambda, Layer
 from tensorflow.python.keras.regularizers import Regularizer
 from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.internal import \
     distribution_util as dist_util
 from tensorflow_probability.python.layers import DistributionLambda
@@ -81,7 +77,7 @@ def _get_all_args(fn):
 # Main classes
 # ===========================================================================
 class DistributionDense(Dense):
-  r""" Using `Dense` layer to parameterize the tensorflow_probability
+  """ Using `Dense` layer to parameterize the tensorflow_probability
   `Distribution`
 
     Parameters
@@ -273,6 +269,12 @@ class DistributionDense(Dense):
             p: Optional[Union[Distribution, Callable[[],
                                                      Distribution]]] = None):
     self._prior = p
+
+  def set_prior(self,
+                p: Optional[Union[Distribution,
+                                  Callable[[], Distribution]]] = None):
+    self.prior = p
+    return self
 
   def _sample_fn(self, dist):
     return dist.sample(sample_shape=self._posterior_sample_shape)
@@ -669,8 +671,7 @@ class DistributionNetwork(Model):
   def __init__(
       self,
       distributions: List[Layer],
-      network: Union[Layer, NetConf] = NetConf([128, 128],
-                                                           flatten_inputs=True),
+      network: Union[Layer, NetConf] = NetConf([128, 128], flatten_inputs=True),
       name: str = 'DistributionNetwork',
   ):
     super().__init__(name=name)

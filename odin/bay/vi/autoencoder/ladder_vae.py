@@ -32,6 +32,36 @@ class hierarchicalVAE(betaVAE):
   Hierachical takes longer to train and often more unstable, reduce the learning rate
   is often desired.
 
+  Parameters
+  ----------
+  ladder_hiddens : List[int], optional
+      [description], by default [256]
+  ladder_latents : List[int], optional
+      [description], by default [64]
+  ladder_layers : int, optional
+      [description], by default 2
+  batchnorm : bool, optional
+      [description], by default True
+  dropout : float, optional
+      [description], by default 0.0
+  activation : Callable[..., tf.Tensor], optional
+      [description], by default tf.nn.leaky_relu
+  latents : Union[Layer, RVmeta], optional
+      [description], by default RVmeta(32, 'mvndiag', projection=True, name="latents")
+  beta : Union[float, Interpolation], optional
+      a fixed beta or interpolated beta based on iteration step. It is recommended
+      to keep the beta value > 0 at the beginning of training, especially when using
+      powerful architecture for encoder and decoder. Otherwise, the suboptimal
+      latents could drive the network to very unstable loss region which result NaNs
+      during early training,
+      by default `linear(vmin=1e-4, vmax=1., length=2000, delay_in=0)`
+  tie_latents : bool, optional
+      [description], by default False
+  all_standard_prior : bool, optional
+      [description], by default False
+  name : str, optional
+      [description], by default 'HierarchicalVAE'
+
   References
   ----------
   Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
@@ -46,23 +76,25 @@ class hierarchicalVAE(betaVAE):
       ladder_layers: int = 2,
       batchnorm: bool = True,
       dropout: float = 0.0,
-      activation: Callable[..., tf.Tensor] = tf.nn.leaky_relu,
+      activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
       latents: Union[Layer, RVmeta] = RVmeta(32,
                                              'mvndiag',
                                              projection=True,
                                              name="latents"),
-      beta: Union[float, Interpolation] = linear(vmin=0.,
+      beta: Union[float, Interpolation] = linear(vmin=1e-6,
                                                  vmax=1.,
                                                  length=2000,
-                                                 delay_in=100),
+                                                 delay_in=0),
       tie_latents: bool = False,
       all_standard_prior: bool = False,
+      stochastic_inference: bool = True,
       name: str = 'HierarchicalVAE',
       **kwargs,
   ):
     super().__init__(latents=latents, beta=beta, name=name, **kwargs)
     assert len(ladder_hiddens) == len(ladder_latents)
     self.all_standard_prior = bool(all_standard_prior)
+    self.stochastic_inference = bool(stochastic_inference)
     self.ladder_encoder = [
         NetConf([units] * ladder_layers,
                 activation=activation,
@@ -170,10 +202,6 @@ class LadderMergeDistribution(DistributionLambda):
   """ Merge two Gaussian based on weighed variance
 
   https://github.com/casperkaae/LVAE/blob/066858a3fb53bb1c529a6f12ae5afb0955722845/run_models.py#L106
-
-  #all log_*** should have dimension (batch_size, nsamples, ivae_samples)
-  a = log_px.sum(axis=3) + temp * (sum([p.sum(axis=3) for p in log_pz]) -
-                                   sum([p.sum(axis=3) for p in log_qz]))
   """
 
   def __init__(self, name='LadderMergeDistribution'):
