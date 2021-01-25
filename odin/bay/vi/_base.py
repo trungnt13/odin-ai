@@ -20,7 +20,9 @@ class VariationalModel(Networks):
       self,
       analytic: bool = False,
       reverse: bool = True,
+      free_bits: Optional[float] = None,
       sample_shape: Union[int, List[int]] = (),
+      allow_negative_kl: bool = True,
       **kwargs,
   ):
     self.supports_masking = True
@@ -28,6 +30,8 @@ class VariationalModel(Networks):
     self._sample_shape = sample_shape
     self.analytic = analytic
     self.reverse = reverse
+    self.free_bits = free_bits
+    self.allow_negative_kl = bool(allow_negative_kl)
 
   @property
   def sample_shape(self) -> List[int]:
@@ -42,6 +46,7 @@ class VariationalModel(Networks):
       analytic: Optional[bool] = None,
       reverse: Optional[bool] = None,
       sample_shape: Optional[Union[int, List[int]]] = None,
+      free_bits: Optional[float] = None,
   ) -> 'VariationalModel':
     """Set the configuration for ELBO
 
@@ -71,6 +76,7 @@ class VariationalModel(Networks):
       self.reverse = bool(reverse)
     if sample_shape is not None:
       self._sample_shape = sample_shape
+    self.free_bits = free_bits
     return self
 
   def importance_weighted(self, elbo: TensorTypes, axis: int = 0) -> tf.Tensor:
@@ -163,11 +169,12 @@ class VariationalModel(Networks):
     for x in llk.values():  # log-likelihood
       llk_sum += x
     for name, x in kl.items():  # kl-divergence
-      # tf.debugging.assert_greater(
-      #     x,
-      #     -1e-3,
-      #     message=(f"Negative KL-divergence values for '{name}', "
-      #              "probably because of numerical instability."))
+      if not self.allow_negative_kl:
+        tf.debugging.assert_greater(
+            x,
+            -1e-3,
+            message=(f"Negative KL-divergence values for '{name}', "
+                     "probably because of numerical instability."))
       kl_sum += x
     elbo = llk_sum - kl_sum
     return elbo

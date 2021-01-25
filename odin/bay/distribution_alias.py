@@ -29,6 +29,8 @@ _dist_mapping = multikeysdict({
     ('mdntril', 'gmmtril'): (partialclass(obl.MixtureGaussianLayer,
                                           covariance='tril'),
                              tfd.MixtureSameFamily),
+    # ====== Mixture of Logistic ====== #
+    ('mixqlogist',): (obl.MixtureQLogisticLayer, tfd.Logistic),
     # ====== NegativeBinomial ====== #
     ('nb', 'negativebinomial'):
         (obl.NegativeBinomialLayer, tfd.NegativeBinomial),

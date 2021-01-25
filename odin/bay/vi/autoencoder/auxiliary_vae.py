@@ -220,6 +220,8 @@ class auxiliaryVAE(conditionalM2VAE):
     pa_zy = P_u[1]
     a = tf.convert_to_tensor(qa_x)
     kl_qp_a = qa_x.log_prob(a) - pa_zy.log_prob(a)
+    if self.free_bits is not None:
+      kl_qp_a = tf.maximum(kl_qp_a, self.free_bits)
     kl_u['kl_aux_u'] = kl_qp_a
     ### for labelled data, add the discriminative objective
     P_l, Q_l, llk_l, kl_l = self._labelled_loss(X_l, y_l, training)
@@ -229,6 +231,8 @@ class auxiliaryVAE(conditionalM2VAE):
       pa_zy = P_l[1]
       a = tf.convert_to_tensor(qa_x)
       kl_qp_a = qa_x.log_prob(a) - pa_zy.log_prob(a)
+      if self.free_bits is not None:
+        kl_qp_a = tf.maximum(kl_qp_a, self.free_bits)
       kl_l['kl_aux_l'] = tf.cond(is_ss, lambda: kl_qp_a, lambda: 0.)
     # l_qa_x, l_qa_x_mu, l_qa_x_logvar = stochastic_layer(l_qa_x)
     # l_pa_zy, l_pa_zy_mu, l_pa_zy_logvar = stochastic_layer(l_pa_zy)

@@ -1,7 +1,7 @@
 import tensorflow as tf
 from typing import Union
 from odin.backend import interpolation as interp
-from odin.backend.interpolation import Interpolation
+from odin.backend.interpolation import Interpolation, linear
 from odin.bay.vi.autoencoder.variational_autoencoder import VariationalAutoencoder
 from odin.bay.vi.losses import total_correlation
 from odin.utils import as_tuple
@@ -57,6 +57,32 @@ class beta10VAE(betaVAE):
     super().__init__(beta=10.0, name=name, **kwargs)
 
 
+class annealingVAE(betaVAE):
+  """KL-annealing VAE, cyclical annealing could be achieved by setting
+  `cyclical=True` when creating `Interpolation`
+
+  References
+  ----------
+  Fu, H., Li, C., Liu, X., Gao, J., Celikyilmaz, A., Carin, L., 2019.
+      "Cyclical Annealing Schedule: A Simple Approach to Mitigating KL
+      Vanishing". arXiv:1903.10145 [cs, stat].
+  Maaløe, L., Sønderby, C.K., Sønderby, S.K., Winther, O., 2016. Auxiliary
+      Deep Generative Models. arXiv:1602.05473 [cs, stat].
+  """
+  def __init__(self,
+               beta: float = 1,
+               annealing_steps: int = 2000,
+               wait_steps: int = 0,
+               name: str = 'AnnealingVAE',
+               **kwargs):
+    super().__init__(beta=linear(vmin=1e-6,
+                                 vmax=float(beta),
+                                 length=int(annealing_steps),
+                                 delay_in=int(wait_steps)),
+                     name=name,
+                     **kwargs)
+
+
 class betatcVAE(betaVAE):
   r""" Extend the beta-VAE with total correlation loss added.
 
@@ -84,22 +110,25 @@ class annealedVAE(VariationalAutoencoder):
 
   Implementing Eq. 8 of (Burgess et al. 2018)
 
-  Arguments:
-    gamma: Hyperparameter for the regularizer.
-    c_max: a Scalar. Maximum capacity of the bottleneck.
-      is gradually increased from zero to a value large enough to produce
-      good quality reconstructions
-    iter_max: an Integer. Number of iteration until reach the maximum
-      capacity (start from 0).
-    interpolation : a String. Type of interpolation for increasing capacity.
+  Parameters
+  ----------
+  gamma: Hyperparameter for the regularizer.
+  c_max: a Scalar. Maximum capacity of the bottleneck.
+    is gradually increased from zero to a value large enough to produce
+    good quality reconstructions
+  iter_max: an Integer. Number of iteration until reach the maximum
+    capacity (start from 0).
+  interpolation : a String. Type of interpolation for increasing capacity.
 
-  Example:
-    vae = annealedVAE()
-    elbo = vae.elbo(x, px, qz, n_iter=1)
+  Example
+  -------
+  vae = annealedVAE()
+  elbo = vae.elbo(x, px, qz, n_iter=1)
 
-  Reference:
-    Burgess, C.P., Higgins, I., et al. 2018. "Understanding disentangling in
-      beta-VAE". arXiv:1804.03599 [cs, stat].
+  Reference
+  ---------
+  Burgess, C.P., Higgins, I., et al. 2018. "Understanding disentangling in
+    beta-VAE". arXiv:1804.03599 [cs, stat].
   """
 
   def __init__(self,
@@ -123,12 +152,3 @@ class annealedVAE(VariationalAutoencoder):
     kl = {key: self.gamma * tf.math.abs(val - c) for key, val in kl.items()}
     return llk, kl
 
-
-# class CyclicalAnnealingVAE(betaVAE):
-#   r"""
-#   Reference:
-#     Fu, H., Li, C., Liu, X., Gao, J., Celikyilmaz, A., Carin, L., 2019.
-#       "Cyclical Annealing Schedule: A Simple Approach to Mitigating KL
-#       Vanishing". arXiv:1903.10145 [cs, stat].
-#   """
-#   pass

@@ -8,12 +8,14 @@ from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              NetConf,
                                                              _parse_layers)
+from odin.backend.interpolation import Interpolation, linear, circle
 from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
 from tensorflow import Tensor
 from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
-                                                         Distribution)
+                                                         Distribution,
+                                                         QuantizedDistribution)
 
 
 # ===========================================================================
@@ -207,11 +209,14 @@ class miVAE(betaVAE):
     else:
       llk['mi_codes'] = self.mi_coef * mi_c
     ## this value is just for monitoring
-    mi_z = qz_xprime.log_prob(z_prime)
+    mi_z = tf.reduce_mean(qz_xprime.log_prob(z_prime))
+    mi_z = tf.cond(tf.math.is_nan(mi_z),
+                   true_fn=lambda: 0.,
+                   false_fn=lambda: tf.clip_by_value(mi_z, -1e8, 1e8))
     llk['mi_latents'] = tf.stop_gradient(mi_z)
     ## factorizing the mutual codes if required
     if hasattr(qc_x, 'KL_divergence'):
-      kl_c = qc_x.KL_divergence()
+      kl_c = qc_x.KL_divergence(free_bits=self.free_bits)
     else:
       kl_c = 0.
     if self.kl_codes_coef == 0.:
@@ -222,35 +227,52 @@ class miVAE(betaVAE):
     return llk, kl
 
 
-class semifoVAE(betaVAE):
+class semafoVAE(betaVAE):
   """A semaphore is a variable or abstract data type used to control access to
   a common resource by multiple processes and avoid critical section problems in
   a concurrent system
+
+  SemafoVAE  [Callback#50001]:
+  llk_x:-73.33171081542969
+  llk_y:-0.9238954782485962
+  acc_y:0.7268000245094299
+
+  Without autoregressive
+  llk_x:-72.9976577758789
+  llk_y:-0.7141319513320923
+  acc_y:0.8095999956130981
   """
 
-  def __init__(self,
-               latents: RVmeta = RVmeta(32,
-                                        'mvndiag',
-                                        projection=True,
-                                        name='latents'),
-               labels: RVmeta = RVmeta(10,
-                                       'onehot',
-                                       projection=True,
-                                       name="digits"),
-               decoder_y: LayerCreator = NetConf([256, 256],
-                                                       name='decoder_y'),
-               beta: float = 1.0,
-               alpha: float = 10.0,
-               mi_coef: float = 0.1,
-               steps_without_mi: int = 1000,
-               name='semifoVAE',
-               **kwargs):
-    super().__init__(beta=beta, latents=latents, name=name, **kwargs)
+  def __init__(
+      self,
+      labels: RVmeta = RVmeta(10, 'onehot', projection=True, name="digits"),
+      alpha: float = 10.0,
+      mi_coef: Union[float, Interpolation] = circle(vmin=0.,
+                                                    vmax=0.1,
+                                                    length=2000,
+                                                    delay_in=100,
+                                                    delay_out=100,
+                                                    cyclical=True),
+      beta: Union[float, Interpolation] = linear(vmin=1e-6,
+                                                 vmax=1.,
+                                                 length=2000,
+                                                 delay_in=0),
+      name='SemafoVAE',
+      **kwargs,
+  ):
+    super().__init__(beta=beta, name=name, **kwargs)
     self.labels = _parse_layers(labels)
-    self.decoder_y = _parse_layers(decoder_y)
-    self.mi_coef = float(mi_coef)
-    self.steps_without_mi = int(steps_without_mi)
+    self._mi_coef = mi_coef
     self.alpha = alpha
+
+  def build(self, input_shape):
+    return super().build(input_shape)
+
+  @property
+  def mi_coef(self):
+    if isinstance(self._mi_coef, Interpolation):
+      return self._mi_coef(self.step)
+    return self._mi_coef
 
   @classmethod
   def is_semi_supervised(cls) -> bool:
@@ -260,29 +282,16 @@ class semifoVAE(betaVAE):
     X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
     # don't condition on the labels, only accept inputs
     X = X[0]
-    return super().encode(X, training=training, mask=None, **kwargs)
+    qz_x = super().encode(X, training=training, mask=None, **kwargs)
+    qy_zx = self.labels(tf.convert_to_tensor(qz_x),
+                        training=training,
+                        mask=mask)
+    return (qz_x, qy_zx)
 
-  def decode(self,
-             latents,
-             training=None,
-             mask=None,
-             predict_labels=True,
-             **kwargs):
-    h_d = super().decode(latents,
-                         training=training,
-                         mask=mask,
-                         only_decoding=True,
-                         **kwargs)
-    px_z = self.observation(h_d, training=training, mask=mask)
-    if not predict_labels:
-      return px_z
+  def decode(self, latents, training=None, mask=None, **kwargs):
     if isinstance(latents, (tuple, list)):
-      latents = tf.concat(latents, axis=-1)
-    h_y = self.decoder_y(tf.convert_to_tensor(latents),
-                         training=training,
-                         mask=mask)
-    py_z = self.labels(h_y, training=training, mask=mask)
-    return (px_z, py_z)
+      latents = latents[0]
+    return super().decode(latents, training, mask, **kwargs)
 
   def elbo_components(self, inputs, training=None, mask=None):
     ## unsupervised ELBO
@@ -290,10 +299,10 @@ class semifoVAE(betaVAE):
     if mask is not None:
       mask = tf.reshape(mask, (-1,))
     llk, kl = super().elbo_components(X[0], mask=mask, training=training)
-    (px_z, qy_z), qz_x = self.last_outputs
+    px_z, (qz_x, py_zx) = self.last_outputs
     ## supervised loss
     if len(y) > 0:
-      llk_y = qy_z.log_prob(y[0])
+      llk_y = py_zx.log_prob(y[0])
       if mask is not None:
         llk_y = tf.cond(
             tf.reduce_all(tf.logical_not(mask)),
@@ -307,30 +316,32 @@ class semifoVAE(betaVAE):
                       false_fn=lambda: llk_y)
       llk[f"llk_{self.labels.name}"] = llk_y
     ## sample the prior
-    batch_shape = px_z.batch_shape
+    batch_shape = qz_x.batch_shape
     z_prime = qz_x.KL_divergence.prior.sample(batch_shape)
     ## decoding
-    px = self.decode(z_prime, training=training, predict_labels=False)
+    px = self.decode(z_prime, training=training)
     if px.reparameterization_type == NOT_REPARAMETERIZED:
       x = px.mean()
     else:
       x = tf.convert_to_tensor(px)
-    qz_xprime = self.encode(x, training=training)
+    # x = tf.stop_gradient(x) # should not stop gradient here, generator need to be updated
+    qz_xprime, qy_zxprime = self.encode(x, training=training)
     #' mutual information (we want to maximize this, hence, add it to the llk)
-    py = self.labels(self.decoder_y(tf.convert_to_tensor(qz_xprime),
-                                    training=training),
-                     training=training)
-    y = tf.convert_to_tensor(py)
-    mi_y = py.log_prob(y) - qy_z.log_prob(y)
+    y = tf.convert_to_tensor(py_zx)
+    # only calculate MI for unsupervised data
+    mi_y = tf.reduce_mean(
+        tf.boolean_mask(
+            py_zx.log_prob(y) - qy_zxprime.log_prob(y), tf.logical_not(mask)))
     if training:
-      llk['mi_labels'] = tf.cond(self.step > self.steps_without_mi,
-                                 true_fn=lambda: self.mi_coef * mi_y,
-                                 false_fn=lambda: 0.)
+      llk[f'mi_{self.labels.name}'] = self.mi_coef * mi_y
     else:
-      llk['mi_labels'] = self.mi_coef * mi_y
+      llk[f'mi_{self.labels.name}'] = mi_y
     ## this value is just for monitoring
-    mi_z = qz_xprime.log_prob(z_prime)
-    llk['mi_latents'] = tf.stop_gradient(mi_z)
+    mi_z = tf.reduce_mean(qz_xprime.log_prob(z_prime))
+    mi_z = tf.cond(tf.math.is_nan(mi_z),
+                   true_fn=lambda: 0.,
+                   false_fn=lambda: tf.clip_by_value(mi_z, -1e8, 1e8))
+    llk[f'mi_{self.latents.name}'] = tf.stop_gradient(mi_z)
     return llk, kl
 
 
@@ -352,7 +363,6 @@ class IFVAE(betaVAE):
     Creswell, A., Mohamied, Y., Sengupta, B., Bharath, A.A., 2018.
       "Adversarial Information Factorization". arXiv:1711.05175 [cs].
   """
-  pass
 
 
 class InfoMaxVAE(betaVAE):
@@ -364,4 +374,3 @@ class InfoMaxVAE(betaVAE):
     Hjelm, R.D., Fedorov, A., et al. 2019. "Learning Deep Representations by
       Mutual Information Estimation and Maximization". ICLR'19.
   """
-  pass

@@ -182,34 +182,46 @@ def kl_divergence(
                                   Tensor]] = lambda q: q.sample(),
     reduce_axis: List[int] = (),
     reverse: bool = True,
+    free_bits: Optional[float] = None,
 ) -> Tensor:
-  r""" Calculating `KL(q(x)||p(x))` (if reverse=True) or
+  """ Calculating `KL(q(x)||p(x))` (if reverse=True) or
   `KL(p(x)||q(x))` (if reverse=False)
 
-  Arguments:
-    q : `tensorflow_probability.Distribution` or `Callable`,
+  Parameters
+  ----------
+  q : `tensorflow_probability.Distribution` or `Callable`,
       the approximated posterior distribution
-    p : `tensorflow_probability.Distribution` or `Callable`,
+  p : `tensorflow_probability.Distribution` or `Callable`,
       the prior distribution
-    analytic : bool (default: False)
+  analytic : bool (default: False)
       if True, use the close-form solution  for
-    q_sample : {callable, Tensor, Number}
+  q_sample : {callable, Tensor, Number}
       callable for extracting sample from `q(x)` (takes `q` posterior distribution
       as input argument)
-    reudce_axis : {None, int, tuple}. Reduce axis when use MCMC to estimate KL
+  reudce_axis : {None, int, tuple}. Reduce axis when use MCMC to estimate KL
       divergence, default `()` mean keep all original dimensions.
-    reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
+  reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
       (or p_model) by greedily filling in the highest modes of data (or, in
       other word, placing low probability to where data does not occur).
       Otherwise, `KL(p||q)` a.k.a maximum likelihood, place high probability
       at anywhere data occur (i.e. averagely fitting the data).
+  free_bits : `float` (optional)
+      maximum(lambda, KL) as stated in (Kingma et al. 2016)
 
-  Returns:
-    A Tensor with the batchwise KL-divergence between `distribution_a`
+  Returns
+  -------
+  A Tensor with the batchwise KL-divergence between `distribution_a`
       and `distribution_b`.  The shape is `[batch_dims]` for analytic KL,
       otherwise, `[sample_shape, batch_dims]`.
 
-  Example:
+  References
+  ----------
+  Kingma, D.P., et al., 2016. Improved variational inference with inverse
+      autoregressive flow, Advances in Neural Information Processing
+      Systems. Curran Associates, Inc., pp. 4743–4751.
+
+  Example
+  -------
   ```python
   p = bay.distributions.OneHotCategorical(logits=[1, 2, 3])
 
@@ -250,17 +262,23 @@ def kl_divergence(
     q, p = [q, p][::-1]
   ### analytic KL
   if bool(analytic):
-    return tfd.kl_divergence(q, p)
+    kl = tfd.kl_divergence(q, p)
   ### non-analytic KL
-  # using MCMC sampling for estimating the KL
-  if callable(q_sample):
-    z = q_sample(q)
-  elif q_sample is None:  # TensorCoercible
-    z = tf.convert_to_tensor(q)
   else:
-    z = q.sample(q_sample)
-  # calculate the output, then perform reduction
-  kl = q.log_prob(z) - p.log_prob(z)
+    # using MCMC sampling for estimating the KL
+    if callable(q_sample):
+      z = q_sample(q)
+    elif q_sample is None:  # TensorCoercible
+      z = tf.convert_to_tensor(q)
+    else:
+      z = q.sample(q_sample)
+    # calculate the output, then perform reduction
+    kl = q.log_prob(z) - p.log_prob(z)
+    if free_bits is not None:
+      pass
+  ### free-bits
+  if free_bits is not None:
+    kl = tf.maximum(kl, tf.cast(free_bits, kl.dtype))
   kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
   return kl
 
@@ -272,25 +290,27 @@ class KLdivergence:
     - Calculating KL(q(x)||p(x)) (if reverse=True) or
     - KL(p(x)||q(x)) (if reverse=False)
 
-  Arguments:
-    posterior : `tensorflow_probability.Distribution`, the approximated
-      posterior distribution
-    prior : `tensorflow_probability.Distribution`, the prior distribution
-    analytic : bool (default: False)
-      if True, use the close-form solution  for
-    sample_shape : {Tensor, Number}
-      number of MCMC samples for MCMC estimation of KL-divergence
-    reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
-      (or p_model) by greedily filling in the highest modes of data (or, in
-      other word, placing low probability to where data does not occur).
-      Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
-      propagation place high probability at anywhere data occur
-      (i.e. averagely fitting the data).
-    keepdims : a Boolean. If True, expand the dimension to preserve the MCMC
-      dimension in case of analytic KL.
+  Parameters
+  ----------
+  posterior : `tensorflow_probability.Distribution`, the approximated
+    posterior distribution
+  prior : `tensorflow_probability.Distribution`, the prior distribution
+  analytic : bool (default: False)
+    if True, use the close-form solution  for
+  sample_shape : {Tensor, Number}
+    number of MCMC samples for MCMC estimation of KL-divergence
+  reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
+    (or p_model) by greedily filling in the highest modes of data (or, in
+    other word, placing low probability to where data does not occur).
+    Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
+    propagation place high probability at anywhere data occur
+    (i.e. averagely fitting the data).
+  keepdims : a Boolean. If True, expand the dimension to preserve the MCMC
+    dimension in case of analytic KL.
 
-  Note:
-    this class return 0. if the prior is not given (i.e. prior=None)
+  Note
+  ----
+  this class return 0. if the prior is not given (i.e. prior=None)
   """
 
   def __init__(self,
@@ -299,6 +319,7 @@ class KLdivergence:
                analytic=False,
                sample_shape=(),
                reverse=True,
+               free_bits=None,
                keepdims=False):
     self.posterior = posterior
     self.prior = prior
@@ -306,6 +327,7 @@ class KLdivergence:
     self.sample_shape = sample_shape
     self.reverse = bool(reverse)
     self.keepdims = bool(keepdims)
+    self.free_bits = free_bits
 
   def __str__(self):
     if hasattr(self.posterior, 'shape'):
@@ -330,19 +352,22 @@ class KLdivergence:
                analytic=None,
                sample_shape=-1,
                reverse=None,
-               keepdims=False):
+               keepdims=False,
+               free_bits=None):
     prior = self.prior if prior is None else prior
     analytic = self.analytic if analytic is None else bool(analytic)
     sample_shape = self.sample_shape if sample_shape == -1 else sample_shape
     reverse = self.reverse if reverse is None else bool(reverse)
     keepdims = self.keepdims if keepdims is None else bool(keepdims)
+    free_bits = self.free_bits if free_bits is None else free_bits
     if prior is None:
       return 0.
     div = kl_divergence(q=self.posterior,
                         p=prior,
                         analytic=analytic,
                         reverse=reverse,
-                        q_sample=sample_shape)
+                        q_sample=sample_shape,
+                        free_bits=free_bits)
     if analytic and keepdims:
       div = tf.expand_dims(div, axis=0)
     return div

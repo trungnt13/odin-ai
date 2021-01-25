@@ -171,53 +171,58 @@ def is_random_variable(x: Any) -> bool:
                        unsafe_hash=False,
                        frozen=False)
 class RVmeta:
-  r""" Description of a random variable for the Bayesian model.
+  """ Description of a random variable for the Bayesian model.
 
-  Arguments:
-    event_shape : a tuple of Integer. The shape tuple of distribution
-      event shape
-    posterior : a String. Alias for a distribution, for examples:
-      - 'bernoulli' : `Bernoulli` distribution
-      - ('poisson'): `Poisson` distribution
-      - ('normal', 'gaussian') : `IndependentGaussian` distribution
-      - 'mvndiag' : diagonal multivariate Gaussian distribution
-      - 'mvntril' : lower triangle multivariate Gaussian distribution
-      - 'mvnfull' : full covariance MVN
-      - 'lognorm' : LogNormal distribution
-      - 'nb' : negative binomial
-      - 'nbd' : negative binomial using mean-dispersion parameterization
-      - 'zinb' or 'zinbd' : zero-inflated negative binomial
-      - 'gmm' : mixture density network (`IndependentNormal` components)
-      - 'gmmdiag' : mixture of multivariate diagonal normals
-      - 'gmmtril' : mixture of multivariate full or triL (lower-triangle) normals
-      - 'vdeterministic' : vectorized deterministic distribution
-      or loss function named in `tensorflow.losses` or `keras.activations`,
-      then a VectorDeterministic distribution is created and the `log_prob`
-      function is replaced with given loss function, for example:
-      - 'binary_crossentropy'
-      - 'categorical_crossentropy'
-      - 'categorical_hinge'
-      - 'cosine_similarity'
-      - 'mean_absolute_error'
-      - 'mean_squared_error'
-    projection : a Boolean (default: False)
-      If True, use a fully connected feedforward network to project the input
-      to a desire number of parameters for the distribution.
-    preactivation : a String,
-      Activation function applied on the inputs before the reparameterization.
-    dropout : a Float (default: 0)
-      Dropout probability of input parameters before the reparameterization.
-    name : a String. Identity of the random variable.
-    kwargs : a Dictionary. Keyword arguments for initializing the
-      `DistributionLambda` of the posterior.
+  Parameters
+  ----------
+  event_shape : a tuple of Integer. The shape tuple of distribution
+    event shape
+  posterior : a String. Alias for a distribution, for examples:
+    - 'bernoulli' : `Bernoulli` distribution
+    - ('poisson'): `Poisson` distribution
+    - ('normal', 'gaussian') : `IndependentGaussian` distribution
+    - 'mvndiag' : diagonal multivariate Gaussian distribution
+    - 'mvntril' : lower triangle multivariate Gaussian distribution
+    - 'mvnfull' : full covariance MVN
+    - 'lognorm' : LogNormal distribution
+    - 'nb' : negative binomial
+    - 'nbd' : negative binomial using mean-dispersion parameterization
+    - 'zinb' or 'zinbd' : zero-inflated negative binomial
+    - 'gmm' : mixture density network (`IndependentNormal` components)
+    - 'gmmdiag' : mixture of multivariate diagonal normals
+    - 'gmmtril' : mixture of multivariate full or triL (lower-triangle) normals
+    - 'vdeterministic' : vectorized deterministic distribution
+    or loss function named in `tensorflow.losses` or `keras.activations`,
+    then a VectorDeterministic distribution is created and the `log_prob`
+    function is replaced with given loss function, for example:
+    - 'binary_crossentropy'
+    - 'categorical_crossentropy'
+    - 'categorical_hinge'
+    - 'cosine_similarity'
+    - 'mean_absolute_error'
+    - 'mean_squared_error'
+  projection : a Boolean (default: False)
+    If True, use a fully connected feedforward network to project the input
+    to a desire number of parameters for the distribution.
+  autoregressive : a Boolean (default: False)
+    If True, use a masked autoregressive dense network
+  preactivation : a String,
+    Activation function applied on the inputs before the reparameterization.
+  dropout : a Float (default: 0)
+    Dropout probability of input parameters before the reparameterization.
+  name : a String. Identity of the random variable.
+  kwargs : a Dictionary. Keyword arguments for initializing the
+    `DistributionLambda` of the posterior.
 
-  Example:
-    x = RVmeta(event_shape=12, posterior='gaus')
-    dist = x.create_posterior()
+  Example
+  -------
+  x = RVmeta(event_shape=12, posterior='gaus')
+  dist = x.create_posterior()
   """
   event_shape: List[int] = ()
   posterior: Union[str] = 'normal'
   projection: bool = False
+  autoregressive: bool = False
   dropout: float = 0.0
   name: Optional[str] = None
   preactivation: str = 'linear'
@@ -394,6 +399,7 @@ class RVmeta:
       posterior_kwargs.update(kw)
       # dense network for projection
       layer = obl.MixtureDensityNetwork(event_shape,
+                                        autoregressive=self.autoregressive,
                                         loc_activation=activation,
                                         scale_activation='softplus1',
                                         covariance=dict(
@@ -408,6 +414,7 @@ class RVmeta:
     ## non-mixture distribution
     else:
       layer = obl.DistributionDense(event_shape,
+                                    autoregressive=self.autoregressive,
                                     posterior=distribution_layer,
                                     prior=prior,
                                     activation=activation,

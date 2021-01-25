@@ -6,6 +6,7 @@ from odin.bay.layers.discrete import *
 from odin.bay.layers.distribution_util_layers import *
 from odin.bay.layers.latents import *
 from odin.bay.layers.mixture_layers import *
+from odin.bay.layers.autoregressive_layers import *
 
 
 def _register_distribution_layers():

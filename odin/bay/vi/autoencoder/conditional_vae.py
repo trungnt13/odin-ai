@@ -51,38 +51,38 @@ class conditionalM2VAE(betaVAE):
 
   Parameters
   ------------
-    n_classes : int
-        number of supervised labels.
-    classifier : LayerCreator, optional
-        classifier `q(y|x)`
-    xy_to_qz : LayerCreator, optional
-        a network transforming the joint variable `x,y` for modeling `q(z)`
-        distribution
-    zy_to_px : LayerCreator, optional
-        a network transforming the joint variable `z,y` for modeling `p(x)`
-        distribution
-    embedding_dim : int, optional
-        embedding dimension, by default 128
-    embedding_method : {'repetition', 'projection', 'dictionary',
-                        'sequential', 'identity'}
-        embedding method, by default 'sequential'
-    batchnorm : str, optional
-        if True, applying batch normalization on the joint variables `x,y`
-        and `z, y`, by default 0., by default False
-    dropout : float, optional
-        if greater than zeros, applying dropout on the joint variables `x,y`
-        and `z, y`, by default 0.
-    alpha : float, optional
-        The weight of discriminative objective added to the labelled
-        data objective. In the paper, it is recommended:
-        `alpha = 0.1 * (n_total_samples / n_labelled_samples)`, by default 0.05
-    beta : float, optional
-        [description], by default 1.
-    temperature : float, optional
-        [description], by default 10.
-    marginalize : bool, optional
-        marginalizing the labels (i.e. `y`), otherwide, use Gumbel-Softmax for
-        reparameterization, by default True
+  n_classes : int
+      number of supervised labels.
+  classifier : LayerCreator, optional
+      classifier `q(y|x)`
+  xy_to_qz : LayerCreator, optional
+      a network transforming the joint variable `x,y` for modeling `q(z)`
+      distribution
+  zy_to_px : LayerCreator, optional
+      a network transforming the joint variable `z,y` for modeling `p(x)`
+      distribution
+  embedding_dim : int, optional
+      embedding dimension, by default 128
+  embedding_method : {'repetition', 'projection', 'dictionary',
+                      'sequential', 'identity'}
+      embedding method, by default 'sequential'
+  batchnorm : str, optional
+      if True, applying batch normalization on the joint variables `x,y`
+      and `z, y`, by default 0., by default False
+  dropout : float, optional
+      if greater than zeros, applying dropout on the joint variables `x,y`
+      and `z, y`, by default 0.
+  alpha : float, optional
+      The weight of discriminative objective added to the labelled
+      data objective. In the paper, it is recommended:
+      `alpha = 0.1 * (n_total_samples / n_labelled_samples)`, by default 0.05
+  beta : float, optional
+      [description], by default 1.
+  temperature : float, optional
+      [description], by default 10.
+  marginalize : bool, optional
+      marginalizing the labels (i.e. `y`), otherwide, use Gumbel-Softmax for
+      reparameterization, by default True
 
   References
   ------------
@@ -107,14 +107,14 @@ class conditionalM2VAE(betaVAE):
                                    name='image'),
       latents: RVmeta = RVmeta(64, 'mvndiag', projection=True, name='latents'),
       classifier: LayerCreator = NetConf([128, 128],
-                                               flatten_inputs=True,
-                                               name='classifier'),
+                                         flatten_inputs=True,
+                                         name='classifier'),
       encoder: LayerCreator = NetConf([512, 512],
-                                            flatten_inputs=True,
-                                            name='encoder'),
+                                      flatten_inputs=True,
+                                      name='encoder'),
       decoder: LayerCreator = NetConf([512, 512],
-                                            flatten_inputs=True,
-                                            name='decoder'),
+                                      flatten_inputs=True,
+                                      name='decoder'),
       xy_to_qz: LayerCreator = NetConf([128, 128], name='xy_to_qz'),
       zy_to_px: LayerCreator = NetConf([128, 128], name='zy_to_px'),
       embedding_dim: int = 128,
@@ -347,3 +347,102 @@ class StructuredSemiVAE(betaVAE):
       Representations with Semi-Supervised Deep Generative Models".
       arXiv:1706.00400 [cs, stat].
   """
+
+
+# ===========================================================================
+# M3 Reparameterized VAE
+# ===========================================================================
+class conditionalM3VAE(betaVAE):
+
+  def __init__(
+      self,
+      labels: RVmeta = RVmeta(10, 'onehot', name='digits'),
+      observation: RVmeta = RVmeta((28, 28, 1),
+                                   'bernoulli',
+                                   projection=True,
+                                   name='image'),
+      latents: RVmeta = RVmeta(64, 'mvndiag', projection=True, name='latents'),
+      classifier: LayerCreator = NetConf([128, 128],
+                                         flatten_inputs=True,
+                                         name='classifier'),
+      encoder: LayerCreator = NetConf([512, 512],
+                                      flatten_inputs=True,
+                                      name='encoder'),
+      decoder: LayerCreator = NetConf([512, 512],
+                                      flatten_inputs=True,
+                                      name='decoder'),
+      xy_to_qz: LayerCreator = NetConf([128, 128], name='xy_to_qz'),
+      zy_to_px: LayerCreator = NetConf([128, 128], name='zy_to_px'),
+      embedding_dim: int = 128,
+      embedding_method: Literal['repetition', 'projection', 'dictionary',
+                                'sequential', 'identity'] = 'sequential',
+      batchnorm: str = False,
+      dropout: float = 0.,
+      alpha: float = 0.05,
+      beta: float = 1.,
+      temperature: float = 10.,
+      marginalize: bool = True,
+      name: str = 'ConditionalM2VAE',
+      **kwargs,
+  ):
+    super().__init__(latents=latents,
+                     observation=observation,
+                     encoder=encoder,
+                     decoder=decoder,
+                     beta=beta,
+                     name=name,
+                     **kwargs)
+    self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name="alpha")
+    self.marginalize = bool(marginalize)
+    self.n_classes = int(np.prod(labels.event_shape))
+    assert labels.posterior == 'onehot', \
+      f'only support Categorical distribution for labels, given {labels.posterior}'
+    self.embedding_dim = int(embedding_dim)
+    self.embedding_method = str(embedding_method)
+    self.batchnorm = bool(batchnorm)
+    self.dropout = float(dropout)
+    # the networks
+    self.classifier = _parse_layers(classifier)
+    self.xy_to_qz_net = _parse_layers(xy_to_qz)
+    self.zy_to_px_net = _parse_layers(zy_to_px)
+    # labels distribution
+    if marginalize:
+      temperature = 0
+    if temperature == 0.:
+      posterior = 'onehot'
+      dist_kw = dict()
+      self.relaxed = False
+    else:
+      posterior = 'relaxedonehot'
+      dist_kw = dict(temperature=temperature)
+      self.relaxed = True
+    self.labels = RVmeta(self.n_classes,
+                         posterior,
+                         projection=True,
+                         prior=OneHotCategorical(probs=[1. / self.n_classes] *
+                                                 self.n_classes),
+                         name=labels.name,
+                         kwargs=dist_kw).create_posterior()
+    # create embedder
+    embedder = get_embedding(self.embedding_method)
+    # q(z|xy)
+    self.y_to_qz = embedder(n_classes=self.n_classes,
+                            event_shape=self.embedding_dim,
+                            name='y_to_qz')
+    self.x_to_qz = Dense(embedding_dim, activation='linear', name='x_to_qz')
+    # p(x|zy)
+    self.y_to_px = embedder(n_classes=self.n_classes,
+                            event_shape=self.embedding_dim,
+                            name='y_to_px')
+    self.z_to_px = Dense(embedding_dim, activation='linear', name='z_to_px')
+    # batch normalization
+    if self.batchnorm:
+      self.qz_xy_norm = BatchNormalization(axis=-1, name='qz_xy_norm')
+      self.px_zy_norm = BatchNormalization(axis=-1, name='px_zy_norm')
+    if 0.0 < self.dropout < 1.0:
+      self.qz_xy_drop = Dropout(rate=self.dropout, name='qz_xy_drop')
+      self.px_zy_drop = Dropout(rate=self.dropout, name='px_zy_drop')
+
+  @classmethod
+  def is_semi_supervised(self) -> bool:
+    return True

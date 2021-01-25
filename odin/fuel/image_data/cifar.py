@@ -15,8 +15,15 @@ from odin.fuel.dataset_base import get_partition
 from odin.utils import get_file, md5_checksum, md5_folder, one_hot
 
 
+def _quantisize(images, levels=256):
+  """" Quantization code from
+  `https://github.com/larsmaaloee/BIVA/blob/master/data/cifar10.py` """
+  images = images / 255.
+  return (np.digitize(images, np.arange(levels) / levels) - 1).astype('i')
+
+
 class CIFAR(ImageDataset):
-  r""" CIFAR10 """
+  """ CIFAR10 """
 
   URL = {
       10: r"https://www.cs.toronto.edu/%7Ekriz/cifar-10-python.tar.gz",
@@ -35,7 +42,10 @@ class CIFAR(ImageDataset):
 
   DIR_NAME = {10: "cifar-10-batches-py", 100: "cifar-100-python"}
 
-  def __init__(self, version, path="~/tensorflow_datasets/cifar"):
+  def __init__(self,
+               version: Literal[10, 100],
+               quantize_bits: int=8,
+               path: str = "~/tensorflow_datasets/cifar"):
     path = os.path.abspath(os.path.expanduser(path))
     if not os.path.exists(path):
       os.makedirs(path)
@@ -111,6 +121,10 @@ class CIFAR(ImageDataset):
       self.y_valid_coarse = y_train_coarse[:5000]
       self.y_train_coarse = y_train_coarse[5000:]
       self.y_test_coarse = np.array(y_test_coarse)
+    # levels = int(2**quantize_bits)
+    # self.X_train =  _quantisize(self.X_train, levels)
+    # self.X_valid =  _quantisize(self.X_valid, levels)
+    # self.X_test =  _quantisize(self.X_test, levels)
 
   @property
   def is_binary(self):
@@ -131,20 +145,23 @@ class CIFAR(ImageDataset):
                      parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
                      inc_labels: Union[bool, float] = False,
                      seed: int = 1) -> tf.data.Dataset:
-    r"""
-    Arguments:
-      partition : {'train', 'valid', 'test'}
-      inc_labels : a Boolean or Scalar. If True, return both image and label,
+    """ Create Tensorflow dataset
+
+    Parameters
+    ----------
+    partition : {'train', 'valid', 'test'}
+    inc_labels : a Boolean or Scalar. If True, return both image and label,
         otherwise, only image is returned.
         If a scalar is provided, it indicate the percent of labelled data
         in the mask.
 
-    Return :
-      tensorflow.data.Dataset :
-        image - `(tf.float32, (None, 28, 28, 1))`
-        label - `(tf.float32, (None, 10))`
-        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
-      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
+    Returns
+    -------
+    tensorflow.data.Dataset :
+      image - `(tf.float32, (None, 28, 28, 1))`
+      label - `(tf.float32, (None, 10))`
+      mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+    where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
     X, y = get_partition(partition,
                          train=(self.X_train, self.y_train),

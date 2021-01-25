@@ -6,22 +6,31 @@
 import inspect
 from functools import partial
 from numbers import Number
-from typing import Callable, Dict, List, Union, Any, Tuple, Optional
-from typeguard import typechecked
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
-from six import string_types
 import numpy as np
 import tensorflow as tf
-from odin.backend.keras_helpers import layer2text
-from odin.bay.distributions import (Bernoulli, Categorical, Distribution, Gamma,
-                                    JointDistributionSequential, Normal,
-                                    Blockwise, VonMises, ContinuousBernoulli)
-from odin.networks.base_networks import NetConf, SequentialNetwork
-from odin.networks.skip_connection import SkipConnection
+import tensorflow_addons as tfa
+from six import string_types
+from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
+from tensorflow_probability.python.bijectors import Shift
+from tensorflow_probability.python.distributions import (
+    NOT_REPARAMETERIZED, Categorical, Distribution, Independent, Logistic,
+    MixtureSameFamily, NegativeBinomial, Normal, QuantizedDistribution,
+    TransformedDistribution, Uniform)
 from tensorflow_probability.python.layers import DistributionLambda
-from tensorflow.keras.optimizers.schedules import LearningRateSchedule
+from typeguard import typechecked
+from tensorflow_probability.python.distributions.pixel_cnn import PixelCNN, _PixelCNNNetwork
+
+from odin.backend.keras_helpers import layer2text
+from odin.bay.distributions import (Bernoulli, Blockwise, Categorical,
+                                    ContinuousBernoulli, Distribution, Gamma,
+                                    JointDistributionSequential, Normal,
+                                    PixelCNNpp, VonMises)
+from odin.networks.base_networks import NetConf, SequentialNetwork
+from odin.networks.skip_connection import SkipConnection
 
 __all__ = [
     'mnist_networks',
@@ -43,12 +52,18 @@ class CenterAt0(keras.layers.Layer):
   at 0 given range [-1, 1]
   """
 
-  def __init__(self, enable: bool = True, name: str = 'CenterAt0'):
+  def __init__(self,
+               enable: bool = True,
+               div_255: bool = False,
+               name: str = 'CenterAt0'):
     super().__init__(name=name)
     self.enable = bool(enable)
+    self.div_255 = bool(div_255)
 
   def call(self, inputs, **kwargs):
     if self.enable:
+      if self.div_255:
+        inputs = inputs / 255.
       return 2. * inputs - 1.
     return inputs
 
@@ -196,10 +211,33 @@ fashionmnist_networks = mnist_networks
 # ===========================================================================
 # CIFAR10
 # ===========================================================================
+class _PixelCNNDecoder(keras.Model):
+
+  def __init__(self, input_shape, zdim, n_components, dtype, name):
+    super().__init__(name)
+    # create the pixelcnn decoder
+    self.pixelcnn = _PixelCNNNetwork(dropout_p=0.3,
+                                     num_resnet=1,
+                                     num_hierarchies=1,
+                                     num_filters=32,
+                                     num_logistic_mix=n_components,
+                                     use_weight_norm=False)
+    self.pixelcnn.build((None,) + input_shape)
+    self.dense = keras.layers.Dense(units=int(np.prod(input_shape)),
+                                    activation='tanh',
+                                    name='decoder0')
+    self.reshape = keras.layers.Reshape(input_shape)
+
+  def call(self, inputs, training=None):
+    h = self.dense(inputs)
+    h = self.reshape(h)
+    return self.pixelcnn(h, training=training)
+
+
 @typechecked
 def cifar_networks(
     qz: str = 'mvndiag',
-    zdim: Optional[int] = 16,
+    zdim: Optional[int] = 32,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
@@ -209,11 +247,17 @@ def cifar_networks(
   """Network for CIFAR dataset image size (32, 32, 3)"""
   from odin.bay.random_variable import RVmeta
   if zdim is None:
-    zdim = 16
+    zdim = 32
+  n_components = 10
   n_channels = int(kwargs.get('n_channels', 3))
   input_shape = (32, 32, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
   n_classes = kwargs.get('n_classes', 10)
+  # the number of parameters per pixel.
+  n_coeffs = n_channels * (n_channels - 1) // 2
+  n_out = n_channels * 2 + n_coeffs + 1
+  n_out_total = n_out * n_components
+  # input to cifar network must be [-1., 1.]
   encoder = keras.Sequential(
       [
           CenterAt0(enable=centerize_image),
@@ -226,28 +270,26 @@ def cifar_networks(
       ],
       name='encoder',
   )
-  layers = [
-      keras.layers.Lambda(  # assume that n_mcmc_sample=()
-          lambda x: tf.reshape(x, [-1, 1, 1, x.shape[-1]])),
-      deconv(64, 8, strides=1, padding='valid', name='decoder0'),
-      deconv(64, 5, strides=1, name='decoder1'),
-      deconv(64, 5, strides=2, name='decoder2'),
-      deconv(32, 5, strides=1, name='decoder3'),
-      deconv(32, 5, strides=2, name='decoder4'),
-      deconv(32, 5, strides=1, name='decoder5'),
-      conv(n_channels, 5, strides=1, activation=None, name='decoder6'),
-      keras.layers.Flatten()
-  ]
-  if skip_generator:
-    decoder = SkipSequential(layers=layers, name='skipdecoder')
-  else:
-    decoder = keras.Sequential(layers=layers, name='decoder')
+  # create the pixelcnn decoder
+  decoder = _PixelCNNDecoder(input_shape,
+                             zdim,
+                             n_components,
+                             dtype=encoder.dtype,
+                             name='decoder')
+  # others
   latents = RVmeta((zdim,), qz, projection=True,
                    name="latents").create_posterior()
-  observation = RVmeta(input_shape,
-                       "cbernoulli",
-                       projection=False,
-                       name="image").create_posterior()
+  # create the observation of MixtureQuantizedLogistic
+  observation = DistributionLambda(
+      lambda params: PixelCNNpp(params,
+                                n_components=n_components,
+                                n_channels=n_channels,
+                                inputs_domain='sigmoid',
+                                high=255,
+                                low=0),
+      convert_to_tensor_fn=Distribution.mean,
+      name='image',
+  )
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,
@@ -256,7 +298,7 @@ def cifar_networks(
     networks['labels'] = RVmeta(n_classes,
                                 'onehot',
                                 projection=True,
-                                name='digits').create_posterior()
+                                name='labels').create_posterior()
   return networks
 
 
@@ -707,23 +749,31 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
 
   """
   dataset_name = str(dataset_name).strip().lower()
+  decay_rate = 0.96
   ### image networks
-  if 'mnist' in dataset_name:
+  if 'fashionmnist' in dataset_name:
+    max_iter = 50000
+    init_lr = 1e-3
+    decay_steps = 5000
+    decay_rate = 0.996
+  elif 'mnist' in dataset_name:
     max_iter = 30000
     init_lr = 1e-3
     decay_steps = 2500
+    decay_rate = 0.996
   elif 'cifar' in dataset_name:
-    max_iter = 180000
-    init_lr = 1e-4
-    decay_steps = 8000
+    max_iter = 200000
+    init_lr = 0.001
+    decay_steps = 5000
+    decay_rate = 0.996
   elif 'dsprites' in dataset_name:
     max_iter = 120000
-    init_lr = 1e-3
-    decay_steps = 5000
+    init_lr = 0.001
+    decay_steps = 3000
   elif 'dspritessmall' in dataset_name:
     max_iter = 100000
-    init_lr = 1e-4
-    decay_steps = 5000
+    init_lr = 0.001
+    decay_steps = 2500
   elif 'shapes3dsmall' in dataset_name:
     max_iter = 150000
     init_lr = 5e-4
@@ -754,6 +804,6 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
         f'No predefined optimizer information for dataset {dataset_name}')
   lr = tf.optimizers.schedules.ExponentialDecay(init_lr,
                                                 decay_steps=decay_steps,
-                                                decay_rate=0.96,
-                                                staircase=True)
+                                                decay_rate=decay_rate,
+                                                staircase=False)
   return max_iter, lr

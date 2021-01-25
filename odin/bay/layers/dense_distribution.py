@@ -76,37 +76,36 @@ def _get_all_args(fn):
 # ===========================================================================
 # Main classes
 # ===========================================================================
-class DistributionDense(Dense):
+class DistributionDense(Layer):
   """ Using `Dense` layer to parameterize the tensorflow_probability
   `Distribution`
 
-    Parameters
-    ----------
-    event_shape : List[int]
-        distribution event shape, by default ()
-    posterior : {str, DistributionLambda, Callable[..., Distribution]}
-        Instrution for creating the posterior distribution, could be one of
-        the following:
-        - string : alias of the distribution, e.g. 'normal', 'mvndiag', etc.
-        - DistributionLambda : an instance or type.
-        - Callable : a callable that accept a Tensor as inputs and return a Distribution.
-    posterior_kwargs : Dict[str, Any], optional
-        keywords arguments for initialize the DistributionLambda if a type is
-        given as posterior.
-    prior : Union[Distribution, Callable[[], Distribution]]
-        prior Distribution, could be one of the following:
-        -
-        -
-    convert_to_tensor_fn : Callable[..., Tensor], optional
-        [description], by default Distribution.sample
-    dropout : float, optional
-        [description], by default 0.0
-    projection : bool, optional
-        [description], by default True
-    flatten_inputs : bool, optional
-        [description], by default False
-    units : Optional[int], optional
-        [description], by default None
+  Parameters
+  ----------
+  event_shape : List[int]
+      distribution event shape, by default ()
+  posterior : {str, DistributionLambda, Callable[..., Distribution]}
+      Instrution for creating the posterior distribution, could be one of
+      the following:
+      - string : alias of the distribution, e.g. 'normal', 'mvndiag', etc.
+      - DistributionLambda : an instance or type.
+      - Callable : a callable that accept a Tensor as inputs and return a Distribution.
+  posterior_kwargs : Dict[str, Any], optional
+      keywords arguments for initialize the DistributionLambda if a type is
+      given as posterior.
+  prior : Union[Distribution, Callable[[], Distribution]]
+      prior Distribution, or a callable which return a prior.
+  autoregressive: bool
+      using maksed autoregressive dense network, by default False
+  dropout : float, optional
+      dropout on the dense layer, by default 0.0
+  projection : bool, optional
+      enable dense layers for projecting the inputs into parameters for distribution,
+      by default True
+  flatten_inputs : bool, optional
+      flatten to 2D, by default False
+  units : Optional[int], optional
+      explicitly given total number of distribution parameters, by default None
 
   Return
   -------
@@ -122,6 +121,7 @@ class DistributionDense(Dense):
       prior: Optional[Union[Distribution, Callable[[], Distribution]]] = None,
       convert_to_tensor_fn: Callable[..., Tensor] = Distribution.sample,
       activation: Union[str, Callable[..., Tensor]] = 'linear',
+      autoregressive: bool = False,
       use_bias: bool = True,
       kernel_initializer: Union[str, Initializer] = 'glorot_normal',
       bias_initializer: Union[str, Initializer] = 'zeros',
@@ -200,18 +200,33 @@ class DistributionDense(Dense):
         self._params_size = int(
             _params_size(self.posterior_layer, event_shape,
                          **self._posterior_kwargs))
-    super(DistributionDense,
-          self).__init__(units=self._params_size,
-                         activation=activation,
-                         use_bias=use_bias,
-                         kernel_initializer=kernel_initializer,
-                         bias_initializer=bias_initializer,
-                         kernel_regularizer=kernel_regularizer,
-                         bias_regularizer=bias_regularizer,
-                         activity_regularizer=activity_regularizer,
-                         kernel_constraint=kernel_constraint,
-                         bias_constraint=bias_constraint,
-                         **kwargs)
+    super().__init__(**kwargs)
+    self.autoregressive = autoregressive
+    if autoregressive:
+      from odin.bay.layers.autoregressive_layers import AutoregressiveDense
+      self._dense = AutoregressiveDense(
+                          params=self._params_size / self.event_size,
+                          event_shape=(self.event_size,),
+                          activation=activation,
+                          use_bias=use_bias,
+                          kernel_initializer=kernel_initializer,
+                          bias_initializer=bias_initializer,
+                          kernel_regularizer=kernel_regularizer,
+                          bias_regularizer=bias_regularizer,
+                          activity_regularizer=activity_regularizer,
+                          kernel_constraint=kernel_constraint,
+                          bias_constraint=bias_constraint)
+    else:
+      self._dense = Dense(units=self._params_size,
+                          activation=activation,
+                          use_bias=use_bias,
+                          kernel_initializer=kernel_initializer,
+                          bias_initializer=bias_initializer,
+                          kernel_regularizer=kernel_regularizer,
+                          bias_regularizer=bias_regularizer,
+                          activity_regularizer=activity_regularizer,
+                          kernel_constraint=kernel_constraint,
+                          bias_constraint=bias_constraint)
     # store the distribution from last call,
     self._most_recently_built_distribution = None
     # We'll need to keep track of who's calling who since the functional
@@ -222,7 +237,7 @@ class DistributionDense(Dense):
     self._posterior_call_kw = set(spec.args + spec.kwonlyargs)
 
   def build(self, input_shape) -> 'DistributionDense':
-    super().build(input_shape)
+    self._dense.build(input_shape)
     return self
 
   @property
@@ -321,7 +336,12 @@ class DistributionDense(Dense):
       distribution = super().__call__(inputs, *args, **kwargs)
     return distribution
 
-  def call(self, inputs, training=None, sample_shape=(), **kwargs):
+  def call(self,
+           inputs,
+           training=None,
+           sample_shape=(),
+           projection=None,
+           **kwargs):
     ## NOTE: a 2D inputs is important here, but we don't want to flatten
     # automatically
     if self.flatten_inputs:
@@ -329,8 +349,11 @@ class DistributionDense(Dense):
     params = inputs
     ## do not use tf.cond here, it infer the wrong shape when
     # trying to build the layer in Graph mode.
-    if self.projection:
-      params = super().call(params)
+    projection = projection if projection is not None else self.projection
+    if projection:
+      params = self._dense(params)
+      if self.autoregressive:
+        params = tf.concat(tf.unstack(params, axis=-1), axis=-1)
     ## applying dropout
     if self._dropout > 0:
       params = bk.dropout(params, p_drop=self._dropout, training=training)
@@ -370,7 +393,7 @@ class DistributionDense(Dense):
                     analytic=True,
                     sample_shape=1,
                     reverse=True):
-    r""" KL(q||p) where `p` is the posterior distribution returned from last
+    """ KL(q||p) where `p` is the posterior distribution returned from last
     call
 
     Parameters
@@ -432,23 +455,10 @@ class DistributionDense(Dense):
     else:
       inshape = self.input_shape
       outshape = self.output_shape
-    return (f"<'{self.name}' proj:{self.projection} "
+    return (f"<'{self.name}' autoregr:{self.autoregressive} proj:{self.projection} "
             f"in:{inshape} out:{outshape} event:{self.event_shape} "
-            f"#params:{self.units} post:{posterior} prior:{prior} "
+            f"#params:{self._params_size} post:{posterior} prior:{prior} "
             f"dropout:{self._dropout:.2f} kw:{self._posterior_kwargs}>")
-
-  def get_config(self):
-    config = super().get_config()
-    config['convert_to_tensor_fn'] = _serialize(self._convert_to_tensor_fn)
-    config['event_shape'] = self._event_shape
-    config['posterior'] = self._posterior
-    config['prior'] = self._prior
-    config['dropout'] = self._dropout
-    config['posterior_kwargs'] = self._posterior_kwargs
-    config['projection'] = self.projection
-    config['flatten_inputs'] = self.flatten_inputs
-    config['units'] = self.units
-    return config
 
 
 # ===========================================================================

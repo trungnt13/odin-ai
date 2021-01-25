@@ -1,25 +1,27 @@
-from typing import List, Union, Callable
+from typing import Callable, List, Union
 
 import tensorflow as tf
 from odin.backend.interpolation import Interpolation, linear
+from odin.bay.helpers import kl_divergence
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import annealedVAE, betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.networks import NetConf
 from odin.utils import as_tuple
+from tensorflow import keras
 from tensorflow.keras.layers import Layer
 from tensorflow_probability.python.distributions import Independent, Normal
 from tensorflow_probability.python.layers import DistributionLambda
-from odin.bay.helpers import kl_divergence
-from tensorflow import keras
 
 
 # ===========================================================================
 # Hierarchical VAE
 # ===========================================================================
-class hierarchicalVAE(betaVAE):
-  """ A hierachical VAE with multiple stochastic layers stacked on top of
-  the previous one.
+class stackedVAE(betaVAE):
+  """ A hierachical VAE with multiple stochastic layers stacked on top of the previous one
+  (autoregressive):
+
+    $q(z|x) = q(z_1|x) \mul_{i=2}^L q(z_i|z_{i-1})$
 
   Inference: `X -> E(->z1) -> E1(->z2) -> E2 -> z`
 
@@ -35,19 +37,19 @@ class hierarchicalVAE(betaVAE):
   Parameters
   ----------
   ladder_hiddens : List[int], optional
-      [description], by default [256]
+      number of hidden units for layers in the ladder, each element corresponding
+      to a ladder latents, by default [256]
   ladder_latents : List[int], optional
-      [description], by default [64]
+      number of latents units for each latent variable in the ladder,
+      by default [64]
   ladder_layers : int, optional
-      [description], by default 2
+      number of layers for each hidden layer in the ladder, by default 2
   batchnorm : bool, optional
-      [description], by default True
+      use batch normalization in the ladder hidden layers, by default True
   dropout : float, optional
-      [description], by default 0.0
-  activation : Callable[..., tf.Tensor], optional
-      [description], by default tf.nn.leaky_relu
-  latents : Union[Layer, RVmeta], optional
-      [description], by default RVmeta(32, 'mvndiag', projection=True, name="latents")
+      dropout rate for the ladder hidden layers, by default 0.0
+  activation : Callable[[tf.Tensor], tf.Tensor], optional
+      activation function for the ladder hidden layers, by default tf.nn.leaky_relu
   beta : Union[float, Interpolation], optional
       a fixed beta or interpolated beta based on iteration step. It is recommended
       to keep the beta value > 0 at the beginning of training, especially when using
@@ -56,17 +58,17 @@ class hierarchicalVAE(betaVAE):
       during early training,
       by default `linear(vmin=1e-4, vmax=1., length=2000, delay_in=0)`
   tie_latents : bool, optional
-      [description], by default False
+      tie the parameters that encoding means and standard deviation for both
+      $q(z_i|z_{i-1})$ and $p(z_i|z_{i-1})$, by default False
   all_standard_prior : bool, optional
-      [description], by default False
-  name : str, optional
-      [description], by default 'HierarchicalVAE'
+      use standard normal as prior for all latent variables, by default False
 
   References
   ----------
   Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
     Ladder variational autoencoders, Advances in Neural Information Processing Systems.
     Curran Associates, Inc., pp. 3738–3746.
+  Tomczak, J.M., Welling, M., 2018. VAE with a VampPrior. arXiv:1705.07120 [cs, stat].
   """
 
   def __init__(
@@ -88,6 +90,8 @@ class hierarchicalVAE(betaVAE):
       tie_latents: bool = False,
       all_standard_prior: bool = False,
       stochastic_inference: bool = True,
+      only_mean_up: bool = False,
+      preserve_latents_order: bool = False,
       name: str = 'HierarchicalVAE',
       **kwargs,
   ):
@@ -95,6 +99,7 @@ class hierarchicalVAE(betaVAE):
     assert len(ladder_hiddens) == len(ladder_latents)
     self.all_standard_prior = bool(all_standard_prior)
     self.stochastic_inference = bool(stochastic_inference)
+    self.only_mean_up = bool(only_mean_up)
     self.ladder_encoder = [
         NetConf([units] * ladder_layers,
                 activation=activation,
@@ -130,9 +135,14 @@ class hierarchicalVAE(betaVAE):
       # stochastic bottom-up inference
       qz = z(h, training=training, mask=mask)
       latents.append(qz)
-      # next hidden
-      h = tf.convert_to_tensor(qz)
-      h = e(h, training=training, mask=mask)
+      if self.stochastic_inference:
+        h = tf.convert_to_tensor(qz)
+        h = e(h, training=training, mask=mask)
+      else:
+        # deterministic bottom-up inference
+        if self.only_mean_up:
+          h = qz.mean()
+        h = e(h, training=training, mask=mask)
     if only_encoding:
       return h
     qz = self.latents(h,
@@ -222,7 +232,7 @@ class LadderMergeDistribution(DistributionLambda):
     return dist
 
 
-class ladderVAE(hierarchicalVAE):
+class ladderVAE(stackedVAE):
   """ The ladder variational autoencoder
 
   Similar to hierarchical VAE with 2 improvements:
@@ -252,28 +262,9 @@ class ladderVAE(hierarchicalVAE):
                merge_gaussians: bool = True,
                name: str = 'LadderVAE',
                **kwargs):
-    super().__init__(name=name, **kwargs)
+    super().__init__(stochastic_inference=False, name=name, **kwargs)
     self.ladder_merge = LadderMergeDistribution()
     self.merge_gaussians = bool(merge_gaussians)
-
-  def encode(self, inputs, training=None, mask=None, only_encoding=False):
-    h = self.encoder(inputs, training=training, mask=mask)
-    latents = []
-    for e, z in zip(self.ladder_encoder, self.ladder_qz):
-      qz = z(h, training=training, mask=mask)
-      # h = qz.mean() # only_mu_up=True
-      latents.append(qz)
-      # deterministic bottom-up inference
-      h = e(h, training=training, mask=mask)
-    # final encoder
-    if only_encoding:
-      return h
-    qz = self.latents(h,
-                      training=training,
-                      mask=mask,
-                      sample_shape=self.sample_shape)
-    latents.append(qz)
-    return tuple(latents[::-1])
 
   def decode(self, latents, training=None, mask=None, only_decoding=False):
     h = tf.convert_to_tensor(latents[0])
@@ -298,9 +289,9 @@ class ladderVAE(hierarchicalVAE):
     return tuple([outputs[-1]] + outputs[:-1])
 
   def elbo_components(self, inputs, training=None, mask=None):
-    llk, kl = super(hierarchicalVAE, self).elbo_components(inputs=inputs,
-                                                           mask=mask,
-                                                           training=training)
+    llk, kl = super(stackedVAE, self).elbo_components(inputs=inputs,
+                                                      mask=mask,
+                                                      training=training)
     P, Q = self.last_outputs
     for (qz, pz), lz in zip(P[1:], self.ladder_qz[::-1]):
       if self.all_standard_prior:

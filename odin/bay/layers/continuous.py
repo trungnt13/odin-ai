@@ -24,9 +24,16 @@ from tensorflow_probability.python.layers.internal import \
     distribution_tensor_coercible as dtc
 
 __all__ = [
-    'DistributionLambda', 'MultivariateNormalLayer', 'GammaLayer', 'BetaLayer',
-    'DirichletLayer', 'GaussianLayer', 'NormalLayer', 'LogNormalLayer',
-    'LogisticLayer', 'update_convert_to_tensor_fn'
+    'DistributionLambda',
+    'MultivariateNormalLayer',
+    'GammaLayer',
+    'BetaLayer',
+    'DirichletLayer',
+    'GaussianLayer',
+    'NormalLayer',
+    'LogNormalLayer',
+    'LogisticLayer',
+    'update_convert_to_tensor_fn',
 ]
 
 DistributionLambda = tfl.DistributionLambda

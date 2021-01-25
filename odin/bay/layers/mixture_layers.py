@@ -1,4 +1,5 @@
 from __future__ import absolute_import, division, print_function
+from typing import List, Union, Callable
 
 import numpy as np
 import tensorflow as tf
@@ -11,12 +12,16 @@ from tensorflow_probability.python.layers import (
 
 from odin.backend import parse_activation
 from odin.backend.maths import softplus1
-from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated
+from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated, MixtureQLogistic
 from odin.bay.layers.count_layers import _dispersion
 
 __all__ = [
-    'MixtureLogisticLayer', 'MixtureSameFamilyLayer', 'MixtureGaussianLayer',
-    'CategoricalMixtureOfOneHotCategorical', 'MixtureNegativeBinomialLayer'
+    'MixtureLogisticLayer',
+    'MixtureSameFamilyLayer',
+    'MixtureGaussianLayer',
+    'CategoricalMixtureOfOneHotCategorical',
+    'MixtureNegativeBinomialLayer',
+    'MixtureQLogisticLayer',
 ]
 MixtureLogisticLayer = MixtureLogistic
 MixtureSameFamilyLayer = MixtureSameFamily
@@ -48,7 +53,7 @@ def _to_loc_scale(params_split,
 
 
 class MixtureGaussianLayer(tfp.layers.DistributionLambda):
-  r""" Initialize the mixture of gaussian distributions layer.
+  """ Initialize the mixture of gaussian distributions layer.
 
   Arguments:
     n_components: Number of component distributions in the mixture
@@ -565,3 +570,101 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
     if tie_mixtures:
       total -= n_components
     return total
+
+
+# ===========================================================================
+# Mixture of Quantized logistic distribution
+# ===========================================================================
+class MixtureQLogisticLayer(tfp.layers.DistributionLambda):
+
+  def __init__(
+      self,
+      event_shape: List[int] = (),
+      n_components: int = 2,
+      low: int = 0,
+      bits: int = 8,
+      loc_activation: Union[str, Callable[..., tf.Tensor]] = 'identity',
+      scale_activation: Union[str, Callable[..., tf.Tensor]] = 'softplus',
+      convert_to_tensor_fn: Callable[
+          ..., tf.Tensor] = tfp.distributions.Distribution.sample,
+      validate_args: bool = False,
+      **kwargs,
+  ):
+    super().__init__(
+        lambda params: MixtureQLogisticLayer.new(
+            params,
+            event_shape=event_shape,
+            n_components=n_components,
+            low=low,
+            bits=bits,
+            loc_activation=parse_activation(loc_activation, self),
+            scale_activation=parse_activation(scale_activation, self),
+        ), convert_to_tensor_fn, **kwargs)
+
+  @staticmethod
+  def new(params,
+          event_shape=(),
+          n_components=2,
+          low=0,
+          bits=8,
+          loc_activation=tf.identity,
+          scale_activation=tf.nn.softplus,
+          validate_args=False):
+    """ Create the distribution instance from a `params` vector. """
+    n_components = tf.convert_to_tensor(value=n_components,
+                                        name='n_components',
+                                        dtype_hint=tf.int32)
+    event_size = tf.convert_to_tensor(
+        tf.reduce_prod(event_shape),
+        dtype_hint=tf.int32,
+        name='event_size',
+    )
+    ### prepare params
+    params = tf.convert_to_tensor(value=params, name='params')
+    event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
+        value=event_shape, name='event_shape', dtype=tf.int32),
+                                             tensor_name='event_shape')
+    output_shape = tf.concat(
+        (tf.shape(input=params)[:-1], [n_components], event_shape),
+        axis=0,
+    )
+    ### Create the mixture
+    logits = params[..., :n_components]
+    ### logistics
+    params = params[..., n_components:]
+    locs, scales = tf.split(params, 2, axis=-1)
+    locs = tf.reshape(locs, output_shape)
+    scales = tf.reshape(scales, output_shape)
+    ### applying activation
+    locs = loc_activation(locs)
+    scales = scale_activation(scales)
+    return MixtureQLogistic(locs,
+                            scales,
+                            low=low,
+                            bits=bits,
+                            logits=logits,
+                            batch_ndims=tf.size(event_shape))
+
+  @staticmethod
+  def params_size(event_shape: List[int] = (), n_components: int = 2) -> int:
+    """Number of `params` needed to create a `MixtureNegativeBinomialLayer`
+    distribution.
+
+    Returns
+    -------
+    params_size: The number of parameters needed to create the mixture
+        distribution.
+    """
+    n_components = tf.convert_to_tensor(
+        n_components,
+        dtype_hint=tf.int32,
+        name='n_components',
+    )
+    event_size = tf.convert_to_tensor(
+        tf.reduce_prod(event_shape),
+        dtype_hint=tf.int32,
+        name='event_size',
+    )
+    n_components = dist_util.prefer_static_value(n_components)
+    event_size = dist_util.prefer_static_value(event_size)
+    return n_components + (event_size + event_size) * n_components

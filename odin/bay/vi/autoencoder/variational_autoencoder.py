@@ -525,6 +525,7 @@ class VariationalAutoencoder(VariationalModel):
       if hasattr(qz, "KL_divergence"):
         kl[f'kl_{z.name}'] = qz.KL_divergence(analytic=self.analytic,
                                               reverse=self.reverse,
+                                              free_bits=self.free_bits,
                                               sample_shape=None,
                                               keepdims=True)
       else:

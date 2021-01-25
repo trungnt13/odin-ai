@@ -12,15 +12,22 @@ from odin.fuel.image_data._base import ImageDataset
 from odin.utils import md5_checksum, one_hot
 from odin.utils.net_utils import download_and_extract
 
+_binmnist = dict(train="http://www.cs.toronto.edu/~larocheh/public/"
+                 "datasets/binarized_mnist/binarized_mnist_train.amat",
+                 valid="http://www.cs.toronto.edu/~larocheh/public/datasets/"
+                 "binarized_mnist/binarized_mnist_valid.amat",
+                 test="http://www.cs.toronto.edu/~larocheh/public/datasets/"
+                 "binarized_mnist/binarized_mnist_test.amat")
+
 
 class BinarizedMNIST(ImageDataset):
-  """BinarizedMNIST"""
+  """ BinarizedMNIST """
 
   def __init__(self, normalize: bool = False):
     self.train, self.valid, self.test = tfds.load(
         name='binarized_mnist',
         split=['train', 'validation', 'test'],
-        read_config=tfds.ReadConfig(shuffle_seed=seed,
+        read_config=tfds.ReadConfig(shuffle_seed=1,
                                     shuffle_reshuffle_each_iteration=True),
         as_supervised=False)
     self._normalize = bool(normalize)
@@ -245,7 +252,7 @@ class FashionMNIST(BinarizedMNIST):
     self._normalize = normalize
     self.train, self.valid, self.test = tfds.load(
         name='fashion_mnist',
-        split=['train[:70%]', 'train[70%:80%]', 'train[80%:]'],
+        split=['train[:50000]', 'train[50000:]', 'test'],
         as_supervised=True,
         read_config=tfds.ReadConfig(shuffle_seed=seed,
                                     shuffle_reshuffle_each_iteration=True),

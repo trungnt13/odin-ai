@@ -12,6 +12,7 @@ from tensorflow_probability.python.distributions import (PowerSpherical,
                                                          SphericalUniform,
                                                          VonMisesFisher)
 from tensorflow_probability.python.layers import DistributionLambda
+from odin.backend.interpolation import Interpolation, linear
 
 
 class _von_mises_fisher:
@@ -60,6 +61,10 @@ class hypersphericalVAE(betaVAE):
   def __init__(self,
                latents: Union[RVmeta, Layer] = RVmeta(64, name="latents"),
                distribution: str = 'powerspherical',
+               beta: Union[float, Interpolation] = linear(vmin=1e-6,
+                                                          vmax=1.,
+                                                          length=2000,
+                                                          delay_in=0),
                name: str = 'HyperSphericalVAE',
                **kwargs):
     event_shape = latents.event_shape
@@ -72,16 +77,17 @@ class hypersphericalVAE(betaVAE):
       fn_distribution = _power_spherical(event_size)
     else:
       fn_distribution = _von_mises_fisher(event_size)
-      if event_size != 3:
-        raise ValueError('VonMisesFisher distribution only reparamerizable at '
-                         f'latent_size=3, but given {event_size}')
     latents = DistributionDense(
         event_shape,
         posterior=DistributionLambda(make_distribution_fn=fn_distribution),
         prior=SphericalUniform(dimension=event_size),
         units=event_size + 1,
         name=latents.name)
-    super().__init__(latents=latents, analytic=True, name=name, **kwargs)
+    super().__init__(latents=latents,
+                     analytic=True,
+                     beta=beta,
+                     name=name,
+                     **kwargs)
 
 
 class powersphericalVAE(hypersphericalVAE):

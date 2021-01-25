@@ -191,6 +191,7 @@ class Networks(keras.Model, MD5object):
                      *args,
                      **kwargs)
     self.step = tf.Variable(step, dtype=tf.int64, trainable=False, name="Step")
+    self.skipped_update = tf.Variable(0, dtype=tf.int64, trainable=False, name='SkippedUpdate')
     self._save_path = path
     with trackable.no_automatic_dependency_tracking_scope(self):
       self._last_outputs = None
@@ -354,6 +355,7 @@ class Networks(keras.Model, MD5object):
                training: bool = True,
                optimizer: Optional[Union[List[OptimizerV2],
                                          OptimizerV2]] = None,
+               skip_update_threshold: Optional[float] = None,
                allow_none_gradients: bool = False,
                track_gradients: bool = False,
                *args,
@@ -368,6 +370,8 @@ class Networks(keras.Model, MD5object):
         indicating the training mode for call method, by default True
     optimizer : Optional[OptimizerV2], optional
         optimizer, by default None
+    skip_update_threshold : Optional[float], optional
+        if gradients value pass this threshold, it will be set to 0.
     allow_none_gradients : bool, optional
         allow variables with None gradients during training, by default False
     track_gradients : bool, optional
@@ -411,6 +415,14 @@ class Networks(keras.Model, MD5object):
           loss, metrics = step()
         # applying the gradients
         gradients = tape.gradient(loss, parameters)
+        if skip_update_threshold is not None:
+          skip = tf.reduce_any(
+              [tf.greater_equal(g, skip_update_threshold) for g in gradients])
+          gradients = tf.cond(
+              skip,
+              true_fn=lambda: [tf.zeros_like(g) for g in gradients],
+              false_fn=lambda: gradients)
+          self.skipped_update.assign_add(1)
         # for debugging gradients
         grads_params = [(g, p)
                         for g, p in zip(gradients, parameters)
@@ -441,6 +453,7 @@ class Networks(keras.Model, MD5object):
       optimizer: Union[str, List[str], OptimizerV2, List[OptimizerV2]] = 'adam',
       learning_rate: Union[float, TensorTypes, LearningRateSchedule] = 1e-4,
       clipnorm: Optional[float] = None,
+      skip_update_threshold: Optional[float] = None,
       epochs: int = -1,
       max_iter: int = 1000,
       batch_size: int = 32,
@@ -475,6 +488,8 @@ class Networks(keras.Model, MD5object):
         learning rate for initializing the optimizer, by default 1e-3
     clipnorm : Optional[float], optional
         global L2-norm value for clipping the gradients, by default None
+    skip_update_threshold : Optional[float], optional
+        if gradients value pass this threshold, it will be set to 0.
     epochs : int, optional
         maximum number of epochs, by default -1
     max_iter : int, optional
