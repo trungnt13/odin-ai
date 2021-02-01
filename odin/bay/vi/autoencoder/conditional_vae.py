@@ -4,6 +4,14 @@ from typing import List
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python import keras
+from tensorflow.python.keras.layers import BatchNormalization, Dense, Dropout
+from tensorflow_probability.python.distributions import (Distribution, Normal,
+                                                         OneHotCategorical)
+from tensorflow_probability.python.layers import IndependentNormal
+from typing_extensions import Literal
+from tensorflow_probability.python.internal import prefer_static as ps
+
 from odin import backend as bk
 from odin.backend import TensorTypes
 from odin.bay.random_variable import RVmeta
@@ -14,15 +22,32 @@ from odin.bay.vi.utils import (marginalize_categorical_labels,
                                prepare_ssl_inputs, split_ssl_inputs)
 from odin.networks import NetConf
 from odin.networks.conditional_embedding import get_embedding
-from odin.utils import as_tuple
-from tensorflow.python import keras
-from tensorflow.python.keras.layers import (BatchNormalization, Dense, Dropout,
-                                            Layer)
-from tensorflow_probability.python.distributions import (Distribution,
-                                                         OneHotCategorical)
-from typing_extensions import Literal
 
-__all__ = ['conditionalM2VAE']
+__all__ = [
+    'conditionalM2VAE',
+    'reparamsM3VAE',
+]
+
+
+def _prepare_elbo(self, inputs, training=None, mask=None):
+  X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+  X_u, X_l, y_l = split_ssl_inputs(X, y, mask)
+  # for simplication only 1 inputs and 1 labels are supported
+  X_u, X_l = X_u[0], X_l[0]
+  if len(y_l) > 0:
+    y_l = y_l[0]
+  else:
+    y_l = None
+  # marginalize the unsupervised data
+  if self.marginalize:
+    X_u, y_u = marginalize_categorical_labels(
+        X=X_u,
+        n_classes=self.n_classes,
+        dtype=self.dtype,
+    )
+  else:
+    y_u = None
+  return X_u, y_u, X_l, y_l
 
 
 # ===========================================================================
@@ -77,9 +102,9 @@ class conditionalM2VAE(betaVAE):
       data objective. In the paper, it is recommended:
       `alpha = 0.1 * (n_total_samples / n_labelled_samples)`, by default 0.05
   beta : float, optional
-      [description], by default 1.
+      beta value in BetaVAE, by default 1.
   temperature : float, optional
-      [description], by default 10.
+      temperature in case using relaxed onehot distribution, by default 10.
   marginalize : bool, optional
       marginalizing the labels (i.e. `y`), otherwide, use Gumbel-Softmax for
       reparameterization, by default True
@@ -237,26 +262,6 @@ class conditionalM2VAE(betaVAE):
     return super().decode(h_zy, training=training, mask=mask)
 
   ##################### Helper methods for ELBO
-  def _prepare_elbo(self, inputs, training=None, mask=None):
-    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
-    X_u, X_l, y_l = split_ssl_inputs(X, y, mask)
-    # for simplication only 1 inputs and 1 labels are supported
-    X_u, X_l = X_u[0], X_l[0]
-    if len(y_l) > 0:
-      y_l = y_l[0]
-    else:
-      y_l = None
-    # marginalize the unsupervised data
-    if self.marginalize:
-      X_u, y_u = marginalize_categorical_labels(
-          X=X_u,
-          n_classes=self.n_classes,
-          dtype=self.dtype,
-      )
-    else:
-      y_u = None
-    return X_u, y_u, X_l, y_l
-
   def _unlabelled_loss(self, X_u, y_u, training):
     llk_u, kl_u = super().elbo_components(inputs=[X_u, y_u], training=training)
     P_u, Q_u = self.last_outputs
@@ -307,9 +312,10 @@ class conditionalM2VAE(betaVAE):
     return P_l, Q_l, llk_l, kl_l
 
   def elbo_components(self, inputs, training=None, mask=None):
-    X_u, y_u, X_l, y_l = self._prepare_elbo(inputs,
-                                            training=training,
-                                            mask=mask)
+    X_u, y_u, X_l, y_l = _prepare_elbo(self,
+                                       inputs,
+                                       training=training,
+                                       mask=mask)
     ### for unlabelled data (assumed always available)
     P_u, Q_u, llk_u, kl_u = self._unlabelled_loss(X_u, y_u, training)
     ### for labelled data, add the discriminative objective
@@ -352,16 +358,38 @@ class StructuredSemiVAE(betaVAE):
 # ===========================================================================
 # M3 Reparameterized VAE
 # ===========================================================================
-class conditionalM3VAE(betaVAE):
+class PriorRegressor(keras.layers.Layer):
+
+  def __init__(self, n_classes: int, **kwargs):
+    super().__init__(**kwargs)
+    self.n_classes = int(n_classes)
+
+  def build(self, input_shape=None):
+    dim = self.n_classes
+    self.diag_loc_true = tf.Variable(tf.zeros((dim), dtype=self.dtype))
+    self.diag_loc_false = tf.Variable(tf.zeros((dim), dtype=self.dtype))
+    self.diag_scale_true = tf.Variable(tf.ones((dim), dtype=self.dtype))
+    self.diag_scale_false = tf.Variable(tf.ones((dim), dtype=self.dtype))
+    self.dist = IndependentNormal(event_shape=(dim,))
+    return super().build((None, self.n_classes))
+
+  def call(self, x, training=None, mask=None):
+    loc = x * self.diag_loc_true + (1 - x) * self.diag_loc_false
+    scale = x * self.diag_scale_true + (1 - x) * self.diag_scale_false
+    scale = tf.clip_by_value(tf.nn.softplus(scale), 1e-3, 1e12)
+    return self.dist(tf.concat([loc, scale], axis=-1))
+
+
+class reparamsM3VAE(betaVAE):
 
   def __init__(
       self,
-      labels: RVmeta = RVmeta(10, 'onehot', name='digits'),
+      labels: RVmeta = RVmeta(10, 'relaxedonehot', name='digits'),
       observation: RVmeta = RVmeta((28, 28, 1),
                                    'bernoulli',
                                    projection=True,
                                    name='image'),
-      latents: RVmeta = RVmeta(64, 'mvndiag', projection=True, name='latents'),
+      latents: RVmeta = RVmeta(54, 'mvndiag', projection=True, name='latents'),
       classifier: LayerCreator = NetConf([128, 128],
                                          flatten_inputs=True,
                                          name='classifier'),
@@ -371,77 +399,172 @@ class conditionalM3VAE(betaVAE):
       decoder: LayerCreator = NetConf([512, 512],
                                       flatten_inputs=True,
                                       name='decoder'),
-      xy_to_qz: LayerCreator = NetConf([128, 128], name='xy_to_qz'),
-      zy_to_px: LayerCreator = NetConf([128, 128], name='zy_to_px'),
-      embedding_dim: int = 128,
-      embedding_method: Literal['repetition', 'projection', 'dictionary',
-                                'sequential', 'identity'] = 'sequential',
-      batchnorm: str = False,
-      dropout: float = 0.,
+      n_resamples: int = 128,
       alpha: float = 0.05,
-      beta: float = 1.,
       temperature: float = 10.,
-      marginalize: bool = True,
-      name: str = 'ConditionalM2VAE',
+      name: str = 'ReparameterizedM3VAE',
       **kwargs,
   ):
     super().__init__(latents=latents,
                      observation=observation,
                      encoder=encoder,
                      decoder=decoder,
-                     beta=beta,
                      name=name,
                      **kwargs)
-    self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name="alpha")
-    self.marginalize = bool(marginalize)
+    assert labels.posterior == 'relaxedonehot', \
+      f"only support 'relaxedonehot' distribution for labels, given {labels.posterior}"
+    self.marginalize = False
     self.n_classes = int(np.prod(labels.event_shape))
-    assert labels.posterior == 'onehot', \
-      f'only support Categorical distribution for labels, given {labels.posterior}'
-    self.embedding_dim = int(embedding_dim)
-    self.embedding_method = str(embedding_method)
-    self.batchnorm = bool(batchnorm)
-    self.dropout = float(dropout)
-    # the networks
+    self.n_resamples = int(n_resamples)
+    self.regressor = PriorRegressor(self.n_classes)
+    self.labels = RVmeta(
+        self.n_classes,
+        posterior='relaxedonehot',
+        projection=True,
+        prior=OneHotCategorical(probs=[1. / self.n_classes] * self.n_classes),
+        name=labels.name,
+        kwargs=dict(temperature=temperature)).create_posterior()
+    self.denotations = RVmeta(event_shape=(self.n_classes,),
+                              posterior='normal',
+                              projection=True,
+                              name='denotations').create_posterior()
     self.classifier = _parse_layers(classifier)
-    self.xy_to_qz_net = _parse_layers(xy_to_qz)
-    self.zy_to_px_net = _parse_layers(zy_to_px)
-    # labels distribution
-    if marginalize:
-      temperature = 0
-    if temperature == 0.:
-      posterior = 'onehot'
-      dist_kw = dict()
-      self.relaxed = False
-    else:
-      posterior = 'relaxedonehot'
-      dist_kw = dict(temperature=temperature)
-      self.relaxed = True
-    self.labels = RVmeta(self.n_classes,
-                         posterior,
-                         projection=True,
-                         prior=OneHotCategorical(probs=[1. / self.n_classes] *
-                                                 self.n_classes),
-                         name=labels.name,
-                         kwargs=dist_kw).create_posterior()
-    # create embedder
-    embedder = get_embedding(self.embedding_method)
-    # q(z|xy)
-    self.y_to_qz = embedder(n_classes=self.n_classes,
-                            event_shape=self.embedding_dim,
-                            name='y_to_qz')
-    self.x_to_qz = Dense(embedding_dim, activation='linear', name='x_to_qz')
-    # p(x|zy)
-    self.y_to_px = embedder(n_classes=self.n_classes,
-                            event_shape=self.embedding_dim,
-                            name='y_to_px')
-    self.z_to_px = Dense(embedding_dim, activation='linear', name='z_to_px')
-    # batch normalization
-    if self.batchnorm:
-      self.qz_xy_norm = BatchNormalization(axis=-1, name='qz_xy_norm')
-      self.px_zy_norm = BatchNormalization(axis=-1, name='px_zy_norm')
-    if 0.0 < self.dropout < 1.0:
-      self.qz_xy_drop = Dropout(rate=self.dropout, name='qz_xy_drop')
-      self.px_zy_drop = Dropout(rate=self.dropout, name='px_zy_drop')
+
+  def build(self, input_shape):
+    self.regressor.build()
+    self.classifier.build((None, self.n_classes))
+    return super().build(input_shape)
+
+  def classify(self,
+               inputs: TensorTypes,
+               training: bool = False) -> Distribution:
+    """Return the prediction of labels"""
+    if isinstance(inputs, (tuple, list)) and len(inputs) == 1:
+      inputs = inputs[0]
+    h = self.classifier(inputs, training=training)
+    return self.labels(h, training=training)
+
+  def encode(self, inputs, training=None, mask=None, **kwargs):
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    X = X[0]  # only accept single inputs now
+    # encode normally
+    h_x = self.encoder(X, training=training, mask=mask)
+    qz_x = self.latents(h_x, training=training, mask=mask)
+    qzc_x = self.denotations(h_x, training=training, mask=mask)
+    # prepare the label embedding
+    z_c = tf.convert_to_tensor(qzc_x)
+    qy_zx = self.classify(z_c, training=training)
+    return (qz_x, qzc_x, qy_zx)
+
+  def decode(self, latents, training=None, mask=None, **kwargs):
+    qz_x, qzc_x, qy_zx = latents
+    z = tf.concat([qz_x, qzc_x], axis=-1)
+    return super().decode(z, training=training, mask=mask, **kwargs)
+
+  def elbo_components(self, inputs, training=None, mask=None):
+    X_u, y_u, X_l, y_l = _prepare_elbo(self,
+                                       inputs,
+                                       training=training,
+                                       mask=mask)
+    y_l = tf.clip_by_value(y_l, 1e-8, 1. - 1e-8)
+    px_z_u, (qz_x_u, qzc_x_u, qy_zx_u) = self(X_u, training=training)
+    px_z_l, (qz_x_l, qzc_x_l, qy_zx_l) = self(X_l, training=training)
+    z_exc = tf.concat(
+        [tf.convert_to_tensor(qz_x_u),
+         tf.convert_to_tensor(qz_x_l)], axis=0)
+    z_c = tf.concat(
+        [tf.convert_to_tensor(qzc_x_u),
+         tf.convert_to_tensor(qzc_x_l)], axis=0)
+    # Convert y to one-hot vector and Sample y for those without labels
+    y_sup = y_l
+    y_uns = tf.convert_to_tensor(qy_zx_u)
+    y = tf.concat((y_uns, y_sup), axis=0)
+    # log q(y|z_c)
+    h = tf.concat([qy_zx_u.logits, qy_zx_l.logits], axis=0)
+    log_q_y_zc = tf.reduce_sum(h * y, axis=1)
+    # log p(x|z)
+    log_p_x_z = tf.concat([px_z_u.log_prob(X_u), px_z_l.log_prob(X_l)], axis=0)
+    # log p(z_c|y)
+    pzc_y = self.regressor(y)
+    log_p_zc_y = pzc_y.log_prob(z_c)
+    # log p(z_\c)
+    dist = Normal(tf.cast(0., self.dtype), 1.)
+    log_p_zexc = tf.reduce_sum(dist.log_prob(z_exc), axis=-1)
+    # log p(z|y)
+    log_p_z_y = log_p_zc_y + log_p_zexc
+    # log q(y|x)  (Draw 128 points from q(z_c|x). Supervised samples only)
+    h = qzc_x_l.sample(self.n_resamples)
+    h = tf.reshape(h, (-1, h.shape[-1]))
+    qy_x = self.classify(h, training=training)
+    qy_x_logits = tf.reshape(qy_x.logits, (self.n_resamples, -1, h.shape[-1]))
+    h = tf.reduce_logsumexp(h, axis=0) - tf.math.log(128.)
+    log_q_y_x = tf.reduce_sum(h * y_l, axis=1)
+    # log q(z|x)
+    log_qz_x = tf.concat([qz_x_u.log_prob(qz_x_u),
+                          qz_x_l.log_prob(qz_x_l)],
+                         axis=0)
+    log_qzc_x = tf.concat(
+        [qzc_x_u.log_prob(qzc_x_u),
+         qzc_x_l.log_prob(qzc_x_l)], axis=0)
+    log_q_z_x = log_qz_x + log_qzc_x
+    # Calculate the lower bound
+    n_uns = ps.shape(X_u)[0]
+    h = log_p_x_z + log_p_z_y - log_q_y_zc - log_q_z_x
+    coef_sup = tf.math.exp(log_q_y_zc[n_uns:] - log_q_y_x)
+    coef_uns = tf.ones((n_uns,), dtype=self.dtype)
+    coef = tf.concat((coef_uns, coef_sup), axis=0)
+    zeros = tf.zeros((n_uns,), dtype=self.dtype)
+    lb = coef * h + tf.concat((zeros, log_q_y_x), axis=0)
+    return {'elbo': lb}, {}
+
+  def _elbo_components(self, inputs, training=None, mask=None):
+    X_u, y_u, X_l, y_l = _prepare_elbo(self,
+                                       inputs,
+                                       training=training,
+                                       mask=mask)
+    y_l = tf.clip_by_value(y_l, 1e-8, 1. - 1e-8)
+    ## ELBO unsupervised examples
+    elbo_u = super().elbo_components(X_u, training=training, mask=mask)
+    P_u, Q_u = self.last_outputs
+    ## ELBO supervised examples
+    elbo_l = super().elbo_components(X_l, training=training, mask=mask)
+    P_l, Q_l = self.last_outputs
+    ## The classifier loss
+    qy_zx_u = Q_u[-1]
+    qy_zx_l = Q_l[-1]
+    y_zx_u = tf.convert_to_tensor(qy_zx_u)
+    y = tf.concat([y_zx_u, y_l], axis=0)
+    log_qy_zx = tf.concat([qy_zx_u.log_prob(y_zx_u),
+                           qy_zx_l.log_prob(y_l)],
+                          axis=0)
+    ## The conditional prior (reparameterized regressor, sec 4.1)
+    pzc_y = self.regressor(y)
+    z_c = tf.concat([Q_u[1], Q_l[1]], axis=0)
+    log_pzc_y = pzc_y.log_prob(z_c)
+    ## MCMC sample marginalize z_c to estimate q(y|x), B2
+    z_c = Q_l[1].sample(self.n_resamples)
+    qy_x = self.classify(tf.reshape(z_c, (-1, z_c.shape[-1])),
+                         training=training)
+    log_qy_x = qy_x.log_prob(tf.repeat(y_l, self.n_resamples, axis=0))
+    log_qy_x = tf.reshape(log_qy_x, (self.n_resamples, -1))
+    log_qy_x = (tf.reduce_logsumexp(log_qy_x, axis=0) -
+                tf.math.log(tf.cast(self.n_resamples, self.dtype)))
+    ## coefficients
+    ## the final elbo
+    llk = {}
+    kl = {}
+    for k, v in elbo_u[0].items():
+      llk[f'{k}_u'] = v
+    for k, v in elbo_l[0].items():
+      llk[f'{k}_u'] = v
+    for k, v in elbo_u[1].items():
+      kl[f'{k}_u'] = v
+    for k, v in elbo_l[1].items():
+      kl[f'{k}_u'] = v
+    llk['log_pzc_y'] = log_pzc_y
+    print(llk)
+    print(kl)
+    exit()
 
   @classmethod
   def is_semi_supervised(self) -> bool:

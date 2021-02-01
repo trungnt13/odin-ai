@@ -117,6 +117,7 @@ class IterableDataset:
                      parallel: Optional[int] = None,
                      inc_labels: bool = False,
                      seed: int = 1) -> tf.data.Dataset:
+    """ Create tensorflow Dataset """
     raise NotImplementedError()
 
   def numpy(self,

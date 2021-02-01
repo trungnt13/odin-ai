@@ -1,4 +1,4 @@
-from typing import Callable, List, Union
+from typing import Callable, List, Union, Dict, Any
 
 import tensorflow as tf
 from odin.backend.interpolation import Interpolation, linear
@@ -77,6 +77,7 @@ class stackedVAE(betaVAE):
       ladder_latents: List[int] = [64],
       ladder_layers: int = 2,
       batchnorm: bool = True,
+      batchnorm_kw: Dict[str, Any] = {'momentum': 0.9},
       dropout: float = 0.0,
       activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
       latents: Union[Layer, RVmeta] = RVmeta(32,
@@ -104,6 +105,7 @@ class stackedVAE(betaVAE):
         NetConf([units] * ladder_layers,
                 activation=activation,
                 batchnorm=batchnorm,
+                batchnorm_kw=batchnorm_kw,
                 dropout=dropout,
                 name=f'LadderEncoder{i}').create_network()
         for i, units in enumerate(ladder_hiddens)
@@ -112,6 +114,7 @@ class stackedVAE(betaVAE):
         NetConf([units] * ladder_layers,
                 activation=activation,
                 batchnorm=batchnorm,
+                batchnorm_kw=batchnorm_kw,
                 dropout=dropout,
                 name=f'LadderDecoder{i}').create_network()
         for i, units in enumerate(ladder_hiddens[::-1])

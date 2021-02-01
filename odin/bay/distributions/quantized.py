@@ -1,19 +1,15 @@
 from __future__ import absolute_import, division, print_function
 
-from typing import Optional, Any
-from typing_extensions import Literal
+from typing import Any, Optional
 
-import numpy as np
 import tensorflow as tf
 from tensorflow_probability.python.bijectors import Shift
-from tensorflow_probability.python.bijectors import exp as exp_bijector
 from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, Logistic, MixtureSameFamily,
-    NegativeBinomial, Normal, QuantizedDistribution, TransformedDistribution,
-    Uniform, NOT_REPARAMETERIZED)
-from tensorflow_probability.python.internal import dtype_util
+    NOT_REPARAMETERIZED, Categorical, Distribution, Independent, Logistic,
+    MixtureSameFamily, Normal, QuantizedDistribution, TransformedDistribution,
+    Uniform)
 from tensorflow_probability.python.internal import prefer_static as ps
-from tensorflow_probability.python.internal import tensorshape_util
+from typing_extensions import Literal
 
 __all__ = [
     "PixelCNNpp",
@@ -115,6 +111,12 @@ class PixelCNNpp(Distribution):
     self._params = params
     self.image_shape = list(params[0].shape[-3:-1]) + [n_channels]
 
+  @staticmethod
+  def params_size(n_components: int, n_channels: int) -> int:
+    n_coeffs = n_channels * (n_channels - 1) // 2
+    n_out = n_channels * 2 + n_coeffs + 1
+    return int(n_out * n_components)
+
   def transform_tanh(self, x):
     """ Transform the image [0, 255] to [-1, 1] """
     return (2. * (x - self.low) / (self.high - self.low)) - 1.
@@ -209,8 +211,6 @@ class PixelCNNpp(Distribution):
     elif self.inputs_domain == 'tanh':
       mean = 2. * mean / self.high - 1.
     return mean
-
-
 
   def _sample_n(self, n, seed=None, conditional_input=None, training=False):
     # TODO

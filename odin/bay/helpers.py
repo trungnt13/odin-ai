@@ -274,11 +274,9 @@ def kl_divergence(
       z = q.sample(q_sample)
     # calculate the output, then perform reduction
     kl = q.log_prob(z) - p.log_prob(z)
-    if free_bits is not None:
-      pass
   ### free-bits
   if free_bits is not None:
-    kl = tf.maximum(kl, tf.cast(free_bits, kl.dtype))
+    kl = tf.maximum(kl, tf.constant(free_bits, dtype=kl.dtype))
   kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
   return kl
 

@@ -2,22 +2,13 @@ from __future__ import absolute_import, division, print_function
 
 import dataclasses
 import inspect
-import types
 from collections import MutableSequence, Sequence
 from copy import deepcopy
-from numbers import Number
 from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
 import tensorflow_probability as tfp
-from odin.bay import distributions as obd
-from odin.bay import layers as obl
-from odin.bay.distribution_alias import parse_distribution
-from odin.bay.helpers import (is_binary_distribution, is_discrete_distribution,
-                              is_mixture_distribution,
-                              is_zeroinflated_distribution)
-from odin.utils.cache_utils import cache_memory
 from six import string_types
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
@@ -25,7 +16,18 @@ from tensorflow_probability.python.distributions import Distribution
 from tensorflow_probability.python.experimental.nn.util import RandomVariable
 from tensorflow_probability.python.layers import DistributionLambda
 
-__all__ = ['RVmeta', 'RandomVariable']
+from odin.bay import distributions as obd
+from odin.bay import layers as obl
+from odin.bay.distribution_alias import parse_distribution
+from odin.bay.helpers import (is_binary_distribution, is_discrete_distribution,
+                              is_mixture_distribution,
+                              is_zeroinflated_distribution)
+from odin.utils.cache_utils import cache_memory
+
+__all__ = [
+    'RVmeta',
+    'RandomVariable',
+]
 
 
 # ===========================================================================

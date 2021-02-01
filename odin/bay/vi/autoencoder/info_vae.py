@@ -1,21 +1,18 @@
 from functools import partial
 from typing import Callable, List, Optional, Union
 
-import numpy as np
 import tensorflow as tf
+from tensorflow import Tensor
+from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
+                                                         Distribution)
+
+from odin.backend.interpolation import Interpolation, circle, linear
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
-from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
-                                                             NetConf,
-                                                             _parse_layers)
-from odin.backend.interpolation import Interpolation, linear, circle
+from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
-from tensorflow import Tensor
-from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
-                                                         Distribution,
-                                                         QuantizedDistribution)
 
 
 # ===========================================================================
@@ -31,7 +28,7 @@ def _clip_binary(x, eps=1e-7):
 # InfoVAE
 # ===========================================================================
 class infoVAE(betaVAE):
-  r""" For MNIST, the authors used scaling coefficient `lambda=1000`,
+  """ For MNIST, the authors used scaling coefficient `lambda=1000`,
   and information preference `alpha=0`.
 
   Increase `np` (number of prior samples) in `divergence_kw` to reduce the

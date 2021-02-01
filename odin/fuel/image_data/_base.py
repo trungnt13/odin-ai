@@ -11,11 +11,11 @@ class ImageDataset(IterableDataset):
 
   def sample_images(self,
                     save_path=None,
-                    dpi=120,
+                    dpi=200,
                     n_samples=25,
                     partition='train',
                     seed=1):
-    r""" Sample a subset of image from training set """
+    """ Sample a subset of image from training set """
     n = int(np.sqrt(n_samples))
     assert n * n == n_samples, "Sqrt of n_samples is not an integer"
     train = self.create_dataset(batch_size=n_samples,

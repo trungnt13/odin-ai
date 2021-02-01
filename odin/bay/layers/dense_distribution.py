@@ -1,40 +1,39 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
-from functools import partial
 from numbers import Number
 from types import LambdaType
-from typing import Any, Callable, Dict, List, Optional, Text, Type, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
+from six import string_types
+from tensorflow import Tensor
+from tensorflow.python.keras import Model
+from tensorflow.python.keras.constraints import Constraint
+from tensorflow.python.keras.initializers.initializers_v2 import Initializer
+from tensorflow.python.keras.layers import Dense, Layer
+from tensorflow.python.keras.regularizers import Regularizer
+from tensorflow.python.training.tracking import base as trackable
+from tensorflow_probability.python.bijectors import FillScaleTriL
+from tensorflow_probability.python.distributions import (Categorical,
+                                                         Distribution,
+                                                         Independent,
+                                                         MixtureSameFamily,
+                                                         MultivariateNormalDiag,
+                                                         MultivariateNormalTriL,
+                                                         Normal)
+from tensorflow_probability.python.layers import DistributionLambda
+from tensorflow_probability.python.layers.distribution_layer import (
+    DistributionLambda)
+
 from odin import backend as bk
 from odin.bay.helpers import (KLdivergence, coercible_tensor,
                               is_binary_distribution, is_discrete_distribution,
                               is_mixture_distribution,
                               is_zeroinflated_distribution, kl_divergence)
-from odin.bay.layers.distribution_util_layers import Moments, Sampling
 from odin.networks import NetConf
 from odin.utils import as_tuple
-from six import string_types
-from tensorflow import Tensor
-from tensorflow.python.keras import Model, Sequential
-from tensorflow.python.keras.constraints import Constraint
-from tensorflow.python.keras.initializers.initializers_v2 import Initializer
-from tensorflow.python.keras.layers import Dense, Lambda, Layer
-from tensorflow.python.keras.regularizers import Regularizer
-from tensorflow.python.training.tracking import base as trackable
-from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (
-    Categorical, Distribution, Independent, MixtureSameFamily,
-    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
-from tensorflow_probability.python.internal import \
-    distribution_util as dist_util
-from tensorflow_probability.python.layers import DistributionLambda
-from tensorflow_probability.python.layers.distribution_layer import (
-    DistributionLambda, _get_convert_to_tensor_fn, _serialize,
-    _serialize_function)
-from typing_extensions import Literal
 
 __all__ = [
     'DenseDeterministic',

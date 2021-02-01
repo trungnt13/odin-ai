@@ -81,14 +81,11 @@ def _infer_rank_and_input_shape(rank, input_shape):
 # ===========================================================================
 # Networks
 # ===========================================================================
-def _to_optimizer(optimizer, learning_rate, clipnorm):
+def _to_optimizer(optimizer, learning_rate):
   optimizer = tf.nest.flatten(optimizer)
   learning_rate = tf.nest.flatten(learning_rate)
-  clipnorm = tf.nest.flatten(clipnorm)
   if len(learning_rate) == 1:
     learning_rate = learning_rate * len(optimizer)
-  if len(clipnorm) == 1:
-    clipnorm = clipnorm * len(clipnorm)
   ## check learning rate
   lr_types = (sparse.spmatrix, np.ndarray, Tensor, float, LearningRateSchedule)
   for lr in learning_rate:
@@ -96,21 +93,17 @@ def _to_optimizer(optimizer, learning_rate, clipnorm):
       f'Invalid learning_rate type {lr}; allow types are: {lr_types}'
   ## create the optimizer
   all_optimizers = []
-  for opt, lr, clip in zip(optimizer, learning_rate, clipnorm):
+  for opt, lr in zip(optimizer, learning_rate):
     # string
     if isinstance(opt, string_types):
       config = dict(learning_rate=lr)
-      if clip is not None:
-        config['clipnorm'] = clip
       opt = tf.optimizers.get({'class_name': opt, 'config': config})
     # the instance
     elif isinstance(opt, OptimizerV2):
       pass
     # type
     elif inspect.isclass(opt) and issubclass(opt, OptimizerV2):
-      opt = opt(learning_rate=float(learning_rate)) \
-        if clipnorm is None else \
-        opt(learning_rate=float(learning_rate), clipnorm=clipnorm)
+      opt = opt(learning_rate=float(learning_rate))
     # no support
     else:
       raise ValueError("No support for optimizer: %s" % str(opt))
@@ -191,7 +184,10 @@ class Networks(keras.Model, MD5object):
                      *args,
                      **kwargs)
     self.step = tf.Variable(step, dtype=tf.int64, trainable=False, name="Step")
-    self.skipped_update = tf.Variable(0, dtype=tf.int64, trainable=False, name='SkippedUpdate')
+    self.skipped_update = tf.Variable(0,
+                                      dtype=tf.int64,
+                                      trainable=False,
+                                      name='SkippedUpdate')
     self._save_path = path
     with trackable.no_automatic_dependency_tracking_scope(self):
       self._last_outputs = None
@@ -355,7 +351,11 @@ class Networks(keras.Model, MD5object):
                training: bool = True,
                optimizer: Optional[Union[List[OptimizerV2],
                                          OptimizerV2]] = None,
+               clipnorm: Optional[float] = None,
+               clipvalue: Optional[float] = None,
+               global_clipnorm: Optional[float] = None,
                skip_update_threshold: Optional[float] = None,
+               skip_nan: bool = False,
                allow_none_gradients: bool = False,
                track_gradients: bool = False,
                *args,
@@ -370,6 +370,8 @@ class Networks(keras.Model, MD5object):
         indicating the training mode for call method, by default True
     optimizer : Optional[OptimizerV2], optional
         optimizer, by default None
+    clipnorm : Optional[float], optional
+        global L2-norm value for clipping the gradients, by default None
     skip_update_threshold : Optional[float], optional
         if gradients value pass this threshold, it will be set to 0.
     allow_none_gradients : bool, optional
@@ -415,14 +417,55 @@ class Networks(keras.Model, MD5object):
           loss, metrics = step()
         # applying the gradients
         gradients = tape.gradient(loss, parameters)
-        if skip_update_threshold is not None:
-          skip = tf.reduce_any(
-              [tf.greater_equal(g, skip_update_threshold) for g in gradients])
+        # skip update
+        if skip_update_threshold is not None or skip_nan:
+          skip = True
+          if skip_nan:
+            skip = tf.logical_and(
+                skip,
+                tf.reduce_any([
+                    tf.reduce_any(tf.math.is_nan(g))
+                    for g in gradients
+                    if g is not None
+                ]))
+          if skip_update_threshold is not None:
+            skip_update_threshold = tf.constant(skip_update_threshold,
+                                                dtype=self.dtype)
+            skip = tf.logical_and(
+                skip,
+                tf.reduce_any([
+                    tf.reduce_any(tf.greater_equal(g, skip_update_threshold))
+                    for g in gradients
+                    if g is not None
+                ]))
           gradients = tf.cond(
               skip,
-              true_fn=lambda: [tf.zeros_like(g) for g in gradients],
+              true_fn=lambda:
+              [None if g is None else tf.zeros_like(g) for g in gradients],
               false_fn=lambda: gradients)
-          self.skipped_update.assign_add(1)
+          self.skipped_update.assign_add(
+              tf.cond(skip,
+                      true_fn=lambda: tf.constant(1, dtype=tf.int64),
+                      false_fn=lambda: tf.constant(0, dtype=tf.int64)))
+        # clip norm
+        if clipnorm is not None:
+          clipnorm = tf.constant(clipnorm, dtype=self.dtype)
+          gradients = [
+              None if g is None else tf.clip_by_norm(g, clipnorm)
+              for g in gradients
+          ]
+        if global_clipnorm is not None:
+          global_clipnorm = tf.constant(global_clipnorm, dtype=self.dtype)
+          not_none = [g for g in gradients if g is not None]
+          if len(not_none) > 0:
+            not_none, _ = tf.clip_by_global_norm(not_none, global_clipnorm)
+            gradients = [None if g is None else not_none.pop(0) for g in gradients]
+        if clipvalue is not None:
+          clipvalue = tf.constant(clipvalue, dtype=self.dtype)
+          gradients = [
+              None if g is None else tf.clip_by_value(g, -clipvalue, clipvalue)
+              for g in gradients
+          ]
         # for debugging gradients
         grads_params = [(g, p)
                         for g, p in zip(gradients, parameters)
@@ -453,7 +496,10 @@ class Networks(keras.Model, MD5object):
       optimizer: Union[str, List[str], OptimizerV2, List[OptimizerV2]] = 'adam',
       learning_rate: Union[float, TensorTypes, LearningRateSchedule] = 1e-4,
       clipnorm: Optional[float] = None,
+      global_clipnorm: Optional[float] = None,
+      clipvalue: Optional[float] = None,
       skip_update_threshold: Optional[float] = None,
+      skip_nan: bool = False,
       epochs: int = -1,
       max_iter: int = 1000,
       batch_size: int = 32,
@@ -487,7 +533,11 @@ class Networks(keras.Model, MD5object):
     learning_rate : float, optional
         learning rate for initializing the optimizer, by default 1e-3
     clipnorm : Optional[float], optional
-        global L2-norm value for clipping the gradients, by default None
+        clip L2-norm value individual gradients, by default None
+    global_clipnorm : Optional[float], optional
+        clip L2-norm value for all gradients, by default None
+    clipvalue : Optional[float], optional
+        clip value for individual gradients, by default None
     skip_update_threshold : Optional[float], optional
         if gradients value pass this threshold, it will be set to 0.
     epochs : int, optional
@@ -559,7 +609,7 @@ class Networks(keras.Model, MD5object):
     # won't be saved in save_weights
     if optimizer is not None and self.optimizer is None:
       with trackable.no_automatic_dependency_tracking_scope(self):
-        self.optimizer = _to_optimizer(optimizer, learning_rate, clipnorm)
+        self.optimizer = _to_optimizer(optimizer, learning_rate)
     if self.optimizer is None:
       raise RuntimeError("No optimizer found!")
     ## run early stop and callback
@@ -567,7 +617,12 @@ class Networks(keras.Model, MD5object):
         train_ds=train,
         optimize=partial(self.optimize,
                          allow_none_gradients=allow_none_gradients,
-                         track_gradients=track_gradients),
+                         track_gradients=track_gradients,
+                         clipnorm=clipnorm,
+                         clipvalue=clipvalue,
+                         global_clipnorm=global_clipnorm,
+                         skip_update_threshold=skip_update_threshold,
+                         skip_nan=skip_nan),
         valid_ds=valid,
         valid_freq=valid_freq,
         valid_interval=valid_interval,
@@ -672,6 +727,7 @@ def dense_network(units: List[int],
                   bias_constraint: Optional[str] = None,
                   flatten_inputs: bool = True,
                   batchnorm: bool = True,
+                  batchnorm_kw: Dict[str, Any] = {},
                   input_dropout: float = 0.,
                   dropout: float = 0.,
                   input_shape: Optional[List[int]] = None,
@@ -709,7 +765,7 @@ def dense_network(units: List[int],
           bias_constraint=bias_constraint[i],
           name=f"{prefix}{i}"))
     if batchnorm[i]:
-      layers.append(keras.layers.BatchNormalization())
+      layers.append(keras.layers.BatchNormalization(**batchnorm_kw))
     layers.append(keras.layers.Activation(activation[i]))
     if dropout[i] > 0:
       layers.append(keras.layers.Dropout(rate=dropout[i]))
@@ -732,6 +788,7 @@ def conv_network(units: List[int],
                  kernel_constraint: Optional[str] = None,
                  bias_constraint: Optional[str] = None,
                  batchnorm: bool = True,
+                 batchnorm_kw: Dict[str, Any] = {},
                  input_dropout: float = 0.,
                  dropout: float = 0.,
                  projection: bool = False,
@@ -790,7 +847,7 @@ def conv_network(units: List[int],
           bias_constraint=bias_constraint[i],
           name=f"{prefix}{i}"))
     if batchnorm[i]:
-      layers.append(keras.layers.BatchNormalization())
+      layers.append(keras.layers.BatchNormalization(**batchnorm_kw))
     layers.append(keras.layers.Activation(activation[i]))
     if dropout[i] > 0:
       layers.append(keras.layers.Dropout(rate=dropout[i]))
@@ -825,6 +882,7 @@ def deconv_network(units: List[int],
                    kernel_constraint: Optional[str] = None,
                    bias_constraint: Optional[str] = None,
                    batchnorm: bool = True,
+                   batchnorm_kw: Dict[str, Any] = {},
                    input_dropout: float = 0.,
                    dropout: float = 0.,
                    projection: Optional[int] = None,
@@ -876,7 +934,7 @@ def deconv_network(units: List[int],
           bias_constraint=bias_constraint[i],
           name=f"{prefix}{i}"))
     if batchnorm[i]:
-      layers.append(keras.layers.BatchNormalization())
+      layers.append(keras.layers.BatchNormalization(**batchnorm_kw))
     layers.append(keras.layers.Activation(activation[i]))
     if dropout[i] > 0:
       layers.append(keras.layers.Dropout(rate=dropout[i]))
@@ -942,6 +1000,7 @@ class NetConf(dict):
   kernel_constraint: Union[str, List[str]] = None
   bias_constraint: Union[str, List[str]] = None
   batchnorm: Union[bool, List[bool]] = False
+  batchnorm_kw: Dict[str, Any] = dataclasses.field(default_factory=dict)
   input_dropout: float = 0.
   dropout: Union[float, List[float]] = 0.
   linear_decoder: bool = False
@@ -1137,6 +1196,7 @@ class NetConf(dict):
           activation=self.activation,
           use_bias=self.use_bias,
           batchnorm=self.batchnorm,
+          batchnorm_kw=self.batchnorm_kw,
           input_dropout=self.input_dropout,
           dropout=self.dropout,
           kernel_initializer=self.kernel_initializer,
@@ -1157,6 +1217,7 @@ class NetConf(dict):
           activation=self.activation,
           use_bias=self.use_bias,
           batchnorm=self.batchnorm,
+          batchnorm_kw=self.batchnorm_kw,
           input_dropout=self.input_dropout,
           dropout=self.dropout,
           kernel_initializer=self.kernel_initializer,
@@ -1181,6 +1242,7 @@ class NetConf(dict):
           activation=self.activation,
           use_bias=self.use_bias,
           batchnorm=self.batchnorm,
+          batchnorm_kw=self.batchnorm_kw,
           input_dropout=self.input_dropout,
           dropout=self.dropout,
           kernel_initializer=self.kernel_initializer,

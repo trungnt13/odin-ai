@@ -1,36 +1,29 @@
-# References:
+# References
+# ----------
 # Kim, H., Mnih, A., 2018. Disentangling by factorising,
 #   in: Dy, J., Krause, A. (Eds.), Proceedings of Machine
 #   Learning Research. PMLR, Stockholmsmässan, Stockholm
 #   Sweden, pp. 2649–2658.
 import inspect
 from functools import partial
-from numbers import Number
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
-import tensorflow_addons as tfa
 from six import string_types
 from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
-from tensorflow_probability.python.bijectors import Shift
-from tensorflow_probability.python.distributions import (
-    NOT_REPARAMETERIZED, Categorical, Distribution, Independent, Logistic,
-    MixtureSameFamily, NegativeBinomial, Normal, QuantizedDistribution,
-    TransformedDistribution, Uniform)
+from tensorflow_probability.python.distributions.pixel_cnn import \
+    _PixelCNNNetwork
 from tensorflow_probability.python.layers import DistributionLambda
 from typeguard import typechecked
-from tensorflow_probability.python.distributions.pixel_cnn import PixelCNN, _PixelCNNNetwork
 
-from odin.backend.keras_helpers import layer2text
-from odin.bay.distributions import (Bernoulli, Blockwise, Categorical,
-                                    ContinuousBernoulli, Distribution, Gamma,
-                                    JointDistributionSequential, Normal,
-                                    PixelCNNpp, VonMises)
-from odin.networks.base_networks import NetConf, SequentialNetwork
-from odin.networks.skip_connection import SkipConnection
+from odin.networks import residuals as rsd
+from odin.bay.distributions import (Blockwise, Categorical, ContinuousBernoulli,
+                                    Distribution, Gamma,
+                                    JointDistributionSequential, PixelCNNpp,
+                                    VonMises)
 
 __all__ = [
     'mnist_networks',
@@ -206,6 +199,8 @@ def mnist_networks(
 
 
 fashionmnist_networks = mnist_networks
+binarizedmnist_networks = mnist_networks
+omniglot_networks = partial(mnist_networks, n_channels=3)
 
 
 # ===========================================================================
@@ -249,6 +244,7 @@ def cifar_networks(
   if zdim is None:
     zdim = 32
   n_components = 10
+  decoder_input = kwargs.get('decoder_input', zdim)
   n_channels = int(kwargs.get('n_channels', 3))
   input_shape = (32, 32, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
@@ -257,26 +253,56 @@ def cifar_networks(
   n_coeffs = n_channels * (n_channels - 1) // 2
   n_out = n_channels * 2 + n_coeffs + 1
   n_out_total = n_out * n_components
-  # input to cifar network must be [-1., 1.]
-  encoder = keras.Sequential(
-      [
-          CenterAt0(enable=centerize_image),
-          conv(32, 5, strides=1, name='encoder0'),
-          conv(32, 5, strides=2, name='encoder1'),
-          conv(64, 5, strides=1, name='encoder2'),
-          conv(64, 5, strides=2, name='encoder3'),
-          conv(4 * zdim, 7, strides=1, padding='valid', name='encoder4'),
-          keras.layers.Flatten()
-      ],
-      name='encoder',
-  )
-  # create the pixelcnn decoder
-  decoder = _PixelCNNDecoder(input_shape,
-                             zdim,
-                             n_components,
-                             dtype=encoder.dtype,
-                             name='decoder')
-  # others
+  ## encoder
+  inputs = keras.Input(input_shape)
+  x = CenterAt0(enable=centerize_image)(inputs)
+  x = rsd.project_1_1(x, filters=32, activation=activation, name='encoder1')
+  x = rsd.residual_inverted(x,
+                            expand_ratio=2,
+                            activation=activation,
+                            strides=1,
+                            name='encoder2')
+  x = rsd.squeeze_and_excitation(x, activation=activation, name='encoder3')
+  x = rsd.residual_inverted(x,
+                            expand_ratio=2,
+                            activation=activation,
+                            strides=2,
+                            name='encoder4')
+  x = rsd.squeeze_and_excitation(x, activation=activation, name='encoder5')
+  x = rsd.project_1_1(x, filters=64, activation=activation, name='encoder6')
+  x = rsd.residual_inverted(x,
+                            expand_ratio=2,
+                            activation=activation,
+                            strides=2,
+                            name='encoder7')
+  x = rsd.squeeze_and_excitation(x, activation=activation, name='encoder8')
+  x = keras.layers.Flatten()(x)
+  x = keras.layers.Dense(256, activation=activation, name='encoder9')(x)
+  encoder = keras.Model(inputs=inputs, outputs=x, name='encoder')
+  ## create the decoder
+  inputs = keras.Input((decoder_input,))
+  x = keras.layers.Dense(zdim * 8 * 8, activation=activation,
+                         name='decoder1')(inputs)
+  x = keras.layers.Reshape((8, 8, zdim))(x)
+  x = rsd.project_1_1(x, filters=64, activation=activation, name='decoder2')
+  x = rsd.unpooling(x, 2, name='decoder3')
+  x = rsd.residual_inverted(x,
+                            expand_ratio=2,
+                            activation=activation,
+                            name='decoder4')
+  x = rsd.squeeze_and_excitation(x, activation=activation, name='decoder5')
+  x = rsd.project_1_1(x, 32, activation=activation, name='decoder6')
+  x = rsd.unpooling(x, 2, name='decoder7')
+  x = rsd.residual_inverted(x,
+                            expand_ratio=2,
+                            activation=activation,
+                            name='decoder8')
+  x = rsd.squeeze_and_excitation(x, activation=activation, name='decoder9')
+  x = rsd.project_1_1(x,
+                      PixelCNNpp.params_size(n_components, n_channels),
+                      activation=activation)
+  decoder = keras.Model(inputs=inputs, outputs=x, name='decoder')
+  ## others
   latents = RVmeta((zdim,), qz, projection=True,
                    name="latents").create_posterior()
   # create the observation of MixtureQuantizedLogistic
@@ -751,7 +777,12 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
   dataset_name = str(dataset_name).strip().lower()
   decay_rate = 0.96
   ### image networks
-  if 'fashionmnist' in dataset_name:
+  if 'omniglot' in dataset_name:
+    max_iter = 80000
+    init_lr = 1e-3
+    decay_steps = 5000
+    decay_rate = 0.996
+  elif 'fashionmnist' in dataset_name:
     max_iter = 50000
     init_lr = 1e-3
     decay_steps = 5000
