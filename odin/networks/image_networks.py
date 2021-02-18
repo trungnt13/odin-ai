@@ -837,4 +837,4 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
                                                 decay_steps=decay_steps,
                                                 decay_rate=decay_rate,
                                                 staircase=False)
-  return max_iter, lr
+  return dict(max_iter=max_iter, learning_rate=lr)

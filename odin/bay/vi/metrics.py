@@ -327,8 +327,7 @@ def discrete_mutual_info(codes, factors):
   codes = np.atleast_2d(codes)
   factors = np.atleast_2d(factors)
   assert codes.ndim == 2 and factors.ndim == 2, \
-    "codes and factors must be matrix, but given: %s and %s" % \
-      (str(codes.shape), str(factors.shape))
+    f"codes and factors must be matrix, but given: {codes.shape} and {factors.shape}"
   num_latents = codes.shape[1]
   num_factors = factors.shape[1]
   m = np.zeros([num_latents, num_factors])
@@ -429,7 +428,7 @@ def mutual_info_estimate(
 
 
 def mutual_info_gap(representations, factors):
-  r"""Computes score based on both representation codes and factors.
+  """Computes score based on both representation codes and factors.
     In (Chen et. al 2019), 10000 samples used to estimate MIG
 
   Arguments:

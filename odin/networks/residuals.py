@@ -73,7 +73,7 @@ class Resampling2D(Layer):
       elif self.mode == 'max':
         self.pool = AvgPool2D(self.size, padding='same')
       elif self.mode == 'global':
-        self.pool = GlobalAvgPool2D(name=name)
+        self.pool = GlobalAvgPool2D()
       else:
         raise NotImplementedError
     ## upsampling
@@ -81,7 +81,7 @@ class Resampling2D(Layer):
       if self.mode == 'pad':
         if not isinstance(self.size, (tuple, list)):
           self.size = [self.size]
-        if len(size) == 1:
+        if len(self.size) == 1:
           self.size = list(self.size) * 2
         # this doesn't take into account odd number
         self.pool = ZeroPadding2D(padding=[
@@ -151,6 +151,31 @@ class SqueezeExcitation(Layer):
       return tf.multiply(x, inputs)
 
 
+class SkipAndForget(Layer):
+  """ Add skip connection then gradually forget the connection
+  during training """
+
+  def __init__(self, max_step: int = 10000, name: str = 'skip_and_forget'):
+    super().__init__(name=name)
+    self.max_step = tf.constant(max_step, dtype=self.dtype)
+    self.step = tf.Variable(0., dtype=self.dtype, trainable=False)
+
+  @property
+  def skip_gate(self) -> tf.Tensor:
+    return tf.maximum((self.max_step - self.step) / self.max_step, 0.)
+
+  def call(self, inputs, training=None, **kwargs):
+    if training:
+      x, skip = inputs
+      x = x + self.skip_gate * skip
+      self.step.assign_add(1.)
+      return x
+    else:
+      if isinstance(inputs, (tuple, list)):
+        inputs = inputs[0]
+      return inputs
+
+
 class ResidualSequential(keras.Sequential):
 
   def __init__(self,
@@ -200,6 +225,18 @@ def merge(
   return layer([inputs, outputs])
 
 
+def skip_and_forget(
+    inputs: Optional[tf.Tensor] = None,
+    max_step: int = 10000,
+    name: str = 'skip_and_forget',
+) -> Union[tf.Tensor, SkipAndForget]:
+  """ Add skip connection then gradually forget the connection during training """
+  layer = SkipAndForget(max_step=max_step, name=name)
+  if inputs is None:
+    return layer
+  return layer(inputs)
+
+
 def dense(
     inputs: Optional[tf.Tensor] = None,
     units: int = 256,
@@ -215,7 +252,7 @@ def dense(
 def normalize_image(
     inputs: Optional[tf.Tensor] = None,
     name: str = 'normalize_image',
-) -> Union[tf.Tensor, Layer]:
+) -> Union[tf.Tensor, Lambda]:
   layer = Lambda(lambda x: 2. * x / 255. - 1., name=name)
   if inputs is None:
     return layer
@@ -225,7 +262,7 @@ def normalize_image(
 def flatten(
     inputs: Optional[tf.Tensor] = None,
     name: str = 'flatten',
-) -> Union[tf.Tensor, Layer]:
+) -> Union[tf.Tensor, Flatten]:
   layer = Flatten(name=name)
   if inputs is None:
     return layer
@@ -235,7 +272,7 @@ def flatten(
 def remove_mcmc_dim(
     inputs: Optional[tf.Tensor] = None,
     name: str = 'remove_mcmc_dim',
-) -> Union[tf.Tensor, Layer]:
+) -> Union[tf.Tensor, RemoveMCMCdim]:
   layer = RemoveMCMCdim(name=name)
   if inputs is None:
     return layer
@@ -246,7 +283,7 @@ def restore_mcmc_dim(
     inputs: Optional[tf.Tensor] = None,
     n_mcmc: int = 1,
     name: str = 'restore_mcmc_dim',
-) -> Union[tf.Tensor, Layer]:
+) -> Union[tf.Tensor, RestoreMCMCdim]:
   layer = RestoreMCMCdim(n_mcmc=n_mcmc, name=name)
   if inputs is None:
     return layer
@@ -258,7 +295,7 @@ def pooling2D(
     size: Tuple[int, int] = (2, 2),
     mode: Literal['max', 'avg', 'global'] = 'avg',
     name: str = 'pooling2D',
-) -> Union[tf.Tensor, Layer]:
+) -> Union[tf.Tensor, Resampling2D]:
   """ Pooling """
   layer = Resampling2D(size, mode, name=name)
   if inputs is None:
@@ -271,7 +308,7 @@ def unpooling2D(
     size: Tuple[int, int] = (2, 2),
     mode: Literal['pad', 'nearest', 'bilinear'] = 'nearest',
     name: str = 'unpooling2D',
-) -> tf.Tensor:
+) -> Union[tf.Tensor, Resampling2D]:
   """ Upsampling or Unpooling """
   layer = Resampling2D(size, mode, name=name)
   if inputs is None:
