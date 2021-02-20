@@ -1,7 +1,7 @@
 import glob
 import os
 import zipfile
-from typing import Optional, Union
+from typing import Optional, Union, List
 from typing_extensions import Literal
 
 import numpy as np
@@ -42,10 +42,18 @@ class CelebA(ImageDataset):
       Conference on Computer Vision (ICCV)
   """
 
-  def __init__(self,
-               path: str = "~/tensorflow_datasets/celeb_a",
-               image_size: Optional[int] = 64,
-               square_image: bool = True):
+  def __init__(
+      self,
+      path: str = "~/tensorflow_datasets/celeb_a",
+      image_size: Optional[int] = 64,
+      square_image: bool = True,
+      labels: List[str] = [
+          'Arched_Eyebrows', 'Bags_Under_Eyes', 'Bangs', 'Black_Hair',
+          'Blond_Hair', 'Brown_Hair', 'Bushy_Eyebrows', 'Chubby', 'Eyeglasses',
+          'Heavy_Makeup', 'Male', 'No_Beard', 'Pale_Skin', 'Receding_Hairline',
+          'Smiling', 'Wavy_Hair', 'Wearing_Earrings', 'Young'
+      ],
+  ):
     self.image_size = image_size
     self.square_image = bool(square_image)
     path = os.path.abspath(os.path.expanduser(path))
@@ -106,9 +114,12 @@ class CelebA(ImageDataset):
     self.train_files = np.array(train_files)
     self.valid_files = np.array(valid_files)
     self.test_files = np.array(test_files)
-    self.train_attr = np.array(train_attr)
-    self.valid_attr = np.array(valid_attr)
-    self.test_attr = np.array(test_attr)
+    ### extra filtering of the attributes
+    ids = [i for i, name in enumerate(labels) if name in self._header]
+    self._header = self._header[ids]
+    self.train_attr = np.array(train_attr)[:, ids]
+    self.valid_attr = np.array(valid_attr)[:, ids]
+    self.test_attr = np.array(test_attr)[:, ids]
 
   @property
   def original_shape(self):
@@ -138,8 +149,8 @@ class CelebA(ImageDataset):
                      drop_remainder: bool = False,
                      shuffle: int = 1000,
                      cache: Optional[str] = '',
-                     prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
+                     prefetch: Optional[int] = tf.data.AUTOTUNE,
+                     parallel: Optional[int] = tf.data.AUTOTUNE,
                      inc_labels: Union[bool, float] = False,
                      seed: int = 1) -> tf.data.Dataset:
     r""" The default argument will downsize and crop the image to square size
@@ -197,13 +208,13 @@ class CelebA(ImageDataset):
     # convert [-1, 1] to [0., 1.]
     attrs = (attrs + 1.) / 2
     images = tf.data.Dataset.from_tensor_slices(images)
+    images = images.map(read, num_parallel_calls=parallel)
     if inc_labels:
       attrs = tf.data.Dataset.from_tensor_slices(attrs)
       images = tf.data.Dataset.zip((images, attrs))
     # caching
     if cache is not None:
       images = images.cache(str(cache))
-    images = images.map(read, parallel)
     if 0. < inc_labels < 1.:  # semi-supervised mask
       images = images.map(mask)
     # shuffle must be called after cache

@@ -1,5 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
+import sys
 import collections
 import copy
 import dataclasses
@@ -346,20 +347,22 @@ class Networks(keras.Model, MD5object):
                     *args,
                     **kwargs)
 
-  def optimize(self,
-               inputs: Union[TensorTypes, List[TensorTypes]],
-               training: bool = True,
-               optimizer: Optional[Union[List[OptimizerV2],
-                                         OptimizerV2]] = None,
-               clipnorm: Optional[float] = None,
-               clipvalue: Optional[float] = None,
-               global_clipnorm: Optional[float] = None,
-               skip_update_threshold: Optional[float] = None,
-               skip_nan: bool = False,
-               allow_none_gradients: bool = False,
-               track_gradients: bool = False,
-               *args,
-               **kwargs) -> Tuple[Tensor, Dict[str, Any]]:
+  def optimize(
+      self,
+      inputs: Union[TensorTypes, List[TensorTypes]],
+      training: bool = True,
+      optimizer: Optional[Union[List[OptimizerV2], OptimizerV2]] = None,
+      clipnorm: Optional[float] = None,
+      clipvalue: Optional[float] = None,
+      global_clipnorm: Optional[float] = None,
+      skip_update_threshold: Optional[float] = None,
+      when_skip_update: int = 0,
+      nan_policy: Literal['ignore', 'skip', 'raise'] = 'skip',
+      allow_none_gradients: bool = False,
+      track_gradients: bool = False,
+      *args,
+      **kwargs,
+  ) -> Tuple[Tensor, Dict[str, Any]]:
     """Optimization function, could be used for autograph
 
     Parameters
@@ -374,6 +377,13 @@ class Networks(keras.Model, MD5object):
         global L2-norm value for clipping the gradients, by default None
     skip_update_threshold : Optional[float], optional
         if gradients value pass this threshold, it will be set to 0.
+    nan_policy : ['stop', 'skip', 'ignore', 'raise']
+        Policies for handling NaNs value gradients:
+          - 'stop': skip the current updates and stop training
+          - 'skip': skip the current updates and continue training
+          - 'ignore': do nothing
+          - 'raise': raise exception
+        ,default is 'skip'
     allow_none_gradients : bool, optional
         allow variables with None gradients during training, by default False
     track_gradients : bool, optional
@@ -415,39 +425,57 @@ class Networks(keras.Model, MD5object):
         with tf.GradientTape(watch_accessed_variables=False) as tape:
           tape.watch(parameters)
           loss, metrics = step()
-        # applying the gradients
+        ## backward pass, get the gradients
         gradients = tape.gradient(loss, parameters)
-        # skip update
-        if skip_update_threshold is not None or skip_nan:
-          skip = True
-          if skip_nan:
-            skip = tf.logical_and(
-                skip,
-                tf.reduce_any([
-                    tf.reduce_any(tf.math.is_nan(g))
-                    for g in gradients
-                    if g is not None
-                ]))
-          if skip_update_threshold is not None:
-            skip_update_threshold = tf.constant(skip_update_threshold,
-                                                dtype=self.dtype)
-            skip = tf.logical_and(
-                skip,
-                tf.reduce_any([
-                    tf.reduce_any(tf.greater_equal(g, skip_update_threshold))
-                    for g in gradients
-                    if g is not None
-                ]))
-          gradients = tf.cond(
-              skip,
-              true_fn=lambda:
-              [None if g is None else tf.zeros_like(g) for g in gradients],
-              false_fn=lambda: gradients)
-          self.skipped_update.assign_add(
-              tf.cond(skip,
-                      true_fn=lambda: tf.constant(1, dtype=tf.int64),
-                      false_fn=lambda: tf.constant(0, dtype=tf.int64)))
-        # clip norm
+        skip_update = False
+        ## NaN policy
+        is_nan = tf.reduce_any([
+            tf.reduce_any(tf.math.is_nan(g)) for g in gradients if g is not None
+        ])
+
+        def _true_nan():
+          if nan_policy == 'skip':
+            tf.print('NaNs gradients, skip the update!',
+                     output_stream=sys.stderr)
+            return True
+          elif nan_policy == 'raise':
+            raise RuntimeError('NaNs gradient!')
+          elif nan_policy == 'stop':
+            tf.print('\nNaNs gradients, stop the training!',
+                     output_stream=sys.stderr)
+            for p, g in zip(parameters, gradients):
+              if g is None:
+                tf.print(p.name, 'None')
+              else:
+                tf.print(p.name, 'is_nan=', tf.reduce_any(tf.math.is_nan(g)))
+            if self._trainer is not None:
+              self._trainer.terminate()
+            return True
+          return False
+
+        skip_update = tf.cond(is_nan, true_fn=_true_nan, false_fn=lambda: False)
+        ## skip update based on threshold
+        if skip_update_threshold is not None:
+          skip_update_threshold = tf.constant(skip_update_threshold,
+                                              dtype=self.dtype)
+          skip_update = tf.reduce_any([
+              tf.reduce_any(tf.greater_equal(g, skip_update_threshold))
+              for g in gradients
+              if g is not None
+          ])
+          skip_update = tf.logical_and(self.step >= when_skip_update,
+                                       skip_update)
+        ## skip update
+        gradients = tf.cond(
+            skip_update,
+            true_fn=lambda:
+            [None if g is None else tf.zeros_like(g) for g in gradients],
+            false_fn=lambda: gradients)
+        self.skipped_update.assign_add(
+            tf.cond(skip_update,
+                    true_fn=lambda: tf.constant(1, dtype=tf.int64),
+                    false_fn=lambda: tf.constant(0, dtype=tf.int64)))
+        ## clip norm
         if clipnorm is not None:
           clipnorm = tf.constant(clipnorm, dtype=self.dtype)
           gradients = [
@@ -459,14 +487,16 @@ class Networks(keras.Model, MD5object):
           not_none = [g for g in gradients if g is not None]
           if len(not_none) > 0:
             not_none, _ = tf.clip_by_global_norm(not_none, global_clipnorm)
-            gradients = [None if g is None else not_none.pop(0) for g in gradients]
+            gradients = [
+                None if g is None else not_none.pop(0) for g in gradients
+            ]
         if clipvalue is not None:
           clipvalue = tf.constant(clipvalue, dtype=self.dtype)
           gradients = [
               None if g is None else tf.clip_by_value(g, -clipvalue, clipvalue)
               for g in gradients
           ]
-        # for debugging gradients
+        ## for debugging gradients
         grads_params = [(g, p)
                         for g, p in zip(gradients, parameters)
                         if g is not None or allow_none_gradients]
@@ -499,7 +529,7 @@ class Networks(keras.Model, MD5object):
       global_clipnorm: Optional[float] = None,
       clipvalue: Optional[float] = None,
       skip_update_threshold: Optional[float] = None,
-      skip_nan: bool = False,
+      when_skip_update: int = 0,
       epochs: int = -1,
       max_iter: int = 1000,
       batch_size: int = 32,
@@ -508,7 +538,7 @@ class Networks(keras.Model, MD5object):
       autograph: bool = False,
       logging_interval: float = 3,
       skip_fitted: Union[bool, int] = False,
-      terminate_on_nan: bool = True,
+      nan_policy: Literal['stop', 'skip', 'ignore', 'raise'] = 'skip',
       logdir: Optional[str] = None,
       allow_none_gradients: bool = False,
       track_gradients: bool = False,
@@ -560,8 +590,13 @@ class Networks(keras.Model, MD5object):
     skip_fitted : Union[bool, int], optional
         skip this function if the model if fitted, or fitted for certain amount of
         steps, by default False
-    terminate_on_nan : bool, optional
-        terminate the training if NaNs returned, by default True
+    nan_policy : ['stop', 'skip', 'ignore', 'raise']
+        Policies for handling NaNs value gradients:
+          - 'stop': skip the current updates and stop training
+          - 'skip': skip the current updates and continue training
+          - 'ignore': do nothing
+          - 'raise': raise exception
+        ,default is 'skip'
     logdir : Optional[str], optional
         tensorboard logging directory, by default None
     allow_none_gradients : bool, optional
@@ -622,7 +657,8 @@ class Networks(keras.Model, MD5object):
                          clipvalue=clipvalue,
                          global_clipnorm=global_clipnorm,
                          skip_update_threshold=skip_update_threshold,
-                         skip_nan=skip_nan),
+                         when_skip_update=when_skip_update,
+                         nan_policy=nan_policy),
         valid_ds=valid,
         valid_freq=valid_freq,
         valid_interval=valid_interval,
@@ -631,7 +667,6 @@ class Networks(keras.Model, MD5object):
         logging_interval=logging_interval,
         log_tag=self.name,
         max_iter=max_iter,
-        terminate_on_nan=terminate_on_nan,
         callback=callback,
     )
     return self

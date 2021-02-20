@@ -51,7 +51,7 @@ ds:
 qz: mvndiag
 beta: 1
 gamma: 1
-alpha: 10
+py: 0.004
 lamda: 1
 skip: False
 eval: False
@@ -157,20 +157,18 @@ def main(cfg: dict):
   ### fit
   else:
     vae.early_stopping.patience = 10
-    max_iter, learning_rate = get_optimizer_info(cfg.ds)
     vae.fit(train,
             valid=valid,
-            learning_rate=learning_rate,
             epochs=-1,
             clipnorm=100,
-            max_iter=max_iter,
-            valid_freq=int(0.05 * max_iter),
+            valid_interval=30,
             logging_interval=2,
             skip_fitted=True,
             callback=callback,
             logdir=output_dir,
             compile_graph=True,
-            track_gradients=True)
+            track_gradients=True,
+            **get_optimizer_info(cfg.ds))
     vae.early_stopping.plot_losses(
         path=os.path.join(output_dir, 'early_stopping.png'))
     vae.plot_learning_curves(os.path.join(output_dir, 'learning_curves.png'))

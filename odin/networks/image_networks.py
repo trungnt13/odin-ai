@@ -23,7 +23,7 @@ from odin.networks import residuals as rsd
 from odin.bay.distributions import (Blockwise, Categorical, ContinuousBernoulli,
                                     Distribution, Gamma,
                                     JointDistributionSequential, PixelCNNpp,
-                                    VonMises)
+                                    VonMises, Bernoulli)
 
 __all__ = [
     'mnist_networks',
@@ -525,6 +525,7 @@ def celebasmall_networks(qz: str = 'mvndiag',
                          is_semi_supervised: bool = False,
                          centerize_image: bool = True,
                          skip_generator: bool = False,
+                         n_labels: int = 18,
                          **kwargs):
   if zdim is None:
     zdim = 10
@@ -538,7 +539,7 @@ def celebasmall_networks(qz: str = 'mvndiag',
                             proj_dim=128)
   if is_semi_supervised:
     from odin.bay.layers import DistributionDense
-    networks['labels'] = DistributionDense(event_shape=40,
+    networks['labels'] = DistributionDense(event_shape=int(n_labels),
                                            posterior='bernoulli',
                                            name='attributes')
   return networks
@@ -550,6 +551,7 @@ def celeba_networks(qz: str = 'mvndiag',
                     is_semi_supervised: bool = False,
                     centerize_image: bool = True,
                     skip_generator: bool = False,
+                    n_labels: int = 18,
                     **kwargs):
   if zdim is None:
     zdim = 10
@@ -562,7 +564,7 @@ def celeba_networks(qz: str = 'mvndiag',
                                n_channels=3)
   if is_semi_supervised:
     from odin.bay.layers import DistributionDense
-    networks['labels'] = DistributionDense(event_shape=40,
+    networks['labels'] = DistributionDense(event_shape=int(n_labels),
                                            posterior='bernoulli',
                                            name='attributes')
   return networks
@@ -746,6 +748,8 @@ def get_networks(dataset_name: str,
                  zdim: Optional[int] = None,
                  is_semi_supervised: bool = False,
                  **kwargs) -> Dict[str, Layer]:
+  """ Return dictionary of networks for encoder, decoder, observation, latents
+  and labels (in case of semi-supervised learning) """
   dataset_name = str(dataset_name).lower().strip()
   for k, fn in globals().items():
     if isinstance(k, string_types) and (inspect.isfunction(fn) or
@@ -814,11 +818,11 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
     init_lr = 1e-4
     decay_steps = 10000
   elif 'celebasmall' in dataset_name:
-    max_iter = 150000
+    max_iter = 200000
     init_lr = 5e-4
     decay_steps = 8000
   elif 'celeba' in dataset_name:
-    max_iter = 200000
+    max_iter = 250000
     init_lr = 1e-4
     decay_steps = 10000
   ### gene networks

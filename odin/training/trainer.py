@@ -426,7 +426,7 @@ class Trainer(object):
     # others
     self._current_train_progress = None
     self._cached_tensorboard = None
-    self._is_training = False
+    self._is_training = tf.Variable(False, trainable=False, dtype=tf.bool, name='is_training')
 
   @property
   def n_iter(self) -> int:
@@ -496,10 +496,10 @@ class Trainer(object):
 
   @property
   def is_training(self) -> bool:
-    return self._is_training
+    return self._is_training.numpy()
 
   def terminate(self):
-    self._is_training = False
+    self._is_training.assign(False)
 
   def __getstate__(self):
     return (self.logdir, self.trace_on, self.n_iter)
@@ -510,7 +510,7 @@ class Trainer(object):
     self._summary_writer = None
     self._current_train_progress = None
     self._cached_tensorboard = None
-    self._is_training = False
+    self._is_training = tf.Variable(False, trainable=False, dtype=tf.bool, name='is_training')
     # default attributes
     self._last_valid_loss = None
     self._last_valid_metrics = {}
@@ -529,9 +529,8 @@ class Trainer(object):
           logging_interval: float = 3,
           log_tag: str = '',
           max_iter: int = -1,
-          terminate_on_nan: bool = True,
           callback: Union[Callback, List[Callback]] = lambda: None):
-    r""" A simplified fitting API
+    """ A simplified fitting API
 
     Parameters
     ----------
@@ -640,13 +639,12 @@ class Trainer(object):
     def train():
       global _CURRENT_TRAINER
       _CURRENT_TRAINER = self
-      self._is_training = True
+      self._is_training.assign(True)
       progress = tqdm(train_ds, desc=f"Traning {max_iter}(its)")
       self._current_train_progress = progress
       start_time = progress.start_t
       last_print_time = 0
       last_valid_time = start_time
-      is_nan = False
       for cur_iter, inputs in enumerate(progress):
         self._n_iter += 1
         tf.summary.experimental.set_step(self.n_iter)
@@ -663,13 +661,6 @@ class Trainer(object):
         metrics = {k: v for k, v in metrics.items() if '_' != k[0]}
         # do not record the loss and metrics at every iteration, the
         # performance will drop about 40%
-        if terminate_on_nan and np.isnan(loss) or np.isinf(loss):
-          is_nan = True
-          progress.write(
-              f" *Terminated on NaN loss at iteration #{int(self.n_iter)}")
-          for k, v in metrics.items():
-            progress.write(f"\t{k}: {v}")
-          break
         # ====== logging ====== #
         interval = progress._time() - last_print_time
         if interval >= logging_interval:
@@ -700,14 +691,17 @@ class Trainer(object):
                            is_valid=True)
           # callback always called
           _process_callback_returns(progress, log_tag, self.n_iter, callback())
-          if not self.is_training:
-            break
           last_valid_time = progress._time()
-        #########
+        # ====== terminate training ====== #
+        if not self.is_training:
+          progress.write('Terminate training!')
+          progress.write(f' Loss: {np.asarray(loss)}')
+          for k, v in metrics.items():
+            progress.write(f' {k}: {np.asarray(v)}')
+          break
       # Final callback to signal train ended
-      self._is_training = False
-      if not is_nan:
-        _process_callback_returns(progress, log_tag, self.n_iter, callback())
+      self._is_training.assign(False)
+      _process_callback_returns(progress, log_tag, self.n_iter, callback())
       # end the progress
       progress.clear()
       progress.close()

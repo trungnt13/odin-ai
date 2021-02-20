@@ -229,6 +229,9 @@ class semafoVAE(betaVAE):
   a common resource by multiple processes and avoid critical section problems in
   a concurrent system
 
+  For MNIST, `mi_coef` could be from 0.1 to 0.5. For dSprites, it should be smaller
+  than `0.01`.
+
   SemafoVAE  [Callback#50001]:
   llk_x:-73.33171081542969
   llk_y:-0.9238954782485962
@@ -246,7 +249,7 @@ class semafoVAE(betaVAE):
       alpha: float = 10.0,
       mi_coef: Union[float, Interpolation] = circle(vmin=0.,
                                                     vmax=0.1,
-                                                    length=2000,
+                                                    length=4000,
                                                     delay_in=100,
                                                     delay_out=100,
                                                     cyclical=True),
@@ -269,7 +272,7 @@ class semafoVAE(betaVAE):
   def mi_coef(self):
     if isinstance(self._mi_coef, Interpolation):
       return self._mi_coef(self.step)
-    return self._mi_coef
+    return tf.constant(self._mi_coef, dtype=self.dtype)
 
   @classmethod
   def is_semi_supervised(cls) -> bool:
@@ -280,10 +283,8 @@ class semafoVAE(betaVAE):
     # don't condition on the labels, only accept inputs
     X = X[0]
     qz_x = super().encode(X, training=training, mask=None, **kwargs)
-    qy_zx = self.labels(tf.convert_to_tensor(qz_x),
-                        training=training,
-                        mask=mask)
-    return (qz_x, qy_zx)
+    py_z = self.labels(tf.convert_to_tensor(qz_x), training=training, mask=mask)
+    return (qz_x, py_z)
 
   def decode(self, latents, training=None, mask=None, **kwargs):
     if isinstance(latents, (tuple, list)):
@@ -296,10 +297,11 @@ class semafoVAE(betaVAE):
     if mask is not None:
       mask = tf.reshape(mask, (-1,))
     llk, kl = super().elbo_components(X[0], mask=mask, training=training)
-    px_z, (qz_x, py_zx) = self.last_outputs
+    px_z, (qz_x, py_z) = self.last_outputs
     ## supervised loss
+    llk_y = 0.
     if len(y) > 0:
-      llk_y = py_zx.log_prob(y[0])
+      llk_y = py_z.log_prob(y[0])  # support only 1 labels set provided
       if mask is not None:
         llk_y = tf.cond(
             tf.reduce_all(tf.logical_not(mask)),
@@ -309,9 +311,9 @@ class semafoVAE(betaVAE):
         )
       llk_y = tf.reduce_mean(self.alpha * llk_y)
       llk_y = tf.cond(tf.abs(llk_y) < 1e-8,
-                      true_fn=lambda: tf.stop_gradient(llk_y),
-                      false_fn=lambda: llk_y)
-      llk[f"llk_{self.labels.name}"] = llk_y
+                      true_fn=lambda: 0.,
+                      false_fn=lambda: self.alpha * llk_y)
+    llk[f"llk_{self.labels.name}"] = llk_y
     ## sample the prior
     batch_shape = qz_x.batch_shape
     z_prime = qz_x.KL_divergence.prior.sample(batch_shape)
@@ -324,15 +326,18 @@ class semafoVAE(betaVAE):
     # x = tf.stop_gradient(x) # should not stop gradient here, generator need to be updated
     qz_xprime, qy_zxprime = self.encode(x, training=training)
     #' mutual information (we want to maximize this, hence, add it to the llk)
-    y = tf.convert_to_tensor(py_zx)
+    y = tf.convert_to_tensor(py_z)
     # only calculate MI for unsupervised data
     mi_y = tf.reduce_mean(
         tf.boolean_mask(
-            py_zx.log_prob(y) - qy_zxprime.log_prob(y), tf.logical_not(mask)))
+            py_z.log_prob(y) - qy_zxprime.log_prob(y), tf.logical_not(mask)))
     if training:
-      llk[f'mi_{self.labels.name}'] = self.mi_coef * mi_y
-    else:
-      llk[f'mi_{self.labels.name}'] = mi_y
+      # this is important to prevent unstable gradients pass through
+      # small change in mi_y leads to huge divergence in the generative network
+      mi_y = tf.cond(self.mi_coef < 1e-8,
+                     true_fn=lambda: 0.,
+                     false_fn=lambda: self.mi_coef * mi_y)
+    llk[f'mi_{self.labels.name}'] = mi_y
     ## this value is just for monitoring
     mi_z = tf.reduce_mean(qz_xprime.log_prob(z_prime))
     mi_z = tf.cond(tf.math.is_nan(mi_z),

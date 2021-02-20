@@ -51,6 +51,9 @@ def estimate_Izx(fn_px_z: Callable[[tf.Tensor], tfd.Distribution],
   ## calculate the MI
   log_px = tf.reduce_logsumexp(log_px_z, axis=1, keepdims=True) - \
     tf.math.log(tf.cast(n_samples_z, tf.float32))
+  H_x = tf.reduce_mean(log_px)
+  print(H_x)
+  exit()
   mi = tf.reduce_mean(log_px_z - log_px)
   return mi
 
