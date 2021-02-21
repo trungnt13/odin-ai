@@ -193,12 +193,16 @@ def mnist_networks(
                   observation=observation,
                   latents=latents)
   if is_semi_supervised:
-    networks['labels'] = RVmeta(10, 'onehot', projection=True,
-                                name='digits').create_posterior()
+    networks['labels'] = RVmeta(
+        10,
+        'onehot',
+        projection=True,
+        name=kwargs.get('labels_name', 'digits'),
+    ).create_posterior()
   return networks
 
 
-fashionmnist_networks = mnist_networks
+fashionmnist_networks = partial(mnist_networks, labels_name='fashion')
 binarizedmnist_networks = mnist_networks
 omniglot_networks = partial(mnist_networks, n_channels=3)
 
@@ -337,6 +341,8 @@ cifar100_networks = partial(cifar_networks, n_classes=100)
 # dSprites
 # ===========================================================================
 def _dsprites_distribution(x: tf.Tensor) -> Blockwise:
+  # NOTE: tried Continuous Bernoulli for dSPrites, but leads to
+  # more unstable training in semi-supervised learning.
   dtype = x.dtype
   py = JointDistributionSequential([
       VonMises(loc=0.,
@@ -346,8 +352,8 @@ def _dsprites_distribution(x: tf.Tensor) -> Blockwise:
             rate=tf.math.softplus(x[..., 2]),
             name='scale'),
       Categorical(logits=x[..., 3:6], dtype=dtype, name='shape'),
-      ContinuousBernoulli(logits=x[..., 6], name='x_position'),
-      ContinuousBernoulli(logits=x[..., 7], name='y_position'),
+      Bernoulli(logits=x[..., 6], dtype=dtype, name='x_position'),
+      Bernoulli(logits=x[..., 7], dtype=dtype, name='y_position'),
   ])
   return Blockwise(py, name='shapes2d')
 
@@ -413,7 +419,7 @@ def dsprites_networks(
     networks['labels'] = DistributionDense(event_shape=(5,),
                                            posterior=_dsprites_distribution,
                                            units=8,
-                                           name='geometry')
+                                           name='geometry2d')
   return networks
 
 
@@ -441,7 +447,7 @@ def dspritessmall_networks(
     networks['labels'] = DistributionDense(event_shape=(5,),
                                            posterior=_dsprites_distribution,
                                            units=8,
-                                           name='geometry')
+                                           name='geometry2d')
   return networks
 
 
@@ -487,7 +493,7 @@ def shapes3dsmall_networks(qz: str = 'mvndiag',
     networks['labels'] = DistributionDense(event_shape=(6,),
                                            posterior=_shapes3d_distribution,
                                            units=10,
-                                           name='geometry')
+                                           name='geometry3d')
   return networks
 
 
@@ -512,7 +518,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
     networks['labels'] = DistributionDense(event_shape=(6,),
                                            posterior=_shapes3d_distribution,
                                            units=10,
-                                           name='geometry')
+                                           name='geometry3d')
   return networks
 
 
@@ -792,7 +798,7 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
     decay_steps = 5000
     decay_rate = 0.996
   elif 'mnist' in dataset_name:
-    max_iter = 30000
+    max_iter = 35000
     init_lr = 1e-3
     decay_steps = 2500
     decay_rate = 0.996

@@ -229,8 +229,22 @@ class semafoVAE(betaVAE):
   a common resource by multiple processes and avoid critical section problems in
   a concurrent system
 
-  For MNIST, `mi_coef` could be from 0.1 to 0.5. For dSprites, it should be smaller
-  than `0.01`.
+  For MNIST, `mi_coef` could be from 0.1 to 0.5.
+  For dSprites, it should be smaller than `0.05`.
+  For CelebA and Shapes3D, `mi_coef=0.1` has been tested.
+
+  It is also seems that the choice of `mi_coef` is crucial, regardless
+  the percentage of labels, or the networks design.
+
+  It is also crucial to get the right value at the beginning of training
+  (i.e. small enough)
+
+  Parameters
+  ----------
+  warmup_step : int
+      number of step without mutual information maximization which allows
+      the network to fit better encoder. Gradients backpropagated to encoder
+      often NaNs if optimize all objective from beginning, default: 1000
 
   SemafoVAE  [Callback#50001]:
   llk_x:-73.33171081542969
@@ -247,16 +261,13 @@ class semafoVAE(betaVAE):
       self,
       labels: RVmeta = RVmeta(10, 'onehot', projection=True, name="digits"),
       alpha: float = 10.0,
-      mi_coef: Union[float, Interpolation] = circle(vmin=0.,
-                                                    vmax=0.1,
-                                                    length=4000,
-                                                    delay_in=100,
-                                                    delay_out=100,
-                                                    cyclical=True),
+      mi_coef: Union[float, Interpolation] = linear(vmin=0.1,
+                                                    vmax=0.001,
+                                                    length=20000),
+      warmup_step: int = 1000,
       beta: Union[float, Interpolation] = linear(vmin=1e-6,
                                                  vmax=1.,
-                                                 length=2000,
-                                                 delay_in=0),
+                                                 length=2000),
       name='SemafoVAE',
       **kwargs,
   ):
@@ -264,6 +275,7 @@ class semafoVAE(betaVAE):
     self.labels = _parse_layers(labels)
     self._mi_coef = mi_coef
     self.alpha = alpha
+    self.warmup_step = int(warmup_step)
 
   def build(self, input_shape):
     return super().build(input_shape)
@@ -271,7 +283,8 @@ class semafoVAE(betaVAE):
   @property
   def mi_coef(self):
     if isinstance(self._mi_coef, Interpolation):
-      return self._mi_coef(self.step)
+      step = tf.maximum(0., tf.cast(self.step - self.warmup_step, tf.float32))
+      return self._mi_coef(step)
     return tf.constant(self._mi_coef, dtype=self.dtype)
 
   @classmethod
@@ -312,7 +325,7 @@ class semafoVAE(betaVAE):
       llk_y = tf.reduce_mean(self.alpha * llk_y)
       llk_y = tf.cond(tf.abs(llk_y) < 1e-8,
                       true_fn=lambda: 0.,
-                      false_fn=lambda: self.alpha * llk_y)
+                      false_fn=lambda: llk_y)
     llk[f"llk_{self.labels.name}"] = llk_y
     ## sample the prior
     batch_shape = qz_x.batch_shape
@@ -325,25 +338,32 @@ class semafoVAE(betaVAE):
       x = tf.convert_to_tensor(px)
     # x = tf.stop_gradient(x) # should not stop gradient here, generator need to be updated
     qz_xprime, qy_zxprime = self.encode(x, training=training)
-    #' mutual information (we want to maximize this, hence, add it to the llk)
-    y = tf.convert_to_tensor(py_z)
+
     # only calculate MI for unsupervised data
-    mi_y = tf.reduce_mean(
-        tf.boolean_mask(
-            py_z.log_prob(y) - qy_zxprime.log_prob(y), tf.logical_not(mask)))
-    if training:
-      # this is important to prevent unstable gradients pass through
-      # small change in mi_y leads to huge divergence in the generative network
-      mi_y = tf.cond(self.mi_coef < 1e-8,
-                     true_fn=lambda: 0.,
-                     false_fn=lambda: self.mi_coef * mi_y)
-    llk[f'mi_{self.labels.name}'] = mi_y
-    ## this value is just for monitoring
-    mi_z = tf.reduce_mean(qz_xprime.log_prob(z_prime))
+    def _mi_x_y():
+      y = tf.convert_to_tensor(py_z)
+      mi_y = tf.reduce_mean(
+          tf.boolean_mask(py_z.log_prob(y) - qy_zxprime.log_prob(y),
+                          mask=tf.logical_not(mask),
+                          axis=0))
+      if training:
+        # this is important to prevent unstable gradients pass through
+        # small change in mi_y leads to huge divergence in the generative network
+        mi_y = tf.cond(self.mi_coef < 1e-8,
+                       true_fn=lambda: 0.,
+                       false_fn=lambda: self.mi_coef * mi_y)
+      return mi_y
+
+    #' mutual information (we want to maximize this, hence, add it to the llk)
+    llk[f'mi_{self.labels.name}'] = tf.cond(self.step >= self.warmup_step,
+                                            true_fn=_mi_x_y,
+                                            false_fn=lambda: 0.)
+    # ## this value is just for monitoring
+    mi_z = tf.reduce_mean(tf.stop_gradient(qz_xprime.log_prob(z_prime)))
     mi_z = tf.cond(tf.math.is_nan(mi_z),
                    true_fn=lambda: 0.,
                    false_fn=lambda: tf.clip_by_value(mi_z, -1e8, 1e8))
-    llk[f'mi_{self.latents.name}'] = tf.stop_gradient(mi_z)
+    llk[f'mi_{self.latents.name}'] = mi_z
     return llk, kl
 
 

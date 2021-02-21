@@ -3,25 +3,21 @@ import inspect
 import os
 import pickle
 import tempfile
-import warnings
 from collections import defaultdict
 from functools import partial
-from numbers import Number
-from threading import RLock
-from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union, TextIO
+import datetime
 
 import numpy as np
 from scipy import signal
 import tensorflow as tf
-from odin.utils import as_tuple
 from six import string_types
-from tensorflow import Tensor, Variable
+from tensorflow import Tensor
 from tensorflow.python import keras
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.data.ops.iterator_ops import OwnedIterator
 from tensorflow.python.eager.def_function import Function
 from tensorflow.python.keras import Model, Sequential
-from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
 from tensorflow.python.ops import summary_ops_v2
 from tensorflow.python.summary.summary_iterator import summary_iterator
 from tqdm import tqdm
@@ -74,7 +70,7 @@ def _save_summary(loss, metrics, prefix="", flush=False):
     tf.summary.flush()
 
 
-def _print_summary(progress: tqdm,
+def _print_summary(print_fn: Callable,
                    log_tag: str,
                    loss: float,
                    metrics: dict,
@@ -83,18 +79,18 @@ def _print_summary(progress: tqdm,
   log_tag = ("" if len(log_tag) == 0 else f"{log_tag} ")
   if is_valid:
     log_tag = f" * [VALID]{log_tag}"
-  progress.write(f"{log_tag} #{int(n_iter)} loss:{loss:.4f}")
+  print_fn(f"{log_tag} #{int(n_iter)} loss:{loss:.4f}")
   for k, v in metrics.items():
     v = str(v) if _is_text(v) else f"{v:.4f}"
-    progress.write(f"{len(log_tag) * ' '} {k}:{v}")
+    print_fn(f"{len(log_tag) * ' '} {k}:{v}")
 
 
-def _process_callback_returns(progress: tqdm,
+def _process_callback_returns(print_fn: Callable,
                               log_tag: str,
                               n_iter: int,
                               metrics: Optional[dict] = None):
   if metrics is not None and isinstance(metrics, dict) and len(metrics) > 0:
-    progress.write(f"{log_tag} [Callback#{int(n_iter)}]:")
+    print_fn(f"{log_tag} [Callback#{int(n_iter)}]:")
     for k, v in metrics.items():
       if isinstance(v, (tuple, list)):
         v = tf.convert_to_tensor(v)
@@ -111,7 +107,7 @@ def _process_callback_returns(progress: tqdm,
       # histogram
       else:
         tf.summary.histogram(k, v)
-      progress.write(f" {k}:{v}")
+      print_fn(f" {k}:{v}")
 
 
 def read_tensorboard(logdir: str) -> Dict[Text, Tuple[float, int, float]]:
@@ -355,59 +351,6 @@ class Trainer(object):
       optimizer.apply_gradients(grads_and_vars=zip(grads, weights))
     return grads
 
-  @staticmethod
-  def prepare(ds,
-              preprocess=None,
-              postprocess=None,
-              batch_size=128,
-              epochs=1,
-              cache='',
-              drop_remainder=False,
-              shuffle=None,
-              parallel_preprocess=0,
-              parallel_postprocess=0):
-    r""" A standardalized procedure for preparing `tf.data.Dataset` for training
-    or evaluation.
-
-    Arguments:
-      ds : `tf.data.Dataset`
-      preprocess : Callable (optional). Call at the beginning when a single
-        example is fetched.
-      postprocess : Callable (optional). Called after `.batch`, which processing
-        the whole minibatch.
-      parallel_preprocess, parallel_postprocess : Integer.
-        - if value is 0, process sequentially
-        - if value is -1, using `tf.data.experimental.AUTOTUNE`
-        - if value > 0, explicitly specify the number of process for running
-            map task
-    """
-    parallel_preprocess = None if parallel_preprocess == 0 else \
-      (tf.data.experimental.AUTOTUNE if parallel_preprocess == -1 else
-       int(parallel_preprocess))
-    parallel_postprocess = None if parallel_postprocess == 0 else \
-      (tf.data.experimental.AUTOTUNE if parallel_postprocess == -1 else
-       int(parallel_postprocess))
-
-    if not isinstance(ds, DatasetV2):
-      ds = tf.data.Dataset.from_tensor_slices(ds)
-
-    if shuffle:
-      if isinstance(shuffle, Number):
-        ds = ds.shuffle(buffer_size=int(shuffle), reshuffle_each_iteration=True)
-      else:
-        ds = ds.shuffle(buffer_size=10000, reshuffle_each_iteration=True)
-
-    if preprocess is not None:
-      ds = ds.map(preprocess, num_parallel_calls=parallel_preprocess)
-      if cache is not None:
-        ds = ds.cache(cache)
-    ds = ds.repeat(epochs).batch(batch_size, drop_remainder=drop_remainder)
-
-    if postprocess is not None:
-      ds = ds.map(postprocess, num_parallel_calls=parallel_postprocess)
-    ds = ds.prefetch(tf.data.experimental.AUTOTUNE)
-    return ds
-
   #######################################################
   def __init__(self, logdir: Optional[str] = None, trace_on: bool = False):
     super().__init__()
@@ -426,7 +369,10 @@ class Trainer(object):
     # others
     self._current_train_progress = None
     self._cached_tensorboard = None
-    self._is_training = tf.Variable(False, trainable=False, dtype=tf.bool, name='is_training')
+    self._is_training = tf.Variable(False,
+                                    trainable=False,
+                                    dtype=tf.bool,
+                                    name='is_training')
 
   @property
   def n_iter(self) -> int:
@@ -459,6 +405,13 @@ class Trainer(object):
       else:
         self._cached_tensorboard = read_tensorboard(self.logdir)
     return self._cached_tensorboard
+
+  @property
+  def log_file(self) -> TextIO:
+    if not hasattr(self, '_log_file'):
+      path = os.path.join(self.logdir, 'log.txt')
+      self._log_file = open(path, mode='a')
+    return self._log_file
 
   def get_train_losses(self) -> List[float]:
     losses = self.tensorboard.get('train/loss', [])
@@ -499,9 +452,11 @@ class Trainer(object):
     return self._is_training.numpy()
 
   def terminate(self):
+    self.log_file.flush()
     self._is_training.assign(False)
 
   def __getstate__(self):
+    self.log_file.flush()
     return (self.logdir, self.trace_on, self.n_iter)
 
   def __setstate__(self, states):
@@ -510,7 +465,10 @@ class Trainer(object):
     self._summary_writer = None
     self._current_train_progress = None
     self._cached_tensorboard = None
-    self._is_training = tf.Variable(False, trainable=False, dtype=tf.bool, name='is_training')
+    self._is_training = tf.Variable(False,
+                                    trainable=False,
+                                    dtype=tf.bool,
+                                    name='is_training')
     # default attributes
     self._last_valid_loss = None
     self._last_valid_metrics = {}
@@ -645,6 +603,8 @@ class Trainer(object):
       start_time = progress.start_t
       last_print_time = 0
       last_valid_time = start_time
+      self.print("*** Start training: "
+                 f"{datetime.datetime.now().strftime(r'%H:%M:%S %d/%m/%Y')}")
       for cur_iter, inputs in enumerate(progress):
         self._n_iter += 1
         tf.summary.experimental.set_step(self.n_iter)
@@ -664,9 +624,10 @@ class Trainer(object):
         # ====== logging ====== #
         interval = progress._time() - last_print_time
         if interval >= logging_interval:
+          self.log_file.flush()
           # summarize the batch loss and metrics
           _save_summary(loss, metrics, prefix="train/")
-          _print_summary(progress,
+          _print_summary(self.print,
                          log_tag,
                          loss,
                          metrics,
@@ -683,28 +644,30 @@ class Trainer(object):
             self._last_valid_loss = val_loss
             self._last_valid_metrics = val_metrics
             _save_summary(val_loss, val_metrics, prefix="valid/", flush=True)
-            _print_summary(progress,
+            _print_summary(self.print,
                            log_tag,
                            val_loss,
                            val_metrics,
                            self.n_iter,
                            is_valid=True)
           # callback always called
-          _process_callback_returns(progress, log_tag, self.n_iter, callback())
+          _process_callback_returns(self.print, log_tag, self.n_iter,
+                                    callback())
           last_valid_time = progress._time()
         # ====== terminate training ====== #
         if not self.is_training:
-          progress.write('Terminate training!')
-          progress.write(f' Loss: {np.asarray(loss)}')
+          self.print('Terminate training!')
+          self.print(f' Loss: {np.asarray(loss)}')
           for k, v in metrics.items():
-            progress.write(f' {k}: {np.asarray(v)}')
+            self.print(f' {k}: {np.asarray(v)}')
           break
       # Final callback to signal train ended
       self._is_training.assign(False)
-      _process_callback_returns(progress, log_tag, self.n_iter, callback())
+      _process_callback_returns(self.print, log_tag, self.n_iter, callback())
       # end the progress
       progress.clear()
       progress.close()
+      self.log_file.flush()
 
     ### train and return
     with self.summary_writer.as_default():
@@ -724,12 +687,14 @@ class Trainer(object):
     self._current_train_progress = None
     return self
 
-  def print(self, msg: str):
-    r""" Print log message without interfering the current `tqdm` progress bar """
-    if self._current_train_progress is None:
-      print(msg)
-    else:
-      self._current_train_progress.write(msg)
+  def print(self, *msg):
+    """ Print log message without interfering the current `tqdm` progress bar """
+    for m in msg:
+      if self._current_train_progress is None:
+        print(m)
+      else:
+        self._current_train_progress.write(m)
+      self.log_file.write(f'{m}\n')
     return self
 
   def write_keras_graph(self,
@@ -771,7 +736,6 @@ class Trainer(object):
     """
     import seaborn as sns
     from matplotlib import pyplot as plt
-    from odin import visual as vs
     sns.set()
     smooth = float(smooth)
     assert 0. < smooth < 1., f"EMA smooth must be in [0, 1] but given {smooth}"
