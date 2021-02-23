@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 from typing import List
+import warnings
 
 import numpy as np
 import tensorflow as tf
@@ -162,18 +163,25 @@ class conditionalM2VAE(betaVAE):
                      name=name,
                      **kwargs)
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name="alpha")
-    self.marginalize = bool(marginalize)
-    self.n_classes = int(np.prod(labels.event_shape))
-    assert labels.posterior == 'onehot', \
-      f'only support Categorical distribution for labels, given {labels.posterior}'
     self.embedding_dim = int(embedding_dim)
     self.embedding_method = str(embedding_method)
     self.batchnorm = bool(batchnorm)
     self.dropout = float(dropout)
-    # the networks
+    ## the networks
     self.classifier = _parse_layers(classifier)
     self.xy_to_qz_net = _parse_layers(xy_to_qz)
     self.zy_to_px_net = _parse_layers(zy_to_px)
+    ## check the labels distribution
+    if hasattr(labels, 'posterior'):
+      posterior_name = str(labels.posterior)
+    if hasattr(labels, 'posterior_layer'):
+      posterior_name = str(labels.posterior_layer).lower()
+    if 'onehot' not in posterior_name:
+      warnings.warn(
+          'Conditional VAE only support one-hot or relaxed one-hot distribution, '
+          f'but given: {labels}')
+    self.n_classes = int(np.prod(labels.event_shape))
+    self.marginalize = bool(marginalize)
     # labels distribution
     if marginalize:
       temperature = 0

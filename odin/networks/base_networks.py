@@ -466,11 +466,20 @@ class Networks(keras.Model, MD5object):
           skip_update = tf.logical_and(self.step >= when_skip_update,
                                        skip_update)
         ## skip update
-        gradients = tf.cond(
-            skip_update,
-            true_fn=lambda:
-            [None if g is None else tf.zeros_like(g) for g in gradients],
-            false_fn=lambda: gradients)
+        def _skipped():
+          new_gradients = []
+          for g in gradients:
+            if isinstance(g, tf.IndexedSlices):
+              values = g.values
+              g = tf.IndexedSlices(values - values, g.indices, g.dense_shape)
+            elif g is not None:
+              g = tf.identity(g - g)
+            new_gradients.append(g)
+          return new_gradients
+
+        gradients = tf.cond(skip_update,
+                            true_fn=_skipped,
+                            false_fn=lambda: gradients)
         self.skipped_update.assign_add(
             tf.cond(skip_update,
                     true_fn=lambda: tf.constant(1, dtype=tf.int64),

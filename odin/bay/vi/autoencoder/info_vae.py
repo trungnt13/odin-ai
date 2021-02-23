@@ -297,6 +297,10 @@ class semafoVAE(betaVAE):
     X = X[0]
     qz_x = super().encode(X, training=training, mask=None, **kwargs)
     py_z = self.labels(tf.convert_to_tensor(qz_x), training=training, mask=mask)
+    ## keep the mask
+    mask = kwargs.get('mask', None)
+    qz_x._keras_mask = mask
+    py_z._keras_mask = mask
     return (qz_x, py_z)
 
   def decode(self, latents, training=None, mask=None, **kwargs):
