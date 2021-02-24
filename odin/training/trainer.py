@@ -675,7 +675,7 @@ class Trainer(object):
         tf.summary.trace_on(graph=True, profiler=False)
       else:
         tf.summary.trace_off()
-      train()
+      train() # training
       if self.trace_on:
         tf.summary.trace_export(name=func_name,
                                 step=0,

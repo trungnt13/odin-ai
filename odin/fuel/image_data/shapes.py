@@ -185,6 +185,8 @@ class Shapes3D(_ShapeDataset):
   """ The dataset must be manually downloaded from GCS at
     https://console.cloud.google.com/storage/browser/3d-shapes
 
+  Recommend to run `ulimit -n 100000` before download this dataset
+
   All the factors are:
     ['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation']
   Values per factor:
@@ -231,6 +233,8 @@ class Shapes3DSmall(Shapes3D):
 class dSprites(_ShapeDataset):
   """dSprites dataset with continuous non-negative attributes values
   by defaults.
+
+  Recommend to run `ulimit -n 100000` before download this dataset
 
   Discrete attributes:
     label_orientation: ()

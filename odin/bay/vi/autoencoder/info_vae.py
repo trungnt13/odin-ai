@@ -255,6 +255,8 @@ class semafoVAE(betaVAE):
   llk_x:-72.9976577758789
   llk_y:-0.7141319513320923
   acc_y:0.8095999956130981
+
+  Idea: set mi_coef = 1. / alpha
   """
 
   def __init__(
@@ -321,10 +323,10 @@ class semafoVAE(betaVAE):
       llk_y = py_z.log_prob(y[0])  # support only 1 labels set provided
       if mask is not None:
         llk_y = tf.cond(
-            tf.reduce_all(tf.logical_not(mask)),
-            lambda: 0.,
-            lambda: tf.transpose(
+            tf.reduce_any(mask),
+            true_fn=lambda: tf.transpose(
                 tf.boolean_mask(tf.transpose(llk_y), mask, axis=0)),
+            false_fn=lambda: 0.,
         )
       llk_y = tf.reduce_mean(self.alpha * llk_y)
       llk_y = tf.cond(tf.abs(llk_y) < 1e-8,
@@ -340,29 +342,28 @@ class semafoVAE(betaVAE):
       x = px.mean()
     else:
       x = tf.convert_to_tensor(px)
-    # x = tf.stop_gradient(x) # should not stop gradient here, generator need to be updated
+    # should not stop gradient here, generator need to be updated
+    # x = tf.stop_gradient(x)
     qz_xprime, qy_zxprime = self.encode(x, training=training)
-
-    # only calculate MI for unsupervised data
-    def _mi_x_y():
-      y = tf.convert_to_tensor(py_z)
-      mi_y = tf.reduce_mean(
-          tf.boolean_mask(py_z.log_prob(y) - qy_zxprime.log_prob(y),
-                          mask=tf.logical_not(mask),
-                          axis=0))
-      if training:
-        # this is important to prevent unstable gradients pass through
-        # small change in mi_y leads to huge divergence in the generative network
-        mi_y = tf.cond(self.mi_coef < 1e-8,
-                       true_fn=lambda: 0.,
-                       false_fn=lambda: self.mi_coef * mi_y)
-      return mi_y
-
-    #' mutual information (we want to maximize this, hence, add it to the llk)
-    llk[f'mi_{self.labels.name}'] = tf.cond(self.step >= self.warmup_step,
-                                            true_fn=_mi_x_y,
-                                            false_fn=lambda: 0.)
-    # ## this value is just for monitoring
+    ## y ~ p(y|z), stop gradient here is important to prevent the encoder updated twice
+    # this significantly increase the stability, otherwise, encoder and latents often
+    # get NaNs gradients
+    y_samples = tf.stop_gradient(tf.convert_to_tensor(py_z))
+    ## only calculate MI for unsupervised data
+    mi_mask = tf.logical_not(mask)  # TODO: tf.reduce_any(mi_mask)
+    # D_kl(p(y|z)||q(y|z))
+    mi_y = tf.reduce_mean(
+        tf.boolean_mask(py_z.log_prob(y_samples) -
+                        qy_zxprime.log_prob(y_samples),
+                        mask=mi_mask,
+                        axis=0))
+    ## mutual information (we want to maximize this, hence, add it to the llk)
+    llk[f'mi_{self.labels.name}'] = tf.cond(
+        tf.logical_and(self.step >= self.warmup_step, training),
+        true_fn=lambda: self.mi_coef * mi_y,
+        false_fn=lambda: tf.stop_gradient(mi_y),
+    )
+    ## this value is just for monitoring
     mi_z = tf.reduce_mean(tf.stop_gradient(qz_xprime.log_prob(z_prime)))
     mi_z = tf.cond(tf.math.is_nan(mi_z),
                    true_fn=lambda: 0.,

@@ -152,6 +152,7 @@ def mnist_networks(
   """Network for MNIST dataset image size (28, 28, 1)"""
   from odin.bay.random_variable import RVmeta
   n_channels = int(kwargs.get('n_channels', 1))
+  proj_dim = int(kwargs.get('proj_dim', 128))
   input_shape = (28, 28, n_channels)
   if zdim is None:
     zdim = 16
@@ -163,16 +164,20 @@ def mnist_networks(
           conv(32, 5, strides=2, name='encoder1'),
           conv(64, 5, strides=1, name='encoder2'),
           conv(64, 5, strides=2, name='encoder3'),
-          conv(4 * zdim, 7, strides=1, padding='valid', name='encoder4'),
-          keras.layers.Flatten()
+          keras.layers.Flatten(),
+          keras.layers.Dense(proj_dim, activation='linear', name='encoder4')
+          # conv(4 * zdim, 7, strides=1, padding='valid', name='encoder4'),
+          # keras.layers.Flatten()
       ],
       name='encoder',
   )
   layers = [
-      keras.layers.Lambda(  # assume that n_mcmc_sample=()
-          lambda x: tf.reshape(x, [-1, 1, 1, x.shape[-1]])),
-      deconv(64, 7, strides=1, padding='valid', name='decoder0'),
-      deconv(64, 5, strides=1, name='decoder1'),
+      # keras.layers.Lambda(  # assume that n_mcmc_sample=()
+      #     lambda x: tf.reshape(x, [-1, 1, 1, x.shape[-1]])),
+      # deconv(64, 7, strides=1, padding='valid', name='decoder0'),
+      keras.layers.Dense(proj_dim, activation=activation, name='decoder0'),
+      keras.layers.Dense(7 * 7 * 64, activation=activation, name='decoder1'),
+      keras.layers.Reshape((7, 7, 64)),
       deconv(64, 5, strides=2, name='decoder2'),
       deconv(32, 5, strides=1, name='decoder3'),
       deconv(32, 5, strides=2, name='decoder4'),

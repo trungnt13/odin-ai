@@ -357,7 +357,7 @@ class Networks(keras.Model, MD5object):
       global_clipnorm: Optional[float] = None,
       skip_update_threshold: Optional[float] = None,
       when_skip_update: int = 0,
-      nan_policy: Literal['ignore', 'skip', 'raise'] = 'skip',
+      nan_gradients_policy: Literal['ignore', 'skip', 'raise'] = 'skip',
       allow_none_gradients: bool = False,
       track_gradients: bool = False,
       *args,
@@ -377,7 +377,7 @@ class Networks(keras.Model, MD5object):
         global L2-norm value for clipping the gradients, by default None
     skip_update_threshold : Optional[float], optional
         if gradients value pass this threshold, it will be set to 0.
-    nan_policy : ['stop', 'skip', 'ignore', 'raise']
+    nan_gradients_policy : ['stop', 'skip', 'ignore', 'raise']
         Policies for handling NaNs value gradients:
           - 'stop': skip the current updates and stop training
           - 'skip': skip the current updates and continue training
@@ -434,13 +434,13 @@ class Networks(keras.Model, MD5object):
         ])
 
         def _true_nan():
-          if nan_policy == 'skip':
+          if nan_gradients_policy == 'skip':
             tf.print('NaNs gradients, skip the update!',
                      output_stream=sys.stderr)
             return True
-          elif nan_policy == 'raise':
+          elif nan_gradients_policy == 'raise':
             raise RuntimeError('NaNs gradient!')
-          elif nan_policy == 'stop':
+          elif nan_gradients_policy == 'stop':
             tf.print('\nNaNs gradients, stop the training!',
                      output_stream=sys.stderr)
             for p, g in zip(parameters, gradients):
@@ -547,7 +547,7 @@ class Networks(keras.Model, MD5object):
       autograph: bool = False,
       logging_interval: float = 3,
       skip_fitted: Union[bool, int] = False,
-      nan_policy: Literal['stop', 'skip', 'ignore', 'raise'] = 'skip',
+      nan_gradients_policy: Literal['stop', 'skip', 'ignore', 'raise'] = 'skip',
       logdir: Optional[str] = None,
       allow_none_gradients: bool = False,
       track_gradients: bool = False,
@@ -599,7 +599,7 @@ class Networks(keras.Model, MD5object):
     skip_fitted : Union[bool, int], optional
         skip this function if the model if fitted, or fitted for certain amount of
         steps, by default False
-    nan_policy : ['stop', 'skip', 'ignore', 'raise']
+    nan_gradients_policy : ['stop', 'skip', 'ignore', 'raise']
         Policies for handling NaNs value gradients:
           - 'stop': skip the current updates and stop training
           - 'skip': skip the current updates and continue training
@@ -667,7 +667,7 @@ class Networks(keras.Model, MD5object):
                          global_clipnorm=global_clipnorm,
                          skip_update_threshold=skip_update_threshold,
                          when_skip_update=when_skip_update,
-                         nan_policy=nan_policy),
+                         nan_gradients_policy=nan_gradients_policy),
         valid_ds=valid,
         valid_freq=valid_freq,
         valid_interval=valid_interval,
