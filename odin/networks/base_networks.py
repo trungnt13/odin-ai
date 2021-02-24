@@ -185,6 +185,10 @@ class Networks(keras.Model, MD5object):
                      *args,
                      **kwargs)
     self.step = tf.Variable(step, dtype=tf.int64, trainable=False, name="Step")
+    self.restore_checkpoint = tf.Variable(False,
+                                          dtype=tf.bool,
+                                          trainable=False,
+                                          name='RestoreCheckpoint')
     self.skipped_update = tf.Variable(0,
                                       dtype=tf.int64,
                                       trainable=False,
@@ -357,7 +361,8 @@ class Networks(keras.Model, MD5object):
       global_clipnorm: Optional[float] = None,
       skip_update_threshold: Optional[float] = None,
       when_skip_update: int = 0,
-      nan_gradients_policy: Literal['ignore', 'skip', 'raise'] = 'skip',
+      nan_gradients_policy: Literal['ignore', 'skip', 'raise',
+                                    'restore'] = 'skip',
       allow_none_gradients: bool = False,
       track_gradients: bool = False,
       *args,
@@ -377,12 +382,13 @@ class Networks(keras.Model, MD5object):
         global L2-norm value for clipping the gradients, by default None
     skip_update_threshold : Optional[float], optional
         if gradients value pass this threshold, it will be set to 0.
-    nan_gradients_policy : ['stop', 'skip', 'ignore', 'raise']
+    nan_gradients_policy : ['stop', 'skip', 'ignore', 'raise', 'restore']
         Policies for handling NaNs value gradients:
           - 'stop': skip the current updates and stop training
           - 'skip': skip the current updates and continue training
           - 'ignore': do nothing
           - 'raise': raise exception
+          - 'restore': fall back to the last checkpoint
         ,default is 'skip'
     allow_none_gradients : bool, optional
         allow variables with None gradients during training, by default False
@@ -450,6 +456,9 @@ class Networks(keras.Model, MD5object):
                 tf.print(p.name, 'is_nan=', tf.reduce_any(tf.math.is_nan(g)))
             if self._trainer is not None:
               self._trainer.terminate()
+            return True
+          elif nan_gradients_policy == 'restore':
+            self.restore_checkpoint.assign(True)
             return True
           return False
 
@@ -599,12 +608,13 @@ class Networks(keras.Model, MD5object):
     skip_fitted : Union[bool, int], optional
         skip this function if the model if fitted, or fitted for certain amount of
         steps, by default False
-    nan_gradients_policy : ['stop', 'skip', 'ignore', 'raise']
+    nan_gradients_policy : ['stop', 'skip', 'ignore', 'raise', 'restore']
         Policies for handling NaNs value gradients:
           - 'stop': skip the current updates and stop training
           - 'skip': skip the current updates and continue training
           - 'ignore': do nothing
           - 'raise': raise exception
+          - 'restore': fall back to the last checkpoint
         ,default is 'skip'
     logdir : Optional[str], optional
         tensorboard logging directory, by default None
@@ -624,6 +634,9 @@ class Networks(keras.Model, MD5object):
     RuntimeError
         if the optimizer is not defined.
     """
+    assert nan_gradients_policy in [
+        'stop', 'skip', 'ignore', 'raise', 'restore'
+    ]
     if not self.built:
       raise RuntimeError(
           "build(input_shape) method must be called to initialize "
@@ -657,6 +670,13 @@ class Networks(keras.Model, MD5object):
     if self.optimizer is None:
       raise RuntimeError("No optimizer found!")
     ## run early stop and callback
+    def _callback():
+      if self.restore_checkpoint.numpy():
+        self.restore_checkpoint.assign(False)
+        self.load_weights(raise_notfound=True, verbose=True)
+      if callback is not None:
+        callback()
+
     self.trainer.fit(
         train_ds=train,
         optimize=partial(self.optimize,
@@ -676,7 +696,7 @@ class Networks(keras.Model, MD5object):
         logging_interval=logging_interval,
         log_tag=self.name,
         max_iter=max_iter,
-        callback=callback,
+        callback=_callback,
     )
     return self
 

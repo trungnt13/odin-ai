@@ -230,8 +230,7 @@ class semafoVAE(betaVAE):
   a concurrent system
 
   For MNIST, `mi_coef` could be from 0.1 to 0.5.
-  For dSprites, it should be smaller than `0.05`.
-  For CelebA and Shapes3D, `mi_coef=0.1` has been tested.
+  For dSprites, CelebA and Shapes3D, `mi_coef=0.1` has been tested.
 
   It is also seems that the choice of `mi_coef` is crucial, regardless
   the percentage of labels, or the networks design.
@@ -241,6 +240,8 @@ class semafoVAE(betaVAE):
 
   Parameters
   ----------
+  reverse_mi : bool
+      if True, minimize `D_kl(p(y|z)||q(y|z))`, otherwise, `D_kl(q(y|z)||p(y|z))`
   warmup_step : int
       number of step without mutual information maximization which allows
       the network to fit better encoder. Gradients backpropagated to encoder
@@ -264,8 +265,9 @@ class semafoVAE(betaVAE):
       labels: RVmeta = RVmeta(10, 'onehot', projection=True, name="digits"),
       alpha: float = 10.0,
       mi_coef: Union[float, Interpolation] = linear(vmin=0.1,
-                                                    vmax=0.001,
+                                                    vmax=0.01,
                                                     length=20000),
+      reverse_mi: bool = True,
       warmup_step: int = 1000,
       beta: Union[float, Interpolation] = linear(vmin=1e-6,
                                                  vmax=1.,
@@ -278,6 +280,7 @@ class semafoVAE(betaVAE):
     self._mi_coef = mi_coef
     self.alpha = alpha
     self.warmup_step = int(warmup_step)
+    self.reverse_mi = bool(reverse_mi)
 
   def build(self, input_shape):
     return super().build(input_shape)
@@ -344,19 +347,19 @@ class semafoVAE(betaVAE):
       x = tf.convert_to_tensor(px)
     # should not stop gradient here, generator need to be updated
     # x = tf.stop_gradient(x)
-    qz_xprime, qy_zxprime = self.encode(x, training=training)
+    qz_xprime, qy_z = self.encode(x, training=training)
     ## y ~ p(y|z), stop gradient here is important to prevent the encoder updated twice
     # this significantly increase the stability, otherwise, encoder and latents often
     # get NaNs gradients
-    y_samples = tf.stop_gradient(tf.convert_to_tensor(py_z))
+    if self.reverse_mi:  # D_kl(p(y|z)||q(y|z))
+      y_samples = tf.stop_gradient(tf.convert_to_tensor(py_z))
+      Dkl = py_z.log_prob(y_samples) - qy_z.log_prob(y_samples)
+    else:  # D_kl(q(y|z)||p(y|z))
+      y_samples = tf.stop_gradient(tf.convert_to_tensor(qy_z))
+      Dkl = qy_z.log_prob(y_samples) - py_z.log_prob(y_samples)
     ## only calculate MI for unsupervised data
     mi_mask = tf.logical_not(mask)  # TODO: tf.reduce_any(mi_mask)
-    # D_kl(p(y|z)||q(y|z))
-    mi_y = tf.reduce_mean(
-        tf.boolean_mask(py_z.log_prob(y_samples) -
-                        qy_zxprime.log_prob(y_samples),
-                        mask=mi_mask,
-                        axis=0))
+    mi_y = tf.reduce_mean(tf.boolean_mask(Dkl, mask=mi_mask, axis=0))
     ## mutual information (we want to maximize this, hence, add it to the llk)
     llk[f'mi_{self.labels.name}'] = tf.cond(
         tf.logical_and(self.step >= self.warmup_step, training),
