@@ -376,6 +376,7 @@ def dsprites_networks(
   from odin.bay.random_variable import RVmeta
   if zdim is None:
     zdim = 10
+  distribution = str(kwargs.get('distribution', 'bernoulli'))
   n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (64, 64, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
@@ -413,7 +414,7 @@ def dsprites_networks(
     decoder = keras.Sequential(layers=layers, name='decoder')
   latents = RVmeta((zdim,), qz, projection=True,
                    name="latents").create_posterior()
-  observation = RVmeta(input_shape, "bernoulli", projection=False,
+  observation = RVmeta(input_shape, distribution, projection=False,
                        name="image").create_posterior()
   networks = dict(encoder=encoder,
                   decoder=decoder,
@@ -531,7 +532,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
 # CelebA
 # ===========================================================================
 def celebasmall_networks(qz: str = 'mvndiag',
-                         zdim: Optional[int] = 10,
+                         zdim: Optional[int] = None,
                          activation: Union[Callable, str] = tf.nn.leaky_relu,
                          is_semi_supervised: bool = False,
                          centerize_image: bool = True,
@@ -539,7 +540,7 @@ def celebasmall_networks(qz: str = 'mvndiag',
                          n_labels: int = 18,
                          **kwargs):
   if zdim is None:
-    zdim = 10
+    zdim = 32
   networks = mnist_networks(qz=qz,
                             zdim=zdim,
                             activation=activation,
@@ -557,7 +558,7 @@ def celebasmall_networks(qz: str = 'mvndiag',
 
 
 def celeba_networks(qz: str = 'mvndiag',
-                    zdim: Optional[int] = 10,
+                    zdim: Optional[int] = None,
                     activation: Union[Callable, str] = tf.nn.leaky_relu,
                     is_semi_supervised: bool = False,
                     centerize_image: bool = True,
@@ -565,14 +566,15 @@ def celeba_networks(qz: str = 'mvndiag',
                     n_labels: int = 18,
                     **kwargs):
   if zdim is None:
-    zdim = 10
+    zdim = 32
   networks = dsprites_networks(qz=qz,
                                zdim=zdim,
                                activation=activation,
                                is_semi_supervised=False,
                                centerize_image=centerize_image,
                                skip_generator=skip_generator,
-                               n_channels=3)
+                               n_channels=3,
+                               distribution='gaussian')
   if is_semi_supervised:
     from odin.bay.layers import DistributionDense
     networks['labels'] = DistributionDense(event_shape=int(n_labels),

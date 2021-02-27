@@ -1281,13 +1281,13 @@ def plot_to_image(figure: plt.Figure,
   return image
 
 
-def plot_save(path='/tmp/tmp.pdf',
+def plot_save(path: str = '/tmp/tmp.pdf',
               figs=None,
-              dpi=180,
-              tight_plot=False,
-              clear_all=True,
-              log=False,
-              transparent=False):
+              dpi: int = 180,
+              tight_plot: bool = False,
+              clear_all: bool = True,
+              verbose: bool = False,
+              transparent: bool = False):
   """
   Parameters
   ----------
@@ -1315,7 +1315,7 @@ def plot_save(path='/tmp/tmp.pdf',
                     bbox_inches="tight")
       pp.close()
     except Exception as e:
-      sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))
+      sys.stderr.write(f'Cannot save figures to pdf, error:{str(e)}\n')
   # ====== saving PNG file ====== #
   else:
     saved_path = []
@@ -1325,14 +1325,14 @@ def plot_save(path='/tmp/tmp.pdf',
     kwargs = dict(dpi=dpi, bbox_inches="tight")
     for idx, fig in enumerate(figs):
       if len(figs) > 1:
-        out_path = path + ('.%d.' % idx) + ext
+        out_path = path + (f'{idx}') + ext
       else:
         out_path = path + '.' + ext
       fig.savefig(out_path, transparent=transparent, **kwargs)
       saved_path.append(out_path)
   # ====== clean ====== #
-  if log:
-    sys.stderr.write('Saved figures to:%s \n' % ', '.join(saved_path))
+  if verbose:
+    sys.stdout.write(f"Saved figures to:{', '.join(saved_path)} \n")
   if clear_all:
     plt.close('all')
 

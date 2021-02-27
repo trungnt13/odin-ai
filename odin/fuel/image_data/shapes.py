@@ -188,7 +188,8 @@ class Shapes3D(_ShapeDataset):
   Recommend to run `ulimit -n 100000` before download this dataset
 
   All the factors are:
-    ['floor_hue', 'wall_hue', 'object_hue', 'scale', 'shape', 'orientation']
+      ['orientation', 'scale', 'shape', 'floor_hue', 'wall_hue', 'object_hue']
+
   Values per factor:
     'orientation': 15
     'scale': 8
@@ -233,6 +234,9 @@ class Shapes3DSmall(Shapes3D):
 class dSprites(_ShapeDataset):
   """dSprites dataset with continuous non-negative attributes values
   by defaults.
+
+  All factors are:
+      ['orientation', 'scale', 'shape', 'x_position', 'y_position']
 
   Recommend to run `ulimit -n 100000` before download this dataset
 

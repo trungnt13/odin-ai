@@ -61,6 +61,16 @@ class Interpolation(object):
     self.delay_out = max(delay_out, 0)
 
   @property
+  def name(self) -> str:
+    """Short description of the Interpolation with its parameters"""
+    name = self.__class__.__name__.lower()
+    cyclical = 'cyc' if self.cyclical else 'lin'
+    vmin = f'{self.vmin:g}'
+    vmax = f'{self.vmax:g}'
+    return (f"{name}_{vmin}_{vmax}_{self.length:g}_"
+            f"{self.delay_in:g}_{self.delay_out:g}_{cyclical}")
+
+  @property
   def mean(self):
     return (self.vmin + self.vmax) / 2
 

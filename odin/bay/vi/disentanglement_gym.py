@@ -12,8 +12,7 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from odin import visual as vs
 from odin.bay.distributions import Batchwise
-from odin.bay.vi.autoencoder.variational_autoencoder import \
-    VariationalAutoencoder
+from odin.bay.vi.autoencoder import VariationalAutoencoder, semafoVAE
 from sklearn.mixture import GaussianMixture
 from odin.bay.vi.metrics import (Correlation, beta_vae_score, dci_scores,
                                  factor_vae_score, mutual_info_gap,
@@ -394,7 +393,7 @@ class DisentanglementGym:
     self._factor_vae = False
     self._beta_vae = False
     self.setup = dict(train={}, valid={}, test={})
-    self._mode = 'train'
+    self._current_mode = 'train'
     self.data_info = dict(train=(self._train, self.x_train, self.y_train),
                           valid=(self._valid, self.x_valid, self.y_valid),
                           test=(self._test, self.x_test, self.y_test))
@@ -406,7 +405,7 @@ class DisentanglementGym:
         mode='linear',
     )
 
-  @typechecked
+  # @typechecked
   def set_config(
       self,
       reconstruction: bool = False,
@@ -472,33 +471,31 @@ class DisentanglementGym:
   @property
   def mode(self) -> TrainingMode:
     """The training mode: 'train', 'valid', 'test' """
-    return self._mode
+    return self._current_mode
 
   def train(self) -> 'DisentanglementGym':
     """Enable the training mode"""
-    self._mode = 'train'
-    for k, v in self.setup['train'].items():
-      setattr(self, k, v)
+    self._current_mode = 'train'
     return self
 
   def valid(self) -> 'DisentanglementGym':
-    self._mode = 'valid'
-    for k, v in self.setup['valid'].items():
-      setattr(self, k, v)
+    self._current_mode = 'valid'
     return self
 
   def test(self) -> 'DisentanglementGym':
     """Enable the evaluation mode"""
-    self._mode = 'test'
-    for k, v in self.setup['test'].items():
-      setattr(self, k, v)
+    self._current_mode = 'test'
     return self
 
   def _is_predict(self) -> bool:
     return (self._dimension_reduction is not None or
-            self._correlation_methods is not None or self._mig_score or
-            self._latents_pairs or self._dci_score or self._sap_score or
-            self._beta_vae or self._factor_vae)
+            self._correlation_methods is not None or \
+            self._latents_pairs is not None or \
+            self._mig_score or \
+            self._dci_score or \
+            self._sap_score or
+            self._beta_vae or \
+            self._factor_vae)
 
   def _is_clustering(self) -> bool:
     return (self._adjusted_rand_score or self._adjusted_mutual_info or
@@ -542,6 +539,10 @@ class DisentanglementGym:
       return {}
 
   def _call_safe(self, save_path, remove_saved_image, dpi, prefix, verbose):
+    ## set the config for current mode
+    for k, v in self.setup[self._current_mode].items():
+      setattr(self, k, v)
+    ## prepare
     unique_key = uuid(20)
     vae = self.vae
     grids = (int(sqrt(self._n_visual_samples)),
@@ -557,8 +558,12 @@ class DisentanglementGym:
     ## prepare
     P, Q = vae(x, training=False)
     P, Q = as_tuple(P), as_tuple(Q)
-    z_mean = tf.reduce_mean(tf.concat([q.mean() for q in Q], axis=-1), axis=0)
-    z_std = tf.reduce_mean(tf.concat([q.stddev() for q in Q], axis=-1), axis=0)
+    if isinstance(self.vae, semafoVAE):
+      z_mean = tf.reduce_mean(Q[0].mean(), axis=0)
+      z_std = tf.reduce_mean(Q[0].stddev(), axis=0)
+    else:
+      z_mean = tf.reduce_mean(tf.concat([q.mean() for q in Q], axis=-1), axis=0)
+      z_std = tf.reduce_mean(tf.concat([q.stddev() for q in Q], axis=-1), axis=0)
     outputs['latents/mean'] = z_mean
     outputs['latents/stddev'] = z_std
     ## reconstruction
@@ -607,7 +612,10 @@ class DisentanglementGym:
       outputs['latents_stats'] = image_latents
     ## latents traverse
     if self._latents_traverse:
-      z = tf.concat([q.mean() for q in Q], axis=-1)
+      if isinstance(self.vae, semafoVAE):
+        z = Q[0].mean()
+      else:
+        z = tf.concat([q.mean() for q in Q], axis=-1)
       sorted_indices = np.argsort(z_std)[:20]  # only top 20
       z, ids = traverse_dims(z,
                              feature_indices=sorted_indices,

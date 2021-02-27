@@ -267,7 +267,7 @@ class semafoVAE(betaVAE):
       mi_coef: Union[float, Interpolation] = linear(vmin=0.1,
                                                     vmax=0.01,
                                                     length=20000),
-      reverse_mi: bool = True,
+      reverse_mi: bool = False,
       warmup_step: int = 1000,
       beta: Union[float, Interpolation] = linear(vmin=1e-6,
                                                  vmax=1.,
@@ -319,11 +319,12 @@ class semafoVAE(betaVAE):
     if mask is not None:
       mask = tf.reshape(mask, (-1,))
     llk, kl = super().elbo_components(X[0], mask=mask, training=training)
-    px_z, (qz_x, py_z) = self.last_outputs
+    px_z, (qz_x, qy_z) = self.last_outputs
     ## supervised loss
     llk_y = 0.
+    # if labels is provided, p(y|z) is q(y|z) here since we use the same network for both
     if len(y) > 0:
-      llk_y = py_z.log_prob(y[0])  # support only 1 labels set provided
+      llk_y = qy_z.log_prob(y[0])  # support only 1 labels set provided
       if mask is not None:
         llk_y = tf.cond(
             tf.reduce_any(mask),
@@ -347,15 +348,15 @@ class semafoVAE(betaVAE):
       x = tf.convert_to_tensor(px)
     # should not stop gradient here, generator need to be updated
     # x = tf.stop_gradient(x)
-    qz_xprime, qy_z = self.encode(x, training=training)
+    qz_xprime, py_z = self.encode(x, training=training)
     ## y ~ p(y|z), stop gradient here is important to prevent the encoder updated twice
     # this significantly increase the stability, otherwise, encoder and latents often
     # get NaNs gradients
     if self.reverse_mi:  # D_kl(p(y|z)||q(y|z))
-      y_samples = tf.stop_gradient(tf.convert_to_tensor(py_z))
+      y_samples = tf.stop_gradient(py_z.sample())
       Dkl = py_z.log_prob(y_samples) - qy_z.log_prob(y_samples)
     else:  # D_kl(q(y|z)||p(y|z))
-      y_samples = tf.stop_gradient(tf.convert_to_tensor(qy_z))
+      y_samples = tf.stop_gradient(qy_z.sample())
       Dkl = qy_z.log_prob(y_samples) - py_z.log_prob(y_samples)
     ## only calculate MI for unsupervised data
     mi_mask = tf.logical_not(mask)  # TODO: tf.reduce_any(mi_mask)
@@ -375,32 +376,40 @@ class semafoVAE(betaVAE):
     return llk, kl
 
 
-class InfoNCEVAE(betaVAE):
-  r""" Mutual information bound based on Noise-Contrastive Estimation
+class remafoVAE(semafoVAE):
+  """ semafoVAE with reversed KL for the mutual information
 
-  Reference:
-    Tschannen, M., Djolonga, J., Rubenstein, P.K., Gelly, S., Lucic, M., 2019.
-      "On Mutual Information Maximization for Representation Learning".
-      arXiv:1907.13625 [cs, stat].
-    https://github.com/google-research/google-research/tree/master/mutual_information_representation_learning
+  (i.e. minimize `D_kl(p(y|z)||q(y|z))`)
   """
 
-
-class IFVAE(betaVAE):
-  r""" Adversarial information factorized VAE
-
-  Reference:
-    Creswell, A., Mohamied, Y., Sengupta, B., Bharath, A.A., 2018.
-      "Adversarial Information Factorization". arXiv:1711.05175 [cs].
-  """
+  def __init__(self, name='RemafoVAE', **kwargs):
+    super().__init__(reverse_mi=True, name=name, **kwargs)
 
 
-class InfoMaxVAE(betaVAE):
-  r"""
-  Reference:
-    Rezaabad, A.L., Vishwanath, S., 2020. "Learning Representations by
-      Maximizing Mutual Information in Variational Autoencoders".
-      arXiv:1912.13361 [cs, stat].
-    Hjelm, R.D., Fedorov, A., et al. 2019. "Learning Deep Representations by
-      Mutual Information Estimation and Maximization". ICLR'19.
-  """
+# class InfoNCEVAE(betaVAE):
+#   r""" Mutual information bound based on Noise-Contrastive Estimation
+
+#   Reference:
+#     Tschannen, M., Djolonga, J., Rubenstein, P.K., Gelly, S., Lucic, M., 2019.
+#       "On Mutual Information Maximization for Representation Learning".
+#       arXiv:1907.13625 [cs, stat].
+#     https://github.com/google-research/google-research/tree/master/mutual_information_representation_learning
+#   """
+
+# class IFVAE(betaVAE):
+#   r""" Adversarial information factorized VAE
+
+#   Reference:
+#     Creswell, A., Mohamied, Y., Sengupta, B., Bharath, A.A., 2018.
+#       "Adversarial Information Factorization". arXiv:1711.05175 [cs].
+#   """
+
+# class InfoMaxVAE(betaVAE):
+#   r"""
+#   Reference:
+#     Rezaabad, A.L., Vishwanath, S., 2020. "Learning Representations by
+#       Maximizing Mutual Information in Variational Autoencoders".
+#       arXiv:1912.13361 [cs, stat].
+#     Hjelm, R.D., Fedorov, A., et al. 2019. "Learning Deep Representations by
+#       Mutual Information Estimation and Maximization". ICLR'19.
+#   """
