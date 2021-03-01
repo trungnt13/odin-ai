@@ -23,30 +23,46 @@ _binmnist = dict(train="http://www.cs.toronto.edu/~larocheh/public/"
 class BinarizedMNIST(ImageDataset):
   """ BinarizedMNIST """
 
-  def __init__(self, normalize: bool = False):
+  def __init__(self):
+    self._binarized = True
     self.train, self.valid, self.test = tfds.load(
         name='binarized_mnist',
         split=['train', 'validation', 'test'],
         read_config=tfds.ReadConfig(shuffle_seed=1,
                                     shuffle_reshuffle_each_iteration=True),
         as_supervised=False)
-    self._normalize = bool(normalize)
 
   @property
   def shape(self):
     return (28, 28, 1)
 
-  def create_dataset(self,
-                     partition: Literal['train', 'valid', 'test'] = 'train',
-                     *,
-                     batch_size: Optional[int] = 32,
-                     drop_remainder: bool = False,
-                     shuffle: int = 1000,
-                     cache: Optional[str] = '',
-                     prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     inc_labels: Union[bool, float] = False,
-                     seed: int = 1) -> tf.data.Dataset:
+  def _mnist_normalize(self, image, normalize):
+    if self._binarized:
+      if 'raster' in normalize:
+        image = image * 255.
+      elif 'tanh' in normalize:
+        image = tf.clip_by_value(image * 2. - 1., -1. + 1e-6, 1. - 1e-6)
+    else:
+      if 'probs' in normalize:
+        image = self.normalize_255(image)
+      elif 'tanh' in normalize:
+        image = tf.clip_by_value(image / 255. * 2. - 1., -1 + 1e-6, 1. - 1e-6)
+    return image
+
+  def create_dataset(
+      self,
+      partition: Literal['train', 'valid', 'test'] = 'train',
+      *,
+      batch_size: Optional[int] = 32,
+      drop_remainder: bool = False,
+      shuffle: int = 1000,
+      cache: Optional[str] = '',
+      prefetch: Optional[int] = tf.data.AUTOTUNE,
+      parallel: Optional[int] = tf.data.AUTOTUNE,
+      inc_labels: Union[bool, float] = False,
+      normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
+      seed: int = 1,
+  ) -> tf.data.Dataset:
     """
     Parameters
     -----------
@@ -77,8 +93,9 @@ class BinarizedMNIST(ImageDataset):
 
     def _process_dict(data):
       image = tf.cast(data['image'], tf.float32)
-      if self._normalize:
-        image = self.normalize_255(image)
+      ## normalize the image
+      image = self._mnist_normalize(image, normalize)
+      ## prepare labels
       if inc_labels:
         label = tf.cast(data['label'], tf.float32)
         if len(label.shape) == 0:  # covert to one-hot
@@ -91,8 +108,9 @@ class BinarizedMNIST(ImageDataset):
 
     def _process_tuple(*data):
       image = tf.cast(data[0], tf.float32)
-      if self._normalize:
-        image = self.normalize_255(image)
+      ## normalize the image
+      image = self._mnist_normalize(image, normalize)
+      ## prepare the labels
       if inc_labels:
         label = tf.cast(data[1], tf.float32)
         if len(label.shape) == 0:  # covert to one-hot
@@ -133,10 +151,8 @@ class MNIST(BinarizedMNIST):
 
   MD5 = r"8ba71f60dccd53a0b68bfe41ed4cdf9c"
 
-  def __init__(self,
-               normalize: bool = True,
-               path: str = '~/tensorflow_datasets/mnist'):
-    self._normalize = bool(normalize)
+  def __init__(self, path: str = '~/tensorflow_datasets/mnist'):
+    self._binarized = False
     path = os.path.abspath(os.path.expanduser(path))
     save_path = os.path.join(path, 'mnist.npz')
     if not os.path.exists(path):
@@ -219,19 +235,13 @@ class MNIST(BinarizedMNIST):
     return (28, 28, 1)
 
 
-class MNIST255(MNIST):
-
-  def __init__(self, path: str = '~/tensorflow_datasets/mnist'):
-    super().__init__(normalize=False, path=path)
-
-
 class BinarizedAlphaDigits(BinarizedMNIST):
   """Binary 20x16 digits of '0' through '9' and capital 'A' through 'Z'.
   39 examples of each class. """
 
   def __init__(self):
     import tensorflow_datasets as tfds
-    self._normalize = False
+    self._binarized = True
     self.train, self.valid, self.test = tfds.load(
         name='binary_alpha_digits',
         split=['train[:70%]', 'train[70%:80%]', 'train[80%:]'],
@@ -248,8 +258,8 @@ class BinarizedAlphaDigits(BinarizedMNIST):
 
 class FashionMNIST(BinarizedMNIST):
 
-  def __init__(self, normalize: bool = True, seed: int = 1):
-    self._normalize = normalize
+  def __init__(self, seed: int = 1):
+    self._binarized = False
     self.train, self.valid, self.test = tfds.load(
         name='fashion_mnist',
         split=['train[:50000]', 'train[50000:]', 'test'],
@@ -270,9 +280,3 @@ class FashionMNIST(BinarizedMNIST):
   @property
   def shape(self):
     return (28, 28, 1)
-
-
-class FashionMNIST255(FashionMNIST):
-
-  def __init__(self):
-    super().__init__(normalize=False)

@@ -77,17 +77,20 @@ class _ShapeDataset(ImageDataset):
   def shape(self):
     return (self.image_size, self.image_size, self.n_channels)
 
-  def create_dataset(self,
-                     partition: Literal['train', 'valid', 'test'] = 'train',
-                     *,
-                     batch_size: Optional[int] = 32,
-                     drop_remainder: bool = False,
-                     shuffle: int = 1000,
-                     cache: Optional[str] = '',
-                     prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     inc_labels: Union[bool, float] = False,
-                     seed: int = 1) -> tf.data.Dataset:
+  def create_dataset(
+      self,
+      partition: Literal['train', 'valid', 'test'] = 'train',
+      *,
+      batch_size: Optional[int] = 32,
+      drop_remainder: bool = False,
+      shuffle: int = 1000,
+      cache: Optional[str] = '',
+      prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
+      parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
+      inc_labels: Union[bool, float] = False,
+      normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
+      seed: int = 1,
+  ) -> tf.data.Dataset:
     """
 
     Parameters
@@ -134,18 +137,27 @@ class _ShapeDataset(ImageDataset):
 
     def _process(data):
       image = tf.cast(data['image'], tf.float32)
-      # normalize the image
-      if self.dsname == 'shapes3d':
-        image = self.normalize_255(image)
-      else:
-        image = tf.clip_by_value(image, 1e-6, 1. - 1e-6)
-      # resize the image
+      ## normalize the image
+      if self.dsname == 'shapes3d':  # shapes 3D
+        if 'probs' in normalize:
+          image = self.normalize_255(image)
+        elif 'tanh' in normalize:
+          image = tf.clip_by_value(image / 255. * 2. - 1., -1. + 1e-6,
+                                   1. - 1e-6)
+      else:  # shapes 2D
+        if 'probs' in normalize:
+          image = tf.clip_by_value(image, 1e-6, 1. - 1e-6)
+        elif 'tanh' in normalize:
+          image = tf.clip_by_value(image * 2. - 1., -1. + 1e-6, 1. - 1e-6)
+        else:
+          image = image * 255.
+      ## resize the image
       if self.image_size != 64:
         image = tf.image.resize(image, (self.image_size, self.image_size),
                                 method=tf.image.ResizeMethod.BILINEAR,
                                 preserve_aspect_ratio=True,
                                 antialias=True)
-      # process the labels
+      ## process the labels
       if inc_labels:
         # dSprites shapes attribute is encoded as [1, 2, 3], should be [0, 1, 2]
         label = []

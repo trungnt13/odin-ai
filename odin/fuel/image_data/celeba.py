@@ -142,17 +142,20 @@ class CelebA(ImageDataset):
   def labels(self):
     return self._header
 
-  def create_dataset(self,
-                     partition: Literal['train', 'valid', 'test'] = 'train',
-                     *,
-                     batch_size: Optional[int] = 32,
-                     drop_remainder: bool = False,
-                     shuffle: int = 1000,
-                     cache: Optional[str] = '',
-                     prefetch: Optional[int] = tf.data.AUTOTUNE,
-                     parallel: Optional[int] = tf.data.AUTOTUNE,
-                     inc_labels: Union[bool, float] = False,
-                     seed: int = 1) -> tf.data.Dataset:
+  def create_dataset(
+      self,
+      partition: Literal['train', 'valid', 'test'] = 'train',
+      *,
+      batch_size: Optional[int] = 32,
+      drop_remainder: bool = False,
+      shuffle: int = 1000,
+      cache: Optional[str] = '',
+      prefetch: Optional[int] = tf.data.AUTOTUNE,
+      parallel: Optional[int] = tf.data.AUTOTUNE,
+      inc_labels: Union[bool, float] = False,
+      normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
+      seed: int = 1,
+  ) -> tf.data.Dataset:
     r""" The default argument will downsize and crop the image to square size
     (64, 64)
 
@@ -183,8 +186,7 @@ class CelebA(ImageDataset):
     def read(path):
       img = tf.io.decode_jpeg(tf.io.read_file(path))
       img.set_shape(image_shape)
-      img = tf.cast(img, tf.float32)
-      img = self.normalize_255(img)
+      ## resize the image
       if image_size is not None:
         img = tf.image.resize(img, (height, image_size),
                               method=tf.image.ResizeMethod.BILINEAR,
@@ -192,6 +194,12 @@ class CelebA(ImageDataset):
                               antialias=True)
         if self.square_image:
           img = tf.image.crop_to_bounding_box(img, *crop_offset)
+      ## normalize the image
+      img = tf.cast(img, tf.float32)
+      if 'probs' in normalize:
+        img = self.normalize_255(img)
+      elif 'tanh' in normalize:
+        img = tf.clip_by_value(img / 255. * 2. - 1., -1. + 1e-6, 1. - 1e-6)
       return img
 
     def mask(image, label):

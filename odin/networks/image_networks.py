@@ -166,23 +166,18 @@ def mnist_networks(
           conv(64, 5, strides=2, name='encoder3'),
           keras.layers.Flatten(),
           keras.layers.Dense(proj_dim, activation='linear', name='encoder4')
-          # conv(4 * zdim, 7, strides=1, padding='valid', name='encoder4'),
-          # keras.layers.Flatten()
       ],
       name='encoder',
   )
   layers = [
-      # keras.layers.Lambda(  # assume that n_mcmc_sample=()
-      #     lambda x: tf.reshape(x, [-1, 1, 1, x.shape[-1]])),
-      # deconv(64, 7, strides=1, padding='valid', name='decoder0'),
-      keras.layers.Dense(proj_dim, activation=activation, name='decoder0'),
+      keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
       keras.layers.Dense(7 * 7 * 64, activation=activation, name='decoder1'),
       keras.layers.Reshape((7, 7, 64)),
       deconv(64, 5, strides=2, name='decoder2'),
-      deconv(32, 5, strides=1, name='decoder3'),
+      deconv(64, 5, strides=1, name='decoder3'),
       deconv(32, 5, strides=2, name='decoder4'),
       deconv(32, 5, strides=1, name='decoder5'),
-      conv(n_channels, 5, strides=1, activation=None, name='decoder6'),
+      conv(n_channels, 1, strides=1, activation='linear', name='decoder6'),
       keras.layers.Flatten()
   ]
   if skip_generator:
@@ -377,6 +372,8 @@ def dsprites_networks(
   if zdim is None:
     zdim = 10
   distribution = str(kwargs.get('distribution', 'bernoulli'))
+  assert distribution in ('bernoulli', 'gaussian'), \
+    f'Only support Bernoulli or Gaussian output, given: {distribution}'
   n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (64, 64, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
@@ -405,7 +402,10 @@ def dsprites_networks(
       deconv(64, 4, strides=2, name='decoder2'),
       deconv(32, 4, strides=2, name='decoder3'),
       deconv(32, 4, strides=2, name='decoder4'),
-      deconv(n_channels, 4, strides=2, name='decoder5'),
+      deconv(n_channels * (1 if distribution == 'bernoulli' else 2),
+             4,
+             strides=2,
+             name='decoder5'),
       keras.layers.Flatten()
   ]
   if skip_generator:
@@ -414,7 +414,9 @@ def dsprites_networks(
     decoder = keras.Sequential(layers=layers, name='decoder')
   latents = RVmeta((zdim,), qz, projection=True,
                    name="latents").create_posterior()
-  observation = RVmeta(input_shape, distribution, projection=False,
+  observation = RVmeta(input_shape,
+                       distribution,
+                       projection=False,
                        name="image").create_posterior()
   networks = dict(encoder=encoder,
                   decoder=decoder,
@@ -559,24 +561,54 @@ def celebasmall_networks(qz: str = 'mvndiag',
 
 def celeba_networks(qz: str = 'mvndiag',
                     zdim: Optional[int] = None,
-                    activation: Union[Callable, str] = tf.nn.leaky_relu,
+                    activation: Union[Callable, str] = tf.nn.relu,
                     is_semi_supervised: bool = False,
                     centerize_image: bool = True,
                     skip_generator: bool = False,
                     n_labels: int = 18,
                     **kwargs):
+  from odin.bay.random_variable import RVmeta
+  from odin.bay.layers import DistributionDense
   if zdim is None:
-    zdim = 32
-  networks = dsprites_networks(qz=qz,
-                               zdim=zdim,
-                               activation=activation,
-                               is_semi_supervised=False,
-                               centerize_image=centerize_image,
-                               skip_generator=skip_generator,
-                               n_channels=3,
-                               distribution='gaussian')
+    zdim = 45
+  input_shape = (64, 64, 3)
+  conv, deconv = _prepare_cnn(activation=activation)
+  proj_dim = 256
+  encoder = keras.Sequential(
+      [
+          CenterAt0(enable=centerize_image),
+          conv(32, 4, strides=2, name='encoder0'),
+          conv(32, 4, strides=2, name='encoder1'),
+          conv(64, 4, strides=2, name='encoder2'),
+          conv(64, 4, strides=2, name='encoder3'),
+          keras.layers.Flatten(),
+          keras.layers.Dense(proj_dim, activation='linear', name='encoder5')
+      ],
+      name='encoder',
+  )
+  layers = [
+      keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
+      keras.layers.Reshape((4, 4, 16)),
+      deconv(64, 4, strides=2, name='decoder1'),
+      deconv(64, 4, strides=2, name='decoder2'),
+      deconv(32, 4, strides=2, name='decoder3'),
+      deconv(32, 4, strides=2, name='decoder4'),
+      conv(3 * 2, 1, strides=1, activation='linear', name='decoder5'),
+      keras.layers.Flatten()
+  ]
+  if skip_generator:
+    decoder = SkipSequential(layers=layers, name='skipdecoder')
+  else:
+    decoder = keras.Sequential(layers=layers, name='decoder')
+  latents = RVmeta((zdim,), qz, projection=True,
+                   name="latents").create_posterior()
+  observation = RVmeta(input_shape, 'gaussian', projection=False,
+                       name="image").create_posterior()
+  networks = dict(encoder=encoder,
+                  decoder=decoder,
+                  observation=observation,
+                  latents=latents)
   if is_semi_supervised:
-    from odin.bay.layers import DistributionDense
     networks['labels'] = DistributionDense(event_shape=int(n_labels),
                                            posterior='bernoulli',
                                            name='attributes')
@@ -835,7 +867,7 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
     init_lr = 5e-4
     decay_steps = 8000
   elif 'celeba' in dataset_name:
-    max_iter = 250000
+    max_iter = 200000
     init_lr = 1e-4
     decay_steps = 10000
   ### gene networks

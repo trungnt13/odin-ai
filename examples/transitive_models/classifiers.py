@@ -1,4 +1,5 @@
 # This code try to find the best classifier for the SemafoVAE latents
+import os
 import numpy as np
 from sklearn.metrics import classification_report, accuracy_score, f1_score
 from sklearn.linear_model import LogisticRegression
@@ -11,8 +12,16 @@ from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
 
 seed = 1
+
 ######## load the arrays
-path = '/home/trung/exp/hyperparams/celeba_0.004/remafovae_linear_0.2_0.02_20000_0_0_cyc/analysis/arrays.npz'
+basedir = '/home/trung/exp/hyperparams'
+dsdir = 'celeba_0.004'
+expdir = 'semafovae_linear_0.1_0.01_20000_0_0_lin'
+path = f'{basedir}/{dsdir}/{expdir}/analysis/arrays.npz'
+if not os.path.exists(path):
+  raise ValueError(f'path not found "{path}"')
+
+### load arrays
 arrs = np.load(path)
 x_train = arrs['x_train']
 y_train = arrs['y_train']
@@ -38,7 +47,7 @@ for m in (
     # LogisticRegression(max_iter=3000, random_state=seed),
     # LinearSVC(max_iter=3000, random_state=seed),
     MLPClassifier(
-        hidden_layer_sizes=[64, 64],
+        hidden_layer_sizes=[64, 64, 64],
         learning_rate='invscaling',
         early_stopping=True,  # helped when p > 0.2
         max_iter=3000,
@@ -47,7 +56,13 @@ for m in (
     # KNeighborsClassifier(n_neighbors=5),
 ):
   print(m.__class__.__name__)
-  for p in [0.004, 0.06, 0.2]:
+  for p in [
+      0.004,
+      0.06,
+      0.2,
+      0.5,
+      0.99,
+  ]:
     print(' ****', p, '****')
     x1, x2, y1, y2 = train_test_split(x_train,
                                       y_train,

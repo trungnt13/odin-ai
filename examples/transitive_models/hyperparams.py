@@ -36,21 +36,21 @@ configs = dict(
     ],
     py=[
         0.004,
-        0.06,
-        0.2,
+        # 0.06,
+        # 0.2,
         # 0.5,
         # 0.95,
     ],
     coef=[
-        # linear(vmin=0.1, vmax=0.01, length=20000, cyclical=False),
-        linear(vmin=0.2, vmax=0.02, length=20000, cyclical=True),
-        linear(vmin=0.2, vmax=0.02, length=20000, cyclical=False),
+        linear(vmin=0.1, vmax=0.01, length=20000, cyclical=False),
+        # linear(vmin=0.2, vmax=0.02, length=20000, cyclical=True),
+        # linear(vmin=0.2, vmax=0.02, length=20000, cyclical=False),
         # linear(vmin=0.5, vmax=0.1, length=20000, cyclical=True),
     ],
     ds=[
-        'mnist',
-        'fashionmnist',
-        'shapes3d',
+        # 'mnist',
+        # 'fashionmnist',
+        # 'shapes3d',
         # 'dsprites',
         'celeba'
     ],
@@ -89,12 +89,14 @@ def evaluate(vae,
   rand = np.random.RandomState(seed=seed)
   if not os.path.exists(expdir):
     os.makedirs(expdir)
+  tanh = True if ds.name.lower() == 'celeba' else False
   ## data for training semi-supervised
   # careful don't allow any data leakage!
   train = ds.create_dataset('train',
                             batch_size=batch_size,
                             inc_labels=True,
-                            shuffle=False)
+                            shuffle=False,
+                            normalize='tanh' if tanh else 'probs')
   data = [(vae.encode(x, training=False), y) \
     for x, y in tqdm(train, desc=title)]
   x_semi_train = tf.concat(
@@ -109,7 +111,8 @@ def evaluate(vae,
   test = ds.create_dataset('test',
                            batch_size=batch_size,
                            inc_labels=True,
-                           shuffle=False)
+                           shuffle=False,
+                           normalize='tanh' if tanh else 'probs')
   prog = tqdm(test, desc=title)
   llk_x = []
   llk_y = []
@@ -151,11 +154,13 @@ def evaluate(vae,
   x_rec = x_rec[ids][:36]
   vmin = x_rec.reshape((36, -1)).min(axis=1).reshape((36, 1, 1, 1))
   vmax = x_rec.reshape((36, -1)).max(axis=1).reshape((36, 1, 1, 1))
+  if tanh:
+    x_org = (x_org + 1.) / 2.
   x_rec = (x_rec - vmin) / (vmax - vmin)
-  if x_org.shape[-1] == 1: # grayscale image
+  if x_org.shape[-1] == 1:  # grayscale image
     x_org = np.squeeze(x_org, -1)
     x_rec = np.squeeze(x_rec, -1)
-  else: # color image
+  else:  # color image
     x_org = np.transpose(x_org, (0, 3, 1, 2))
     x_rec = np.transpose(x_rec, (0, 3, 1, 2))
   plt.figure(figsize=(15, 8))
@@ -263,7 +268,6 @@ def evaluate(vae,
     plt.tight_layout()
   ## save all plot
   vs.plot_save(f'{expdir}/analysis.pdf', dpi=180, verbose=True)
-  exit()
 
 
 def run_task(args, evaluation=False):
@@ -278,7 +282,7 @@ def run_task(args, evaluation=False):
   model_name = model.__name__.lower()
   ######## prepare path
   logdir = f'{outdir}/{dsname}_{py}/{model_name}_{coef.name}'
-  if OVERRIDE and os.path.exists(logdir):
+  if OVERRIDE and os.path.exists(logdir) and not evaluation:
     shutil.rmtree(logdir)
     print(f'Override model at path: {logdir}')
   if not os.path.exists(logdir):
@@ -286,11 +290,20 @@ def run_task(args, evaluation=False):
   modelpath = f'{logdir}/model'
   ######## dataset
   ds = get_dataset(dsname)
-  train = ds.create_dataset('train', batch_size=32, inc_labels=py)
-  valid = ds.create_dataset('valid', batch_size=32, inc_labels=True).shuffle(
-      1000, seed=1, reshuffle_each_iteration=True)
+  tanh_norm = True if dsname == 'celeba' else False
+  train = ds.create_dataset('train',
+                            batch_size=32,
+                            inc_labels=py,
+                            normalize='tanh' if tanh_norm else 'probs')
+  valid = ds.create_dataset('valid',
+                            batch_size=32,
+                            inc_labels=True,
+                            normalize='tanh' if tanh_norm else 'probs').shuffle(
+                                1000, seed=1, reshuffle_each_iteration=True)
   ######## model
-  networks = get_networks(dsname, is_semi_supervised=True)
+  networks = get_networks(dsname,
+                          centerize_image=False if tanh_norm else True,
+                          is_semi_supervised=True)
   vae = model(alpha=1. / py, mi_coef=coef, **networks)
   vae.build((None,) + ds.shape)
   vae.load_weights(modelpath, verbose=True)
@@ -358,8 +371,9 @@ def main(mode: Literal['train', 'evaluate'], fn_filter=lambda job: True):
   ######## evaluation mode
   elif mode == 'evaluate':
     for j in jobs:
-      # if j['ds'] == 'mnist' and j['py'] == 0.004:
-      run_task(j, evaluation=True)
+      if j['ds'] == 'celeba' and j['coef'].vmin == 0.1:
+        # print(j)
+        run_task(j, evaluation=True)
   ######## others
   else:
     raise NotImplementedError(f'No support for mode="{mode}"')
@@ -369,8 +383,12 @@ if __name__ == "__main__":
   parser = argparse.ArgumentParser()
   parser.add_argument('--train', help='Training mode', action='store_true')
   parser.add_argument('--eval', help='Evaluation mode', action='store_true')
+  parser.add_argument('--override',
+                      help='Override exist models',
+                      action='store_true')
   parser.add_argument('-ds', default='')
   args = parser.parse_args()
+  OVERRIDE = bool(args.override)
   ## create the filter
   if args.ds:
     ds = set([str(i).lower() for i in args.ds.split(',')])
