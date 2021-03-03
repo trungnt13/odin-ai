@@ -18,12 +18,12 @@ OVERRIDE = False
 all_vaes = [
     # semafoVAE,
     # remafoVAE,
-    # miVAE,
+    miVAE,
     # factorVAE,
     # beta10VAE,
-    VAE,
+    # VAE,
     # multiheadVAE,
-    skiptaskVAE,
+    # skiptaskVAE,
     # conditionalM2VAE,
 ]
 all_py = [

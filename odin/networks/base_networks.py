@@ -556,7 +556,7 @@ class Networks(keras.Model, MD5object):
       autograph: bool = False,
       logging_interval: float = 3,
       skip_fitted: Union[bool, int] = False,
-      nan_gradients_policy: Literal['stop', 'skip', 'ignore', 'raise'] = 'skip',
+      nan_gradients_policy: Literal['stop', 'skip', 'ignore', 'raise'] = 'stop',
       logdir: Optional[str] = None,
       allow_none_gradients: bool = False,
       track_gradients: bool = False,
@@ -676,7 +676,6 @@ class Networks(keras.Model, MD5object):
         self.load_weights(raise_notfound=True, verbose=True)
       if callback is not None:
         callback()
-
     self.trainer.fit(
         train_ds=train,
         optimize=partial(self.optimize,

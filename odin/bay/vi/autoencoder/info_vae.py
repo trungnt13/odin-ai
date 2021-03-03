@@ -13,6 +13,7 @@ from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
+from odin.backend.types_helpers import Coefficient
 
 
 # ===========================================================================
@@ -96,7 +97,7 @@ class infoVAE(betaVAE):
 # Mutual Information VAE
 # ===========================================================================
 class miVAE(betaVAE):
-  r""" Mutual-information VAE
+  """ Mutual-information VAE
 
   The algorithm of MI-VAE is as following:
   ```
@@ -129,27 +130,40 @@ class miVAE(betaVAE):
   Ducau, F.N. Code:  https://github.com/fducau/infoVAE
   """
 
-  def __init__(self,
-               beta: float = 1.0,
-               mi_coef: float = 1.0,
-               kl_codes_coef: float = 0.,
-               latents: RVmeta = RVmeta(32,
-                                        'mvndiag',
-                                        projection=True,
-                                        name='latents'),
-               mutual_codes: Optional[RVmeta] = None,
-               steps_without_mi: int = 100,
-               name='miVAE',
-               **kwargs):
+  def __init__(
+      self,
+      mi_coef: Coefficient = 0.2,
+      latents: RVmeta = RVmeta(32, 'mvndiag', projection=True, name='latents'),
+      mutual_codes: RVmeta = RVmeta(10,
+                                    'mvndiag',
+                                    projection=True,
+                                    name='codes'),
+      steps_without_mi: int = 100,
+      beta: Coefficient = linear(vmin=1e-6, vmax=1., length=2000),
+      beta_codes: Coefficient = 0.,
+      name: str = 'MutualInfoVAE',
+      **kwargs,
+  ):
     super().__init__(beta=beta, latents=latents, name=name, **kwargs)
-    if mutual_codes is None:
-      zdim = sum(sum(q.event_shape) for q in as_tuple(self.latents))
-      mutual_codes = RVmeta(zdim, 'mvndiag', projection=True, name='Codes')
     self.is_binary_code = mutual_codes.is_binary
-    self.mutual_codes = mutual_codes.create_posterior()
-    self.mi_coef = float(mi_coef)
-    self.kl_codes_coef = float(kl_codes_coef)
+    if isinstance(mutual_codes, RVmeta):
+      mutual_codes = mutual_codes.create_posterior()
+    self.mutual_codes = mutual_codes
+    self._mi_coef = mi_coef
+    self._beta_codes = beta_codes
     self.steps_without_mi = int(steps_without_mi)
+
+  @property
+  def beta_codes(self) -> tf.Tensor:
+    if callable(self._beta_codes):
+      return self._beta_codes(self.step)
+    return tf.constant(self._beta_codes, dtype=self.dtype)
+
+  @property
+  def mi_coef(self) -> tf.Tensor:
+    if callable(self._mi_coef):
+      return self._mi_coef(self.step)
+    return tf.constant(self._mi_coef, dtype=self.dtype)
 
   def sample_prior(self,
                    sample_shape: Union[int, List[int]] = (),
@@ -179,11 +193,18 @@ class miVAE(betaVAE):
     # only maximize the mutual information of q(c|X)
     llk, kl = super().elbo_components(inputs, mask=mask, training=training)
     px_z, (qz_x, qc_x) = self.last_outputs
+    ## factorizing the mutual codes if required
+    kl_c = qc_x.KL_divergence(free_bits=self.free_bits)
+    kl[f'kl_{self.mutual_codes.name}'] = tf.cond(
+        self.beta_codes > 1e-8,  # for numerical stability
+        true_fn=lambda: self.beta_codes * kl_c,
+        false_fn=lambda: tf.stop_gradient(kl_c),
+    )
     ## This approach is not working!
     # z_prime = tf.stop_gradient(tf.convert_to_tensor(qz_x))
     # batch_shape = z_prime.shape[:-1]
     # c_prime = qc_x.KL_divergence.prior.sample(batch_shape)
-    ##
+    ## sampling for maximizing I(X;Z)
     batch_shape = px_z.batch_shape
     z_prime = qz_x.KL_divergence.prior.sample(batch_shape)
     c_prime = qc_x.KL_divergence.prior.sample(batch_shape)
@@ -197,30 +218,18 @@ class miVAE(betaVAE):
     else:
       x = tf.convert_to_tensor(px)
     qz_xprime, qc_xprime = self.encode(x, training=training)
-    #' mutual information (we want to maximize this, hence, add it to the llk)
-    mi_c = qc_xprime.log_prob(c_prime)
-    if training:
-      llk['mi_codes'] = tf.cond(self.step > self.steps_without_mi,
-                                true_fn=lambda: self.mi_coef * mi_c,
-                                false_fn=lambda: 0.)
-    else:
-      llk['mi_codes'] = self.mi_coef * mi_c
+    ## mutual information (we want to maximize this, hence, add it to the llk)
+    llk['mi_codes'] = self.mi_coef * tf.cond(
+        self.step > self.steps_without_mi,
+        true_fn=lambda: qc_xprime.log_prob(c_prime),
+        false_fn=lambda: 0.)
     ## this value is just for monitoring
-    mi_z = tf.reduce_mean(qz_xprime.log_prob(z_prime))
-    mi_z = tf.cond(tf.math.is_nan(mi_z),
-                   true_fn=lambda: 0.,
-                   false_fn=lambda: tf.clip_by_value(mi_z, -1e8, 1e8))
-    llk['mi_latents'] = tf.stop_gradient(mi_z)
-    ## factorizing the mutual codes if required
-    if hasattr(qc_x, 'KL_divergence'):
-      kl_c = qc_x.KL_divergence(free_bits=self.free_bits)
-    else:
-      kl_c = 0.
-    if self.kl_codes_coef == 0.:
-      kl_c = tf.stop_gradient(kl_c)
-    if training:
-      kl_c = self.kl_codes_coef * kl_c
-    kl['kl_codes'] = kl_c
+    mi_z = tf.stop_gradient(tf.reduce_mean(qz_xprime.log_prob(z_prime)))
+    llk['mi_latents'] = tf.cond(
+        tf.logical_or(tf.math.is_nan(mi_z), tf.math.is_inf(mi_z)),
+        true_fn=lambda: 0.,
+        false_fn=lambda: mi_z,
+    )
     return llk, kl
 
 

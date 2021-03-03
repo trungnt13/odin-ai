@@ -30,17 +30,10 @@ class betaVAE(VariationalAutoencoder):
     self._beta = beta
 
   @property
-  def beta(self):
-    if isinstance(self._beta, interp.Interpolation):
+  def beta(self) -> tf.Tensor:
+    if callable(self._beta):
       return self._beta(self.step)
-    return self._beta
-
-  @beta.setter
-  def beta(self, b):
-    if isinstance(b, interp.Interpolation):
-      self._beta = b
-    else:
-      self._beta = tf.convert_to_tensor(b, dtype=self.dtype, name='beta')
+    return tf.constant(self._beta, dtype=self.dtype)
 
   def elbo_components(self, inputs, training=None, mask=None):
     llk, kl = super().elbo_components(inputs=inputs,
@@ -69,6 +62,7 @@ class annealingVAE(betaVAE):
   Maaløe, L., Sønderby, C.K., Sønderby, S.K., Winther, O., 2016. Auxiliary
       Deep Generative Models. arXiv:1602.05473 [cs, stat].
   """
+
   def __init__(self,
                beta: float = 1,
                annealing_steps: int = 2000,
@@ -151,4 +145,3 @@ class annealedVAE(VariationalAutoencoder):
     c = self.interpolation(self.step)
     kl = {key: self.gamma * tf.math.abs(val - c) for key, val in kl.items()}
     return llk, kl
-

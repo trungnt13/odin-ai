@@ -1,12 +1,17 @@
+from numbers import Number
+from typing import Callable, List, Union
+
 from numpy import ndarray
 from scipy.sparse import spmatrix
 from tensorflow import Tensor
-from typing_extensions import Literal
-from typing import Union, List, Tuple, Callable
-from tensorflow.python.keras.layers import Layer
 from tensorflow.python.keras import Model, Sequential
+from tensorflow.python.keras.layers import Layer
+from typing_extensions import Literal
+
+from odin.backend.interpolation import Interpolation
 
 __all__ = [
+    'Coefficient',
     'NoneType',
     'TensorTypes',
     'LayerTypes',
@@ -17,6 +22,8 @@ __all__ = [
     'Axes',
     'Axis',
 ]
+
+Coefficient = Union[Number, Interpolation]
 
 CorrelationMethod = Literal['spearman', 'lasso', 'pearson', 'mutualinfo',
                             'importance']
