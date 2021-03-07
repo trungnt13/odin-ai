@@ -1,21 +1,19 @@
 import collections
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
+from tensorflow_probability.python.distributions import Distribution
+from typing_extensions import Literal
+
 from odin.backend import TensorTypes
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
-from odin.bay.vi.autoencoder.variational_autoencoder import (DatasetV2,
-                                                             OptimizerV2,
-                                                             TrainStep, VAEStep)
+from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep, VAEStep
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
-from tensorflow.python import keras
-from tensorflow_probability.python.distributions import Distribution
-from typing_extensions import Literal
 
 
 # ===========================================================================
@@ -101,7 +99,7 @@ class FactorDiscriminatorStep(VAEStep):
 # Main factorVAE
 # ===========================================================================
 class factorVAE(betaVAE):
-  r""" The default encoder and decoder configuration is the same as proposed
+  """ The default encoder and decoder configuration is the same as proposed
   in (Kim et. al. 2018).
 
   The training procedure of factorVAE is as follows:
@@ -283,9 +281,10 @@ class factorVAE(betaVAE):
       yield step2
 
   def fit(self,
-          train: Union[TensorTypes, DatasetV2],
-          valid: Optional[Union[TensorTypes, DatasetV2]] = None,
-          optimizer: Tuple[OptimizerV2, OptimizerV2] = [
+          train,
+          *,
+          valid=None,
+          optimizer=[
               tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
               tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
           ],

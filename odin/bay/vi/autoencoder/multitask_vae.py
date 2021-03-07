@@ -2,6 +2,8 @@ from typing import List, Union
 
 import numpy as np
 import tensorflow as tf
+from tensorflow.python import keras
+
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
@@ -9,8 +11,6 @@ from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              _parse_layers)
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
-from tensorflow.python import keras
-from tensorflow.python.ops import array_ops
 
 
 class multitaskVAE(betaVAE):
@@ -25,6 +25,11 @@ class multitaskVAE(betaVAE):
       by default True
   alpha : float, optional
       coefficient of the supervised objective, by default 10.
+  n_samples_semi : int
+      if greater than 0, then sample from the posterior for training an
+      auxiliary classifier of labelled-unlabelled data points.
+      This extra loss reduce the within-clusters variance, and reduce the
+      confusion between closely related classes.
   name : str, optional
       by default 'MultitaskVAE'
 
@@ -34,19 +39,46 @@ class multitaskVAE(betaVAE):
       Journal of Computational Biology 27, 1190–1203 (2019).
   """
 
-  def __init__(self,
-               labels: Union[RVmeta, List[RVmeta]] = RVmeta(10,
-                                                            'onehot',
-                                                            projection=True,
-                                                            name="digits"),
-               alpha: float = 10.,
-               skip_decoder: bool = False,
-               name: str = 'MultitaskVAE',
-               **kwargs):
+  def __init__(
+      self,
+      labels: Union[RVmeta, List[RVmeta]] = RVmeta(10,
+                                                   'onehot',
+                                                   projection=True,
+                                                   name="digits"),
+      alpha: float = 10.,
+      skip_decoder: bool = False,
+      n_samples_semi: int = 0,
+      name: str = 'MultitaskVAE',
+      **kwargs,
+  ):
     super().__init__(name=name, **kwargs)
     self.labels = [_parse_layers(y) for y in as_tuple(labels)]
     self.alpha = alpha
     self.skip_decoder = bool(skip_decoder)
+    self.n_samples_semi = int(n_samples_semi)
+    # labelled - unlabelled discriminator
+    if self.n_samples_semi > 0:
+      self.semi_discriminator = keras.layers.Dense(1,
+                                                   activation='linear',
+                                                   name='SemiDiscriminator')
+      self.flatten = keras.layers.Flatten()
+    else:
+      self.semi_discriminator = None
+      self.flatten = None
+
+  def build(self, input_shape):
+    super().build(input_shape)
+    if self.semi_discriminator is not None:
+      units_z = sum(
+          np.prod(
+              z.event_shape if hasattr(z, 'event_shape') else z.output_shape)
+          for z in as_tuple(self.latents))
+      # units_y = sum(
+      #     np.prod(
+      #         y.event_shape if hasattr(y, 'event_shape') else y.output_shape)
+      #     for y in self.labels)
+      self.semi_discriminator.build((None, units_z))
+    return self
 
   @property
   def alpha(self):
@@ -77,14 +109,14 @@ class multitaskVAE(betaVAE):
     ]
     return (px_z,) + tuple(py_z)
 
-  def elbo_components(self, inputs, training=None, mask=None):
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     # unsupervised ELBO
     X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
     if mask is not None:
       mask = tf.reshape(mask, (-1,))
     llk, kl = super().elbo_components(X[0], mask=mask, training=training)
     P, Q = self.last_outputs
-    # supervised log-likelihood
+    ## supervised log-likelihood
     if len(y) > 0:
       # iterate over each pair
       for layer, yi, py in zip(self.labels, y, P[1:]):
@@ -107,6 +139,25 @@ class multitaskVAE(betaVAE):
                         true_fn=lambda: tf.stop_gradient(llk_y),
                         false_fn=lambda: llk_y)
         llk[f"llk_{name}"] = llk_y
+    ## semi-supervised labelled-unlabelled discriminator
+    if self.semi_discriminator is not None and mask is not None:
+      z = tf.concat(
+          [i.sample(self.n_samples_semi) for i in as_tuple(Q)[:self.n_latents]],
+          axis=-1)
+      z = tf.reshape(z, (-1, z.shape[-1]))
+      y_true = tf.tile(tf.cast(tf.expand_dims(mask, axis=-1), self.dtype),
+                       (self.n_samples_semi, 1))
+      # y_pred = tf.reduce_logsumexp(self.semi_discriminator(z), axis=0) - \
+      #   tf.math.log(tf.cast(self.n_samples_semi, self.dtype))
+      y_pred = self.semi_discriminator(z)
+      loss = tf.reduce_mean(
+          tf.losses.binary_crossentropy(y_true=y_true,
+                                        y_pred=y_pred,
+                                        from_logits=True))
+    else:
+      loss = 0.
+    # have to minimize this loss
+    kl['discr_loss'] = loss
     return llk, kl
 
   @classmethod
@@ -128,8 +179,7 @@ class multiheadVAE(multitaskVAE):
   and directly connect to the via non-linear layers latents"""
 
   def __init__(self,
-               decoder_y: LayerCreator = NetConf([256, 256],
-                                                       name='decoder_y'),
+               decoder_y: LayerCreator = NetConf([256, 256], name='decoder_y'),
                name: str = 'MultiheadVAE',
                **kwargs):
     kwargs.pop('skip_decoder', None)

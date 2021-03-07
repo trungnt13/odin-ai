@@ -1,19 +1,17 @@
 from functools import partial
-from typing import Callable, List, Optional, Union
+from typing import Callable, List, Union
 
 import tensorflow as tf
 from tensorflow import Tensor
 from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
                                                          Distribution)
 
-from odin.backend.interpolation import Interpolation, circle, linear
+from odin.backend.interpolation import linear
+from odin.backend.types_helpers import Coefficient
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
-from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.bay.vi.losses import maximum_mean_discrepancy
-from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
-from odin.backend.types_helpers import Coefficient
 
 
 # ===========================================================================

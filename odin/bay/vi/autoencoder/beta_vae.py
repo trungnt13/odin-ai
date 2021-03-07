@@ -51,7 +51,7 @@ class beta10VAE(betaVAE):
 
 
 class annealingVAE(betaVAE):
-  """KL-annealing VAE, cyclical annealing could be achieved by setting
+  """ KL-annealing VAE, cyclical annealing could be achieved by setting
   `cyclical=True` when creating `Interpolation`
 
   References
@@ -61,20 +61,21 @@ class annealingVAE(betaVAE):
       Vanishing". arXiv:1903.10145 [cs, stat].
   Maaløe, L., Sønderby, C.K., Sønderby, S.K., Winther, O., 2016. Auxiliary
       Deep Generative Models. arXiv:1602.05473 [cs, stat].
+  Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
+      Ladder variational autoencodersself. Advances in Neural Information
+      Processing Systems. Curran Associates, Inc., pp. 3738–3746.
   """
 
-  def __init__(self,
-               beta: float = 1,
-               annealing_steps: int = 2000,
-               wait_steps: int = 0,
-               name: str = 'AnnealingVAE',
-               **kwargs):
-    super().__init__(beta=linear(vmin=1e-6,
-                                 vmax=float(beta),
-                                 length=int(annealing_steps),
-                                 delay_in=int(wait_steps)),
-                     name=name,
-                     **kwargs)
+  def __init__(
+      self,
+      beta: Union[float, Interpolation] = linear(vmin=1e-6,
+                                                 vmax=1.0,
+                                                 length=2000,
+                                                 delay_in=0),
+      name: str = 'AnnealingVAE',
+      **kwargs,
+  ):
+    super().__init__(beta=beta, name=name, **kwargs)
 
 
 class betatcVAE(betaVAE):
@@ -99,7 +100,7 @@ class betatcVAE(betaVAE):
     return llk, kl
 
 
-class annealedVAE(VariationalAutoencoder):
+class capacitateVAE(VariationalAutoencoder):
   r"""Creates an annealedVAE model.
 
   Implementing Eq. 8 of (Burgess et al. 2018)

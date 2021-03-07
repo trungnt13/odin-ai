@@ -1,3 +1,12 @@
+# He, K., et al. Identity Mappings in Deep Residual Networks.
+#   X -> BN -> ReLU -> Conv -> BN -> ReLU -> Conv -> Add(X)
+#
+# Tan, M., et al. EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks.
+#   X -> Conv -> BN -> ReLU -> DepthWise -> BN -> ReLU ->
+#     SE -> Conv -> BN -> Dropout -> Add(X)
+#
+# All Convolutions are without biases if using BN
+
 from functools import partial
 from typing import Any, Callable, Dict, Optional, Tuple, List, Union
 

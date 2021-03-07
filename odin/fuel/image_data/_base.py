@@ -1,3 +1,4 @@
+from numbers import Number
 import numpy as np
 import tensorflow as tf
 from odin.fuel.dataset_base import IterableDataset

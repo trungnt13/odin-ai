@@ -24,8 +24,8 @@ from tensorflow_probability.python.distributions import (Categorical,
                                                          MultivariateNormalTriL,
                                                          Normal)
 from tensorflow_probability.python.layers import DistributionLambda
-from tensorflow_probability.python.layers.distribution_layer import (
-    DistributionLambda)
+from tensorflow_probability.python.layers.distribution_layer import \
+    DistributionLambda
 
 from odin import backend as bk
 from odin.bay.helpers import (KLdivergence, coercible_tensor,
@@ -110,7 +110,6 @@ class DistributionDense(Layer):
   -------
   `tensorflow_probability.Distribution`
   """
-
   def __init__(
       self,
       event_shape: List[int] = (),
@@ -135,6 +134,14 @@ class DistributionDense(Layer):
       units: Optional[int] = None,
       **kwargs,
   ):
+    ## store init arguments (this is not intended for serialization but for cloning)
+    init_args = dict(locals())
+    del init_args['self']
+    del init_args['__class__']
+    del init_args['kwargs']
+    init_args.update(kwargs)
+    self._init_args = init_args
+    ## check prior type
     assert isinstance(prior, (Distribution, type(None))) or callable(prior), \
       ("prior can only be None or instance of Distribution, DistributionLambda"
        f",  but given: {prior}-{type(prior)}")
@@ -448,16 +455,21 @@ class DistributionDense(Layer):
     else:
       prior = str(self.prior)
     posterior = self._posterior_class.__name__
-    if not hasattr(self, 'input_shape'):
-      inshape = None
-      outshape = None
-    else:
+    if hasattr(self, 'input_shape'):
       inshape = self.input_shape
+    else:
+      inshape = None
+    if hasattr(self, 'output_shape'):
       outshape = self.output_shape
+    else:
+      outshape = None
     return (f"<'{self.name}' autoregr:{self.autoregressive} proj:{self.projection} "
             f"in:{inshape} out:{outshape} event:{self.event_shape} "
             f"#params:{self._params_size} post:{posterior} prior:{prior} "
             f"dropout:{self._dropout:.2f} kw:{self._posterior_kwargs}>")
+
+  def get_config(self) -> dict:
+    return dict(self._init_args)
 
 
 # ===========================================================================

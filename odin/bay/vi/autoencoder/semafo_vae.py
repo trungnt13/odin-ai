@@ -1,13 +1,13 @@
 from typing import List, Union
 
 import tensorflow as tf
+from tensorflow_probability.python.distributions import NOT_REPARAMETERIZED
 
 from odin.backend.interpolation import Interpolation, linear
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.bay.vi.utils import prepare_ssl_inputs
-from tensorflow_probability.python.distributions import NOT_REPARAMETERIZED
 
 
 # ===========================================================================
@@ -43,7 +43,7 @@ class _semafo(betaVAE):
       labels: RVmeta = RVmeta(10, 'onehot', projection=True, name="digits"),
       alpha: float = 10.0,
       mi_coef: Union[float, Interpolation] = linear(vmin=0.1,
-                                                    vmax=0.01,
+                                                    vmax=0.05,
                                                     length=20000),
       reverse_mi: bool = False,
       steps_without_mi: int = 1000,

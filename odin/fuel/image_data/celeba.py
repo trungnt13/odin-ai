@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 
 class CelebA(ImageDataset):
-  r"""The dataset must be manually downloaded from Google Drive:
+  """The dataset must be manually downloaded from Google Drive:
     https://drive.google.com/drive/folders/0B7EVK8r0v71pWEZsZE9oNnFuzTm8
 
   The following files are required:
@@ -20,13 +20,25 @@ class CelebA(ImageDataset):
     - list_attr_celeba.txt
     - list_eval_partition.txt
 
+  The attributes take value of -1 or 1, it is normalized to 0 and 1 as binary
+  values
+
+  There are 162770 images for training, 19867 validation images, and 19962 test images.
+
   Parameters
   -----------
   path : path to the folder contained the three files.
+      - 'img_align_celeba.zip'
+      - 'list_attr_celeba.txt'
+      - 'list_eval_partition.txt'
   image_size : (optional) an Integer.
-    The smallest dimension of a downsampled image. if `None`, original size
-    (218, 178) is kept.
-  square_image : a Boolean. If True, crop the downsampled image to a square.
+      The smallest dimension of a downsampled image. if `None`, original size
+      (218, 178) is kept.
+  square_image : bool
+      If True, crop the downsampled image to a square.
+  labels : List[str]
+      only provided attributes are presented as labels
+
 
   Attributes
   -----------

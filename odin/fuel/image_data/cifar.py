@@ -44,7 +44,7 @@ class CIFAR(ImageDataset):
 
   def __init__(self,
                version: Literal[10, 100],
-               quantize_bits: int=8,
+               quantize_bits: int = 8,
                path: str = "~/tensorflow_datasets/cifar"):
     path = os.path.abspath(os.path.expanduser(path))
     if not os.path.exists(path):
@@ -144,6 +144,7 @@ class CIFAR(ImageDataset):
                      prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
                      parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
                      inc_labels: Union[bool, float] = False,
+                     normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
                      seed: int = 1) -> tf.data.Dataset:
     """ Create Tensorflow dataset
 
@@ -176,7 +177,10 @@ class CIFAR(ImageDataset):
 
     def _process(*data):
       image = tf.cast(data[0], tf.float32)
-      image = self.normalize_255(image)
+      if 'probs' in normalize:
+        image = self.normalize_255(image)
+      elif 'tanh' in normalize:
+        image = tf.clip_by_value(image / 255. * 2. - 1., -1 + 1e-6, 1. - 1e-6)
       if inc_labels:
         label = tf.cast(data[1], tf.float32)
         if 0. < inc_labels < 1.:  # semi-supervised mask

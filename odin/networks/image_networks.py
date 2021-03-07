@@ -23,13 +23,19 @@ from odin.networks import residuals as rsd
 from odin.bay.distributions import (Blockwise, Categorical, ContinuousBernoulli,
                                     Distribution, Gamma,
                                     JointDistributionSequential, PixelCNNpp,
-                                    VonMises, Bernoulli)
+                                    VonMises, Bernoulli, Independent)
 
 __all__ = [
+    'PixelCNNDecoder',
     'mnist_networks',
     'dsprites_networks',
     'shapes3dsmall_networks',
     'shapes3d_networks',
+    'cifar_networks',
+    'svhn_networks',
+    'cifar10_networks',
+    'cifar20_networks',
+    'cifar100_networks',
     'celebasmall_networks',
     'celeba_networks',
     'get_networks',
@@ -60,6 +66,9 @@ class CenterAt0(keras.layers.Layer):
       return 2. * inputs - 1.
     return inputs
 
+  def get_config(self):
+    return dict(enable=self.enable, div_255=self.div_255)
+
 
 class LogNorm(keras.layers.Layer):
 
@@ -76,8 +85,11 @@ class LogNorm(keras.layers.Layer):
       x = tf.math.log1p(x)
     return x
 
+  def get_config(self):
+    return dict(enable=self.enable)
 
-def _prepare_cnn(activation=tf.nn.leaky_relu):
+
+def _prepare_cnn(activation=tf.nn.relu):
   # he_uniform is better for leaky_relu
   if activation is tf.nn.leaky_relu:
     init = 'he_uniform'
@@ -143,7 +155,7 @@ class SkipSequential(keras.Model):
 def mnist_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 16,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
@@ -152,7 +164,7 @@ def mnist_networks(
   """Network for MNIST dataset image size (28, 28, 1)"""
   from odin.bay.random_variable import RVmeta
   n_channels = int(kwargs.get('n_channels', 1))
-  proj_dim = int(kwargs.get('proj_dim', 128))
+  proj_dim = 196
   input_shape = (28, 28, n_channels)
   if zdim is None:
     zdim = 16
@@ -171,8 +183,7 @@ def mnist_networks(
   )
   layers = [
       keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
-      keras.layers.Dense(7 * 7 * 64, activation=activation, name='decoder1'),
-      keras.layers.Reshape((7, 7, 64)),
+      keras.layers.Reshape((7, 7, 4)),
       deconv(64, 5, strides=2, name='decoder2'),
       deconv(64, 5, strides=1, name='decoder3'),
       deconv(32, 5, strides=2, name='decoder4'),
@@ -210,7 +221,7 @@ omniglot_networks = partial(mnist_networks, n_channels=3)
 # ===========================================================================
 # CIFAR10
 # ===========================================================================
-class _PixelCNNDecoder(keras.Model):
+class PixelCNNDecoder(keras.Model):
 
   def __init__(self, input_shape, zdim, n_components, dtype, name):
     super().__init__(name)
@@ -237,7 +248,7 @@ class _PixelCNNDecoder(keras.Model):
 def cifar_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 32,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
@@ -247,65 +258,42 @@ def cifar_networks(
   from odin.bay.random_variable import RVmeta
   if zdim is None:
     zdim = 32
-  n_components = 10
-  decoder_input = kwargs.get('decoder_input', zdim)
-  n_channels = int(kwargs.get('n_channels', 3))
+  n_components = 10  # for Mixture Quantized Logistic
+  n_channels = kwargs.get('n_channels', 3)
   input_shape = (32, 32, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
   n_classes = kwargs.get('n_classes', 10)
-  # the number of parameters per pixel.
-  n_coeffs = n_channels * (n_channels - 1) // 2
-  n_out = n_channels * 2 + n_coeffs + 1
-  n_out_total = n_out * n_components
+  proj_dim = 8 * 8 * 4
   ## encoder
-  inputs = keras.Input(input_shape)
-  x = CenterAt0(enable=centerize_image)(inputs)
-  x = rsd.project_1_1(x, filters=32, activation=activation, name='encoder1')
-  x = rsd.residual_inverted(x,
-                            expand_ratio=2,
-                            activation=activation,
-                            strides=1,
-                            name='encoder2')
-  x = rsd.squeeze_and_excitation(x, activation=activation, name='encoder3')
-  x = rsd.residual_inverted(x,
-                            expand_ratio=2,
-                            activation=activation,
-                            strides=2,
-                            name='encoder4')
-  x = rsd.squeeze_and_excitation(x, activation=activation, name='encoder5')
-  x = rsd.project_1_1(x, filters=64, activation=activation, name='encoder6')
-  x = rsd.residual_inverted(x,
-                            expand_ratio=2,
-                            activation=activation,
-                            strides=2,
-                            name='encoder7')
-  x = rsd.squeeze_and_excitation(x, activation=activation, name='encoder8')
-  x = keras.layers.Flatten()(x)
-  x = keras.layers.Dense(256, activation=activation, name='encoder9')(x)
-  encoder = keras.Model(inputs=inputs, outputs=x, name='encoder')
-  ## create the decoder
-  inputs = keras.Input((decoder_input,))
-  x = keras.layers.Dense(zdim * 8 * 8, activation=activation,
-                         name='decoder1')(inputs)
-  x = keras.layers.Reshape((8, 8, zdim))(x)
-  x = rsd.project_1_1(x, filters=64, activation=activation, name='decoder2')
-  x = rsd.unpooling(x, 2, name='decoder3')
-  x = rsd.residual_inverted(x,
-                            expand_ratio=2,
-                            activation=activation,
-                            name='decoder4')
-  x = rsd.squeeze_and_excitation(x, activation=activation, name='decoder5')
-  x = rsd.project_1_1(x, 32, activation=activation, name='decoder6')
-  x = rsd.unpooling(x, 2, name='decoder7')
-  x = rsd.residual_inverted(x,
-                            expand_ratio=2,
-                            activation=activation,
-                            name='decoder8')
-  x = rsd.squeeze_and_excitation(x, activation=activation, name='decoder9')
-  x = rsd.project_1_1(x,
-                      PixelCNNpp.params_size(n_components, n_channels),
-                      activation=activation)
-  decoder = keras.Model(inputs=inputs, outputs=x, name='decoder')
+  encoder = keras.Sequential(
+      [
+          CenterAt0(enable=centerize_image),
+          conv(32, 4, strides=1, name='encoder0'),
+          conv(32, 4, strides=2, name='encoder1'),
+          conv(64, 4, strides=1, name='encoder2'),
+          conv(64, 4, strides=2, name='encoder3'),
+          keras.layers.Flatten(),
+          keras.layers.Dense(proj_dim, activation='linear', name='encoder5')
+      ],
+      name='encoder',
+  )
+  layers = [
+      keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
+      keras.layers.Reshape((8, 8, 4)),
+      deconv(64, 4, strides=1, name='decoder1'),
+      deconv(64, 4, strides=2, name='decoder2'),
+      deconv(32, 4, strides=1, name='decoder3'),
+      deconv(32, 4, strides=2, name='decoder4'),
+      conv(PixelCNNpp.params_size(n_components, n_channels),
+           1,
+           strides=1,
+           activation='linear',
+           name='decoder5'),
+  ]
+  if skip_generator:
+    decoder = SkipSequential(layers=layers, name='skipdecoder')
+  else:
+    decoder = keras.Sequential(layers=layers, name='decoder')
   ## others
   latents = RVmeta((zdim,), qz, projection=True,
                    name="latents").create_posterior()
@@ -335,6 +323,7 @@ def cifar_networks(
 cifar10_networks = partial(cifar_networks, n_classes=10)
 cifar20_networks = partial(cifar_networks, n_classes=20)
 cifar100_networks = partial(cifar_networks, n_classes=100)
+svhn_networks = partial(cifar_networks, n_classes=10)
 
 
 # ===========================================================================
@@ -362,7 +351,7 @@ def _dsprites_distribution(x: tf.Tensor) -> Blockwise:
 def dsprites_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 10,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
@@ -434,7 +423,7 @@ def dsprites_networks(
 def dspritessmall_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 10,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
@@ -481,7 +470,7 @@ def _shapes3d_distribution(x: tf.Tensor) -> Blockwise:
 
 def shapes3dsmall_networks(qz: str = 'mvndiag',
                            zdim: Optional[int] = 6,
-                           activation: Union[Callable, str] = tf.nn.leaky_relu,
+                           activation: Union[Callable, str] = tf.nn.relu,
                            is_semi_supervised: bool = False,
                            centerize_image: bool = True,
                            skip_generator: bool = False,
@@ -507,7 +496,7 @@ def shapes3dsmall_networks(qz: str = 'mvndiag',
 
 def shapes3d_networks(qz: str = 'mvndiag',
                       zdim: Optional[int] = 6,
-                      activation: Union[Callable, str] = tf.nn.leaky_relu,
+                      activation: Union[Callable, str] = tf.nn.relu,
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
                       skip_generator: bool = False,
@@ -533,16 +522,22 @@ def shapes3d_networks(qz: str = 'mvndiag',
 # ===========================================================================
 # CelebA
 # ===========================================================================
+def _celeba_distribution(x: tf.Tensor) -> Blockwise:
+  dtype = x.dtype
+  py = ContinuousBernoulli(logits=x)
+  return Independent(py, 1, name='attributes')
+
+
 def celebasmall_networks(qz: str = 'mvndiag',
                          zdim: Optional[int] = None,
-                         activation: Union[Callable, str] = tf.nn.leaky_relu,
+                         activation: Union[Callable, str] = tf.nn.relu,
                          is_semi_supervised: bool = False,
                          centerize_image: bool = True,
                          skip_generator: bool = False,
                          n_labels: int = 18,
                          **kwargs):
   if zdim is None:
-    zdim = 32
+    zdim = 45
   networks = mnist_networks(qz=qz,
                             zdim=zdim,
                             activation=activation,
@@ -553,8 +548,9 @@ def celebasmall_networks(qz: str = 'mvndiag',
                             proj_dim=128)
   if is_semi_supervised:
     from odin.bay.layers import DistributionDense
-    networks['labels'] = DistributionDense(event_shape=int(n_labels),
-                                           posterior='bernoulli',
+    networks['labels'] = DistributionDense(event_shape=n_labels,
+                                           posterior=_celeba_distribution,
+                                           units=n_labels,
                                            name='attributes')
   return networks
 
@@ -609,8 +605,10 @@ def celeba_networks(qz: str = 'mvndiag',
                   observation=observation,
                   latents=latents)
   if is_semi_supervised:
-    networks['labels'] = DistributionDense(event_shape=int(n_labels),
-                                           posterior='bernoulli',
+    from odin.bay.layers import DistributionDense
+    networks['labels'] = DistributionDense(event_shape=n_labels,
+                                           posterior=_celeba_distribution,
+                                           units=n_labels,
                                            name='attributes')
   return networks
 
@@ -824,52 +822,45 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
 
   """
   dataset_name = str(dataset_name).strip().lower()
-  decay_rate = 0.96
+  decay_rate = 0.996
   ### image networks
-  if 'omniglot' in dataset_name:
-    max_iter = 80000
+  if any(i in dataset_name for i in ('fashionmnist', 'mnist', 'omniglot')):
+    if dataset_name == 'mnist':
+      max_iter = 100000
+    else:
+      max_iter = 180000
     init_lr = 1e-3
-    decay_steps = 5000
-    decay_rate = 0.996
-  elif 'fashionmnist' in dataset_name:
-    max_iter = 50000
+    decay_steps = 10000
+  elif any(i in dataset_name for i in ('cifar', 'svhn')):
+    max_iter = 400000
     init_lr = 1e-3
-    decay_steps = 5000
-    decay_rate = 0.996
-  elif 'mnist' in dataset_name:
-    max_iter = 35000
-    init_lr = 1e-3
-    decay_steps = 2500
-    decay_rate = 0.996
-  elif 'cifar' in dataset_name:
+    decay_steps = 20000
+  # dsrpites datasets
+  elif 'dsprites' in dataset_name:
     max_iter = 200000
     init_lr = 0.001
-    decay_steps = 5000
-    decay_rate = 0.996
-  elif 'dsprites' in dataset_name:
-    max_iter = 120000
-    init_lr = 0.001
-    decay_steps = 3000
+    decay_steps = 10000
   elif 'dspritessmall' in dataset_name:
     max_iter = 100000
     init_lr = 0.001
-    decay_steps = 2500
+    decay_steps = 5000
+  # sahpes datasets
   elif 'shapes3dsmall' in dataset_name:
-    max_iter = 150000
+    max_iter = 300000
     init_lr = 5e-4
-    decay_steps = 8000
+    decay_steps = 20000
   elif 'shapes3d' in dataset_name:
-    max_iter = 180000
+    max_iter = 300000
     init_lr = 1e-4
     decay_steps = 10000
   elif 'celebasmall' in dataset_name:
     max_iter = 200000
     init_lr = 5e-4
-    decay_steps = 8000
-  elif 'celeba' in dataset_name:
-    max_iter = 200000
-    init_lr = 1e-4
     decay_steps = 10000
+  elif 'celeba' in dataset_name:
+    max_iter = 500000
+    init_lr = 2e-4
+    decay_steps = 50000
   ### gene networks
   elif 'cortex' in dataset_name:
     max_iter = 30000

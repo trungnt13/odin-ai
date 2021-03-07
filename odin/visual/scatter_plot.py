@@ -330,6 +330,9 @@ def _plot_scatter_points(*, x, y, z, val, color, marker, size, size_range,
             c = art._color
           artist[i] = ax.scatter(*pos, c=c, s=0.1)
           markerscale = 25
+      # sort the legends
+      legend_name, artist = zip(
+          *sorted(zip(legend_name, artist), key=lambda t: t[0]))
       legend = ax.legend(artist,
                          legend_name,
                          markerscale=markerscale,

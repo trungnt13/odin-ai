@@ -1,44 +1,30 @@
 from __future__ import absolute_import, division, print_function
 
-import copy
-import glob
 import inspect
-import os
-import pickle
-import warnings
+from collections import defaultdict
 from dataclasses import dataclass
 from functools import partial
 from itertools import zip_longest
-from numbers import Number
-from typing import (Any, Callable, Dict, Iterator, List, Optional, Text, Tuple,
-                    Type, Union)
+from typing import (Any, Callable, Dict, Iterator, List, Optional, Tuple, Type,
+                    Union)
 
-import numpy as np
-import scipy as sp
 import tensorflow as tf
-from numpy import ndarray
-from odin import backend as bk
-from odin.backend.keras_helpers import layer2text
-from odin.bay.layers import DistributionDense, VectorDeterministicLayer
-from odin.bay.random_variable import RVmeta
-from odin.bay.vi._base import VariationalModel
-from odin.training.trainer import Trainer
-from odin.networks import Identity, NetConf, TrainStep
-from odin.backend import TensorTypes
-from odin.utils import as_tuple
-from odin.utils.python_utils import classproperty
 from six import string_types
 from tensorflow import Tensor
 from tensorflow.python import keras
-from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.keras.layers import Layer
-from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
-from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
-from tensorflow.python.platform import tf_logging as logging
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
 from tensorflow_probability.python.distributions import Distribution
-from typing_extensions import Literal
+
+from odin import backend as bk
+from odin.backend import TensorTypes
+from odin.backend.keras_helpers import layer2text
+from odin.bay.random_variable import RVmeta
+from odin.bay.vi._base import VariationalModel
+from odin.networks import Identity, NetConf, TrainStep
+from odin.utils import as_tuple
+from tqdm import tqdm
 
 __all__ = [
     'LayerCreator',
@@ -237,28 +223,32 @@ class VariationalAutoencoder(VariationalModel):
       self._observation_args = _get_args(self.observation)
 
   @property
-  def encoder(self) -> Layer:
+  def encoder(self) -> Union[Layer, List[Layer]]:
     return self._encoder
 
   @property
-  def decoder(self) -> Layer:
+  def decoder(self) -> Union[Layer, List[Layer]]:
     return self._decoder
 
   @property
-  def latents(self) -> Layer:
+  def latents(self) -> Union[Layer, List[Layer]]:
     return self._latents
 
   @property
-  def observation(self) -> Layer:
+  def observation(self) -> Union[Layer, List[Layer]]:
     return self._observation
 
   @property
   def n_latents(self) -> int:
-    return len(self.latents)
+    if isinstance(self.latents, (tuple, list)):
+      return len(self.latents)
+    return 1
 
   @property
   def n_observation(self) -> int:
-    return len(self.observation)
+    if isinstance(self.observation, (tuple, list)):
+      return len(self.observation)
+    return 1
 
   @property
   def input_shape(self) -> List[int]:
@@ -426,12 +416,16 @@ class VariationalAutoencoder(VariationalModel):
     )
     return (px_z, qz_x)
 
-  @tf.function(autograph=False)
-  def marginal_log_prob(self,
-                        inputs: Union[TensorTypes, List[TensorTypes]],
-                        training: Optional[bool] = None,
-                        mask: Optional[Tensor] = None,
-                        **kwargs) -> Tuple[Tensor, Tensor]:
+  def marginal_log_prob(
+      self,
+      inputs: Union[TensorTypes, List[TensorTypes]],
+      training: Optional[bool] = None,
+      n_mcmc: Optional[int] = 100,
+      reduce: Optional[Callable[[Tensor], Tensor]] = tf.reduce_mean,
+      batch_size: int = 32,
+      verbose: bool = False,
+      **kwargs,
+  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
     """Marginal log likelihood `log(p(X))`, an biased estimation.
     With sufficient amount of MCMC samples (-> inf), the value will converges
     to `log(p(X))`
@@ -464,44 +458,84 @@ class VariationalAutoencoder(VariationalModel):
       distortion (a.k.a reconstruction): a Dictionary mapping from distribution
         name to Tensor of shape `[batch_size]`, the negative reconstruction cost.
     """
-    sample_shape = [tf.cast(tf.reduce_prod(self.sample_shape), tf.int32)]
-    px_z, qz_x = self(inputs, training=training, mask=mask, **kwargs)
-    ## Marginal LLK
-    llk = []
-    distortion = {}
-    # reconstruction (a.k.a distortion)
-    for i, (px, x) in enumerate(zip(as_tuple(px_z), as_tuple(inputs))):
-      x_llk = px.log_prob(x)
-      llk.append(x_llk)
-      distortion[px.name.split('_')[0]] = x_llk
-    # kl-divergence (a.k.a rate)
-    for qz in tf.nest.flatten(qz_x):
-      if isinstance(qz, (tfd.Deterministic, tfd.VectorDeterministic)):
-        continue
-      z = tf.convert_to_tensor(qz)
-      # the prior is injected into the distribution during the call method of
-      # DistributionDense, or modified during the encode method by setting
-      # qZ_X.KL_divergence.prior = ...
-      pz = qz.KL_divergence.prior
-      if pz is None:
-        pz = tfd.Normal(loc=tf.zeros(qz.event_shape, dtype=z.dtype),
-                        scale=tf.ones(qz.event_shape, dtype=z.dtype),
-                        name='pz')
-      llk_pz = pz.log_prob(z)
-      llk_qz_x = qz.log_prob(z)
-      llk.append(llk_pz)
-      llk.append(llk_qz_x)
-    # sum all llk
-    iw_const = tf.math.log(tf.cast(tf.reduce_prod(sample_shape), self.dtype))
-    mllk = 0.
-    for i in llk:
-      mllk += i
-    mllk = tf.reduce_logsumexp(mllk, axis=0) - iw_const
-    distortion = {
-        k: tf.reduce_logsumexp(v, axis=0) - iw_const
-        for k, v in distortion.items()
+    ## prepare data
+    if isinstance(inputs, (tuple, list)):
+      pass
+    elif not isinstance(inputs, tf.data.Dataset):
+      inputs = tf.data.Dataset.from_tensor_slices(inputs).batch(int(batch_size))
+    ## check the MCMC shape
+    if n_mcmc is None:
+      n_mcmc = int(np.prod(self.sample_shape))
+    else:
+      n_mcmc = int(n_mcmc)
+
+    ## single step
+    @tf.function
+    def _step(X):
+      ret_llk = []
+      ret_kl = []
+      if isinstance(X, dict):
+        Q = self.encode(training=training, **X, **kwargs)
+      else:
+        Q = self.encode(X, training=training, **kwargs)
+      Q = as_tuple(Q)
+      z = [i.sample(n_mcmc) for i in Q]
+      z_reshape = [tf.reshape(i, (-1, i.shape[-1])) for i in z]
+      P = self.decode(z_reshape[0] if len(Q) == 1 else z_reshape,
+                      training=training)
+      P = as_tuple(P)
+      # calculate the KL
+      for qz, z in zip(Q, z):
+        if hasattr(qz, 'KL_divergence'):
+          pz = qz.KL_divergence.prior
+          name = qz.name.split('_')[0]
+          llk_q = qz.log_prob(z)
+          llk_p = pz.log_prob(z)
+          ret_kl.append((name, (llk_q, llk_p)))
+      # calculate the LLK
+      if isinstance(X, dict):
+        X = X['inputs']
+      X = as_tuple(X)
+      for px, x in zip(P, X):
+        x = tf.tile(x, [n_mcmc] + [1 for i in range(len(x.shape) - 1)])
+        name = px.name.split('_')[0]
+        llk_x = tf.reshape(px.log_prob(x), (n_mcmc, -1))
+        ret_llk.append((name, llk_x))
+      return ret_llk, ret_kl
+
+    ## run the inputs
+    llk = defaultdict(list)
+    kl = defaultdict(list)
+    old_sample_shape = self.sample_shape
+    self._sample_shape = ()
+    inputs = tqdm(inputs, desc='MarginalLLK', disable=not verbose)
+    for n_batch, X in enumerate(inputs):
+      ret_llk, ret_kl = _step(X)
+      for name, val in ret_llk:
+        llk[str(name.numpy(), 'utf-8')].append(val)
+      for name, val in ret_kl:
+        kl[str(name.numpy(), 'utf-8')].append(val)
+    self._sample_shape = old_sample_shape
+    inputs.clear()
+    inputs.close()
+    # concatenate
+    C = tf.math.log(tf.cast(n_mcmc, self.dtype))
+    logsumexp_concat = lambda x: \
+      tf.reduce_logsumexp(tf.concat(x, axis=-1), axis=0)
+    llk = {
+        name: logsumexp_concat(logprobs) - C for name, logprobs in llk.items()
     }
-    return mllk, distortion
+    kl = {
+        name: (
+            logsumexp_concat([i for i, _ in llkqp]) - C,
+            logsumexp_concat([i for _, i in llkqp]) - C,
+        ) for name, llkqp in kl.items()
+    }
+    ## Marginal LLK
+    if reduce is not None:
+      llk = {i: reduce(j) for i, j in llk.items()}
+      kl = {i: (reduce(q), reduce(p)) for i, (q, p) in kl.items()}
+    return llk, kl
 
   def elbo_components(
       self,

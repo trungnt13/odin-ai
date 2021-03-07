@@ -2,26 +2,16 @@ from __future__ import absolute_import, division, print_function
 
 import inspect
 import os
-from functools import partial
-from math import sqrt
 
 import numpy as np
 import seaborn as sns
 import tensorflow as tf
-from matplotlib import pyplot as plt
-from odin import backend as bk
-from odin import visual as vs
-from odin.backend import interpolation
-from odin.bay.vi import (DisentanglementGym, GroundTruth, NetConf, RVmeta,
-                         VariationalAutoencoder, VariationalPosterior, get_vae,
-                         traverse_dims, DimReduce, Correlation)
-from odin.fuel import IterableDataset, get_dataset
-from odin.ml import fast_tsne, fast_umap
+
+from odin.bay.vi import (Correlation, DimReduce, DisentanglementGym,
+                         VariationalAutoencoder, get_vae)
+from odin.fuel import get_dataset
 from odin.networks import get_networks, get_optimizer_info
 from odin.training import get_output_dir, run_hydra
-from odin.utils import ArgController, as_tuple, clear_folder
-from tensorflow.python import keras
-from tqdm import tqdm
 
 try:
   tf.config.experimental.set_memory_growth(

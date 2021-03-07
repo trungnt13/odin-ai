@@ -1,23 +1,25 @@
-from typing import Callable, List, Union, Dict, Any
+from typing import Any, Callable, Dict, List, Tuple, Union
 
+import inspect
+import numpy as np
 import tensorflow as tf
-from odin.backend.interpolation import Interpolation, linear
-from odin.bay.helpers import kl_divergence
-from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.beta_vae import annealedVAE, betaVAE
-from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
-from odin.networks import NetConf
-from odin.utils import as_tuple
 from tensorflow import keras
 from tensorflow.keras.layers import Layer
 from tensorflow_probability.python.distributions import Independent, Normal
 from tensorflow_probability.python.layers import DistributionLambda
 
+from odin.bay.helpers import kl_divergence
+from odin.bay.random_variable import RVmeta
+from odin.bay.vi.autoencoder.beta_vae import annealingVAE, betaVAE
+from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
+from odin.networks import NetConf
+from odin.utils import as_tuple
+
 
 # ===========================================================================
 # Hierarchical VAE
 # ===========================================================================
-class stackedVAE(betaVAE):
+class stackedVAE(annealingVAE):
   """ A hierachical VAE with multiple stochastic layers stacked on top of the previous one
   (autoregressive):
 
@@ -56,7 +58,7 @@ class stackedVAE(betaVAE):
       powerful architecture for encoder and decoder. Otherwise, the suboptimal
       latents could drive the network to very unstable loss region which result NaNs
       during early training,
-      by default `linear(vmin=1e-4, vmax=1., length=2000, delay_in=0)`
+      by default `linear(vmin=1e-4, vmax=1., length=2000)`
   tie_latents : bool, optional
       tie the parameters that encoding means and standard deviation for both
       $q(z_i|z_{i-1})$ and $p(z_i|z_{i-1})$, by default False
@@ -84,19 +86,15 @@ class stackedVAE(betaVAE):
                                              'mvndiag',
                                              projection=True,
                                              name="latents"),
-      beta: Union[float, Interpolation] = linear(vmin=1e-6,
-                                                 vmax=1.,
-                                                 length=2000,
-                                                 delay_in=0),
       tie_latents: bool = False,
       all_standard_prior: bool = False,
       stochastic_inference: bool = True,
       only_mean_up: bool = False,
       preserve_latents_order: bool = False,
-      name: str = 'HierarchicalVAE',
+      name: str = 'StackedVAE',
       **kwargs,
   ):
-    super().__init__(latents=latents, beta=beta, name=name, **kwargs)
+    super().__init__(latents=latents, name=name, **kwargs)
     assert len(ladder_hiddens) == len(ladder_latents)
     self.all_standard_prior = bool(all_standard_prior)
     self.stochastic_inference = bool(stochastic_inference)
@@ -305,4 +303,342 @@ class ladderVAE(stackedVAE):
         # kl[f'kl_{lz.name}'] = self.beta * (qz.log_prob(z) - pz.log_prob(z))
         kl[f'kl_{lz.name}'] = self.beta * kl_divergence(
             qz, pz, analytic=self.analytic, reverse=self.reverse)
+    return llk, kl
+
+
+# ===========================================================================
+# HVAE
+# ===========================================================================
+class HVAE(annealingVAE):
+  """ Hierarchical VAE
+
+  References
+  ----------
+  Tomczak, J.M., Welling, M., 2018. VAE with a VampPrior.
+      arXiv:1705.07120 [cs, stat].
+  """
+
+  def __init__(
+      self,
+      latents: RVmeta = RVmeta(32, 'mvndiag', projection=True, name="latents1"),
+      ladder_latents: List[int] = [16],
+      connection: NetConf = NetConf(300, activation='relu'),
+      name: str = 'HierarchicalVAE',
+      **kwargs,
+  ):
+    super().__init__(latents=latents, name=name, **kwargs)
+    ## create the hierarchical latents
+    self.ladder_q = [
+        RVmeta(units, 'mvndiag', projection=True,
+               name=f'ladder_q{i}').create_posterior()
+        for i, units in enumerate(ladder_latents)
+    ]
+    self.ladder_p = [
+        RVmeta(units, 'mvndiag', projection=True,
+               name=f'ladder_p{i}').create_posterior()
+        for i, units in enumerate(ladder_latents)
+    ]
+    self.n_ladder = len(ladder_latents)
+    ## create the connections
+    self.qz_to_qz = [
+        connection.create_network(name=f'qz{i}_to_qz{i+1}')
+        for i in range(self.n_ladder)
+    ]
+    self.qz_to_pz = [
+        connection.create_network(name=f'qz{i}_to_pz{i+1}')
+        for i in range(self.n_ladder)
+    ]
+    self.qz_to_px = [
+        connection.create_network(name=f'qz{i}_to_px')
+        for i in range(self.n_ladder + 1)
+    ]
+    ## other layers
+    self.ladder_encoders = [
+        keras.models.clone_model(self.encoder) for _ in range(self.n_ladder)
+    ]
+    self.concat = keras.layers.Concatenate(axis=-1)
+    units = sum(
+        np.prod(i.event_shape)
+        for i in as_tuple(self.ladder_q) + as_tuple(self.latents))
+    self.pre_decoder = keras.layers.Dense(units,
+                                          activation='linear',
+                                          name='pre_decoder')
+
+  def encode(self,
+             inputs,
+             training=None,
+             mask=None,
+             only_encoding=False,
+             **kwargs):
+    Q = super().encode(inputs,
+                       training=training,
+                       mask=mask,
+                       only_encoding=only_encoding,
+                       **kwargs)
+    Q = list(as_tuple(Q))
+    for i, (f_qz, f_e) in enumerate(zip(self.ladder_q, self.ladder_encoders)):
+      h_e = f_e(inputs, training=training, mask=mask)
+      if only_encoding:
+        Q.append(h_e)
+      else:
+        h_z = self.qz_to_qz[i](tf.convert_to_tensor(Q[-1]),
+                               training=training,
+                               mask=mask)
+        qz_x = f_qz(self.concat([h_e, h_z]),
+                    training=training,
+                    mask=mask,
+                    sample_shape=self.sample_shape)
+        Q.append(qz_x)
+    return tuple(Q)
+
+  def decode(self,
+             latents,
+             training=None,
+             mask=None,
+             only_decoding=False,
+             **kwargs):
+    h = []
+    for qz, fz in zip(latents, self.qz_to_px):
+      h.append(fz(tf.convert_to_tensor(qz), training=training, mask=mask))
+    h = self.concat(h)
+    h = self.pre_decoder(h, training=training)
+    px_z = super().decode(h,
+                          training=training,
+                          mask=mask,
+                          only_decoding=only_decoding,
+                          **kwargs)
+    if only_decoding:
+      return px_z
+    ## p(z_i|z_{i-1})
+    P = []
+    for i, f_pz in enumerate(self.ladder_p):
+      h_z = self.qz_to_pz[i](tf.convert_to_tensor(latents[i]),
+                             training=training,
+                             mask=mask)
+      pz_zi = f_pz(h_z, training=training, mask=mask)
+      P.append(pz_zi)
+    return as_tuple(px_z) + tuple(P)
+
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
+    llk, kl = super().elbo_components(inputs=inputs,
+                                      mask=mask,
+                                      training=training)
+    P, Q = self.last_outputs
+    for i, (pz, qz) in enumerate(zip(P[-self.n_ladder:], Q[-self.n_ladder:])):
+      d = self.beta * kl_divergence(q=qz,
+                                    p=pz,
+                                    analytic=self.analytic,
+                                    free_bits=self.free_bits,
+                                    reverse=self.reverse)
+      kl[f'kl_ladder{i}'] = d
+    return llk, kl
+
+
+# ===========================================================================
+# Unet VAE
+# ===========================================================================
+def _get_full_args(fn):
+  spec = inspect.getfullargspec(fn)
+  return spec.args + spec.kwonlyargs
+
+
+def _prepare_encoder_decoder(encoder, decoder):
+  if isinstance(encoder, keras.Sequential):
+    encoder = encoder.layers
+  if isinstance(decoder, keras.Sequential):
+    decoder = decoder.layers
+  assert isinstance(encoder, (tuple, list)), \
+    f'encoder must be list of Layer, given {encoder}'
+  assert isinstance(decoder, (tuple, list)), \
+    f'decoder must be list of Layer, given {decoder}'
+  return encoder, decoder
+
+
+class unetVAE(betaVAE):
+  """ Unet-VAE """
+
+  def __init__(
+      self,
+      encoder: List[keras.layers.Layer],
+      decoder: List[keras.layers.Layer],
+      layers_map: List[Tuple[str, str]] = [
+          ('encoder2', 'decoder2'),
+          ('encoder1', 'decoder3'),
+          ('encoder0', 'decoder4'),
+      ],
+      dropout: float = 0.,
+      noise: float = 0.,
+      beta: float = 10.,
+      free_bits: float = 2.,
+      name: str = 'UnetVAE',
+      **kwargs,
+  ):
+    encoder, decoder = _prepare_encoder_decoder(encoder, decoder)
+    super().__init__(beta=beta,
+                     free_bits=free_bits,
+                     encoder=encoder,
+                     decoder=decoder,
+                     name=name,
+                     **kwargs)
+    encoder_layers = set(l.name for l in self.encoder)
+    # mappping from layers in decoder to encoder
+    self.layers_map = dict(
+        (j, i) if i in encoder_layers else (i, j) for i, j in layers_map)
+    if dropout > 0.:
+      self.dropout = keras.layers.Dropout(rate=dropout)
+    else:
+      self.dropout = None
+    if noise > 0.:
+      self.noise = keras.layers.GaussianNoise(stddev=noise)
+    else:
+      self.noise = None
+
+  def encode(self,
+             inputs,
+             training=None,
+             mask=None,
+             only_encoding=False,
+             **kwargs):
+    h_e = inputs
+    kw = dict(training=training, mask=mask, **kwargs)
+    encoder_outputs = {}
+    for f_e in self.encoder:
+      args = _get_full_args(f_e.call)
+      h_e = f_e(h_e, **{k: v for k, v in kw.items() if k in args})
+      encoder_outputs[f_e.name] = h_e
+    qz_x = self.latents(h_e,
+                        training=training,
+                        mask=mask,
+                        sample_shape=self.sample_shape)
+    qz_x._encoder_outputs = encoder_outputs
+    return qz_x
+
+  def decode(self,
+             latents,
+             training=None,
+             mask=None,
+             only_decoding=False,
+             **kwargs):
+    h_d = latents
+    kw = dict(training=training, mask=mask, **kwargs)
+    encoder_outputs = latents._encoder_outputs
+    for f_d in self.decoder:
+      args = _get_full_args(f_d.call)
+      h_d = f_d(h_d, **{k: v for k, v in kw.items() if k in args})
+      if f_d.name in self.layers_map:
+        h_e = encoder_outputs[self.layers_map[f_d.name]]
+        if self.dropout is not None:
+          h_e = self.dropout(h_e, training=training)
+        if self.noise is not None:
+          h_e = self.noise(h_e, training=training)
+        h_d = h_d + h_e
+    px_z = self.observation(h_d, training=training, mask=mask)
+    return px_z
+
+
+class punetVAE(betaVAE):
+  """ Probabilistic Unet-VAE
+
+  What have been tried:
+
+  1. Soft connection: run autoencoder as normal, only add extra regularization
+      D(q(z|x)||p(z|x)) => posterior collaps in all the ladder latents
+      (i.e. except the main middle latents)
+  2. Semi-hard connection:
+  """
+
+  def __init__(
+      self,
+      encoder: List[keras.layers.Layer],
+      decoder: List[keras.layers.Layer],
+      layers_map: List[Tuple[str, str, int]] = [
+          ('encoder2', 'decoder2', 16),
+          ('encoder1', 'decoder3', 16),
+          ('encoder0', 'decoder4', 16),
+      ],
+      beta: float = 10.,
+      free_bits: float = 2.,
+      name: str = 'PUnetVAE',
+      **kwargs,
+  ):
+    encoder, decoder = _prepare_encoder_decoder(encoder, decoder)
+    super().__init__(encoder=encoder,
+                     decoder=decoder,
+                     beta=beta,
+                     name=name,
+                     free_bits=free_bits,
+                     **kwargs)
+    encoder_name = {i.name: i  for i in self.encoder}
+    decoder_name = {i.name: i  for i in self.decoder}
+    n_latents = 0
+    ladder_latents = {}
+    for i, j, units in layers_map:
+      if i in encoder_name and j in decoder_name:
+        q = RVmeta(units,
+                   'mvndiag',
+                   projection=True,
+                   name=f'ladder_q{n_latents}').create_posterior()
+        p = RVmeta(units,
+                   'mvndiag',
+                   projection=True,
+                   name=f'ladder_p{n_latents}').create_posterior()
+        ladder_latents[i] = q
+        ladder_latents[j] = p
+        n_latents += 1
+    self.ladder_latents = ladder_latents
+    self.flatten = keras.layers.Flatten()
+
+  def encode(self,
+             inputs,
+             training=None,
+             mask=None,
+             only_encoding=False,
+             **kwargs):
+    h_e = inputs
+    kw = dict(training=training, mask=mask, **kwargs)
+    Q = []
+    for f_e in self.encoder:
+      args = _get_full_args(f_e.call)
+      h_e = f_e(h_e, **{k: v for k, v in kw.items() if k in args})
+      if f_e.name in self.ladder_latents:
+        h = self.flatten(h_e)
+        Q.append(self.ladder_latents[f_e.name](h, training=training, mask=mask))
+    qz_x = self.latents(h_e,
+                        training=training,
+                        mask=mask,
+                        sample_shape=self.sample_shape)
+    return [qz_x] + Q
+
+  def decode(self,
+             latents,
+             training=None,
+             mask=None,
+             only_decoding=False,
+             **kwargs):
+    h_d = latents[0]
+    kw = dict(training=training, mask=mask, **kwargs)
+    P = []
+    for f_d in self.decoder:
+      args = _get_full_args(f_d.call)
+      h_d = f_d(h_d, **{k: v for k, v in kw.items() if k in args})
+      if f_d.name in self.ladder_latents:
+        h = self.flatten(h_d)
+        P.append(self.ladder_latents[f_d.name](h, training=training, mask=mask))
+    px_z = self.observation(h_d, training=training, mask=mask)
+    return [px_z] + P
+
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
+    llk, kl = super().elbo_components(inputs=inputs,
+                                      mask=mask,
+                                      training=training)
+    P, Q = self.last_outputs
+    n_latents = len(self.ladder_latents) // 2
+    for i in range(n_latents):
+      pz = [p for p in P if f'ladder_p{i}' in p.name][0]
+      qz = [q for q in Q if f'ladder_q{i}' in q.name][0]
+      kl[f'kl_ladder{i}'] = self.beta * kl_divergence(q=qz,
+                                                      p=pz,
+                                                      analytic=self.analytic,
+                                                      free_bits=self.free_bits,
+                                                      reverse=self.reverse)
     return llk, kl

@@ -246,7 +246,7 @@ class BinarizedAlphaDigits(BinarizedMNIST):
         name='binary_alpha_digits',
         split=['train[:70%]', 'train[70%:80%]', 'train[80%:]'],
         as_supervised=True,
-        read_config=tfds.ReadConfig(shuffle_seed=seed,
+        read_config=tfds.ReadConfig(shuffle_seed=1,
                                     shuffle_reshuffle_each_iteration=True),
         shuffle_files=True,
     )
@@ -256,6 +256,9 @@ class BinarizedAlphaDigits(BinarizedMNIST):
     return (20, 16, 1)
 
 
+# ===========================================================================
+# Fashion MNIST
+# ===========================================================================
 class FashionMNIST(BinarizedMNIST):
 
   def __init__(self, seed: int = 1):
@@ -280,3 +283,34 @@ class FashionMNIST(BinarizedMNIST):
   @property
   def shape(self):
     return (28, 28, 1)
+
+
+# ===========================================================================
+# SVHN
+# ===========================================================================
+class SVHN(BinarizedMNIST):
+
+  def __init__(self, inc_extra: bool = True):
+    self._binarized = False
+    self.train, self.valid, self.test, self.extra = tfds.load(
+        name='svhn_cropped',
+        split=['train[:90%]', 'train[90%:]', 'test', 'extra'],
+        read_config=tfds.ReadConfig(shuffle_seed=1,
+                                    shuffle_reshuffle_each_iteration=True),
+        as_supervised=True,
+    )
+    self.inc_extra = inc_extra
+    if inc_extra:
+      self.train = self.train.concatenate(self.extra)
+
+  @property
+  def is_binary(self):
+    return False
+
+  @property
+  def shape(self):
+    return (32, 32, 3)
+
+  @property
+  def labels(self):
+    return np.array([str(i) for i in range(10)])

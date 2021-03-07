@@ -94,7 +94,9 @@ class PixelCNNpp(Distribution):
     if isinstance(params, (tuple, list)):
       pass
     else:
-      assert params.shape[-1] == self.n_out * n_components
+      assert params.shape[-1] == self.n_out * n_components, \
+        (f'Mixture of Quantized Logistic require {n_components} components of '
+         f'{self.n_out} each, but given {params.shape}')
       # prepare the parameters
       splits = (3 if n_channels == 1 else
                 [1, n_channels, n_channels, self.n_coeffs])
