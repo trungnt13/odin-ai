@@ -1,8 +1,10 @@
 from typing import List, Union, Optional
+from six import string_types
 
 import numpy as np
 import tensorflow as tf
 from tensorflow.python import keras
+from tensorflow_probability.python import distributions as tfd
 
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import betaVAE
@@ -45,8 +47,9 @@ class multitaskVAE(betaVAE):
                                                    'onehot',
                                                    projection=True,
                                                    name="digits"),
-      encoder_y: Optional[LayerCreator] = None,
-      decoder_y: Optional[LayerCreator] = None,
+      encoder_y: Optional[Union[LayerCreator, str]] = None,
+      decoder_y: Union[LayerCreator, str] = None,
+      probabilistic_encoder_y: bool = True,
       alpha: float = 10.,
       skip_decoder: bool = False,
       n_samples_semi: int = 0,
@@ -67,13 +70,32 @@ class multitaskVAE(betaVAE):
     else:
       self.semi_discriminator = None
       self.flatten = None
-    ## prepare for encode and decode y separately
+    ## prepare encoder for Y
     if encoder_y is not None:
-      encoder_y = _parse_layers(encoder_y)
+      units_z = sum(
+          np.prod(
+              z.event_shape if hasattr(z, 'event_shape') else z.output_shape)
+          for z in as_tuple(self.latents))
+      if isinstance(encoder_y, string_types):  # copy
+        layers = [
+            keras.models.clone_model(self.encoder),
+            keras.layers.Flatten()
+        ]
+      else:  # different network
+        layers = [_parse_layers(encoder_y)]
+      if probabilistic_encoder_y:
+        layers.append(
+            RVmeta(units_z, 'mvndiag', projection=True,
+                   name='qzy_x').create_posterior())
+      else:
+        layers.append(keras.layers.Dense(units_z, activation='linear'))
+      encoder_y = keras.Sequential(layers, name='encoder_y')
     self.encoder_y = encoder_y
+    ## prepare decoder for Y
     if decoder_y is not None:
       decoder_y = _parse_layers(decoder_y)
     self.decoder_y = decoder_y
+    self._last_xy = None
 
   def build(self, input_shape):
     super().build(input_shape)
@@ -125,7 +147,7 @@ class multitaskVAE(betaVAE):
       h_y = self.decoder_y(latents, training=training, mask=mask)
     else:
       h_y = h_d
-    X_y = self._last_xy # add skip connection to inputs
+    X_y = self._last_xy  # add skip connection to inputs
     if X_y is not None:
       h_y = tf.concat([h_y, X_y], axis=-1)
     py_z = [fy(h_y, training=training, mask=mask) for fy in self.labels]
@@ -180,6 +202,11 @@ class multitaskVAE(betaVAE):
       loss = 0.
     # have to minimize this loss
     kl['discr_loss'] = loss
+    if isinstance(self._last_xy, tfd.Distribution):
+      kl['kl_qzy_x'] = self.beta * self._last_xy.KL_divergence(
+          analytic=self.analytic,
+          free_bits=self.free_bits,
+          reverse=self.reverse)
     return llk, kl
 
   @classmethod
