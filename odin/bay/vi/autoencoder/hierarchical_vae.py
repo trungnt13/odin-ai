@@ -129,6 +129,10 @@ class stackedVAE(annealingVAE):
           for i, units in enumerate(as_tuple(ladder_latents))
       ]
 
+  @classmethod
+  def is_hierarchical(self) -> bool:
+    return True
+
   def encode(self, inputs, training=None, mask=None, only_encoding=False):
     h = self.encoder(inputs, training=training, mask=mask)
     latents = []
@@ -492,6 +496,10 @@ class unetVAE(betaVAE):
       self.noise = keras.layers.GaussianNoise(stddev=noise)
     else:
       self.noise = None
+
+  @classmethod
+  def is_hierarchical(self) -> bool:
+    return True
 
   def encode(self,
              inputs,

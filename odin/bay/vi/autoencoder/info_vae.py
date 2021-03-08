@@ -151,6 +151,10 @@ class miVAE(betaVAE):
     self._beta_codes = beta_codes
     self.steps_without_mi = int(steps_without_mi)
 
+  @classmethod
+  def is_hierarchical(self) -> bool:
+    return True
+
   @property
   def beta_codes(self) -> tf.Tensor:
     if callable(self._beta_codes):

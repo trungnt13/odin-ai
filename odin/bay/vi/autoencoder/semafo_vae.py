@@ -59,6 +59,10 @@ class _semafo(betaVAE):
     self.steps_without_mi = int(steps_without_mi)
     self.reverse_mi = bool(reverse_mi)
 
+  @classmethod
+  def is_hierarchical(self) -> bool:
+    return True
+
   @property
   def mi_coef(self):
     if isinstance(self._mi_coef, Interpolation):

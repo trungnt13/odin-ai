@@ -71,6 +71,7 @@ class IterableDataset:
 
   @property
   def name(self) -> str:
+    """name of the dataset (all lowered characters)"""
     return self.__class__.__name__.lower()
 
   @property

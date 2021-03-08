@@ -22,8 +22,9 @@ from typeguard import typechecked
 from odin.networks import residuals as rsd
 from odin.bay.distributions import (Blockwise, Categorical, ContinuousBernoulli,
                                     Distribution, Gamma,
-                                    JointDistributionSequential, PixelCNNpp,
-                                    VonMises, Bernoulli, Independent)
+                                    JointDistributionSequential,
+                                    MixtureQuantizedLogistic, VonMises,
+                                    Bernoulli, Independent)
 
 __all__ = [
     'PixelCNNDecoder',
@@ -284,7 +285,7 @@ def cifar_networks(
       deconv(64, 4, strides=2, name='decoder2'),
       deconv(32, 4, strides=1, name='decoder3'),
       deconv(32, 4, strides=2, name='decoder4'),
-      conv(PixelCNNpp.params_size(n_components, n_channels),
+      conv(MixtureQuantizedLogistic.params_size(n_components, n_channels),
            1,
            strides=1,
            activation='linear',
@@ -299,12 +300,12 @@ def cifar_networks(
                    name="latents").create_posterior()
   # create the observation of MixtureQuantizedLogistic
   observation = DistributionLambda(
-      lambda params: PixelCNNpp(params,
-                                n_components=n_components,
-                                n_channels=n_channels,
-                                inputs_domain='sigmoid',
-                                high=255,
-                                low=0),
+      lambda params: MixtureQuantizedLogistic(params,
+                                              n_components=n_components,
+                                              n_channels=n_channels,
+                                              inputs_domain='sigmoid',
+                                              high=255,
+                                              low=0),
       convert_to_tensor_fn=Distribution.mean,
       name='image',
   )
@@ -568,6 +569,8 @@ def celeba_networks(qz: str = 'mvndiag',
   if zdim is None:
     zdim = 45
   input_shape = (64, 64, 3)
+  n_components = 5  # for Mixture Quantized Logistic
+  n_channels = input_shape[-1]
   conv, deconv = _prepare_cnn(activation=activation)
   proj_dim = 256
   encoder = keras.Sequential(
@@ -589,8 +592,11 @@ def celeba_networks(qz: str = 'mvndiag',
       deconv(64, 4, strides=2, name='decoder2'),
       deconv(32, 4, strides=2, name='decoder3'),
       deconv(32, 4, strides=2, name='decoder4'),
-      conv(3 * 2, 1, strides=1, activation='linear', name='decoder5'),
-      keras.layers.Flatten()
+      conv(MixtureQuantizedLogistic.params_size(n_components, n_channels),
+           1,
+           strides=1,
+           activation='linear',
+           name='decoder5'),
   ]
   if skip_generator:
     decoder = SkipSequential(layers=layers, name='skipdecoder')
@@ -598,8 +604,16 @@ def celeba_networks(qz: str = 'mvndiag',
     decoder = keras.Sequential(layers=layers, name='decoder')
   latents = RVmeta((zdim,), qz, projection=True,
                    name="latents").create_posterior()
-  observation = RVmeta(input_shape, 'gaussian', projection=False,
-                       name="image").create_posterior()
+  observation = DistributionLambda(
+      lambda params: MixtureQuantizedLogistic(params,
+                                              n_components=n_components,
+                                              n_channels=n_channels,
+                                              inputs_domain='sigmoid',
+                                              high=255,
+                                              low=0),
+      convert_to_tensor_fn=Distribution.mean,
+      name='image',
+  )
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,

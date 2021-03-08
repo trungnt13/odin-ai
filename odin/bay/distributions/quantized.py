@@ -12,7 +12,7 @@ from tensorflow_probability.python.internal import prefer_static as ps
 from typing_extensions import Literal
 
 __all__ = [
-    "PixelCNNpp",
+    "MixtureQuantizedLogistic",
     "MixtureQLogistic",
     "qUniform",
     "qNormal",
@@ -22,7 +22,7 @@ __all__ = [
 # ===========================================================================
 # Mixture Quantized Logistic
 # ===========================================================================
-class PixelCNNpp(Distribution):
+class MixtureQuantizedLogistic(Distribution):
   """ PixelCNN++ Mixture of Quantized Logistic Distribution
 
   Builds a mixture of quantized logistic distributions.
@@ -60,7 +60,7 @@ class PixelCNNpp(Distribution):
   image_input = tf.keras.Input(shape=image_shape)
   x = keras.layers.Lambda(lambda x: 2. * x / 255. - 1.)(image_input)
   params = pcnn(x, training=True)
-  dist = PixelCNNpp(params, inputs_domain='pixel')
+  dist = MixtureQuantizedLogistic(params, inputs_domain='pixel')
   log_prob = dist.log_prob(image_input)
   ```
 
@@ -75,7 +75,7 @@ class PixelCNNpp(Distribution):
       low: int = 0,
       inputs_domain: Literal['sigmoid', 'tanh', 'pixel'] = 'sigmoid',
       dtype: Any = tf.float32,
-      name: str = 'PixelCNNpp',
+      name: str = 'MixtureQuantizedLogistic',
   ):
     parameters = dict(locals())
     super().__init__(dtype=dtype,
@@ -96,7 +96,7 @@ class PixelCNNpp(Distribution):
     else:
       assert params.shape[-1] == self.n_out * n_components, \
         (f'Mixture of Quantized Logistic require {n_components} components of '
-         f'{self.n_out} each, but given {params.shape}')
+         f'{self.n_out} each, but given inputs with shape: {params.shape}')
       # prepare the parameters
       splits = (3 if n_channels == 1 else
                 [1, n_channels, n_channels, self.n_coeffs])

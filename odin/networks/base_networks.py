@@ -717,6 +717,7 @@ class Networks(keras.Model, MD5object):
 
   @classmethod
   def is_semi_supervised(cls) -> bool:
+    """Return true if the model is semi-supervised or self-supervised"""
     return False
 
   @property

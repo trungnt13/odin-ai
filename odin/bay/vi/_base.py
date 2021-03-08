@@ -33,6 +33,11 @@ class VariationalModel(Networks):
     self.free_bits = free_bits
     self.allow_negative_kl = bool(allow_negative_kl)
 
+  @classmethod
+  def is_hierarchical(self) -> bool:
+    """Hierarchical models have multiple latents"""
+    return False
+
   @property
   def sample_shape(self) -> List[int]:
     return as_tuple(self._sample_shape, t=int)

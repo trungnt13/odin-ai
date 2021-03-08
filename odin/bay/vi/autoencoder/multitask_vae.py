@@ -1,4 +1,4 @@
-from typing import List, Union
+from typing import List, Union, Optional
 
 import numpy as np
 import tensorflow as tf
@@ -45,6 +45,8 @@ class multitaskVAE(betaVAE):
                                                    'onehot',
                                                    projection=True,
                                                    name="digits"),
+      encoder_y: Optional[LayerCreator] = None,
+      decoder_y: Optional[LayerCreator] = None,
       alpha: float = 10.,
       skip_decoder: bool = False,
       n_samples_semi: int = 0,
@@ -65,6 +67,13 @@ class multitaskVAE(betaVAE):
     else:
       self.semi_discriminator = None
       self.flatten = None
+    ## prepare for encode and decode y separately
+    if encoder_y is not None:
+      encoder_y = _parse_layers(encoder_y)
+    self.encoder_y = encoder_y
+    if decoder_y is not None:
+      decoder_y = _parse_layers(decoder_y)
+    self.decoder_y = decoder_y
 
   def build(self, input_shape):
     super().build(input_shape)
@@ -92,7 +101,13 @@ class multitaskVAE(betaVAE):
     X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
     # don't condition on the labels, only accept inputs
     X = X[0]
-    return super().encode(X, training=training, mask=None, **kwargs)
+    qz_x = super().encode(X, training=training, mask=None, **kwargs)
+    if self.encoder_y is not None:
+      X_y = self.encoder_y(X, training=training, mask=mask)
+    else:
+      X_y = None
+    self._last_xy = X_y
+    return qz_x
 
   def decode(self, latents, training=None, mask=None, **kwargs):
     h_d = super().decode(latents,
@@ -103,10 +118,17 @@ class multitaskVAE(betaVAE):
     px_z = self.observation(h_d, training=training, mask=mask)
     if isinstance(latents, (tuple, list)):
       latents = tf.concat(latents, axis=-1)
-    py_z = [
-        fy(latents if self.skip_decoder else h_d, training=training, mask=mask)
-        for fy in self.labels
-    ]
+    ## decode py_zx
+    if self.skip_decoder:
+      h_y = latents
+    elif self.decoder_y is not None:
+      h_y = self.decoder_y(latents, training=training, mask=mask)
+    else:
+      h_y = h_d
+    X_y = self._last_xy # add skip connection to inputs
+    if X_y is not None:
+      h_y = tf.concat([h_y, X_y], axis=-1)
+    py_z = [fy(h_y, training=training, mask=mask) for fy in self.labels]
     return (px_z,) + tuple(py_z)
 
   def elbo_components(self, inputs, training=None, mask=None, **kwargs):
@@ -164,45 +186,54 @@ class multitaskVAE(betaVAE):
   def is_semi_supervised(self) -> bool:
     return True
 
+  def __str__(self):
+    text = super().__str__()
+    text += "\nEncoderY:\n "
+    if self.encoder_y is None:
+      text += ' None'
+    else:
+      text += '\n '.join(str(self.encoder_y).split('\n'))
+    text += "\nDecoderY:\n "
+    if self.decoder_y is None:
+      text += ' None'
+    else:
+      text += '\n '.join(str(self.decoder_y).split('\n'))
+    return text
+
 
 class skiptaskVAE(multitaskVAE):
   """The supervised outputs, skip the decoder, and directly connect to
   the latents"""
 
-  def __init__(self, name: str = 'SkiptaskVAE', **kwargs):
+  def __init__(self,
+               encoder_y: Optional[LayerCreator] = None,
+               name: str = 'SkiptaskVAE',
+               **kwargs):
     kwargs.pop('skip_decoder', None)
-    super().__init__(skip_decoder=True, name=name, **kwargs)
+    kwargs.pop('decoder_y', None)
+    super().__init__(encoder_y=encoder_y,
+                     skip_decoder=True,
+                     name=name,
+                     **kwargs)
 
 
 class multiheadVAE(multitaskVAE):
   """Similar to skiptaskVAE, the supervised outputs, skip the decoder,
   and directly connect to the via non-linear layers latents"""
 
-  def __init__(self,
-               decoder_y: LayerCreator = NetConf([256, 256], name='decoder_y'),
-               name: str = 'MultiheadVAE',
-               **kwargs):
+  def __init__(
+      self,
+      decoder_y: LayerCreator = NetConf([256, 256],
+                                        flatten_inputs=True,
+                                        name='decoder_y'),
+      name: str = 'MultiheadVAE',
+      **kwargs,
+  ):
     kwargs.pop('skip_decoder', None)
-    super().__init__(skip_decoder=False, name=name, **kwargs)
+    kwargs.pop('encoder_y', None)
+    super().__init__(skip_decoder=False,
+                     encoder_y=None,
+                     decoder_y=decoder_y,
+                     name=name,
+                     **kwargs)
     self.decoder_y = _parse_layers(decoder_y)
-
-  def decode(self, latents, training=None, mask=None, **kwargs):
-    h_d = super(multitaskVAE, self).decode(latents,
-                                           training=training,
-                                           mask=mask,
-                                           only_decoding=True,
-                                           **kwargs)
-    px_z = self.observation(h_d, training=training, mask=mask)
-    if isinstance(latents, (tuple, list)):
-      latents = tf.concat(latents, axis=-1)
-    h_y = self.decoder_y(tf.convert_to_tensor(latents),
-                         training=training,
-                         mask=mask)
-    py_z = [fy(h_y, training=training, mask=mask) for fy in self.labels]
-    return (px_z,) + tuple(py_z)
-
-  def __str__(self):
-    text = super().__str__()
-    text += "\nDecoderY:\n "
-    text += '\n '.join(str(self.decoder_y).split('\n'))
-    return text
