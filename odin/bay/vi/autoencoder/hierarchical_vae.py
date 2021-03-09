@@ -547,6 +547,7 @@ class unetVAE(betaVAE):
 class punetVAE(betaVAE):
   """ Probabilistic Unet-VAE
 
+  # TODO
   What have been tried:
 
   1. Soft connection: run autoencoder as normal, only add extra regularization
@@ -650,3 +651,27 @@ class punetVAE(betaVAE):
                                                       free_bits=self.free_bits,
                                                       reverse=self.reverse)
     return llk, kl
+
+# ===========================================================================
+# Very Deep VAE
+# ===========================================================================
+class vdVAE(annealingVAE):
+  """ Very Deep Variational AutoEncoder
+
+  References
+  ----------
+  Sønderby, C.K., et al., 2016. Ladder variational autoencoders,
+      Advances in Neural Information Processing Systems.
+      Curran Associates, Inc., pp. 3738–3746.
+  Kingma, D.P., et al., 2016. Improved variational inference with
+      inverse autoregressive flow, Advances in Neural Information
+      Processing Systems. Curran Associates, Inc., pp. 4743–4751.
+  Maaløe, L., et al., 2019. BIVA: A Very Deep Hierarchy of Latent
+      Variables for Generative Modeling. arXiv:1902.02102 [cs, stat].
+  Child, R., 2021. Very deep {VAE}s generalize autoregressive models
+      and can outperform them on images, in: International Conference
+      on Learning Representations.
+  Havtorn, J.D., et al., 2021. Hierarchical VAEs Know What They Don’t
+      Know. arXiv:2102.08248 [cs, stat].
+  """
+  # TODO

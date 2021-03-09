@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
+from tensorflow import keras
 from six import string_types
 from tensorflow import Tensor
 from tensorflow.python.keras import Model
@@ -16,13 +17,9 @@ from tensorflow.python.keras.layers import Dense, Layer
 from tensorflow.python.keras.regularizers import Regularizer
 from tensorflow.python.training.tracking import base as trackable
 from tensorflow_probability.python.bijectors import FillScaleTriL
-from tensorflow_probability.python.distributions import (Categorical,
-                                                         Distribution,
-                                                         Independent,
-                                                         MixtureSameFamily,
-                                                         MultivariateNormalDiag,
-                                                         MultivariateNormalTriL,
-                                                         Normal)
+from tensorflow_probability.python.distributions import (
+    Categorical, Distribution, Independent, MixtureSameFamily,
+    MultivariateNormalDiag, MultivariateNormalTriL, Normal)
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import \
     DistributionLambda
@@ -110,6 +107,7 @@ class DistributionDense(Layer):
   -------
   `tensorflow_probability.Distribution`
   """
+
   def __init__(
       self,
       event_shape: List[int] = (),
@@ -211,17 +209,17 @@ class DistributionDense(Layer):
     if autoregressive:
       from odin.bay.layers.autoregressive_layers import AutoregressiveDense
       self._dense = AutoregressiveDense(
-                          params=self._params_size / self.event_size,
-                          event_shape=(self.event_size,),
-                          activation=activation,
-                          use_bias=use_bias,
-                          kernel_initializer=kernel_initializer,
-                          bias_initializer=bias_initializer,
-                          kernel_regularizer=kernel_regularizer,
-                          bias_regularizer=bias_regularizer,
-                          activity_regularizer=activity_regularizer,
-                          kernel_constraint=kernel_constraint,
-                          bias_constraint=bias_constraint)
+          params=self._params_size / self.event_size,
+          event_shape=(self.event_size,),
+          activation=activation,
+          use_bias=use_bias,
+          kernel_initializer=kernel_initializer,
+          bias_initializer=bias_initializer,
+          kernel_regularizer=kernel_regularizer,
+          bias_regularizer=bias_regularizer,
+          activity_regularizer=activity_regularizer,
+          kernel_constraint=kernel_constraint,
+          bias_constraint=bias_constraint)
     else:
       self._dense = Dense(units=self._params_size,
                           activation=activation,
@@ -463,10 +461,11 @@ class DistributionDense(Layer):
       outshape = self.output_shape
     else:
       outshape = None
-    return (f"<'{self.name}' autoregr:{self.autoregressive} proj:{self.projection} "
-            f"in:{inshape} out:{outshape} event:{self.event_shape} "
-            f"#params:{self._params_size} post:{posterior} prior:{prior} "
-            f"dropout:{self._dropout:.2f} kw:{self._posterior_kwargs}>")
+    return (
+        f"<'{self.name}' autoregr:{self.autoregressive} proj:{self.projection} "
+        f"in:{inshape} out:{outshape} event:{self.event_shape} "
+        f"#params:{self._params_size} post:{posterior} prior:{prior} "
+        f"dropout:{self._dropout:.2f} kw:{self._posterior_kwargs}>")
 
   def get_config(self) -> dict:
     return dict(self._init_args)

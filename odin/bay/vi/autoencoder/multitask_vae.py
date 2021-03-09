@@ -11,6 +11,7 @@ from odin.bay.vi.autoencoder.beta_vae import betaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              NetConf,
                                                              _parse_layers)
+from odin.bay.helpers import kl_divergence
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
 
@@ -91,11 +92,11 @@ class multitaskVAE(betaVAE):
         layers.append(keras.layers.Dense(units_z, activation='linear'))
       encoder_y = keras.Sequential(layers, name='encoder_y')
     self.encoder_y = encoder_y
+    self.probabilistic_encoder_y = probabilistic_encoder_y
     ## prepare decoder for Y
     if decoder_y is not None:
       decoder_y = _parse_layers(decoder_y)
     self.decoder_y = decoder_y
-    self._last_xy = None
 
   def build(self, input_shape):
     super().build(input_shape)
@@ -128,10 +129,17 @@ class multitaskVAE(betaVAE):
       X_y = self.encoder_y(X, training=training, mask=mask)
     else:
       X_y = None
-    self._last_xy = X_y
+    if X_y is not None:
+      return as_tuple(qz_x) + (X_y,)
     return qz_x
 
   def decode(self, latents, training=None, mask=None, **kwargs):
+    qzy_x = None  # q(z_y|x)
+    if self.encoder_y is not None:
+      qzy_x = latents[-1]
+      latents = latents[:-1]
+      if len(latents) == 1:
+        latents = latents[0]
     h_d = super().decode(latents,
                          training=training,
                          mask=mask,
@@ -141,17 +149,13 @@ class multitaskVAE(betaVAE):
     if isinstance(latents, (tuple, list)):
       latents = tf.concat(latents, axis=-1)
     ## decode py_zx
-    if self.skip_decoder:
-      h_y = latents
-    elif self.decoder_y is not None:
-      h_y = self.decoder_y(latents, training=training, mask=mask)
-    else:
-      h_y = h_d
-    X_y = self._last_xy  # add skip connection to inputs
-    if X_y is not None:
-      h_y = tf.concat([h_y, X_y], axis=-1)
+    h_y = latents if self.skip_decoder else h_d
+    if self.decoder_y is not None:
+      h_y = self.decoder_y(h_y, training=training, mask=mask)
+    if qzy_x is not None:  # add skip connection
+      h_y = tf.concat([h_y, qzy_x], axis=-1)
     py_z = [fy(h_y, training=training, mask=mask) for fy in self.labels]
-    return (px_z,) + tuple(py_z)
+    return as_tuple(px_z) + tuple(py_z)
 
   def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     # unsupervised ELBO
@@ -160,6 +164,12 @@ class multitaskVAE(betaVAE):
       mask = tf.reshape(mask, (-1,))
     llk, kl = super().elbo_components(X[0], mask=mask, training=training)
     P, Q = self.last_outputs
+    qzy_x = None
+    if self.encoder_y is not None:
+      qzy_x = Q[-1]
+      Q = Q[:-1]
+    else:
+      Q = as_tuple(Q)
     ## supervised log-likelihood
     if len(y) > 0:
       # iterate over each pair
@@ -185,9 +195,8 @@ class multitaskVAE(betaVAE):
         llk[f"llk_{name}"] = llk_y
     ## semi-supervised labelled-unlabelled discriminator
     if self.semi_discriminator is not None and mask is not None:
-      z = tf.concat(
-          [i.sample(self.n_samples_semi) for i in as_tuple(Q)[:self.n_latents]],
-          axis=-1)
+      z = tf.concat([i.sample(self.n_samples_semi) for i in Q[:self.n_latents]],
+                    axis=-1)
       z = tf.reshape(z, (-1, z.shape[-1]))
       y_true = tf.tile(tf.cast(tf.expand_dims(mask, axis=-1), self.dtype),
                        (self.n_samples_semi, 1))
@@ -202,15 +211,23 @@ class multitaskVAE(betaVAE):
       loss = 0.
     # have to minimize this loss
     kl['discr_loss'] = loss
-    if isinstance(self._last_xy, tfd.Distribution):
-      kl['kl_qzy_x'] = self.beta * self._last_xy.KL_divergence(
-          analytic=self.analytic,
-          free_bits=self.free_bits,
-          reverse=self.reverse)
+    if self.encoder_y is not None and self.probabilistic_encoder_y:
+      qz_x = Q[0]  # prior
+      kl['kl_qzy_x'] = self.beta * kl_divergence(
+          q=qzy_x, p=qz_x, analytic=False, free_bits=self.free_bits)
+      # (qzy_x.log_prob(z) - tf.stop_gradient(qz_x.log_prob(z)))
+      # self._last_xy.KL_divergence(
+      #     analytic=self.analytic,
+      #     free_bits=self.free_bits,
+      #     reverse=self.reverse)
     return llk, kl
 
   @classmethod
-  def is_semi_supervised(self) -> bool:
+  def is_hierarchical(cls) -> bool:
+    return False
+
+  @classmethod
+  def is_semi_supervised(cls) -> bool:
     return True
 
   def __str__(self):
@@ -239,6 +256,7 @@ class skiptaskVAE(multitaskVAE):
     kwargs.pop('skip_decoder', None)
     kwargs.pop('decoder_y', None)
     super().__init__(encoder_y=encoder_y,
+                     decoder_y=None,
                      skip_decoder=True,
                      name=name,
                      **kwargs)
@@ -258,9 +276,9 @@ class multiheadVAE(multitaskVAE):
   ):
     kwargs.pop('skip_decoder', None)
     kwargs.pop('encoder_y', None)
-    super().__init__(skip_decoder=False,
-                     encoder_y=None,
+    super().__init__(encoder_y=None,
                      decoder_y=decoder_y,
+                     skip_decoder=True,
                      name=name,
                      **kwargs)
     self.decoder_y = _parse_layers(decoder_y)

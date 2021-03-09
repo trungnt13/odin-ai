@@ -9,7 +9,7 @@ from typing_extensions import Literal
 
 from odin.backend import TensorTypes
 from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.autoencoder.beta_vae import annealingVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep, VAEStep
 from odin.bay.vi.utils import prepare_ssl_inputs
@@ -98,7 +98,7 @@ class FactorDiscriminatorStep(VAEStep):
 # ===========================================================================
 # Main factorVAE
 # ===========================================================================
-class factorVAE(betaVAE):
+class factorVAE(annealingVAE):
   """ The default encoder and decoder configuration is the same as proposed
   in (Kim et. al. 2018).
 
@@ -125,12 +125,9 @@ class factorVAE(betaVAE):
   maximize_tc : a Boolean. If True, instead of minimize total correlation
       for more factorized latents, try to maximize the divergence.
   gamma : float.
-      Weight for minimizing total correlation. According to
-      (Kim et al. 2018), for dSprites dataset `gamma=35`,
-      for `3DShapes` dataset `gamma=7`, and for `CelebA` dataset
-      `gamma=6.4`.
-  beta : float.
-      Weight for minimizing Kl-divergence to the prior
+      Weight for minimizing total correlation. According to (Kim et al. 2018),
+      for dSprites dataset `gamma=35`, for `3DShapes` dataset `gamma=7`,
+      and for `CelebA` dataset `gamma=6.4`.
   lamda : float.
       Weight for minimizing the discriminator loss
 
@@ -155,10 +152,9 @@ class factorVAE(betaVAE):
 
   def __init__(self,
                discriminator_units: List[int] = [1000, 1000, 1000, 1000, 1000],
-               activation: Union[str, Callable[[], Any]] = tf.nn.leaky_relu,
+               activation: Union[str, Callable[[], Any]] = tf.nn.relu,
                batchnorm: bool = False,
                gamma: float = 7.0,
-               beta: float = 1.0,
                lamda: float = 1.0,
                maximize_tc: bool = False,
                name: str = 'FactorVAE',
@@ -166,7 +162,7 @@ class factorVAE(betaVAE):
     ss_strategy = kwargs.pop('ss_strategy', 'logsumexp')
     labels = kwargs.pop(
         'labels', RVmeta(1, 'bernoulli', projection=True, name="discriminator"))
-    super().__init__(beta=beta, name=name, **kwargs)
+    super().__init__(name=name, **kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     self.lamda = tf.convert_to_tensor(lamda, dtype=self.dtype, name='lamda')
     ## init discriminator
@@ -239,7 +235,7 @@ class factorVAE(betaVAE):
                   training: bool = True,
                   mask: Optional[TensorTypes] = None,
                   call_kw: Dict[str, Any] = {}) -> TrainStep:
-    r""" Facilitate multiple steps training for each iteration (similar to GAN)
+    """ Facilitate multiple steps training for each iteration (similar to GAN)
 
     Example:
     ```
@@ -289,7 +285,7 @@ class factorVAE(betaVAE):
               tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
           ],
           **kwargs):
-    r""" Override the original fit method of keras to provide simplified
+    """ Override the original fit method of keras to provide simplified
     procedure with `VariationalAutoencoder.optimize` and
     `VariationalAutoencoder.train_steps` """
     assert isinstance(optimizer, (tuple, list)) and len(optimizer) == 2, \
@@ -396,7 +392,7 @@ class factor2VAE(factorVAE):
     self.factors = factors
 
   def _elbo(self, inputs, pX_Z, qz_x, mask, training):
-    llk, div = super(betaVAE, self)._elbo(
+    llk, div = super(annealingVAE, self)._elbo(
         inputs,
         pX_Z,
         qz_x,
