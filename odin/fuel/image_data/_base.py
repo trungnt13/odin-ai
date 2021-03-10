@@ -170,10 +170,10 @@ class ImageDataset(IterableDataset):
       # oversampling the labeled
       ds_labeled = ds.filter(lambda i, x: i)
       ds_labeled = ds_labeled.shuffle(min(1000, n_labeled), seed=seed\
-        ).repeat().take(n_unlabeled)
+        ).repeat()
       # sampling from unlabled (False) and labeled (True) data
       ds = ds.filter(lambda i, x: tf.logical_not(i)\
-        ).repeat().take(n_unlabeled)
+        ).repeat()
       # from collections import Counter # this is for debugging
       # print(Counter([i for _, (_, i) in ds.as_numpy_iterator()]))
       ds = tf.data.experimental.sample_from_datasets(
