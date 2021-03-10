@@ -124,12 +124,10 @@ class factorVAE(annealingVAE):
       Keywords arguments for creating the `FactorDiscriminator`
   maximize_tc : a Boolean. If True, instead of minimize total correlation
       for more factorized latents, try to maximize the divergence.
-  gamma : float.
+  tc_coef : float.
       Weight for minimizing total correlation. According to (Kim et al. 2018),
-      for dSprites dataset `gamma=35`, for `3DShapes` dataset `gamma=7`,
-      and for `CelebA` dataset `gamma=6.4`.
-  lamda : float.
-      Weight for minimizing the discriminator loss
+      for dSprites dataset `tc_coef=35`, for `3DShapes` dataset `tc_coef=7`,
+      and for `CelebA` dataset `tc_coef=6.4`.
 
   Note
   ------
@@ -154,8 +152,7 @@ class factorVAE(annealingVAE):
                discriminator_units: List[int] = [1000, 1000, 1000, 1000, 1000],
                activation: Union[str, Callable[[], Any]] = tf.nn.relu,
                batchnorm: bool = False,
-               gamma: float = 7.0,
-               lamda: float = 1.0,
+               tc_coef: float = 7.0,
                maximize_tc: bool = False,
                name: str = 'FactorVAE',
                **kwargs):
@@ -163,8 +160,9 @@ class factorVAE(annealingVAE):
     labels = kwargs.pop(
         'labels', RVmeta(1, 'bernoulli', projection=True, name="discriminator"))
     super().__init__(name=name, **kwargs)
-    self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
-    self.lamda = tf.convert_to_tensor(lamda, dtype=self.dtype, name='lamda')
+    self.tc_coef = tf.convert_to_tensor(tc_coef,
+                                        dtype=self.dtype,
+                                        name='tc_coef')
     ## init discriminator
     self.discriminator = FactorDiscriminator(
         units=as_tuple(discriminator_units),
@@ -219,16 +217,17 @@ class factorVAE(annealingVAE):
   def total_correlation(self,
                         qz_x: Distribution,
                         training: Optional[bool] = None) -> tf.Tensor:
-    return self.gamma * self.discriminator.total_correlation(qz_x,
-                                                             training=training)
+    return self.tc_coef * self.discriminator.total_correlation(
+        qz_x, training=training)
 
   def dtc_loss(self,
                qz_x: Distribution,
                qz_xprime: Optional[Distribution] = None,
                training: Optional[bool] = None) -> tf.Tensor:
-    r""" Discrimination loss between real and permuted codes Algorithm (2) """
-    return self.lamda * self.discriminator.dtc_loss(
-        qz_x, qz_xprime=qz_xprime, training=training)
+    """ Discrimination loss between real and permuted codes Algorithm (2) """
+    return self.discriminator.dtc_loss(qz_x,
+                                       qz_xprime=qz_xprime,
+                                       training=training)
 
   def train_steps(self,
                   inputs: Union[TensorTypes, List[TensorTypes]],
@@ -400,7 +399,7 @@ class factor2VAE(factorVAE):
         training=training,
     )
     # only use the assumed factors space for total correlation
-    tc = self.total_correlation(qz_x[-1], apply_gamma=True, training=training)
+    tc = self.total_correlation(qz_x[-1], training=training)
     if self.maximize_tc:
       tc = -tc
     div[f'tc_{self.factors.name}'] = tc

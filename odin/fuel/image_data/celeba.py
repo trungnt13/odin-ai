@@ -132,6 +132,41 @@ class CelebA(ImageDataset):
     self.train_attr = np.array(train_attr)[:, ids]
     self.valid_attr = np.array(valid_attr)[:, ids]
     self.test_attr = np.array(test_attr)[:, ids]
+    ### convert to tensorflow dataset
+    image_shape = self.original_shape
+    image_size = self.image_size
+    if image_size is not None:
+      image_size = int(image_size)
+      height = int(float(image_size) / image_shape[1] * image_shape[0])
+      # offset_height, offset_width, target_height, target_width
+      crop_offset = ((height - image_size) // 2, 0, image_size, image_size)
+
+    @tf.function
+    def _read(path):
+      img = tf.io.decode_jpeg(tf.io.read_file(path))
+      img.set_shape(image_shape)
+      ## resize the image
+      if image_size is not None:
+        img = tf.image.resize(img, (height, image_size),
+                              method=tf.image.ResizeMethod.BILINEAR,
+                              preserve_aspect_ratio=True,
+                              antialias=True)
+        if self.square_image:
+          img = tf.image.crop_to_bounding_box(img, *crop_offset)
+      ## normalize the image
+      img = tf.clip_by_value(tf.cast(img, tf.float32), 0.0, 255.)
+      return img
+
+    def _to_tfds(images_path, attributes) -> tf.data.Dataset:
+      images = tf.data.Dataset.from_tensor_slices(images_path)
+      images = images.map(_read, num_parallel_calls=tf.data.AUTOTUNE)
+      attributes = (attributes + 1.) / 2
+      attributes = tf.data.Dataset.from_tensor_slices(attributes)
+      return tf.data.Dataset.zip((images, attributes))
+
+    self.train = _to_tfds(self.train_files, self.train_attr)
+    self.valid = _to_tfds(self.valid_files, self.valid_attr)
+    self.test = _to_tfds(self.test_files, self.test_attr)
 
   @property
   def original_shape(self):
@@ -147,106 +182,12 @@ class CelebA(ImageDataset):
             image_size, 3)
 
   @property
-  def is_binary(self):
+  def binarized(self):
     return False
 
   @property
   def labels(self):
     return self._header
-
-  def create_dataset(
-      self,
-      partition: Literal['train', 'valid', 'test'] = 'train',
-      *,
-      batch_size: Optional[int] = 32,
-      drop_remainder: bool = False,
-      shuffle: int = 1000,
-      cache: Optional[str] = '',
-      prefetch: Optional[int] = tf.data.AUTOTUNE,
-      parallel: Optional[int] = tf.data.AUTOTUNE,
-      inc_labels: Union[bool, float] = False,
-      normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
-      seed: int = 1,
-  ) -> tf.data.Dataset:
-    r""" The default argument will downsize and crop the image to square size
-    (64, 64)
-
-    Arguments:
-      partition : {'train', 'valid', 'test'}
-      inc_labels : a Boolean or Scalar. If True, return both image and label,
-        otherwise, only image is returned.
-        If a scalar is provided, it indicate the percent of labelled data
-        in the mask.
-
-    Return :
-      tensorflow.data.Dataset :
-        image - `(tf.float32, (None, 64, 64, 3))`
-        label - `(tf.float32, (None, 40))`
-        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
-      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
-    """
-    image_shape = self.original_shape
-    image_size = self.image_size
-    if image_size is not None:
-      image_size = int(image_size)
-      height = int(float(image_size) / image_shape[1] * image_shape[0])
-      # offset_height, offset_width, target_height, target_width
-      crop_offset = ((height - image_size) // 2, 0, image_size, image_size)
-    inc_labels = float(inc_labels)
-    gen = tf.random.experimental.Generator.from_seed(seed=seed)
-
-    def read(path):
-      img = tf.io.decode_jpeg(tf.io.read_file(path))
-      img.set_shape(image_shape)
-      ## resize the image
-      if image_size is not None:
-        img = tf.image.resize(img, (height, image_size),
-                              method=tf.image.ResizeMethod.BILINEAR,
-                              preserve_aspect_ratio=True,
-                              antialias=True)
-        if self.square_image:
-          img = tf.image.crop_to_bounding_box(img, *crop_offset)
-      ## normalize the image
-      img = tf.cast(img, tf.float32)
-      if 'probs' in normalize:
-        img = self.normalize_255(img)
-      elif 'tanh' in normalize:
-        img = tf.clip_by_value(img / 255. * 2. - 1., -1. + 1e-6, 1. - 1e-6)
-      return img
-
-    def mask(image, label):
-      mask = gen.uniform(shape=(1,)) < inc_labels
-      return dict(inputs=(image, label), mask=mask)
-
-    ### select partition
-    images, attrs = get_partition(
-        partition,
-        train=(self.train_files, self.train_attr),
-        valid=(self.valid_files, self.valid_attr),
-        test=(self.test_files, self.test_attr),
-    )
-    # convert [-1, 1] to [0., 1.]
-    attrs = (attrs + 1.) / 2
-    images = tf.data.Dataset.from_tensor_slices(images)
-    images = images.map(read, num_parallel_calls=parallel)
-    if inc_labels:
-      attrs = tf.data.Dataset.from_tensor_slices(attrs)
-      images = tf.data.Dataset.zip((images, attrs))
-    # caching
-    if cache is not None:
-      images = images.cache(str(cache))
-    if 0. < inc_labels < 1.:  # semi-supervised mask
-      images = images.map(mask)
-    # shuffle must be called after cache
-    if shuffle is not None and shuffle > 0:
-      images = images.shuffle(int(shuffle),
-                              seed=seed,
-                              reshuffle_each_iteration=True)
-    if batch_size is not None:
-      images = images.batch(batch_size, drop_remainder)
-    if prefetch is not None:
-      images = images.prefetch(prefetch)
-    return images
 
 
 class CelebASmall(CelebA):

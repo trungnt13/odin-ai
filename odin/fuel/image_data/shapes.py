@@ -1,16 +1,13 @@
-import os
-from functools import partial
 from typing import Optional, Union
-from typing_extensions import Literal
 
 import numpy as np
 import tensorflow as tf
-from bigarray import MmapArray, MmapArrayWriter
-from odin.fuel.image_data._base import ImageDataset
-from odin.fuel.dataset_base import get_partition
-from odin.utils import batching
-from tqdm import tqdm
 from typeguard import typechecked
+from typing_extensions import Literal
+
+import tensorflow_datasets as tfds
+from odin.fuel.dataset_base import get_partition
+from odin.fuel.image_data._base import ImageDataset
 
 __all__ = [
     'Shapes3D',
@@ -32,10 +29,7 @@ class _ShapeDataset(ImageDataset):
                continuous: bool = True,
                seed: int = 1):
     super().__init__()
-    import tensorflow_datasets as tfds
-    tf.random.set_seed(seed)
     try:
-
       self.train, self.valid, self.test = tfds.load(
           name,
           split=["train[:85%]", "train[85%:90%]", "train[90%:]"],
@@ -65,134 +59,59 @@ class _ShapeDataset(ImageDataset):
       ])
       self.n_channels = 3
 
-  @property
-  def labels(self):
-    return self._factors
-
-  @property
-  def is_binary(self):
-    return False
-
-  @property
-  def shape(self):
-    return (self.image_size, self.image_size, self.n_channels)
-
-  def create_dataset(
-      self,
-      partition: Literal['train', 'valid', 'test'] = 'train',
-      *,
-      batch_size: Optional[int] = 32,
-      drop_remainder: bool = False,
-      shuffle: int = 1000,
-      cache: Optional[str] = '',
-      prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
-      parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
-      inc_labels: Union[bool, float] = False,
-      normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
-      seed: int = 1,
-  ) -> tf.data.Dataset:
-    """
-
-    Parameters
-    ----------
-    batch_size: A tf.int64 scalar tf.Tensor, representing the number of
-      consecutive elements of this dataset to combine in a single batch.
-    drop_remainder: A tf.bool scalar tf.Tensor, representing whether the
-      last batch should be dropped in the case it has fewer than batch_size
-      elements; the default behavior is not to drop the smaller batch.
-    shuffle: A tf.int64 scalar tf.Tensor, representing the number of elements
-      from this dataset from which the new dataset will sample.
-      If `None` or smaller or equal 0, turn off shuffling
-    prefetch:  A tf.int64 scalar tf.Tensor, representing the maximum number
-      of elements that will be buffered when prefetching.
-    cache: A tf.string scalar tf.Tensor, representing the name of a directory
-      on the filesystem to use for caching elements in this Dataset. If a
-      filename is not provided, the dataset will be cached in memory.
-      If `None`, turn off caching
-    parallel: A tf.int32 scalar tf.Tensor, representing the number elements
-      to process asynchronously in parallel. If not specified, elements will
-      be processed sequentially. If the value `tf.data.experimental.AUTOTUNE`
-      is used, then the number of parallel calls is set dynamically based
-      on available CPU.
-    partition : {'train', 'valid', 'test'}
-    inc_labels : a Boolean or Scalar. If True, return both image and label,
-      otherwise, only image is returned.
-      If a scalar is provided, it indicate the percent of labelled data
-      in the mask.
-
-    Return :
-      tensorflow.data.Dataset :
-        image - `(tf.float32, (None, 64, 64, 1))`
-        label - `(tf.float32, (None, 5))` for dSprites and  `(None, 6)` for Shapes3D
-        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
-      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
-    """
-    ds = get_partition(partition,
-                       train=self.train,
-                       valid=self.valid,
-                       test=self.test)
+    ### convert to tensorflow dataset
     factors = [f'{self._prefix}{i}' for i in self._factors]
-    inc_labels = float(inc_labels)
-    gen = tf.random.experimental.Generator.from_seed(seed=seed)
 
-    def _process(data):
+    @tf.function
+    def process(data):
       image = tf.cast(data['image'], tf.float32)
-      ## normalize the image
-      if self.dsname == 'shapes3d':  # shapes 3D
-        if 'probs' in normalize:
-          image = self.normalize_255(image)
-        elif 'tanh' in normalize:
-          image = tf.clip_by_value(image / 255. * 2. - 1., -1. + 1e-6,
-                                   1. - 1e-6)
-      else:  # shapes 2D
-        if 'probs' in normalize:
-          image = tf.clip_by_value(image, 1e-6, 1. - 1e-6)
-        elif 'tanh' in normalize:
-          image = tf.clip_by_value(image * 2. - 1., -1. + 1e-6, 1. - 1e-6)
-        else:
-          image = image * 255.
+      if self.dsname == 'dsprites':
+        image = image * 255.0
       ## resize the image
       if self.image_size != 64:
         image = tf.image.resize(image, (self.image_size, self.image_size),
                                 method=tf.image.ResizeMethod.BILINEAR,
                                 preserve_aspect_ratio=True,
                                 antialias=True)
-      ## process the labels
-      if inc_labels:
-        # dSprites shapes attribute is encoded as [1, 2, 3], should be [0, 1, 2]
-        label = []
-        for name in factors:
-          fi = data[name]
-          if self._continuous_labels:
-            if self.dsname == 'dsprites':
-              if 'orientation' in name:  # orientation
-                fi = fi - np.pi
-              elif 'shape' in name:  # shape
-                fi = fi - 1
-            else:
-              if 'orientation' in name:  # orientation
-                fi = fi / 30. * np.pi
-          label.append(fi)
-        label = tf.convert_to_tensor(label, dtype=tf.float32)
-        if 0. < inc_labels < 1.:  # semi-supervised mask
-          mask = gen.uniform(shape=(1,)) < inc_labels
-          return dict(inputs=(image, label), mask=mask)
-        return image, label
-      return image
+      # resize sampling would result numerical instable values
+      image = tf.clip_by_value(image, 0.0, 255.0)
+      # dSprites shapes attribute is encoded as [1, 2, 3], should be [0, 1, 2]
+      label = []
+      for name in factors:
+        fi = data[name]
+        if self._continuous_labels:
+          if self.dsname == 'dsprites':
+            if 'orientation' in name:  # orientation
+              fi = fi - np.pi
+            elif 'shape' in name:  # shape
+              fi = fi - 1
+          else:
+            if 'orientation' in name:  # orientation
+              fi = fi / 30. * np.pi
+        label.append(fi)
+      label = tf.convert_to_tensor(label, dtype=tf.float32)
+      return image, label
 
-    if cache is not None:
-      ds = ds.cache(str(cache))
-    ds = ds.map(_process, parallel)
-    # shuffle must be called after cache
-    if shuffle is not None and shuffle > 0:
-      ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
-    if batch_size is not None:
-      ds = ds.batch(batch_size, drop_remainder)
-    if prefetch is not None:
-      ds = ds.prefetch(prefetch)
-    return ds
+    self.train = self.train.map(process, num_parallel_calls=tf.data.AUTOTUNE)
+    self.valid = self.valid.map(process, num_parallel_calls=tf.data.AUTOTUNE)
+    self.test = self.test.map(process, num_parallel_calls=tf.data.AUTOTUNE)
+
+  @property
+  def labels(self):
+    return self._factors
+
+  @property
+  def binarized(self) -> bool:
+    return False
+
+  @property
+  def shape(self):
+    return (self.image_size, self.image_size, self.n_channels)
 
 
+# ===========================================================================
+# Shapes3D
+# ===========================================================================
 class Shapes3D(_ShapeDataset):
   """ The dataset must be manually downloaded from GCS at
     https://console.cloud.google.com/storage/browser/3d-shapes

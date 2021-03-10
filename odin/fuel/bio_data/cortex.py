@@ -6,7 +6,7 @@ from urllib.request import urlretrieve
 import numpy as np
 from scipy import sparse
 
-from odin.fuel.bio_data._base import BioDataset
+from odin.fuel.bio_data._base import GeneDataset
 
 
 def _load_single_cell_data(url, path):
@@ -45,7 +45,7 @@ def _load_single_cell_data(url, path):
   return x, y, xvar, yvar
 
 
-class Cortex(BioDataset):
+class Cortex(GeneDataset):
 
   def __init__(self, path="~/tensorflow_datasets/cortex"):
     super().__init__()

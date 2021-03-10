@@ -65,8 +65,8 @@ class Newsgroup20_clean(IterableDataset):
     self.train = train[ids[start:]]
     self.test = data['test']
 
-  @property
-  def data_type(self) -> str:
+  @classmethod
+  def data_type(cls) -> str:
     return 'text'
 
   @property

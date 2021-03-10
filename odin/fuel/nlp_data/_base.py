@@ -124,6 +124,10 @@ class NLPDataset(IterableDataset):
     self.algorithm = algorithm
     self._tokenizer = None
 
+  @classmethod
+  def data_type(cls) -> str:
+    return 'text'
+
   @property
   def shape(self) -> List[int]:
     return self.transform('train').shape[1:]

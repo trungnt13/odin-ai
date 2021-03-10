@@ -1,18 +1,20 @@
-import numpy as np
 from typing import Optional
+
+import numpy as np
 import tensorflow as tf
+
 import tensorflow_datasets as tfds
-from odin.fuel.image_data.all_mnist import BinarizedMNIST
+from odin.fuel.image_data._base import ImageDataset
 
 
-class Omniglot(BinarizedMNIST):
+class Omniglot(ImageDataset):
   """ Omniglot dataset """
 
-  def __init__(self, image_size: Optional[int] = 28):
+  def __init__(self, image_size: Optional[int] = 28, seed: int = 1):
     train, valid, test = tfds.load(name='omniglot',
                                    split=['train[:80%]', 'train[80%:]', 'test'],
                                    read_config=tfds.ReadConfig(
-                                       shuffle_seed=1,
+                                       shuffle_seed=seed,
                                        shuffle_reshuffle_each_iteration=True),
                                    as_supervised=True)
 
@@ -38,8 +40,11 @@ class Omniglot(BinarizedMNIST):
     self.train = train
     self.valid = valid
     self.test = test
-    self._image_size = int(28)
-    self._normalize = True
+    self._image_size = image_size
+
+  @property
+  def binarized(self):
+    return False
 
   @property
   def shape(self):

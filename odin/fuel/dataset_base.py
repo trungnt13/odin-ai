@@ -65,8 +65,8 @@ def _merge_tensor(data):
 # ===========================================================================
 class IterableDataset:
 
-  @property
-  def data_type(self) -> Literal['image', 'audio', 'text', 'gene']:
+  @classmethod
+  def data_type(cls) -> Literal['image', 'audio', 'text', 'gene']:
     raise NotImplementedError
 
   @property

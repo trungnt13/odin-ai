@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 from scipy import sparse
 
-from odin.fuel.bio_data._base import BioDataset
+from odin.fuel.bio_data._base import GeneDataset
 from odin.utils import one_hot
 from odin.utils.crypto import md5_checksum
 
@@ -19,7 +19,7 @@ _URL = [
 __all__ = ['Melanoma', 'Forebrain', 'Insilico', 'BreastTumor', 'Leukemia']
 
 
-class Melanoma(BioDataset):
+class Melanoma(GeneDataset):
   """melanoma ATAC data from (Bravo González-Blas, et al. 2019)
 
   References
@@ -118,28 +118,28 @@ def _load_scale_dataset(path, dsname):
   return x, labels, peak, np.array(list(ids.keys()))
 
 
-class Forebrain(BioDataset):
+class Forebrain(GeneDataset):
 
   def __init__(self, path: str = "~/tensorflow_datasets/scale_atac"):
     self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
         path=path, dsname="forebrain")
 
 
-class Insilico(BioDataset):
+class Insilico(GeneDataset):
 
   def __init__(self, path: str = "~/tensorflow_datasets/scale_atac"):
     self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
         path=path, dsname="insilico")
 
 
-class BreastTumor(BioDataset):
+class BreastTumor(GeneDataset):
 
   def __init__(self, path: str = "~/tensorflow_datasets/scale_atac"):
     self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(
         path=path, dsname="breast_tumor")
 
 
-class Leukemia(BioDataset):
+class Leukemia(GeneDataset):
 
   def __init__(self, path: str = "~/tensorflow_datasets/scale_atac"):
     self.x, self.y, self.xvar, self.yvar = _load_scale_dataset(

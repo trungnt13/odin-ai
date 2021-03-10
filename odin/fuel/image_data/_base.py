@@ -1,14 +1,26 @@
-from numbers import Number
+from typing import Optional, Union, List
+from typing_extensions import Literal
+
 import numpy as np
 import tensorflow as tf
-from odin.fuel.dataset_base import IterableDataset
+from odin.utils import as_tuple
+
+from odin.fuel.dataset_base import IterableDataset, get_partition
 
 
 class ImageDataset(IterableDataset):
 
   @property
+  def binarized(self) -> bool:
+    raise NotImplementedError
+
+  @classmethod
   def data_type(self) -> str:
     return 'image'
+
+  @property
+  def shape(self) -> List[int]:
+    raise NotImplementedError
 
   def sample_images(self,
                     save_path=None,
@@ -80,7 +92,124 @@ class ImageDataset(IterableDataset):
       plt.close(fig)
     return images
 
-  def normalize_255(self, image):
+  def normalize_255(self, image: tf.Tensor) -> tf.Tensor:
     return tf.clip_by_value(image / 255., 1e-6, 1. - 1e-6)
 
+  def normalize(self, image: tf.Tensor,
+                normalize: Literal['probs', 'tanh', 'raster']) -> tf.Tensor:
+    if self.binarized:
+      if 'raster' in normalize:
+        image = tf.clip_by_value(image * 255., 0.0, 255.0)
+      elif 'tanh' in normalize:
+        image = tf.clip_by_value(image * 2.0 - 1.0, -1.0 + 1e-6, 1.0 - 1e-6)
+    else:
+      image = tf.clip_by_value(image, 0.0, 255.0)
+      if 'probs' in normalize:
+        image = self.normalize_255(image)
+      elif 'tanh' in normalize:
+        image = tf.clip_by_value(image / 255. * 2.0 - 1.0, -1.0 + 1e-6,
+                                 1.0 - 1e-6)
+    return image
 
+  def create_dataset(
+      self,
+      partition: Literal['train', 'valid', 'test'] = 'train',
+      *,
+      batch_size: Optional[int] = 32,
+      batch_labeled_ratio: float = 0.5,
+      drop_remainder: bool = False,
+      shuffle: int = 1000,
+      cache: Optional[str] = '',
+      prefetch: Optional[int] = tf.data.AUTOTUNE,
+      parallel: Optional[int] = tf.data.AUTOTUNE,
+      inc_labels: Union[bool, float] = False,
+      normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
+      seed: int = 1,
+  ) -> tf.data.Dataset:
+    """
+    Parameters
+    -----------
+    partition : {'train', 'valid', 'test'}
+    inc_labels : a Boolean or Scalar. If True, return both image and label,
+      otherwise, only image is returned.
+      If a scalar is provided, it indicate the percent of labelled data
+      in the mask.
+
+    Return
+    -------
+    tensorflow.data.Dataset :
+      image - `(tf.float32, (None, 28, 28, 1))`
+      label - `(tf.float32, (None, 10))`
+      mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+    where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
+    """
+    ds = get_partition(partition,
+                       train=self.train,
+                       valid=self.valid,
+                       test=self.test)
+    struct = as_tuple(tf.data.experimental.get_structure(ds))
+    has_labels = False
+    ids = None
+    if len(struct) == 1:
+      inc_labels = False
+    else:
+      has_labels = True
+      ids = tf.range(self.n_labels, dtype=tf.float32)
+    inc_labels = float(inc_labels)
+    ## prepare the labeled data
+    rand = np.random.RandomState(seed=seed)
+    length = tf.data.experimental.cardinality(ds).numpy()
+    if 0. < inc_labels < 1. or inc_labels > 1.:
+      n_labeled = int(inc_labels * length \
+        if 0. < inc_labels < 1. else int(inc_labels))
+      n_unlabeled = length - n_labeled
+      labeled = np.array([True] * n_labeled + [False] * (length - n_labeled))
+      rand.shuffle(labeled)
+      ds = tf.data.Dataset.zip(
+          (tf.data.Dataset.from_tensor_slices(labeled), ds))
+      # oversampling the labeled
+      ds_labeled = ds.filter(lambda i, x: i)
+      ds_labeled = ds_labeled.shuffle(min(1000, n_labeled), seed=seed\
+        ).repeat().take(n_unlabeled)
+      # sampling from unlabled (False) and labeled (True) data
+      ds = ds.filter(lambda i, x: tf.logical_not(i)\
+        ).repeat().take(n_unlabeled)
+      # from collections import Counter # this is for debugging
+      # print(Counter([i for _, (_, i) in ds.as_numpy_iterator()]))
+      ds = tf.data.experimental.sample_from_datasets(
+          [ds, ds_labeled],
+          weights=[1. - batch_labeled_ratio, batch_labeled_ratio],
+          seed=seed)
+      # .repeat().take(n_unlabeled)
+    elif inc_labels == 0:
+      ds = ds.map(lambda *x: (False, x))
+    elif inc_labels == 1:
+      ds = ds.map(lambda *x: (True, x))
+
+    def _process(mask, data):
+      image = tf.cast(data[0], tf.float32)
+      # normalize the image
+      image = self.normalize(image, normalize)
+      if has_labels:
+        label = tf.cast(data[1], tf.float32)
+        # covert to one-hot
+        if len(label.shape) == 0:
+          label = tf.cast(ids == label, tf.float32)
+          label = label * tf.cast(mask, tf.float32)
+      if inc_labels == 0:
+        return image
+      elif inc_labels == 1:
+        return image, label
+      return dict(inputs=(image, label), mask=mask)
+
+    ds = ds.map(_process, parallel)
+    if cache is not None:
+      ds = ds.cache(str(cache))
+    # shuffle must be called after cache
+    if shuffle is not None and shuffle > 0:
+      ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
+    if batch_size is not None:
+      ds = ds.batch(batch_size, drop_remainder)
+    if prefetch is not None:
+      ds = ds.prefetch(prefetch)
+    return ds

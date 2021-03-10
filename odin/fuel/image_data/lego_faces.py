@@ -1,5 +1,4 @@
 import glob
-import inspect
 import os
 import re
 import shutil
@@ -8,20 +7,21 @@ import zipfile
 from collections import Counter
 from functools import partial
 from itertools import chain
-from numbers import Number
-from urllib.request import urlretrieve
 from typing import Optional, Union
-from typing_extensions import Literal
+from urllib.request import urlretrieve
 
 import numpy as np
+import pandas as pd
 import tensorflow as tf
-from odin.fuel.image_data._base import ImageDataset
-from odin.fuel.dataset_base import get_partition
-from odin.utils.crypto import md5_folder
-from odin.utils.mpi import MPI
 from six import string_types
+from typing_extensions import Literal
 from urllib3 import PoolManager
 from urllib3.exceptions import InsecureRequestWarning
+
+from odin.fuel.dataset_base import get_partition
+from odin.fuel.image_data._base import ImageDataset
+from odin.utils.crypto import md5_folder
+from odin.utils.mpi import MPI
 
 
 # ===========================================================================
@@ -285,7 +285,7 @@ def _extract_factors(images, descriptions, freq_threshold: int = 10):
 # Main classes
 # ===========================================================================
 class LegoFaces(ImageDataset):
-  r""" All credits to
+  """ All credits to
   Links:
     https://www.echevarria.io/blog/lego-face-vae/index.html
     https://github.com/iechevarria/lego-face-VAE
@@ -298,9 +298,9 @@ class LegoFaces(ImageDataset):
   MD5 = r"2ea2f858cbbed72e1a7348676921a3ac"
 
   def __init__(self,
-               path="~/tensorflow_datasets/lego_faces",
-               image_size=64,
-               background_threshold=255):
+               path: str = "~/tensorflow_datasets/lego_faces",
+               image_size: int = 64,
+               background_threshold: int = 255):
     super().__init__()
     path = os.path.abspath(os.path.expanduser(path))
     if not os.path.exists(path):
@@ -310,7 +310,6 @@ class LegoFaces(ImageDataset):
     if not os.path.exists(meta_path):
       print("Download lego faces metadata ...")
       meta_path, _ = urlretrieve(url=LegoFaces.METADATA, filename=meta_path)
-    import pandas as pd
     metadata = pd.read_csv(meta_path)
     metadata = metadata[metadata["Category Name"] == "Minifigure, Head"]
     ### check downloaded images
@@ -392,6 +391,13 @@ class LegoFaces(ImageDataset):
     self.valid = (self.images[int(0.8 * n):int(0.9 * n)],
                   self.factors[int(0.8 * n):int(0.9 * n)])
     self.test = (self.images[int(0.9 * n):], self.factors[int(0.9 * n):])
+    ### convert to tf Dataset
+    to_ds = lambda X_y: tf.data.Dataset.zip(
+        (tf.data.Dataset.from_tensor_slices(X_y[0]),
+         tf.data.Dataset.from_tensor_slices(X_y[1])))
+    self.train = to_ds(self.train)
+    self.valid = to_ds(self.valid)
+    self.test = to_ds(self.test)
 
   @property
   def labels(self):
@@ -403,64 +409,5 @@ class LegoFaces(ImageDataset):
     return (self.image_size, self.image_size, 3)
 
   @property
-  def is_binary(self):
+  def binarized(self):
     return False
-
-  def create_dataset(self,
-                     partition: Literal['train', 'valid', 'test'] = 'train',
-                     *,
-                     batch_size: Optional[int] = 32,
-                     drop_remainder: bool = False,
-                     shuffle: int = 1000,
-                     cache: Optional[str] = '',
-                     prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     inc_labels: Union[bool, float] = False,
-                     seed: int = 1) -> tf.data.Dataset:
-    r"""
-    Arguments:
-      partition : {'train', 'valid', 'test'}
-      inc_labels : a Boolean or Scalar. If True, return both image and label,
-        otherwise, only image is returned.
-        If a scalar is provided, it indicate the percent of labelled data
-        in the mask.
-
-    Return :
-      tensorflow.data.Dataset :
-        image - `(tf.float32, (None, 64, 64, 3))`
-        label - `(tf.float32, (None, 66))`
-        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
-      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
-    """
-    X, y = get_partition(partition,
-                         train=self.train,
-                         valid=self.valid,
-                         test=self.test)
-    inc_labels = float(inc_labels)
-    gen = tf.random.experimental.Generator.from_seed(seed=seed)
-
-    def _process(*data):
-      image = tf.cast(data[0], tf.float32)
-      image = self.normalize_255(image)
-      if inc_labels:
-        label = tf.cast(data[1], tf.float32)
-        if 0. < inc_labels < 1.:  # semi-supervised mask
-          mask = gen.uniform(shape=(1,)) < inc_labels
-          return dict(inputs=(image, label), mask=mask)
-        return image, label
-      return image
-
-    ds = tf.data.Dataset.from_tensor_slices(X)
-    if inc_labels:
-      ds = tf.data.Dataset.zip((ds, tf.data.Dataset.from_tensor_slices(y)))
-    if cache is not None:
-      ds = ds.cache(str(cache))
-    ds = ds.map(_process)
-    # shuffle must be called after cache
-    if shuffle is not None and shuffle > 0:
-      ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
-    if batch_size is not None:
-      ds = ds.batch(batch_size, drop_remainder)
-    if prefetch is not None:
-      ds = ds.prefetch(prefetch)
-    return ds

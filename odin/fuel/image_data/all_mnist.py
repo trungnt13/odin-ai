@@ -1,141 +1,40 @@
 import gzip
 import os
 from urllib.request import urlretrieve
-from typing import Optional, Union
-from typing_extensions import Literal
 
 import numpy as np
 import tensorflow as tf
+
 import tensorflow_datasets as tfds
-from odin.fuel.dataset_base import get_partition
 from odin.fuel.image_data._base import ImageDataset
 from odin.utils import md5_checksum, one_hot
-from odin.utils.net_utils import download_and_extract
-
-_binmnist = dict(train="http://www.cs.toronto.edu/~larocheh/public/"
-                 "datasets/binarized_mnist/binarized_mnist_train.amat",
-                 valid="http://www.cs.toronto.edu/~larocheh/public/datasets/"
-                 "binarized_mnist/binarized_mnist_valid.amat",
-                 test="http://www.cs.toronto.edu/~larocheh/public/datasets/"
-                 "binarized_mnist/binarized_mnist_test.amat")
 
 
 class BinarizedMNIST(ImageDataset):
   """ BinarizedMNIST """
 
   def __init__(self):
-    self._binarized = True
     self.train, self.valid, self.test = tfds.load(
         name='binarized_mnist',
         split=['train', 'validation', 'test'],
         read_config=tfds.ReadConfig(shuffle_seed=1,
                                     shuffle_reshuffle_each_iteration=True),
         as_supervised=False)
+    process = lambda x: x['image']
+    self.train = self.train.map(process)
+    self.valid = self.valid.map(process)
+    self.test = self.test.map(process)
+
+  @property
+  def binarized(self):
+    return True
 
   @property
   def shape(self):
     return (28, 28, 1)
 
-  def _mnist_normalize(self, image, normalize):
-    if self._binarized:
-      if 'raster' in normalize:
-        image = image * 255.
-      elif 'tanh' in normalize:
-        image = tf.clip_by_value(image * 2. - 1., -1. + 1e-6, 1. - 1e-6)
-    else:
-      if 'probs' in normalize:
-        image = self.normalize_255(image)
-      elif 'tanh' in normalize:
-        image = tf.clip_by_value(image / 255. * 2. - 1., -1 + 1e-6, 1. - 1e-6)
-    return image
 
-  def create_dataset(
-      self,
-      partition: Literal['train', 'valid', 'test'] = 'train',
-      *,
-      batch_size: Optional[int] = 32,
-      drop_remainder: bool = False,
-      shuffle: int = 1000,
-      cache: Optional[str] = '',
-      prefetch: Optional[int] = tf.data.AUTOTUNE,
-      parallel: Optional[int] = tf.data.AUTOTUNE,
-      inc_labels: Union[bool, float] = False,
-      normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
-      seed: int = 1,
-  ) -> tf.data.Dataset:
-    """
-    Parameters
-    -----------
-    partition : {'train', 'valid', 'test'}
-    inc_labels : a Boolean or Scalar. If True, return both image and label,
-      otherwise, only image is returned.
-      If a scalar is provided, it indicate the percent of labelled data
-      in the mask.
-
-    Return
-    -------
-    tensorflow.data.Dataset :
-      image - `(tf.float32, (None, 28, 28, 1))`
-      label - `(tf.float32, (None, 10))`
-      mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
-    where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
-    """
-    ds = get_partition(partition,
-                       train=self.train,
-                       valid=self.valid,
-                       test=self.test)
-    struct = tf.data.experimental.get_structure(ds)
-    if len(struct) == 1:
-      inc_labels = False
-    ids = tf.range(self.n_labels, dtype=tf.float32)
-    inc_labels = float(inc_labels)
-    gen = tf.random.experimental.Generator.from_seed(seed=seed)
-
-    def _process_dict(data):
-      image = tf.cast(data['image'], tf.float32)
-      ## normalize the image
-      image = self._mnist_normalize(image, normalize)
-      ## prepare labels
-      if inc_labels:
-        label = tf.cast(data['label'], tf.float32)
-        if len(label.shape) == 0:  # covert to one-hot
-          label = tf.cast(ids == label, tf.float32)
-        if 0. < inc_labels < 1.:  # semi-supervised mask
-          mask = gen.uniform(shape=(1,)) < inc_labels
-          return dict(inputs=(image, label), mask=mask)
-        return image, label
-      return image
-
-    def _process_tuple(*data):
-      image = tf.cast(data[0], tf.float32)
-      ## normalize the image
-      image = self._mnist_normalize(image, normalize)
-      ## prepare the labels
-      if inc_labels:
-        label = tf.cast(data[1], tf.float32)
-        if len(label.shape) == 0:  # covert to one-hot
-          label = tf.cast(ids == label, tf.float32)
-        if 0. < inc_labels < 1.:  # semi-supervised mask
-          mask = gen.uniform(shape=(1,)) < inc_labels
-          return dict(inputs=(image, label), mask=mask)
-        return image, label
-      return image
-
-    if cache is not None:
-      ds = ds.cache(str(cache))
-    ds = ds.map(_process_dict if isinstance(struct, dict) else _process_tuple,
-                parallel)
-    # shuffle must be called after cache
-    if shuffle is not None and shuffle > 0:
-      ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
-    if batch_size is not None:
-      ds = ds.batch(batch_size, drop_remainder)
-    if prefetch is not None:
-      ds = ds.prefetch(prefetch)
-    return ds
-
-
-class MNIST(BinarizedMNIST):
+class MNIST(ImageDataset):
   """Original MNIST from Yann Lecun:
 
       - 55000 examples for train,
@@ -152,7 +51,6 @@ class MNIST(BinarizedMNIST):
   MD5 = r"8ba71f60dccd53a0b68bfe41ed4cdf9c"
 
   def __init__(self, path: str = '~/tensorflow_datasets/mnist'):
-    self._binarized = False
     path = os.path.abspath(os.path.expanduser(path))
     save_path = os.path.join(path, 'mnist.npz')
     if not os.path.exists(path):
@@ -163,7 +61,7 @@ class MNIST(BinarizedMNIST):
     all_data = None
     if os.path.exists(save_path):
       if not os.path.isfile(save_path):
-        raise ValueError("path to %s must be a file" % save_path)
+        raise ValueError(f"path to {save_path} must be a file")
       if md5_checksum(save_path) != MNIST.MD5:
         print("Miss match MD5 remove file at: ", save_path)
         os.remove(save_path)
@@ -231,6 +129,10 @@ class MNIST(BinarizedMNIST):
     return np.array([str(i) for i in range(10)])
 
   @property
+  def binarized(self):
+    return False
+
+  @property
   def shape(self):
     return (28, 28, 1)
 
@@ -240,8 +142,6 @@ class BinarizedAlphaDigits(BinarizedMNIST):
   39 examples of each class. """
 
   def __init__(self):
-    import tensorflow_datasets as tfds
-    self._binarized = True
     self.train, self.valid, self.test = tfds.load(
         name='binary_alpha_digits',
         split=['train[:70%]', 'train[70%:80%]', 'train[80%:]'],
@@ -252,17 +152,25 @@ class BinarizedAlphaDigits(BinarizedMNIST):
     )
 
   @property
+  def binarized(self):
+    return True
+
+  @property
   def shape(self):
     return (20, 16, 1)
+
+  @property
+  def labels(self):
+    return np.array([str(i) for i in range(10)] +
+                    [chr(i) for i in range(65, 91)])
 
 
 # ===========================================================================
 # Fashion MNIST
 # ===========================================================================
-class FashionMNIST(BinarizedMNIST):
+class FashionMNIST(ImageDataset):
 
   def __init__(self, seed: int = 1):
-    self._binarized = False
     self.train, self.valid, self.test = tfds.load(
         name='fashion_mnist',
         split=['train[:50000]', 'train[50000:]', 'test'],
@@ -272,6 +180,10 @@ class FashionMNIST(BinarizedMNIST):
         shuffle_files=True,
         with_info=False,
     )
+
+  @property
+  def binarized(self):
+    return False
 
   @property
   def labels(self):
@@ -288,10 +200,9 @@ class FashionMNIST(BinarizedMNIST):
 # ===========================================================================
 # SVHN
 # ===========================================================================
-class SVHN(BinarizedMNIST):
+class SVHN(ImageDataset):
 
   def __init__(self, inc_extra: bool = True):
-    self._binarized = False
     self.train, self.valid, self.test, self.extra = tfds.load(
         name='svhn_cropped',
         split=['train[:90%]', 'train[90%:]', 'test', 'extra'],
@@ -304,7 +215,7 @@ class SVHN(BinarizedMNIST):
       self.train = self.train.concatenate(self.extra)
 
   @property
-  def is_binary(self):
+  def binarized(self):
     return False
 
   @property

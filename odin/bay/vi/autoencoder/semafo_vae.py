@@ -331,8 +331,9 @@ class semafoDVAE(semafoVAE):
     ## MI objective
     self.labels = self.labels_q
     mi_y, mi_z = self._mi_loss(Q, py_z, training=training, mask=mask)
+    self.labels = self.labels_p
+    ## maximizing the MI
     llk[f'mi_{self.labels.name}'] = mi_y
     for z, mi in zip(as_tuple(self.latents), mi_z):
       llk[f'mi_{z.name}'] = mi
-    self.labels = self.labels_p
     return llk, kl

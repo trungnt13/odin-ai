@@ -19,7 +19,7 @@ def _tensor(x):
   return tf.data.Dataset.from_tensor_slices(x)
 
 
-class BioDataset(IterableDataset):
+class GeneDataset(IterableDataset):
 
   def __init__(self):
     super().__init__()
@@ -31,8 +31,8 @@ class BioDataset(IterableDataset):
     self.valid_ids = None
     self.test_ids = None
 
-  @property
-  def data_type(self) -> str:
+  @classmethod
+  def data_type(cls) -> str:
     return 'gene'
 
   def __str__(self):

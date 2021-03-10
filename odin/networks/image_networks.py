@@ -840,9 +840,9 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
   ### image networks
   if any(i in dataset_name for i in ('fashionmnist', 'mnist', 'omniglot')):
     if dataset_name == 'mnist':
-      max_iter = 100000
+      max_iter = 120000
     else:
-      max_iter = 180000
+      max_iter = 200000
     init_lr = 1e-3
     decay_steps = 10000
   elif any(i in dataset_name for i in ('cifar', 'svhn')):
@@ -855,9 +855,9 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
     init_lr = 0.001
     decay_steps = 10000
   elif 'dspritessmall' in dataset_name:
-    max_iter = 100000
+    max_iter = 200000
     init_lr = 0.001
-    decay_steps = 5000
+    decay_steps = 10000
   # sahpes datasets
   elif 'shapes3dsmall' in dataset_name:
     max_iter = 300000
