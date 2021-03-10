@@ -82,7 +82,7 @@ class Newsgroup20_clean(IterableDataset):
     return (self.train.shape[1],)
 
   @property
-  def is_binary(self) -> bool:
+  def binarized(self) -> bool:
     return False
 
   def create_dataset(self,

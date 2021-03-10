@@ -77,7 +77,7 @@ class GeneDataset(IterableDataset):
     return tuple(self.x.shape[1:])
 
   @property
-  def is_binary(self) -> bool:
+  def binarized(self) -> bool:
     return False
 
   def create_dataset(self,

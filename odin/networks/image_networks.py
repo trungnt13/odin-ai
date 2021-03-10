@@ -822,7 +822,8 @@ def get_networks(dataset_name: str,
 
 
 def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
-  """Return information for optimizing networks of given datasets
+  """Return information for optimizing networks of given datasets,
+  this is create with the assumption that batch_size=32
 
   Parameters
   ----------
@@ -837,58 +838,40 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
   """
   dataset_name = str(dataset_name).strip().lower()
   decay_rate = 0.996
+  decay_steps = 10000
   ### image networks
   if any(i in dataset_name for i in ('fashionmnist', 'mnist', 'omniglot')):
     if dataset_name == 'mnist':
-      max_iter = 120000
-    else:
       max_iter = 200000
+    else:
+      max_iter = 300000
     init_lr = 1e-3
-    decay_steps = 10000
   elif any(i in dataset_name for i in ('cifar', 'svhn')):
-    max_iter = 400000
+    max_iter = 500000
     init_lr = 1e-3
-    decay_steps = 20000
   # dsrpites datasets
   elif 'dsprites' in dataset_name:
-    max_iter = 200000
+    max_iter = 200000 if 'small' in dataset_name else 400000
     init_lr = 0.001
-    decay_steps = 10000
-  elif 'dspritessmall' in dataset_name:
-    max_iter = 200000
-    init_lr = 0.001
-    decay_steps = 10000
   # sahpes datasets
-  elif 'shapes3dsmall' in dataset_name:
-    max_iter = 300000
-    init_lr = 5e-4
-    decay_steps = 20000
   elif 'shapes3d' in dataset_name:
-    max_iter = 300000
+    max_iter = 300000 if 'small' in dataset_name else 500000
     init_lr = 1e-4
-    decay_steps = 10000
-  elif 'celebasmall' in dataset_name:
-    max_iter = 200000
-    init_lr = 5e-4
-    decay_steps = 10000
   elif 'celeba' in dataset_name:
-    max_iter = 500000
+    max_iter = 400000 if 'small' in dataset_name else 500000
     init_lr = 2e-4
-    decay_steps = 50000
   ### gene networks
   elif 'cortex' in dataset_name:
     max_iter = 30000
     init_lr = 1e-4
-    decay_steps = 5000
   elif 'pbmc' in dataset_name:
     max_iter = 50000
     init_lr = 1e-4
-    decay_steps = 8000
   else:
     raise NotImplementedError(
         f'No predefined optimizer information for dataset {dataset_name}')
   lr = tf.optimizers.schedules.ExponentialDecay(init_lr,
                                                 decay_steps=decay_steps,
                                                 decay_rate=decay_rate,
-                                                staircase=False)
+                                                staircase=True)
   return dict(max_iter=max_iter, learning_rate=lr)

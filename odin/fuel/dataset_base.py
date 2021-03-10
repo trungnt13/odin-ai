@@ -103,7 +103,7 @@ class IterableDataset:
     return (None,) + tuple([i for i in self.shape])
 
   @property
-  def is_binary(self) -> bool:
+  def binarized(self) -> bool:
     raise NotImplementedError()
 
   def create_dataset(self,

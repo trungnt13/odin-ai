@@ -53,7 +53,7 @@ class YDisentanglement(ImageDataset):
     return np.array(["num", "xoffset", "yoffset", "rotation"])
 
   @property
-  def is_binary(self):
+  def binarized(self):
     return True
 
   @property

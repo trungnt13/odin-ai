@@ -4,6 +4,7 @@ from typing_extensions import Literal
 import numpy as np
 import tensorflow as tf
 from odin.utils import as_tuple
+from collections import defaultdict
 
 from odin.fuel.dataset_base import IterableDataset, get_partition
 
@@ -21,6 +22,17 @@ class ImageDataset(IterableDataset):
   @property
   def shape(self) -> List[int]:
     raise NotImplementedError
+
+  @property
+  def is_binary_labels(self) -> bool:
+    if not hasattr(self, '_is_binary_labels'):
+      self._is_binary_labels = True
+      for _, y in self.train.take(10):
+        if y.shape.ndims == 0 and 'int' in str(y.dtype):
+          continue
+        if np.any(np.unique(y) != [0., 1.]):
+          self._is_binary_labels = False
+    return self._is_binary_labels
 
   def sample_images(self,
                     save_path=None,
@@ -115,7 +127,7 @@ class ImageDataset(IterableDataset):
       self,
       partition: Literal['train', 'valid', 'test'] = 'train',
       *,
-      batch_size: Optional[int] = 32,
+      batch_size: Optional[int] = 100,
       batch_labeled_ratio: float = 0.5,
       drop_remainder: bool = False,
       shuffle: int = 1000,
@@ -163,8 +175,22 @@ class ImageDataset(IterableDataset):
       n_labeled = int(inc_labels * length \
         if 0. < inc_labels < 1. else int(inc_labels))
       n_unlabeled = length - n_labeled
-      labeled = np.array([True] * n_labeled + [False] * (length - n_labeled))
-      rand.shuffle(labeled)
+      # for binary labels we could do stratified sampling
+      if self.is_binary_labels:
+        y_map = defaultdict(list)
+        for i, (_, y) in enumerate(ds):
+          y_map[np.argmax(y) if y.shape.ndims > 0 else y.numpy()].append(i)
+        n_per_classes = int(n_labeled / len(self.labels))
+        labeled_ids = np.stack([
+            rand.choice(v, size=n_per_classes, replace=False)
+            for k, v in y_map.items()
+        ])
+        labeled = np.full((length,), False, dtype=np.bool)
+        labeled[labeled_ids] = True
+      # just pseudo-random sampling
+      else:
+        labeled = np.array([True] * n_labeled + [False] * (length - n_labeled))
+        rand.shuffle(labeled)
       ds = tf.data.Dataset.zip(
           (tf.data.Dataset.from_tensor_slices(labeled), ds))
       # oversampling the labeled
