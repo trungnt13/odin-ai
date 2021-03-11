@@ -41,88 +41,14 @@ class MNIST(ImageDataset):
       - 5000 for valid, and
       - 10000 for test
   """
-  URL = dict(
-      X_train=r"http://yann.lecun.com/exdb/mnist/train-images-idx3-ubyte.gz",
-      y_train=r"http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz",
-      X_test=r"http://yann.lecun.com/exdb/mnist/t10k-images-idx3-ubyte.gz",
-      y_test=r"http://yann.lecun.com/exdb/mnist/t10k-labels-idx1-ubyte.gz",
-  )
 
-  MD5 = r"8ba71f60dccd53a0b68bfe41ed4cdf9c"
-
-  def __init__(self, path: str = '~/tensorflow_datasets/mnist'):
-    path = os.path.abspath(os.path.expanduser(path))
-    save_path = os.path.join(path, 'mnist.npz')
-    if not os.path.exists(path):
-      os.makedirs(path)
-    assert os.path.isdir(path)
-
-    ## check exist processed file
-    all_data = None
-    if os.path.exists(save_path):
-      if not os.path.isfile(save_path):
-        raise ValueError(f"path to {save_path} must be a file")
-      if md5_checksum(save_path) != MNIST.MD5:
-        print("Miss match MD5 remove file at: ", save_path)
-        os.remove(save_path)
-      else:
-        all_data = np.load(save_path)
-    ## download and extract
-    if all_data is None:
-      from tqdm import tqdm
-
-      def dl_progress(count, block_size, total_size):
-        kB = block_size * count / 1024.
-        prog.update(kB - prog.n)
-
-      read32 = lambda b: np.frombuffer(
-          b, dtype=np.dtype(np.uint32).newbyteorder('>'))[0]
-
-      all_data = {}
-      for name, url in MNIST.URL.items():
-        basename = os.path.basename(url)
-        zip_path = os.path.join(path, basename)
-        prog = tqdm(desc="Downloading %s" % basename, unit='kB')
-        urlretrieve(url, zip_path, dl_progress)
-        prog.clear()
-        prog.close()
-        with gzip.open(zip_path, "rb") as f:
-          magic = read32(f.read(4))
-          if magic not in (2051, 2049):
-            raise ValueError('Invalid magic number %d in MNIST image file: %s' %
-                             (magic, zip_path))
-          n = read32(f.read(4))
-          # images
-          if 'X_' in name:
-            rows = read32(f.read(4))
-            cols = read32(f.read(4))
-            buf = f.read(rows * cols * n)
-            data = np.frombuffer(buf, dtype=np.uint8)
-            data = data.reshape(n, rows, cols, 1)
-          # labels
-          else:
-            buf = f.read(n)
-            data = np.frombuffer(buf, dtype=np.uint8)
-            data = one_hot(data, 10)
-          all_data[name] = data
-      np.savez_compressed(save_path, **all_data)
-    ## split train, valid, test
-    rand = np.random.RandomState(seed=1)
-    ids = rand.permutation(all_data['X_train'].shape[0])
-    X_train = all_data['X_train'][ids]
-    y_train = all_data['y_train'][ids]
-    X_valid = X_train[:5000]
-    y_valid = y_train[:5000]
-    X_train = X_train[5000:]
-    y_train = y_train[5000:]
-    X_test = all_data['X_test']
-    y_test = all_data['y_test']
-    to_ds = lambda images, labels: tf.data.Dataset.zip(
-        (tf.data.Dataset.from_tensor_slices(images),
-         tf.data.Dataset.from_tensor_slices(labels)))
-    self.train = to_ds(X_train, y_train)
-    self.valid = to_ds(X_valid, y_valid)
-    self.test = to_ds(X_test, y_test)
+  def __init__(self):
+    self.train, self.valid, self.test = tfds.load(
+        name='mnist',
+        split=['train[:55000]', 'train[55000:]', 'test'],
+        read_config=tfds.ReadConfig(shuffle_seed=1,
+                                    shuffle_reshuffle_each_iteration=True),
+        as_supervised=True)
 
   @property
   def labels(self):
