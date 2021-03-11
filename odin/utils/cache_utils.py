@@ -39,13 +39,13 @@ def get_cache_memory():
   return _memory
 
 
-def cache_path():
-  r""" Get the directory path used for `cache_disk` """
+def get_cache_path() -> str:
+  """ Get the directory path used for `cache_disk` """
   return __cache_dir
 
 
 def cache_clear():
-  r""" Clear all cache stored by `cache_disk` """
+  """ Clear all cache stored by `cache_disk` """
   if os.path.exists(__cache_dir):
     shutil.rmtree(__cache_dir)
 

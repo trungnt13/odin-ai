@@ -1,12 +1,6 @@
-# References
-# ----------
-# Kim, H., Mnih, A., 2018. Disentangling by factorising,
-#   in: Dy, J., Krause, A. (Eds.), Proceedings of Machine
-#   Learning Research. PMLR, Stockholmsmässan, Stockholm
-#   Sweden, pp. 2649–2658.
 import inspect
 from functools import partial
-from typing import Callable, Dict, List, Optional, Tuple, Union
+from typing import Callable, Dict, List, Optional, Tuple, Union, Any
 
 import numpy as np
 import tensorflow as tf
@@ -821,7 +815,10 @@ def get_networks(dataset_name: str,
                    f'dataset with name="{dataset_name}"')
 
 
-def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
+def get_optimizer_info(
+    dataset_name: str,
+    batch_size: int = 100,
+) -> Dict[str, Any]:
   """Return information for optimizing networks of given datasets,
   this is create with the assumption that batch_size=32
 
@@ -839,37 +836,49 @@ def get_optimizer_info(dataset_name: str) -> Tuple[int, LearningRateSchedule]:
   dataset_name = str(dataset_name).strip().lower()
   decay_rate = 0.996
   decay_steps = 10000
+  init_lr = 1e-3
   ### image networks
-  if any(i in dataset_name for i in ('fashionmnist', 'mnist', 'omniglot')):
-    if dataset_name == 'mnist':
-      max_iter = 200000
-    else:
-      max_iter = 300000
-    init_lr = 1e-3
-  elif any(i in dataset_name for i in ('cifar', 'svhn')):
-    max_iter = 500000
-    init_lr = 1e-3
+  if dataset_name == 'mnist':
+    n_epochs = 1000
+    n_samples = 55000
+  elif dataset_name == 'fashionmnist':
+    n_epochs = 1500
+    n_samples = 55000
+  elif dataset_name == 'omniglot':
+    n_epochs = 1500
+    n_samples = 19280
+  elif 'svhn' in dataset_name:
+    n_epochs = 2500
+    n_samples = 69594
+  elif 'cifar' in dataset_name:
+    n_epochs = 4000
+    n_samples = 48000
   # dsrpites datasets
   elif 'dsprites' in dataset_name:
-    max_iter = 200000 if 'small' in dataset_name else 400000
-    init_lr = 0.001
+    n_epochs = 1000 if 'small' in dataset_name else 2000
+    n_samples = 663552
   # sahpes datasets
   elif 'shapes3d' in dataset_name:
-    max_iter = 300000 if 'small' in dataset_name else 500000
+    n_epochs = 2000 if 'small' in dataset_name else 3000
+    n_samples = 432000
     init_lr = 1e-4
   elif 'celeba' in dataset_name:
-    max_iter = 400000 if 'small' in dataset_name else 500000
+    n_epochs = 4000 if 'small' in dataset_name else 5000
+    n_samples = 162770
     init_lr = 2e-4
   ### gene networks
   elif 'cortex' in dataset_name:
-    max_iter = 30000
+    n_epochs = 500
+    n_samples = 5000
     init_lr = 1e-4
   elif 'pbmc' in dataset_name:
-    max_iter = 50000
+    n_epochs = 500
+    n_samples = 5000
     init_lr = 1e-4
   else:
     raise NotImplementedError(
         f'No predefined optimizer information for dataset {dataset_name}')
+  max_iter = int((n_samples / batch_size) * n_epochs)
   lr = tf.optimizers.schedules.ExponentialDecay(init_lr,
                                                 decay_steps=decay_steps,
                                                 decay_rate=decay_rate,

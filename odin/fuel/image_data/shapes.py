@@ -32,7 +32,7 @@ class _ShapeDataset(ImageDataset):
     try:
       self.train, self.valid, self.test = tfds.load(
           name,
-          split=["train[:85%]", "train[85%:90%]", "train[90%:]"],
+          split=["train[:90%]", "train[90%:95%]", "train[95%:]"],
           read_config=tfds.ReadConfig(shuffle_seed=seed,
                                       shuffle_reshuffle_each_iteration=True),
           shuffle_files=True)

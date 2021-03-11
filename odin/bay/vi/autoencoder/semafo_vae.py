@@ -337,3 +337,52 @@ class semafoDVAE(semafoVAE):
     for z, mi in zip(as_tuple(self.latents), mi_z):
       llk[f'mi_{z.name}'] = mi
     return llk, kl
+
+
+# ===========================================================================
+# Pairwise
+# ===========================================================================
+class semafoPVAE(semafoVAE):
+  """Semafo VAE using generative method for density-ratio estimation of
+  `D(q(y|z)||p(y|z))`
+  """
+
+  def __init__(self, mi_coef=1.0, name: str = 'SemafoPVAE', **kwargs):
+    super().__init__(mi_coef=mi_coef, name=name, **kwargs)
+
+  def elbo_components(self, inputs, training=None, mask=None):
+    ## unsupervised ELBO
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    X = X[0]
+    mask = tf.reshape(mask, (-1,))
+    X_u = tf.boolean_mask(X, tf.logical_not(mask), axis=0)
+    X_l = tf.boolean_mask(X, mask, axis=0)
+    y_l = tf.boolean_mask(y[0], mask, axis=0)
+    ## normal ELBO
+    llk_l, kl_l = super(annealingVAE, self).elbo_components(X_l,
+                                                            training=training)
+    P_l, Q_l = self.last_outputs
+    llk_u, kl_u = super(annealingVAE, self).elbo_components(X_u,
+                                                            training=training)
+    P_u, Q_u = self.last_outputs
+    ## merge the losses
+    llk = {}
+    for k, v in llk_l.items():
+      llk[k] = tf.concat([v, llk_u[k]], axis=0)
+    kl = {}
+    for k, v in kl_l.items():
+      kl[k] = tf.concat([v, kl_u[k]], axis=0)
+    ## supervised loss
+    py_z = P_l[-1]
+    llk[f"llk_{self.labels.name}"] = tf.reduce_mean(self.alpha *
+                                                    py_z.log_prob(y_l))
+    ## minimizing D(q(y|z)||p(y|z)) objective
+    # calculate the pair-wise distance between q(y|z) and p(y|z)
+    qy_z = P_u[-1]
+    z = tf.convert_to_tensor(qy_z)
+    llk_q = tf.expand_dims(qy_z.log_prob(z), axis=-1)
+    llk_p = py_z.log_prob(tf.expand_dims(z, axis=-2))
+    mi_y = tf.reduce_mean(llk_q - llk_p)
+    kl[f'kl_{self.labels.name}'] = self.mi_coef * mi_y
+    ## return
+    return llk, kl

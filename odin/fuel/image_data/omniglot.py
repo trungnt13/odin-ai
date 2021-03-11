@@ -11,12 +11,13 @@ class Omniglot(ImageDataset):
   """ Omniglot dataset """
 
   def __init__(self, image_size: Optional[int] = 28, seed: int = 1):
-    train, valid, test = tfds.load(name='omniglot',
-                                   split=['train[:80%]', 'train[80%:]', 'test'],
-                                   read_config=tfds.ReadConfig(
-                                       shuffle_seed=seed,
-                                       shuffle_reshuffle_each_iteration=True),
-                                   as_supervised=True)
+    train, valid, test = tfds.load(
+        name='omniglot',
+        split=['train[:90%]', 'train[90%:]', 'test'],
+        read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                    shuffle_reshuffle_each_iteration=True),
+        as_supervised=True,
+    )
 
     if image_size is None:
       image_size = 105

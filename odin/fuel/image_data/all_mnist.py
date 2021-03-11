@@ -173,7 +173,7 @@ class FashionMNIST(ImageDataset):
   def __init__(self, seed: int = 1):
     self.train, self.valid, self.test = tfds.load(
         name='fashion_mnist',
-        split=['train[:50000]', 'train[50000:]', 'test'],
+        split=['train[:55000]', 'train[55000:]', 'test'],
         as_supervised=True,
         read_config=tfds.ReadConfig(shuffle_seed=seed,
                                     shuffle_reshuffle_each_iteration=True),
@@ -202,10 +202,10 @@ class FashionMNIST(ImageDataset):
 # ===========================================================================
 class SVHN(ImageDataset):
 
-  def __init__(self, inc_extra: bool = True):
+  def __init__(self, inc_extra: bool = False):
     self.train, self.valid, self.test, self.extra = tfds.load(
         name='svhn_cropped',
-        split=['train[:90%]', 'train[90%:]', 'test', 'extra'],
+        split=['train[:95%]', 'train[95%:]', 'test', 'extra'],
         read_config=tfds.ReadConfig(shuffle_seed=1,
                                     shuffle_reshuffle_each_iteration=True),
         as_supervised=True,

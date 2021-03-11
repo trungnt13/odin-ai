@@ -124,7 +124,7 @@ class VAEStep(TrainStep):
 # Model
 # ===========================================================================
 class VariationalAutoencoder(VariationalModel):
-  r"""Base class for all variational autoencoder
+  """Base class for all variational autoencoder
 
   Parameters
   ----------
@@ -172,7 +172,7 @@ class VariationalAutoencoder(VariationalModel):
       decoder: LayerCreator = NetConf([512, 512],
                                       flatten_inputs=True,
                                       name="decoder"),
-      latents: LayerCreator = RVmeta(64,
+      latents: LayerCreator = RVmeta(16,
                                      'mvndiag',
                                      projection=True,
                                      name="latents"),

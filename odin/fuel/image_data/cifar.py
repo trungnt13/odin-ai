@@ -28,7 +28,7 @@ class CIFAR(ImageDataset):
       dsname = 'cifar100'
     self.train, self.valid, self.test = tfds.load(
         name=dsname,
-        split=['train[:45000]', 'train[45000:]', 'test'],
+        split=['train[:48000]', 'train[48000:]', 'test'],
         # as_supervised=True,
         read_config=tfds.ReadConfig(shuffle_seed=seed,
                                     shuffle_reshuffle_each_iteration=True),

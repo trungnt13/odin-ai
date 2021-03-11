@@ -1,5 +1,7 @@
-from typing import Optional, Union, List
+import os
+from typing import Optional, Union, List, Dict
 from typing_extensions import Literal
+import pickle
 
 import numpy as np
 import tensorflow as tf
@@ -7,6 +9,7 @@ from odin.utils import as_tuple
 from collections import defaultdict
 
 from odin.fuel.dataset_base import IterableDataset, get_partition
+from odin.utils.cache_utils import get_cache_path
 
 
 class ImageDataset(IterableDataset):
@@ -123,6 +126,25 @@ class ImageDataset(IterableDataset):
                                  1.0 - 1e-6)
     return image
 
+  def _build_stratified_map(self, partition) -> Dict[int, List[int]]:
+    name = f'_{self.name}_{partition}'
+    path = os.path.join(get_cache_path(), name)
+    if not os.path.exists(path):
+      ds = get_partition(partition,
+                         train=self.train,
+                         valid=self.valid,
+                         test=self.test)
+      y_map = defaultdict(list)
+      for i, (_, y) in enumerate(ds):
+        y_map[np.argmax(y) if y.shape.ndims > 0 else y.numpy()].append(i)
+      with open(path, 'wb') as f:
+        pickle.dump(y_map, f)
+      setattr(self, name, y_map)
+    if not hasattr(self, name):
+      with open(path, 'rb') as f:
+        setattr(self, name, pickle.load(f))
+    return getattr(self, name)
+
   def create_dataset(
       self,
       partition: Literal['train', 'valid', 'test'] = 'train',
@@ -138,18 +160,40 @@ class ImageDataset(IterableDataset):
       normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
       seed: int = 1,
   ) -> tf.data.Dataset:
-    """
-    Parameters
-    -----------
-    partition : {'train', 'valid', 'test'}
-    inc_labels : a Boolean or Scalar. If True, return both image and label,
-      otherwise, only image is returned.
-      If a scalar is provided, it indicate the percent of labelled data
-      in the mask.
+    """Create `tensorflow.data.Dataset` for the loaded dataset
 
-    Return
+    Parameters
+    ----------
+    partition : {'train', 'valid', 'test'}
+        [description], by default 'train'
+    batch_size : Optional[int], optional
+        [description], by default 100
+    batch_labeled_ratio : float, optional
+        [description], by default 0.5
+    drop_remainder : bool, optional
+        [description], by default False
+    shuffle : int, optional
+        [description], by default 1000
+    cache : Optional[str], optional
+        [description], by default ''
+    prefetch : Optional[int], optional
+        [description], by default tf.data.AUTOTUNE
+    parallel : Optional[int], optional
+        [description], by default tf.data.AUTOTUNE
+    inc_labels : Union[bool, float], optional
+        If True, return both image and label,
+        otherwise, only image is returned.
+        If a scalar is provided, it indicate the percent of labelled data
+        in the mask.
+        , by default False
+    normalize : Literal[, optional
+        [description], by default 'probs'
+    seed : int, optional
+        [description], by default 1
+
+    Returns
     -------
-    tensorflow.data.Dataset :
+    tf.data.Dataset
       image - `(tf.float32, (None, 28, 28, 1))`
       label - `(tf.float32, (None, 10))`
       mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
@@ -175,12 +219,10 @@ class ImageDataset(IterableDataset):
       n_labeled = int(inc_labels * length \
         if 0. < inc_labels < 1. else int(inc_labels))
       n_unlabeled = length - n_labeled
+      n_per_classes = int(n_labeled / len(self.labels))
       # for binary labels we could do stratified sampling
       if self.is_binary_labels:
-        y_map = defaultdict(list)
-        for i, (_, y) in enumerate(ds):
-          y_map[np.argmax(y) if y.shape.ndims > 0 else y.numpy()].append(i)
-        n_per_classes = int(n_labeled / len(self.labels))
+        y_map = self._build_stratified_map(partition)
         labeled_ids = np.stack([
             rand.choice(v, size=n_per_classes, replace=False)
             for k, v in y_map.items()
