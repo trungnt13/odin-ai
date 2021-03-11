@@ -3,8 +3,8 @@ from os import path
 from setuptools import find_packages, setup
 
 ODIN_VERSION = '1.3.0'
-TENSORFLOW_VERSION = '2.3.1'
-TFP_VERSION = '0.11.1'
+TENSORFLOW_VERSION = '2.4.1'
+TFP_VERSION = '0.12.1'
 PYTORCH_VERSION = '1.7.0'
 TORCHVISION_VERSION = '1.6.0'
 
@@ -12,12 +12,12 @@ TORCHVISION_VERSION = '1.6.0'
 # Dependencies
 # ===========================================================================
 dependencies = [
-    'numpy>=1.0.0',
+    'numpy',
     'scipy',
     f"tensorflow=={TENSORFLOW_VERSION}",
     f'tensorflow-probability=={TFP_VERSION}',
     f'torch=={PYTORCH_VERSION}',
-    f'pyro-ppl',
+    'pyro-ppl',
     'tensorflow-addons',
     'tensorflow-datasets',
     'transformers',
@@ -30,7 +30,7 @@ dependencies = [
     'tqdm',
     'pyyaml',
     'pycrypto',
-    'typeguard' # runtime type check
+    'typeguard'  # runtime type check
 ]
 # ===========================================================================
 # Description
