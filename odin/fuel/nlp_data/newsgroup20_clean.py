@@ -94,7 +94,7 @@ class Newsgroup20_clean(IterableDataset):
                      cache: Optional[str] = '',
                      prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
                      parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     inc_labels: Union[bool, float] = False,
+                     label_percent: Union[bool, float] = False,
                      seed: int = 1) -> tf.data.Dataset:
     x = get_partition(partition,
                       train=self.train,

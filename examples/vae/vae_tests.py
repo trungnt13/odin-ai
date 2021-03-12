@@ -105,11 +105,11 @@ def main(cfg: dict):
   model_kw = {k: v for k, v in cfg.items() if k in model_kw}
   is_semi_supervised = ds.has_labels and model.is_semi_supervised()
   if is_semi_supervised:
-    train = ds.create_dataset(partition='train', inc_labels=0.1, **ds_kw)
-    valid = ds.create_dataset(partition='valid', inc_labels=1.0, **ds_kw)
+    train = ds.create_dataset(partition='train', label_percent=0.1, **ds_kw)
+    valid = ds.create_dataset(partition='valid', label_percent=1.0, **ds_kw)
   else:
-    train = ds.create_dataset(partition='train', inc_labels=0., **ds_kw)
-    valid = ds.create_dataset(partition='valid', inc_labels=0., **ds_kw)
+    train = ds.create_dataset(partition='train', label_percent=0., **ds_kw)
+    valid = ds.create_dataset(partition='valid', label_percent=0., **ds_kw)
   ### create the model
   vae = model(path=model_path,
               **get_networks(cfg.ds,

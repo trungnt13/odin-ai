@@ -89,7 +89,7 @@ class GeneDataset(IterableDataset):
                      prefetch: int = tf.data.experimental.AUTOTUNE,
                      cache: str = '',
                      parallel: Optional[int] = None,
-                     inc_labels: bool = False,
+                     label_percent: bool = False,
                      seed: int = 1) -> tf.data.Dataset:
     for attr in ('x', 'y', 'xvar', 'yvar'):
       assert hasattr(self, attr)
@@ -119,14 +119,14 @@ class GeneDataset(IterableDataset):
       if is_sparse_y and len(data) > 1:
         data[1] = tf.sparse.to_dense(data[1])
       data = tuple(data)
-      if inc_labels:
-        if 0. < inc_labels < 1.:  # semi-supervised mask
-          mask = gen.uniform(shape=(1,)) < inc_labels
+      if label_percent:
+        if 0. < label_percent < 1.:  # semi-supervised mask
+          mask = gen.uniform(shape=(1,)) < label_percent
           return dict(inputs=data, mask=mask)
       return data[0] if len(data) == 1 else data
 
     ds = x
-    if inc_labels > 0.:
+    if label_percent > 0.:
       ds = tf.data.Dataset.zip((x, y))
     if cache is not None:
       ds = ds.cache(str(cache))

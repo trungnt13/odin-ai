@@ -142,7 +142,7 @@ def main(cfg: dict):
                             shuffle=2000,
                             drop_remainder=True)
   valid = ds.create_dataset(partition='valid', batch_size=batch_size)
-  x_test, y_test = ds.numpy(partition='test', shuffle=None, inc_labels=True)
+  x_test, y_test = ds.numpy(partition='test', shuffle=None, label_percent=True)
   y_test = ds.labels[np.argmax(y_test, axis=-1)]
   # create the model
   vae_class = vi.get_vae(cfg.vae)

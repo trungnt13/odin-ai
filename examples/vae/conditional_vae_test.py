@@ -28,8 +28,8 @@ tf.random.set_seed(1)
 np.random.seed(1)
 
 ds = MNIST()
-train = ds.create_dataset(partition='train', inc_labels=0.5)
-test = ds.create_dataset(partition='test', inc_labels=True)
+train = ds.create_dataset(partition='train', label_percent=0.5)
+test = ds.create_dataset(partition='test', label_percent=True)
 encoder, decoder = create_image_autoencoder(image_shape=(28, 28, 1),
                                             input_shape=(28, 28, 2),
                                             center0=True,

@@ -94,7 +94,7 @@ def evaluate(vae,
   # careful don't allow any data leakage!
   train = ds.create_dataset('train',
                             batch_size=batch_size,
-                            inc_labels=True,
+                            label_percent=True,
                             shuffle=False,
                             normalize='tanh' if tanh else 'probs')
   data = [(vae.encode(x, training=False), y) \
@@ -110,7 +110,7 @@ def evaluate(vae,
   ## data for testing
   test = ds.create_dataset('test',
                            batch_size=batch_size,
-                           inc_labels=True,
+                           label_percent=True,
                            shuffle=False,
                            normalize='tanh' if tanh else 'probs')
   prog = tqdm(test, desc=title)
@@ -293,11 +293,11 @@ def run_task(args, evaluation=False):
   tanh_norm = True if dsname == 'celeba' else False
   train = ds.create_dataset('train',
                             batch_size=32,
-                            inc_labels=py,
+                            label_percent=py,
                             normalize='tanh' if tanh_norm else 'probs')
   valid = ds.create_dataset('valid',
                             batch_size=32,
-                            inc_labels=True,
+                            label_percent=True,
                             normalize='tanh' if tanh_norm else 'probs').shuffle(
                                 1000, seed=1, reshuffle_each_iteration=True)
   ######## model

@@ -2,14 +2,28 @@ import os
 from typing import Optional, Union, List, Dict
 from typing_extensions import Literal
 import pickle
+from functools import partial
 
 import numpy as np
 import tensorflow as tf
 from odin.utils import as_tuple
 from collections import defaultdict
+from tqdm import tqdm
 
 from odin.fuel.dataset_base import IterableDataset, get_partition
 from odin.utils.cache_utils import get_cache_path
+
+
+def _extract_labeled_examples(ds, normalize_method=None):
+  x_labeled, y_labeled = [], []
+  for m, (x, y) in tqdm(ds.batch(1024), desc='Extracting labeled examples'):
+    x_labeled.append(tf.boolean_mask(x, m, 0))
+    y_labeled.append(tf.boolean_mask(y, m, 0))
+  x_labeled = tf.concat(x_labeled, 0)
+  if normalize_method is not None:
+    x_labeled = normalize_method(tf.cast(x_labeled, tf.float32))
+  y_labeled = tf.concat(y_labeled, 0)
+  return x_labeled, y_labeled
 
 
 class ImageDataset(IterableDataset):
@@ -48,7 +62,7 @@ class ImageDataset(IterableDataset):
     assert n * n == n_samples, "Sqrt of n_samples is not an integer"
     train = self.create_dataset(batch_size=n_samples,
                                 partition=str(partition),
-                                inc_labels=0.5)
+                                label_percent=0.5)
     # prepare the data
     images = []
     labels = []
@@ -145,18 +159,22 @@ class ImageDataset(IterableDataset):
         setattr(self, name, pickle.load(f))
     return getattr(self, name)
 
+  def _get_labeled(self, partition, n_labeled, seed):
+    pass
+
   def create_dataset(
       self,
       partition: Literal['train', 'valid', 'test'] = 'train',
       *,
       batch_size: Optional[int] = 100,
-      batch_labeled_ratio: float = 0.5,
       drop_remainder: bool = False,
       shuffle: int = 1000,
       cache: Optional[str] = '',
       prefetch: Optional[int] = tf.data.AUTOTUNE,
       parallel: Optional[int] = tf.data.AUTOTUNE,
-      inc_labels: Union[bool, float] = False,
+      label_percent: float = 0.0,
+      repeat_label: bool = False,
+      batch_label_ratio: Optional[float] = None,
       normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
       seed: int = 1,
   ) -> tf.data.Dataset:
@@ -168,8 +186,6 @@ class ImageDataset(IterableDataset):
         [description], by default 'train'
     batch_size : Optional[int], optional
         [description], by default 100
-    batch_labeled_ratio : float, optional
-        [description], by default 0.5
     drop_remainder : bool, optional
         [description], by default False
     shuffle : int, optional
@@ -180,12 +196,17 @@ class ImageDataset(IterableDataset):
         [description], by default tf.data.AUTOTUNE
     parallel : Optional[int], optional
         [description], by default tf.data.AUTOTUNE
-    inc_labels : Union[bool, float], optional
+    label_percent : Union[bool, float], optional
         If True, return both image and label,
         otherwise, only image is returned.
         If a scalar is provided, it indicate the percent of labelled data
         in the mask.
         , by default False
+    repeat_label : bool
+        repeat all the labels examples in each batch to ensure that
+        every update contains all of the labeled information available.
+    batch_label_ratio : float, optional
+        [description], by default 0.5
     normalize : Literal[, optional
         [description], by default 'probs'
     seed : int, optional
@@ -196,28 +217,35 @@ class ImageDataset(IterableDataset):
     tf.data.Dataset
       image - `(tf.float32, (None, 28, 28, 1))`
       label - `(tf.float32, (None, 10))`
-      mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+      mask  - `(tf.bool, (None, 1))` if 0. < label_percent < 1.
     where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
     ds = get_partition(partition,
                        train=self.train,
                        valid=self.valid,
                        test=self.test)
+    ######## check labels available
     struct = as_tuple(tf.data.experimental.get_structure(ds))
     has_labels = False
-    ids = None
     if len(struct) == 1:
-      inc_labels = False
+      label_percent = 0.0
     else:
       has_labels = True
-      ids = tf.range(self.n_labels, dtype=tf.float32)
-    inc_labels = float(inc_labels)
-    ## prepare the labeled data
+    label_percent = float(label_percent)
+    if batch_label_ratio is not None:
+      if repeat_label:
+        raise ValueError('batch_label_ratio and repeat_label cannot be '
+                         'enabled at the same time.')
+      assert 0. < batch_label_ratio < 1., \
+        f'batch_label_ration must be in (0, 1) given: {batch_label_ratio}'
+
+    ######## prepare the labeled data
     rand = np.random.RandomState(seed=seed)
     length = tf.data.experimental.cardinality(ds).numpy()
-    if 0. < inc_labels < 1. or inc_labels > 1.:
-      n_labeled = int(inc_labels * length \
-        if 0. < inc_labels < 1. else int(inc_labels))
+    x_labeled, y_labeled, mask_labeled, ds_labeled = [], [], None, None
+    if 0. < label_percent < 1. or label_percent > 1.:
+      n_labeled = int(label_percent * length \
+        if 0. < label_percent < 1. else int(label_percent))
       n_unlabeled = length - n_labeled
       n_per_classes = int(n_labeled / len(self.labels))
       # for binary labels we could do stratified sampling
@@ -236,48 +264,71 @@ class ImageDataset(IterableDataset):
       ds = tf.data.Dataset.zip(
           (tf.data.Dataset.from_tensor_slices(labeled), ds))
       # oversampling the labeled
-      ds_labeled = ds.filter(lambda i, x: i)
-      ds_labeled = ds_labeled.shuffle(min(1000, n_labeled), seed=seed\
-        ).repeat()
-      # sampling from unlabled (False) and labeled (True) data
-      ds = ds.filter(lambda i, x: tf.logical_not(i)\
-        ).repeat()
-      # from collections import Counter # this is for debugging
-      # print(Counter([i for _, (_, i) in ds.as_numpy_iterator()]))
-      ds = tf.data.experimental.sample_from_datasets(
-          [ds, ds_labeled],
-          weights=[1. - batch_labeled_ratio, batch_labeled_ratio],
-          seed=seed)
-      # .repeat().take(n_unlabeled)
-    elif inc_labels == 0:
+      if repeat_label:
+        x_labeled, y_labeled = _extract_labeled_examples(
+            ds, partial(self.normalize, normalize=normalize))
+        if y_labeled.shape.ndims == 1:
+          y_labeled = tf.one_hot(y_labeled, len(self.labels))
+        mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
+        ds = ds.filter(lambda i, x: tf.logical_not(i))
+      elif batch_label_ratio is not None:
+        # for some reason sample_from_datasets significantly slowed down
+        # if we sample from a single dataset that splitted into two by filtering,
+        # and one of which is repeated
+        # (e.g. 7000 samples/s dropped down to 1000 samples/s)
+        x_labeled, y_labeled = _extract_labeled_examples(ds, None)
+        mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
+        ds_labeled = tf.data.Dataset.from_tensor_slices(
+            (mask_labeled, (x_labeled, y_labeled)))
+        n_repeat = int(
+            np.ceil(batch_label_ratio * n_unlabeled / (1 - batch_label_ratio) /
+                    n_labeled))
+        ds_labeled = ds_labeled.shuffle(
+            1000,
+            seed=seed,
+            reshuffle_each_iteration=True,
+        ).repeat(n_repeat)
+        ds_unlabeled = ds.filter(lambda i, x: tf.logical_not(i))
+        ds = tf.data.experimental.sample_from_datasets(
+            [ds_unlabeled, ds_labeled],
+            weights=[1. - batch_label_ratio, batch_label_ratio],
+            seed=seed)
+    ######## other cases
+    elif label_percent == 0:
       ds = ds.map(lambda *x: (False, x))
-    elif inc_labels == 1:
+    elif label_percent == 1:
       ds = ds.map(lambda *x: (True, x))
 
     def _process(mask, data):
-      image = tf.cast(data[0], tf.float32)
+      images = tf.cast(data[0], tf.float32)
       # normalize the image
-      image = self.normalize(image, normalize)
+      images = self.normalize(images, normalize)
       if has_labels:
-        label = tf.cast(data[1], tf.float32)
+        labels = data[1]
         # covert to one-hot
-        if len(label.shape) == 0:
-          label = tf.cast(ids == label, tf.float32)
-          label = label * tf.cast(mask, tf.float32)
-      if inc_labels == 0:
-        return image
-      elif inc_labels == 1:
-        return image, label
-      return dict(inputs=(image, label), mask=mask)
+        if len(labels.shape) == 1:
+          labels = tf.one_hot(labels, len(self.labels))
+        labels = labels * tf.cast(tf.expand_dims(mask, -1), tf.float32)
+      if label_percent == 0:
+        return images
+      elif label_percent == 1:
+        return images, labels
+      if repeat_label:
+        images = tf.concat([images, x_labeled], axis=0)
+        labels = tf.concat([labels, y_labeled], axis=0)
+        mask = tf.concat([mask, mask_labeled], axis=0)
+      return dict(inputs=(images, labels), mask=mask)
 
-    ds = ds.map(_process, parallel)
-    if cache is not None:
-      ds = ds.cache(str(cache))
     # shuffle must be called after cache
     if shuffle is not None and shuffle > 0:
-      ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
+      ds = ds.shuffle(buffer_size=int(shuffle),
+                      seed=seed,
+                      reshuffle_each_iteration=True)
     if batch_size is not None:
-      ds = ds.batch(batch_size, drop_remainder)
+      ds = ds.batch(batch_size, drop_remainder=drop_remainder)
+    ds = ds.map(_process, num_parallel_calls=parallel)
+    if cache is not None:
+      ds = ds.cache(filename=str(cache))
     if prefetch is not None:
-      ds = ds.prefetch(prefetch)
+      ds = ds.prefetch(buffer_size=prefetch)
     return ds

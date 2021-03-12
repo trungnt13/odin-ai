@@ -69,12 +69,12 @@ class YDisentanglement(ImageDataset):
                      cache: Optional[str] = '',
                      prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
                      parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     inc_labels: Union[bool, float] = False,
+                     label_percent: Union[bool, float] = False,
                      seed: int = 1) -> tf.data.Dataset:
     r"""
     Arguments:
       partition : {'train', 'valid', 'test'}
-      inc_labels : a Boolean or Scalar. If True, return both image and label,
+      label_percent : a Boolean or Scalar. If True, return both image and label,
         otherwise, only image is returned.
         If a scalar is provided, it indicate the percent of labelled data
         in the mask.
@@ -83,7 +83,7 @@ class YDisentanglement(ImageDataset):
       tensorflow.data.Dataset :
         image - `(tf.float32, (None, 48, 48, 1))`
         label - `(tf.float32, (None, 4))`
-        mask  - `(tf.bool, (None, 1))` if 0. < inc_labels < 1.
+        mask  - `(tf.bool, (None, 1))` if 0. < label_percent < 1.
       where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
     """
     images, attributes = get_partition(partition,
@@ -93,16 +93,16 @@ class YDisentanglement(ImageDataset):
                                              self.attributes_test))
     images = tf.data.Dataset.from_tensor_slices(images)
     attributes = tf.data.Dataset.from_tensor_slices(attributes)
-    ds = tf.data.Dataset.zip((images, attributes)) if inc_labels else images
-    inc_labels = float(inc_labels)
+    ds = tf.data.Dataset.zip((images, attributes)) if label_percent else images
+    label_percent = float(label_percent)
     gen = tf.random.experimental.Generator.from_seed(seed=seed)
 
     def _process(*data):
       image = tf.expand_dims(tf.cast(data[0], tf.float32), -1)
-      if inc_labels:
+      if label_percent:
         label = tf.cast(data[1], tf.float32)
-        if 0. < inc_labels < 1.:  # semi-supervised mask
-          mask = gen.uniform(shape=(1,)) < inc_labels
+        if 0. < label_percent < 1.:  # semi-supervised mask
+          mask = gen.uniform(shape=(1,)) < label_percent
           return dict(inputs=(image, label), mask=mask)
         return image, label
       return image

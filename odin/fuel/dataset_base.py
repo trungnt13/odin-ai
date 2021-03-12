@@ -116,7 +116,7 @@ class IterableDataset:
                      prefetch: int = tf.data.experimental.AUTOTUNE,
                      cache: str = '',
                      parallel: Optional[int] = None,
-                     inc_labels: bool = False,
+                     label_percent: bool = False,
                      seed: int = 1) -> tf.data.Dataset:
     """ Create tensorflow Dataset """
     raise NotImplementedError()
@@ -130,7 +130,7 @@ class IterableDataset:
             parallel: Optional[int] = None,
             partition: Literal['train', 'valid', 'test',
                                'unlabelled'] = 'train',
-            inc_labels: bool = False,
+            label_percent: bool = False,
             seed: int = 1,
             verbose: bool = False):
     """Return the numpy data returned when iterate the partition"""

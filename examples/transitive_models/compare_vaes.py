@@ -71,11 +71,11 @@ def train_task(args):
   ds = get_dataset(dsname)
   train = ds.create_dataset('train',
                             batch_size=32,
-                            inc_labels=py,
+                            label_percent=py,
                             normalize=normalize)
   valid = ds.create_dataset('valid',
                             batch_size=32,
-                            inc_labels=True,
+                            label_percent=True,
                             normalize=normalize\
     ).shuffle(1000, seed=1, reshuffle_each_iteration=True)
   ######## model

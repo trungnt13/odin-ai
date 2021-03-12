@@ -77,15 +77,15 @@ class Factor(Experimenter):
     ds.sample_images(save_path=os.path.join(self.save_path, 'samples.png'))
     kw = dict(batch_size=128, drop_remainder=True)
     train = ds.create_dataset(partition='train',
-                              inc_labels=float(cfg.semi),
+                              label_percent=float(cfg.semi),
                               **kw)
-    train_u = ds.create_dataset(partition='train', inc_labels=False, **kw)
-    valid = ds.create_dataset(partition='valid', inc_labels=1.0, **kw)
-    valid_u = ds.create_dataset(partition='valid', inc_labels=False, **kw)
+    train_u = ds.create_dataset(partition='train', label_percent=False, **kw)
+    valid = ds.create_dataset(partition='valid', label_percent=1.0, **kw)
+    valid_u = ds.create_dataset(partition='valid', label_percent=False, **kw)
     # reduce batch_size here, otherwise, mllk take ~ 7GB VRAM
     kw['batch_size'] = 8
-    test = ds.create_dataset(partition='test', inc_labels=1.0, **kw)
-    test_u = ds.create_dataset(partition='test', inc_labels=False, **kw)
+    test = ds.create_dataset(partition='test', label_percent=1.0, **kw)
+    test_u = ds.create_dataset(partition='test', label_percent=False, **kw)
     self.ds = ds
     self.train, self.train_u = train, train_u
     self.valid, self.valid_u = valid, valid_u

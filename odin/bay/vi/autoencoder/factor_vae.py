@@ -418,8 +418,8 @@ class semifactor2VAE(semifactorVAE, factor2VAE):
 
   # load the dataset
   ds = MNIST()
-  train = ds.create_dataset(partition='train', inc_labels=0.3, batch_size=128)
-  valid = ds.create_dataset(partition='valid', inc_labels=1.0, batch_size=128)
+  train = ds.create_dataset(partition='train', label_percent=0.3, batch_size=128)
+  valid = ds.create_dataset(partition='valid', label_percent=1.0, batch_size=128)
 
   # construction of SemiFactor2VAE for MNIST dataset
   vae = SemiFactor2VAE(encoder='mnist',

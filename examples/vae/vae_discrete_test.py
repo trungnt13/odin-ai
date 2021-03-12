@@ -55,10 +55,10 @@ n_images = 10  # for visualization
 ds = BinarizedMNIST()
 train = ds.create_dataset(batch_size=batch_size,
                           partition='train',
-                          inc_labels=False)
+                          label_percent=False)
 test = ds.create_dataset(batch_size=batch_size,
                          partition='test',
-                         inc_labels=False)
+                         label_percent=False)
 input_shape = tf.data.experimental.get_structure(train).shape[1:]
 
 # ===========================================================================

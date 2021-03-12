@@ -835,35 +835,35 @@ def get_optimizer_info(
   """
   dataset_name = str(dataset_name).strip().lower()
   decay_rate = 0.996
-  decay_steps = 10000
+  decay_steps = 20000
   init_lr = 1e-3
   ### image networks
   if dataset_name == 'mnist':
-    n_epochs = 1000
+    n_epochs = 600
     n_samples = 55000
   elif dataset_name == 'fashionmnist':
-    n_epochs = 1500
+    n_epochs = 800
     n_samples = 55000
   elif dataset_name == 'omniglot':
-    n_epochs = 1500
+    n_epochs = 1000
     n_samples = 19280
   elif 'svhn' in dataset_name:
-    n_epochs = 2500
+    n_epochs = 1500
     n_samples = 69594
   elif 'cifar' in dataset_name:
-    n_epochs = 4000
+    n_epochs = 2000
     n_samples = 48000
   # dsrpites datasets
   elif 'dsprites' in dataset_name:
-    n_epochs = 1000 if 'small' in dataset_name else 2000
+    n_epochs = 200 if 'small' in dataset_name else 400
     n_samples = 663552
   # sahpes datasets
   elif 'shapes3d' in dataset_name:
-    n_epochs = 2000 if 'small' in dataset_name else 3000
+    n_epochs = 500 if 'small' in dataset_name else 800
     n_samples = 432000
     init_lr = 1e-4
   elif 'celeba' in dataset_name:
-    n_epochs = 4000 if 'small' in dataset_name else 5000
+    n_epochs = 2000 if 'small' in dataset_name else 3000
     n_samples = 162770
     init_lr = 2e-4
   ### gene networks

@@ -15,11 +15,11 @@ tf.random.set_seed(1)
 np.random.seed(1)
 
 ds = LegoFaces()
-train = ds.create_dataset(partition='train', inc_labels=True)
-train_l = ds.create_dataset(partition='train_labelled', inc_labels=True)
-test = ds.create_dataset(partition='test', inc_labels=True)
-train_u = ds.create_dataset(partition='train', inc_labels=False)
-test_u = ds.create_dataset(partition='test', inc_labels=False)
+train = ds.create_dataset(partition='train', label_percent=True)
+train_l = ds.create_dataset(partition='train_labelled', label_percent=True)
+test = ds.create_dataset(partition='test', label_percent=True)
+train_u = ds.create_dataset(partition='train', label_percent=False)
+test_u = ds.create_dataset(partition='test', label_percent=False)
 save_path = f'/tmp/{ds.name}.w'
 
 vae = multitaskVAE(encoder=ds.name,

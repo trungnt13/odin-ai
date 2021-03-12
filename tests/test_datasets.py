@@ -14,8 +14,8 @@ sns.set()
 ds = CIFAR10()
 p = []
 it = ds.create_dataset('train',
-                       inc_labels=100,
-                       batch_labeled_ratio=0.1,
+                       label_percent=100,
+                       batch_label_ratio=0.1,
                        normalize='raster',
                        drop_remainder=False).take(1404)
 all_labels = []
@@ -56,7 +56,7 @@ for ds in get_all_dataset('image'):
     for normalize in ('probs', 'tanh', 'raster'):
       print('  ', normalize)
       x = ds.create_dataset(partition,
-                            inc_labels=True,
+                            label_percent=True,
                             normalize=normalize,
                             drop_remainder=True)
       for data in x.shuffle(1000).take(10):

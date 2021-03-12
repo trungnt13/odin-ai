@@ -338,15 +338,15 @@ class DisentanglementGym:
     tf.random.set_seed(1)
     self._train = self.ds.create_dataset(batch_size=batch_size,
                                          partition='train',
-                                         inc_labels=True,
+                                         label_percent=True,
                                          shuffle=1000)
     self._valid = self.ds.create_dataset(batch_size=batch_size,
                                          partition='valid',
-                                         inc_labels=True,
+                                         label_percent=True,
                                          shuffle=1000)
     self._test = self.ds.create_dataset(batch_size=batch_size,
                                         partition='test',
-                                        inc_labels=True,
+                                        label_percent=True,
                                         shuffle=1000)
     self.vae = vae
     self.z_samples = vae.sample_prior(sample_shape=self._n_visual_samples,

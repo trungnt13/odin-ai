@@ -111,7 +111,7 @@ def main(cfg: dict):
   x_test, y_test = ds.numpy(partition='test',
                             batch_size=batch_size,
                             shuffle=1000,
-                            inc_labels=1.0)
+                            label_percent=1.0)
   y_test = ds.labels[np.argmax(y_test, axis=-1)]
   ## create the prior and the network
   pz = tfd.Sample(tfd.Normal(loc=0, scale=1), sample_shape=encoded_size)
