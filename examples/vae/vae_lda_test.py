@@ -15,7 +15,7 @@ from odin.bay import concat_distributions
 from odin.bay.layers import DistributionDense
 from odin.bay.vi import (AmortizedLDA, LatentDirichletDecoder, NetConf,
                          RVmeta, TwoStageLDA, VariationalAutoencoder,
-                         betaVAE, factorVAE, miVAE)
+                         BetaVAE, FactorVAE, MIVAE)
 from odin.training import Trainer, get_current_trainer
 from odin.training.experimenter import get_output_dir, run_hydra, save_to_yaml
 from odin.fuel import (Cortex, LeukemiaATAC, Newsgroup5, Newsgroup20,
@@ -203,7 +203,7 @@ def main(cfg):
             **fit_kw)
   ######## VDA - Variational Dirichlet Autoencoder
   elif cfg.model == 'vda':
-    vae = betaVAE(
+    vae = BetaVAE(
         beta=cfg.beta,
         encoder=NetConf([300, 150], name='Encoder'),
         decoder=NetConf([150, 300], name='Decoder'),
@@ -226,7 +226,7 @@ def main(cfg):
                    optimizer=tf.optimizers.Adam(learning_rate=1e-4)))
   ######## VAE
   elif cfg.model == 'vae':
-    vae = betaVAE(beta=cfg.beta,
+    vae = BetaVAE(beta=cfg.beta,
                   encoder=NetConf([300, 300], name='Encoder'),
                   decoder=NetConf([300], name='Decoder'),
                   latents=latent_dist,
@@ -243,7 +243,7 @@ def main(cfg):
                    optimizer=tf.optimizers.Adam(learning_rate=1e-4)))
   ######## factorVAE
   elif cfg.model == 'fvae':
-    vae = factorVAE(gamma=6.0,
+    vae = FactorVAE(gamma=6.0,
                     beta=cfg.beta,
                     encoder=NetConf([300, 150], name='Encoder'),
                     decoder=NetConf([150, 300], name='Decoder'),
@@ -267,7 +267,7 @@ def main(cfg):
   ######## TwoStageLDA
   elif cfg.model == 'lda2':
     vae0_iter = 10000
-    vae0 = betaVAE(beta=1.0,
+    vae0 = BetaVAE(beta=1.0,
                    encoder=NetConf(units=[300], name='Encoder'),
                    decoder=NetConf(units=[300, 300], name='Decoder'),
                    outputs=DistributionDense(

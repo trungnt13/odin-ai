@@ -1,6 +1,5 @@
 from __future__ import absolute_import, division, print_function
 
-import sys
 import collections
 import copy
 import dataclasses
@@ -8,6 +7,7 @@ import glob
 import inspect
 import os
 import pickle
+import sys
 import types
 from functools import partial
 from numbers import Number
@@ -16,11 +16,6 @@ from typing import (Any, Callable, Dict, Iterator, List, Optional, Text, Tuple,
 
 import numpy as np
 import tensorflow as tf
-from odin.backend.keras_helpers import layer2text
-from odin.backend.types_helpers import TensorTypes
-from odin.networks.util_layers import (Conv1DTranspose, Identity)
-from odin.training import Callback, EarlyStopping, Trainer
-from odin.utils import MD5object, as_tuple, classproperty
 from scipy import sparse
 from six import string_types
 from tensorflow import Tensor
@@ -28,21 +23,26 @@ from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.python import keras
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.keras.layers import Layer
-from tensorflow.python.keras.layers.convolutional import Conv as _Conv
 from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
 from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training.tracking import base as trackable
 from typing_extensions import Literal
 
+from odin.backend.keras_helpers import layer2text
+from odin.backend.types_helpers import TensorTypes
+from odin.networks.util_layers import (Conv1DTranspose, Identity)
+from odin.training import Callback, EarlyStopping, Trainer
+from odin.utils import MD5object, as_tuple, classproperty
+
 __all__ = [
-    'TrainStep',
-    'Networks',
-    'SequentialNetwork',
-    'dense_network',
-    'conv_network',
-    'deconv_network',
-    'NetConf',
+  'TrainStep',
+  'Networks',
+  'SequentialNetwork',
+  'dense_network',
+  'conv_network',
+  'deconv_network',
+  'NetConf',
 ]
 
 
@@ -66,8 +66,8 @@ def _as_arg_tuples(*args):
 def _infer_rank_and_input_shape(rank, input_shape):
   if rank is None and input_shape is None:
     raise ValueError(
-        "rank or input_shape must be given so the convolution type "
-        "can be determined.")
+      "rank or input_shape must be given so the convolution type "
+      "can be determined.")
   if rank is not None:
     if input_shape is not None:
       input_shape = _shape(input_shape)
@@ -119,7 +119,7 @@ def _to_dataset(x, batch_size, dtype):
                         values=x.data,
                         dense_shape=x.shape)
     x = tf.data.Dataset.from_tensor_slices(x).batch(batch_size).map(
-        lambda y: tf.cast(tf.sparse.to_dense(y), dtype))
+      lambda y: tf.cast(tf.sparse.to_dense(y), dtype))
   # numpy ndarray
   elif isinstance(x, np.ndarray) or tf.is_tensor(x):
     x = tf.data.Dataset.from_tensor_slices(x).batch(batch_size)
@@ -128,8 +128,24 @@ def _to_dataset(x, batch_size, dtype):
 
 @dataclasses.dataclass
 class TrainStep:
-  r""" Encapsulate a training step into a class, when called return
-  a tensor for loss value, and a dictionary of metrics for monitoring. """
+  """ Encapsulate a training step into a class, when called return
+  a tensor for loss value, and a dictionary of metrics for monitoring.
+
+  The `call` method is for overriding which return `Tuple[Tensor, Dict[str, Any]]`
+  are the loss scalar value and returned metrics dictionary.
+
+  Parameters
+  ----------
+  inputs : List[Tensor]
+      a single Tensor or list of inputs tensors
+  training : bool
+      flag indicating training mode
+  mask : Optional[Tensor]
+      mask Tensor
+  parameters : List[Variable]
+      list of trainable parameters
+
+  """
   inputs: TensorTypes
   training: bool
   mask: Optional[TensorTypes]
@@ -148,7 +164,7 @@ class TrainStep:
 
 
 class Networks(keras.Model, MD5object):
-  r""" A more civilized version of `keras.Model`, a container of multiple
+  """ A more civilized version of `keras.Model`, a container of multiple
   networks that serve a computational model. """
 
   def __new__(cls, *args, **kwargs):
@@ -308,7 +324,7 @@ class Networks(keras.Model, MD5object):
         super().load_weights(filepath, by_name=False, skip_mismatch=False)
       elif raise_notfound:
         raise FileNotFoundError(
-            f"Cannot find saved weights at path: {filepath}")
+          f"Cannot find saved weights at path: {filepath}")
       # load trainer
       trainer_path = filepath + '.trainer'
       if os.path.exists(trainer_path):
@@ -323,7 +339,7 @@ class Networks(keras.Model, MD5object):
   def save_weights(self,
                    filepath: Optional[str] = None,
                    overwrite: bool = True) -> 'Networks':
-    r""" Just copy this function here to fix the `save_format` to 'tf'
+    """ Just copy this function here to fix the `save_format` to 'tf'
 
     Since saving 'h5' will drop certain variables.
     """
@@ -344,7 +360,7 @@ class Networks(keras.Model, MD5object):
                   training: bool = True,
                   *args,
                   **kwargs
-                 ) -> Iterator[Callable[[], Tuple[Tensor, Dict[str, Any]]]]:
+                  ) -> Iterator[Callable[[], Tuple[Tensor, Dict[str, Any]]]]:
     yield TrainStep(inputs=inputs,
                     training=training,
                     parameters=self.trainable_variables,
@@ -416,7 +432,7 @@ class Networks(keras.Model, MD5object):
     n_optimizer = len(optimizer)
     ## start optimizing step-by-step
     iterator = enumerate(
-        self.train_steps(inputs=inputs, training=training, *args, **kwargs))
+      self.train_steps(inputs=inputs, training=training, *args, **kwargs))
     for step_idx, step in iterator:
       assert isinstance(step, TrainStep) or callable(step), \
         ("method train_steps must return an Iterator of TrainStep or callable, "
@@ -433,10 +449,9 @@ class Networks(keras.Model, MD5object):
           loss, metrics = step()
         ## backward pass, get the gradients
         gradients = tape.gradient(loss, parameters)
-        skip_update = False
         ## NaN policy
         is_nan = tf.reduce_any([
-            tf.reduce_any(tf.math.is_nan(g)) for g in gradients if g is not None
+          tf.reduce_any(tf.math.is_nan(g)) for g in gradients if g is not None
         ])
 
         def _true_nan():
@@ -468,12 +483,13 @@ class Networks(keras.Model, MD5object):
           skip_update_threshold = tf.constant(skip_update_threshold,
                                               dtype=self.dtype)
           skip_update = tf.reduce_any([
-              tf.reduce_any(tf.greater_equal(g, skip_update_threshold))
-              for g in gradients
-              if g is not None
+            tf.reduce_any(tf.greater_equal(g, skip_update_threshold))
+            for g in gradients
+            if g is not None
           ])
           skip_update = tf.logical_and(self.step >= when_skip_update,
                                        skip_update)
+
         ## skip update
         def _skipped():
           new_gradients = []
@@ -490,15 +506,15 @@ class Networks(keras.Model, MD5object):
                             true_fn=_skipped,
                             false_fn=lambda: gradients)
         self.skipped_update.assign_add(
-            tf.cond(skip_update,
-                    true_fn=lambda: tf.constant(1, dtype=tf.int64),
-                    false_fn=lambda: tf.constant(0, dtype=tf.int64)))
+          tf.cond(skip_update,
+                  true_fn=lambda: tf.constant(1, dtype=tf.int64),
+                  false_fn=lambda: tf.constant(0, dtype=tf.int64)))
         ## clip norm
         if clipnorm is not None:
           clipnorm = tf.constant(clipnorm, dtype=self.dtype)
           gradients = [
-              None if g is None else tf.clip_by_norm(g, clipnorm)
-              for g in gradients
+            None if g is None else tf.clip_by_norm(g, clipnorm)
+            for g in gradients
           ]
         if global_clipnorm is not None:
           global_clipnorm = tf.constant(global_clipnorm, dtype=self.dtype)
@@ -506,13 +522,13 @@ class Networks(keras.Model, MD5object):
           if len(not_none) > 0:
             not_none, _ = tf.clip_by_global_norm(not_none, global_clipnorm)
             gradients = [
-                None if g is None else not_none.pop(0) for g in gradients
+              None if g is None else not_none.pop(0) for g in gradients
             ]
         if clipvalue is not None:
           clipvalue = tf.constant(clipvalue, dtype=self.dtype)
           gradients = [
-              None if g is None else tf.clip_by_value(g, -clipvalue, clipvalue)
-              for g in gradients
+            None if g is None else tf.clip_by_value(g, -clipvalue, clipvalue)
+            for g in gradients
           ]
         ## for debugging gradients
         grads_params = [(g, p)
@@ -525,10 +541,12 @@ class Networks(keras.Model, MD5object):
             metrics[f"_grad/{p.name}"] = g
       ## for validation
       else:
-        tape = None
         loss, metrics = step()
       ## update metrics and loss
-      all_metrics.update(metrics)
+      for k, v in metrics.items():
+        if k in all_metrics:
+          k = f'{k}_{step_idx}'
+        all_metrics[k] = v
       total_loss += loss
     ## return
     # all_metrics = {i: j for i, j in all_metrics.items()}
@@ -635,12 +653,12 @@ class Networks(keras.Model, MD5object):
         if the optimizer is not defined.
     """
     assert nan_gradients_policy in [
-        'stop', 'skip', 'ignore', 'raise', 'restore'
+      'stop', 'skip', 'ignore', 'raise', 'restore'
     ]
     if not self.built:
       raise RuntimeError(
-          "build(input_shape) method must be called to initialize "
-          "the variables before calling fit")
+        "build(input_shape) method must be called to initialize "
+        "the variables before calling fit")
     batch_size = int(batch_size)
     # validate the dataset
     train = _to_dataset(train, batch_size, self.dtype)
@@ -669,6 +687,7 @@ class Networks(keras.Model, MD5object):
         self.optimizer = _to_optimizer(optimizer, learning_rate)
     if self.optimizer is None:
       raise RuntimeError("No optimizer found!")
+
     ## run early stop and callback
     def _callback():
       if self.restore_checkpoint.numpy():
@@ -676,26 +695,27 @@ class Networks(keras.Model, MD5object):
         self.load_weights(raise_notfound=True, verbose=True)
       if callback is not None:
         callback()
+
     self.trainer.fit(
-        train_ds=train,
-        optimize=partial(self.optimize,
-                         allow_none_gradients=allow_none_gradients,
-                         track_gradients=track_gradients,
-                         clipnorm=clipnorm,
-                         clipvalue=clipvalue,
-                         global_clipnorm=global_clipnorm,
-                         skip_update_threshold=skip_update_threshold,
-                         when_skip_update=when_skip_update,
-                         nan_gradients_policy=nan_gradients_policy),
-        valid_ds=valid,
-        valid_freq=valid_freq,
-        valid_interval=valid_interval,
-        compile_graph=compile_graph,
-        autograph=autograph,
-        logging_interval=logging_interval,
-        log_tag=self.name,
-        max_iter=max_iter,
-        callback=_callback,
+      train_ds=train,
+      optimize=partial(self.optimize,
+                       allow_none_gradients=allow_none_gradients,
+                       track_gradients=track_gradients,
+                       clipnorm=clipnorm,
+                       clipvalue=clipvalue,
+                       global_clipnorm=global_clipnorm,
+                       skip_update_threshold=skip_update_threshold,
+                       when_skip_update=when_skip_update,
+                       nan_gradients_policy=nan_gradients_policy),
+      valid_ds=valid,
+      valid_freq=valid_freq,
+      valid_interval=valid_interval,
+      compile_graph=compile_graph,
+      autograph=autograph,
+      logging_interval=logging_interval,
+      log_tag=self.name,
+      max_iter=max_iter,
+      callback=_callback,
     )
     return self
 
@@ -721,13 +741,13 @@ class Networks(keras.Model, MD5object):
     return False
 
   @property
-  def summary_writer(self) -> SummaryWriter:
+  def summary_writer(self) -> Optional[SummaryWriter]:
     if self.trainer is not None:
       return self.trainer.summary_writer
     return None
 
   @property
-  def tensorboard(self) -> Dict[Text, Tuple[float, int, float]]:
+  def tensorboard(self) -> Optional[Dict[Text, Tuple[float, int, float]]]:
     if self.trainer is not None:
       return self.trainer.tensorboard
     return None
@@ -816,18 +836,18 @@ def dense_network(units: List[int],
     layers.append(keras.layers.Dropout(rate=input_dropout))
   for i in range(nlayers):
     layers.append(
-        keras.layers.Dense(\
-          units[i],
-          activation='linear',
-          use_bias=(not batchnorm[i]) and use_bias[i],
-          kernel_initializer=kernel_initializer[i],
-          bias_initializer=bias_initializer[i],
-          kernel_regularizer=kernel_regularizer[i],
-          bias_regularizer=bias_regularizer[i],
-          activity_regularizer=activity_regularizer[i],
-          kernel_constraint=kernel_constraint[i],
-          bias_constraint=bias_constraint[i],
-          name=f"{prefix}{i}"))
+      keras.layers.Dense( \
+        units[i],
+        activation='linear',
+        use_bias=(not batchnorm[i]) and use_bias[i],
+        kernel_initializer=kernel_initializer[i],
+        bias_initializer=bias_initializer[i],
+        kernel_regularizer=kernel_regularizer[i],
+        bias_regularizer=bias_regularizer[i],
+        activity_regularizer=activity_regularizer[i],
+        kernel_constraint=kernel_constraint[i],
+        bias_constraint=bias_constraint[i],
+        name=f"{prefix}{i}"))
     if batchnorm[i]:
       layers.append(keras.layers.BatchNormalization(**batchnorm_kw))
     layers.append(keras.layers.Activation(activation[i]))
@@ -858,10 +878,11 @@ def conv_network(units: List[int],
                  projection: bool = False,
                  input_shape: Optional[List[int]] = None,
                  prefix: Optional[str] = 'Layer') -> List[Layer]:
-  r""" Multi-layers convolutional neural network
+  """ Multi-layers convolutional neural network
 
-  Arguments:
-    projection : {True, False, an Integer}.
+  Parameters
+  ----------
+  projection : {True, False, an Integer}.
       If True, flatten the output into 2-D.
       If an Integer, use a `Dense` layer with linear activation to project
       the output in to 2-D
@@ -894,22 +915,22 @@ def conv_network(units: List[int],
 
   for i in range(nlayers):
     layers.append(
-        layer_type(\
-          filters=units[i],
-          kernel_size=kernel[i],
-          strides=strides[i],
-          padding=padding[i],
-          dilation_rate=dilation[i],
-          activation='linear',
-          use_bias=(not batchnorm[i]) and use_bias[i],
-          kernel_initializer=kernel_initializer[i],
-          bias_initializer=bias_initializer[i],
-          kernel_regularizer=kernel_regularizer[i],
-          bias_regularizer=bias_regularizer[i],
-          activity_regularizer=activity_regularizer[i],
-          kernel_constraint=kernel_constraint[i],
-          bias_constraint=bias_constraint[i],
-          name=f"{prefix}{i}"))
+      layer_type( \
+        filters=units[i],
+        kernel_size=kernel[i],
+        strides=strides[i],
+        padding=padding[i],
+        dilation_rate=dilation[i],
+        activation='linear',
+        use_bias=(not batchnorm[i]) and use_bias[i],
+        kernel_initializer=kernel_initializer[i],
+        bias_initializer=bias_initializer[i],
+        kernel_regularizer=kernel_regularizer[i],
+        bias_regularizer=bias_regularizer[i],
+        activity_regularizer=activity_regularizer[i],
+        kernel_constraint=kernel_constraint[i],
+        bias_constraint=bias_constraint[i],
+        name=f"{prefix}{i}"))
     if batchnorm[i]:
       layers.append(keras.layers.BatchNormalization(**batchnorm_kw))
     layers.append(keras.layers.Activation(activation[i]))
@@ -922,10 +943,10 @@ def conv_network(units: List[int],
   elif isinstance(projection, Number):
     layers.append(keras.layers.Flatten())
     layers.append(
-        keras.layers.Dense(int(projection),
-                           activation='linear',
-                           use_bias=True,
-                           name=f'{prefix}proj'))
+      keras.layers.Dense(int(projection),
+                         activation='linear',
+                         use_bias=True,
+                         name=f'{prefix}proj'))
   return layers
 
 
@@ -960,10 +981,10 @@ def deconv_network(units: List[int],
    use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
    bias_regularizer, activity_regularizer, kernel_constraint,
    bias_constraint, batchnorm, dropout), nlayers = _as_arg_tuples(
-       units, kernel, strides, padding, output_padding, dilation, activation,
-       use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
-       bias_regularizer, activity_regularizer, kernel_constraint,
-       bias_constraint, batchnorm, dropout)
+    units, kernel, strides, padding, output_padding, dilation, activation,
+    use_bias, kernel_initializer, bias_initializer, kernel_regularizer,
+    bias_regularizer, activity_regularizer, kernel_constraint,
+    bias_constraint, batchnorm, dropout)
   #
   layers = []
   if input_shape is not None:
@@ -980,23 +1001,23 @@ def deconv_network(units: List[int],
 
   for i in range(nlayers):
     layers.append(
-        layer_type(\
-          filters=units[i],
-          kernel_size=kernel[i],
-          strides=strides[i],
-          padding=padding[i],
-          output_padding=output_padding[i],
-          dilation_rate=dilation[i],
-          activation='linear',
-          use_bias=(not batchnorm[i]) and use_bias[i],
-          kernel_initializer=kernel_initializer[i],
-          bias_initializer=bias_initializer[i],
-          kernel_regularizer=kernel_regularizer[i],
-          bias_regularizer=bias_regularizer[i],
-          activity_regularizer=activity_regularizer[i],
-          kernel_constraint=kernel_constraint[i],
-          bias_constraint=bias_constraint[i],
-          name=f"{prefix}{i}"))
+      layer_type( \
+        filters=units[i],
+        kernel_size=kernel[i],
+        strides=strides[i],
+        padding=padding[i],
+        output_padding=output_padding[i],
+        dilation_rate=dilation[i],
+        activation='linear',
+        use_bias=(not batchnorm[i]) and use_bias[i],
+        kernel_initializer=kernel_initializer[i],
+        bias_initializer=bias_initializer[i],
+        kernel_regularizer=kernel_regularizer[i],
+        bias_regularizer=bias_regularizer[i],
+        activity_regularizer=activity_regularizer[i],
+        kernel_constraint=kernel_constraint[i],
+        bias_constraint=bias_constraint[i],
+        name=f"{prefix}{i}"))
     if batchnorm[i]:
       layers.append(keras.layers.BatchNormalization(**batchnorm_kw))
     layers.append(keras.layers.Activation(activation[i]))
@@ -1009,10 +1030,10 @@ def deconv_network(units: List[int],
   elif isinstance(projection, Number):
     layers.append(keras.layers.Flatten())
     layers.append(
-        keras.layers.Dense(int(projection),
-                           activation='linear',
-                           use_bias=True,
-                           name=f'{prefix}proj'))
+      keras.layers.Dense(int(projection),
+                         activation='linear',
+                         use_bias=True,
+                         name=f'{prefix}proj'))
   return layers
 
 
@@ -1152,57 +1173,57 @@ class NetConf(dict):
       start_layers = [keras.layers.InputLayer(input_shape=latent_shape)]
       if self.projection is not None and not isinstance(self.projection, bool):
         start_layers += [
-            keras.layers.Dense(int(self.projection),
-                               activation='linear',
-                               use_bias=True),
-            keras.layers.Dense(np.prod(eshape),
-                               activation=self.activation,
-                               use_bias=True),
-            keras.layers.Reshape(eshape),
+          keras.layers.Dense(int(self.projection),
+                             activation='linear',
+                             use_bias=True),
+          keras.layers.Dense(np.prod(eshape),
+                             activation=self.activation,
+                             use_bias=True),
+          keras.layers.Reshape(eshape),
         ]
       decoder = deconv_network(
-          tf.nest.flatten(self.units)[::-1][1:] +
-          [n_channels * int(n_parameterization)],
-          rank=rank,
-          kernel=tf.nest.flatten(self.kernel)[::-1],
-          strides=tf.nest.flatten(self.strides)[::-1],
-          padding=tf.nest.flatten(self.padding)[::-1],
-          dilation=tf.nest.flatten(self.dilation)[::-1],
-          activation=tf.nest.flatten(self.activation)[::-1],
-          use_bias=tf.nest.flatten(self.use_bias)[::-1],
-          batchnorm=tf.nest.flatten(self.batchnorm)[::-1],
-          input_dropout=self.input_dropout,
-          dropout=tf.nest.flatten(self.dropout)[::-1],
-          kernel_initializer=self.kernel_initializer,
-          bias_initializer=self.bias_initializer,
-          kernel_regularizer=self.kernel_regularizer,
-          bias_regularizer=self.bias_regularizer,
-          activity_regularizer=self.activity_regularizer,
-          kernel_constraint=self.kernel_constraint,
-          bias_constraint=self.bias_constraint,
-          prefix=name,
+        tf.nest.flatten(self.units)[::-1][1:] +
+        [n_channels * int(n_parameterization)],
+        rank=rank,
+        kernel=tf.nest.flatten(self.kernel)[::-1],
+        strides=tf.nest.flatten(self.strides)[::-1],
+        padding=tf.nest.flatten(self.padding)[::-1],
+        dilation=tf.nest.flatten(self.dilation)[::-1],
+        activation=tf.nest.flatten(self.activation)[::-1],
+        use_bias=tf.nest.flatten(self.use_bias)[::-1],
+        batchnorm=tf.nest.flatten(self.batchnorm)[::-1],
+        input_dropout=self.input_dropout,
+        dropout=tf.nest.flatten(self.dropout)[::-1],
+        kernel_initializer=self.kernel_initializer,
+        bias_initializer=self.bias_initializer,
+        kernel_regularizer=self.kernel_regularizer,
+        bias_regularizer=self.bias_regularizer,
+        activity_regularizer=self.activity_regularizer,
+        kernel_constraint=self.kernel_constraint,
+        bias_constraint=self.bias_constraint,
+        prefix=name,
       )
       decoder = start_layers + decoder
       decoder.append(keras.layers.Reshape(input_shape))
     ### dense network
     elif self.network == 'dense':
       decoder = dense_network(
-          tf.nest.flatten(self.units)[::-1],
-          activation=tf.nest.flatten(self.activation)[::-1],
-          use_bias=tf.nest.flatten(self.use_bias)[::-1],
-          batchnorm=tf.nest.flatten(self.batchnorm)[::-1],
-          input_dropout=self.input_dropout,
-          dropout=tf.nest.flatten(self.dropout)[::-1],
-          kernel_initializer=self.kernel_initializer,
-          bias_initializer=self.bias_initializer,
-          kernel_regularizer=self.kernel_regularizer,
-          bias_regularizer=self.bias_regularizer,
-          activity_regularizer=self.activity_regularizer,
-          kernel_constraint=self.kernel_constraint,
-          bias_constraint=self.bias_constraint,
-          flatten_inputs=self.flatten_inputs,
-          input_shape=latent_shape,
-          prefix=name,
+        tf.nest.flatten(self.units)[::-1],
+        activation=tf.nest.flatten(self.activation)[::-1],
+        use_bias=tf.nest.flatten(self.use_bias)[::-1],
+        batchnorm=tf.nest.flatten(self.batchnorm)[::-1],
+        input_dropout=self.input_dropout,
+        dropout=tf.nest.flatten(self.dropout)[::-1],
+        kernel_initializer=self.kernel_initializer,
+        bias_initializer=self.bias_initializer,
+        kernel_regularizer=self.kernel_regularizer,
+        bias_regularizer=self.bias_regularizer,
+        activity_regularizer=self.activity_regularizer,
+        kernel_constraint=self.kernel_constraint,
+        bias_constraint=self.bias_constraint,
+        flatten_inputs=self.flatten_inputs,
+        input_shape=latent_shape,
+        prefix=name,
       )
     ### deconv
     else:
@@ -1210,13 +1231,13 @@ class NetConf(dict):
                                 self.network)
     decoder = SequentialNetwork(decoder, name=name)
     decoder.copy = types.MethodType(
-        lambda s, name=None: self.create_decoder(
-            encoder=encoder,
-            latent_shape=latent_shape,
-            n_parameterization=n_parameterization,
-            name=name,
-        ),
-        decoder,
+      lambda s, name=None: self.create_decoder(
+        encoder=encoder,
+        latent_shape=latent_shape,
+        n_parameterization=n_parameterization,
+        name=name,
+      ),
+      decoder,
     )
     return decoder
 
@@ -1247,78 +1268,78 @@ class NetConf(dict):
       name = self.name
     ### prepare the shape
     input_shape = _shape(
-        self.input_shape if input_shape is None else input_shape)
+      self.input_shape if input_shape is None else input_shape)
     ### convolution network
     if self.network == 'conv':
       # create the encoder
       network = conv_network(
-          self.units,
-          kernel=self.kernel,
-          strides=self.strides,
-          padding=self.padding,
-          dilation=self.dilation,
-          activation=self.activation,
-          use_bias=self.use_bias,
-          batchnorm=self.batchnorm,
-          batchnorm_kw=self.batchnorm_kw,
-          input_dropout=self.input_dropout,
-          dropout=self.dropout,
-          kernel_initializer=self.kernel_initializer,
-          bias_initializer=self.bias_initializer,
-          kernel_regularizer=self.kernel_regularizer,
-          bias_regularizer=self.bias_regularizer,
-          activity_regularizer=self.activity_regularizer,
-          kernel_constraint=self.kernel_constraint,
-          bias_constraint=self.bias_constraint,
-          projection=self.projection,
-          input_shape=input_shape,
-          prefix=name,
+        self.units,
+        kernel=self.kernel,
+        strides=self.strides,
+        padding=self.padding,
+        dilation=self.dilation,
+        activation=self.activation,
+        use_bias=self.use_bias,
+        batchnorm=self.batchnorm,
+        batchnorm_kw=self.batchnorm_kw,
+        input_dropout=self.input_dropout,
+        dropout=self.dropout,
+        kernel_initializer=self.kernel_initializer,
+        bias_initializer=self.bias_initializer,
+        kernel_regularizer=self.kernel_regularizer,
+        bias_regularizer=self.bias_regularizer,
+        activity_regularizer=self.activity_regularizer,
+        kernel_constraint=self.kernel_constraint,
+        bias_constraint=self.bias_constraint,
+        projection=self.projection,
+        input_shape=input_shape,
+        prefix=name,
       )
     ### dense network
     elif self.network == 'dense':
       network = dense_network(
-          self.units,
-          activation=self.activation,
-          use_bias=self.use_bias,
-          batchnorm=self.batchnorm,
-          batchnorm_kw=self.batchnorm_kw,
-          input_dropout=self.input_dropout,
-          dropout=self.dropout,
-          kernel_initializer=self.kernel_initializer,
-          bias_initializer=self.bias_initializer,
-          kernel_regularizer=self.kernel_regularizer,
-          bias_regularizer=self.bias_regularizer,
-          activity_regularizer=self.activity_regularizer,
-          kernel_constraint=self.kernel_constraint,
-          bias_constraint=self.bias_constraint,
-          flatten_inputs=self.flatten_inputs,
-          input_shape=input_shape,
-          prefix=name,
+        self.units,
+        activation=self.activation,
+        use_bias=self.use_bias,
+        batchnorm=self.batchnorm,
+        batchnorm_kw=self.batchnorm_kw,
+        input_dropout=self.input_dropout,
+        dropout=self.dropout,
+        kernel_initializer=self.kernel_initializer,
+        bias_initializer=self.bias_initializer,
+        kernel_regularizer=self.kernel_regularizer,
+        bias_regularizer=self.bias_regularizer,
+        activity_regularizer=self.activity_regularizer,
+        kernel_constraint=self.kernel_constraint,
+        bias_constraint=self.bias_constraint,
+        flatten_inputs=self.flatten_inputs,
+        input_shape=input_shape,
+        prefix=name,
       )
     ### deconv
     elif self.network == 'deconv':
       network = deconv_network(
-          self.units,
-          kernel=self.kernel,
-          strides=self.strides,
-          padding=self.padding,
-          dilation=self.dilation,
-          activation=self.activation,
-          use_bias=self.use_bias,
-          batchnorm=self.batchnorm,
-          batchnorm_kw=self.batchnorm_kw,
-          input_dropout=self.input_dropout,
-          dropout=self.dropout,
-          kernel_initializer=self.kernel_initializer,
-          bias_initializer=self.bias_initializer,
-          kernel_regularizer=self.kernel_regularizer,
-          bias_regularizer=self.bias_regularizer,
-          activity_regularizer=self.activity_regularizer,
-          kernel_constraint=self.kernel_constraint,
-          bias_constraint=self.bias_constraint,
-          projection=self.projection,
-          input_shape=input_shape,
-          prefix=name,
+        self.units,
+        kernel=self.kernel,
+        strides=self.strides,
+        padding=self.padding,
+        dilation=self.dilation,
+        activation=self.activation,
+        use_bias=self.use_bias,
+        batchnorm=self.batchnorm,
+        batchnorm_kw=self.batchnorm_kw,
+        input_dropout=self.input_dropout,
+        dropout=self.dropout,
+        kernel_initializer=self.kernel_initializer,
+        bias_initializer=self.bias_initializer,
+        kernel_regularizer=self.kernel_regularizer,
+        bias_regularizer=self.bias_regularizer,
+        activity_regularizer=self.activity_regularizer,
+        kernel_constraint=self.kernel_constraint,
+        bias_constraint=self.bias_constraint,
+        projection=self.projection,
+        input_shape=input_shape,
+        prefix=name,
       )
     ### others
     else:
@@ -1328,8 +1349,8 @@ class NetConf(dict):
     if sequential:
       network = SequentialNetwork(network, name=name)
       network.copy = types.MethodType(
-          lambda s, name=None: self.create_network(input_shape=input_shape,
-                                                   name=name),
-          network,
+        lambda s, name=None: self.create_network(input_shape=input_shape,
+                                                 name=name),
+        network,
       )
     return network

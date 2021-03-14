@@ -2,12 +2,13 @@ import tensorflow as tf
 from typing import Union
 from odin.backend import interpolation as interp
 from odin.backend.interpolation import Interpolation, linear
-from odin.bay.vi.autoencoder.variational_autoencoder import VariationalAutoencoder
+from odin.bay.vi.autoencoder.variational_autoencoder import \
+  VariationalAutoencoder as VAE
 from odin.bay.vi.losses import total_correlation
 from odin.utils import as_tuple
 
 
-class betaVAE(VariationalAutoencoder):
+class BetaVAE(VAE):
   """ Implementation of beta-VAE
 
   Parameters
@@ -43,14 +44,14 @@ class betaVAE(VariationalAutoencoder):
     return llk, kl
 
 
-class beta10VAE(betaVAE):
+class Beta10VAE(BetaVAE):
 
   def __init__(self, name='Beta10VAE', **kwargs):
     kwargs.pop('beta', None)
     super().__init__(beta=10.0, name=name, **kwargs)
 
 
-class annealingVAE(betaVAE):
+class AnnealingVAE(BetaVAE):
   """ KL-annealing VAE, cyclical annealing could be achieved by setting
   `cyclical=True` when creating `Interpolation`
 
@@ -78,8 +79,8 @@ class annealingVAE(betaVAE):
     super().__init__(beta=beta, name=name, **kwargs)
 
 
-class betatcVAE(betaVAE):
-  r""" Extend the beta-VAE with total correlation loss added.
+class BetaTCVAE(BetaVAE):
+  """ Extend the beta-VAE with total correlation loss added.
 
   Based on Equation (4) with alpha = gamma = 1
   If alpha = gamma = 1, Eq. 4 can be written as
@@ -100,8 +101,8 @@ class betatcVAE(betaVAE):
     return llk, kl
 
 
-class capacitateVAE(VariationalAutoencoder):
-  r"""Creates an annealedVAE model.
+class CapacitateVAE(VAE):
+  """Creates an annealedVAE model.
 
   Implementing Eq. 8 of (Burgess et al. 2018)
 
@@ -136,9 +137,9 @@ class capacitateVAE(VariationalAutoencoder):
     super().__init__(**kwargs)
     self.gamma = tf.convert_to_tensor(gamma, dtype=self.dtype, name='gamma')
     self.interpolation = interp.get(str(interpolation))(
-        vmin=tf.constant(c_min, self.dtype),
-        vmax=tf.constant(c_max, self.dtype),
-        norm=int(iter_max))
+      vmin=tf.constant(c_min, self.dtype),
+      vmax=tf.constant(c_max, self.dtype),
+      norm=int(iter_max))
 
   def elbo_components(self, inputs, training=None, mask=None):
     llk, kl = super().elbo_components(inputs, mask=mask, training=training)

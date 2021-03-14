@@ -118,6 +118,7 @@ class VariationalModel(Networks):
     return elbo
 
   def elbo_components(
+      self,
       inputs: Union[TensorTypes, List[TensorTypes]],
       training: Optional[bool] = None,
       *args,
@@ -145,8 +146,8 @@ class VariationalModel(Networks):
 
   def elbo(
       self,
-      llk: Optional[Dict[str, tf.Tensor]] = {},
-      kl: Optional[Dict[str, tf.Tensor]] = {},
+      llk: Optional[Dict[str, tf.Tensor]] = None,
+      kl: Optional[Dict[str, tf.Tensor]] = None,
   ) -> tf.Tensor:
     """Calculate the distortion (log-likelihood) and rate (KL-divergence)
     for contruction the Evident Lower Bound (ELBO).
@@ -168,6 +169,10 @@ class VariationalModel(Networks):
         dictionary mapping the components of the ELBO (e.g. rate, distortion) to
         their values.
     """
+    if llk is None:
+      llk = dict()
+    if kl is None:
+      kl = dict()
     # sum all the components log-likelihood and KL-divergence
     llk_sum = tf.constant(0., dtype=self.dtype)
     kl_sum = tf.constant(0., dtype=self.dtype)

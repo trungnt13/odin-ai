@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
-from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 from odin.utils import as_tuple
 
@@ -48,7 +48,7 @@ class LikelihoodStep(TrainStep):
     return llk_loss, metrics
 
 
-class StochasticVAE(betaVAE):
+class StochasticVAE(BetaVAE):
 
   def __init__(self, kl_steps=1, llk_steps=1, beta=1.0, **kwargs):
     super().__init__(beta=beta, **kwargs)
@@ -113,7 +113,7 @@ class StochasticVAE(betaVAE):
                            parameters=self.llk_params)
 
 
-class ImputeVAE(betaVAE):
+class ImputeVAE(BetaVAE):
   r""" Iteratively imputing VAE outputs for a fixed number of steps
 
   Arguments:

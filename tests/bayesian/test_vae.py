@@ -9,7 +9,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow_probability as tfp
 from odin.bay import vi
-from odin.bay.vi import RVmeta, VariationalAutoencoder, factorVAE
+from odin.bay.vi import RVmeta, VariationalAutoencoder, FactorVAE
 from tensorflow.python import keras
 from tqdm import tqdm
 
@@ -132,7 +132,7 @@ class VAETest(unittest.TestCase):
 
   def test_factor_vae(self):
     train, test = load_mnist()
-    vae = factorVAE(**create_networks(), analytic=True, name='factorvae')
+    vae = FactorVAE(**create_networks(), analytic=True, name='factorvae')
     vae.build(input_shape)
     mllk = tf.reduce_mean([vae.marginal_log_prob(x)[0] for x in test])
     print(mllk)

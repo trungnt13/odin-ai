@@ -9,7 +9,7 @@ from typing_extensions import Literal
 
 from odin.backend import TensorTypes
 from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.beta_vae import annealingVAE
+from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep, VAEStep
 from odin.bay.vi.utils import prepare_ssl_inputs
@@ -29,8 +29,7 @@ def _split_if_tensor(x):
 
 
 def _split_inputs(inputs, mask, call_kw):
-  r""" Split the data into 2 partitions for training the VAE and
-  Discriminator """
+  """ Split the data into 2 partitions for training the VAE and Discriminator"""
   # split inputs into 2 mini-batches here
   if tf.is_tensor(inputs):
     x1, x2 = tf.split(inputs, 2, axis=0)
@@ -52,7 +51,6 @@ def _split_inputs(inputs, mask, call_kw):
   call_kw1 = {}
   call_kw2 = {}
   for k, v in call_kw.items():
-    is_list = False
     if isinstance(v, collections.Sequence):
       v = [_split_if_tensor(i) for i in v]
       call_kw1[k] = [i[0] for i in v]
@@ -66,7 +64,7 @@ def _split_inputs(inputs, mask, call_kw):
 
 @dataclass
 class FactorDiscriminatorStep(VAEStep):
-  vae: 'factorVAE'
+  vae: 'FactorVAE'
 
   def call(self):
     px_z, qz_x = self.vae.last_outputs
@@ -96,13 +94,13 @@ class FactorDiscriminatorStep(VAEStep):
 
 
 # ===========================================================================
-# Main factorVAE
+# Main FactorVAE
 # ===========================================================================
-class factorVAE(annealingVAE):
+class FactorVAE(AnnealingVAE):
   """ The default encoder and decoder configuration is the same as proposed
   in (Kim et. al. 2018).
 
-  The training procedure of factorVAE is as follows:
+  The training procedure of FactorVAE is as follows:
 
   ```
   foreach iter:
@@ -158,18 +156,18 @@ class factorVAE(annealingVAE):
                **kwargs):
     ss_strategy = kwargs.pop('ss_strategy', 'logsumexp')
     labels = kwargs.pop(
-        'labels', RVmeta(1, 'bernoulli', projection=True, name="discriminator"))
+      'labels', RVmeta(1, 'bernoulli', projection=True, name="discriminator"))
     super().__init__(name=name, **kwargs)
     self.tc_coef = tf.convert_to_tensor(tc_coef,
                                         dtype=self.dtype,
                                         name='tc_coef')
     ## init discriminator
     self.discriminator = FactorDiscriminator(
-        units=as_tuple(discriminator_units),
-        activation=activation,
-        batchnorm=batchnorm,
-        ss_strategy=ss_strategy,
-        observation=labels)
+      units=as_tuple(discriminator_units),
+      activation=activation,
+      batchnorm=batchnorm,
+      ss_strategy=ss_strategy,
+      observation=labels)
     # VAE and discriminator must be trained separated so we split their params here
     self.maximize_tc = bool(maximize_tc)
     ## For training
@@ -177,14 +175,14 @@ class factorVAE(annealingVAE):
     # modification without re-writing the train_steps method
     self._is_pretraining = False
 
-  def build(self, input_shape) -> 'factorVAE':
+  def build(self, input_shape) -> 'FactorVAE':
     super().build(input_shape)
     self.discriminator.build(self.latent_shape)
     # split the parameters
     self.disc_params = self.discriminator.trainable_variables
     exclude = set(id(p) for p in self.disc_params)
     self.vae_params = [
-        p for p in self.trainable_variables if id(p) not in exclude
+      p for p in self.trainable_variables if id(p) not in exclude
     ]
     return self
 
@@ -218,7 +216,7 @@ class factorVAE(annealingVAE):
                         qz_x: Distribution,
                         training: Optional[bool] = None) -> tf.Tensor:
     return self.tc_coef * self.discriminator.total_correlation(
-        qz_x, training=training)
+      qz_x, training=training)
 
   def dtc_loss(self,
                qz_x: Distribution,
@@ -238,7 +236,7 @@ class factorVAE(annealingVAE):
 
     Example:
     ```
-    vae = factorVAE()
+    vae = FactorVAE()
     x = vae.sample_data()
     vae_step, discriminator_step = list(vae.train_steps(x))
     # optimizer VAE with total correlation loss
@@ -255,7 +253,7 @@ class factorVAE(annealingVAE):
     """
     # split the data
     (x1, mask1, call_kw1), \
-      (x2, mask2, call_kw2) = _split_inputs(inputs, mask, call_kw)
+    (x2, mask2, call_kw2) = _split_inputs(inputs, mask, call_kw)
     # first step optimize VAE with total correlation loss
     step1 = VAEStep(vae=self,
                     inputs=x1,
@@ -280,8 +278,8 @@ class factorVAE(annealingVAE):
           *,
           valid=None,
           optimizer=[
-              tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
-              tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
+            tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
+            tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
           ],
           **kwargs):
     """ Override the original fit method of keras to provide simplified
@@ -302,7 +300,7 @@ class factorVAE(annealingVAE):
 # ===========================================================================
 # Same as Factor VAE but with multi-task semi-supervised extension
 # ===========================================================================
-class semifactorVAE(factorVAE):
+class SemiFactorVAE(FactorVAE):
   """Semi-supervised Factor VAE
 
   Note:
@@ -355,7 +353,7 @@ class semifactorVAE(factorVAE):
     labelled examples (i.e. `mask=1`), and otherwise, unlabelled examples.
     """
     return self.alpha * self.discriminator.supervised_loss(
-        labels=labels, qz_x=qz_x, mask=mask, training=training)
+      labels=labels, qz_x=qz_x, mask=mask, training=training)
 
   @classmethod
   def is_semi_supervised(self) -> bool:
@@ -365,8 +363,8 @@ class semifactorVAE(factorVAE):
 # ===========================================================================
 # Separated latents for TC factorization
 # ===========================================================================
-class factor2VAE(factorVAE):
-  r"""The same architecture as `factorVAE`, however, utilize two different
+class Factor2VAE(FactorVAE):
+  """The same architecture as `FactorVAE`, however, utilize two different
   latents `Z` for contents generalizability and `C` for disentangling of
   invariant factors."""
 
@@ -383,7 +381,7 @@ class factor2VAE(factorVAE):
     latents = tf.nest.flatten(latents)
     assert isinstance(factors, RVmeta), \
       "factors must be instance of RVmeta, but given: %s" % \
-        str(type(factors))
+      str(type(factors))
     latents.append(factors)
     super().__init__(latents=latents,
                      latent_dim=int(np.prod(factors.event_shape)),
@@ -391,12 +389,12 @@ class factor2VAE(factorVAE):
     self.factors = factors
 
   def _elbo(self, inputs, pX_Z, qz_x, mask, training):
-    llk, div = super(annealingVAE, self)._elbo(
-        inputs,
-        pX_Z,
-        qz_x,
-        mask=mask,
-        training=training,
+    llk, div = super(AnnealingVAE, self)._elbo(
+      inputs,
+      pX_Z,
+      qz_x,
+      mask=mask,
+      training=training,
     )
     # only use the assumed factors space for total correlation
     tc = self.total_correlation(qz_x[-1], training=training)
@@ -406,7 +404,7 @@ class factor2VAE(factorVAE):
     return llk, div
 
 
-class semifactor2VAE(semifactorVAE, factor2VAE):
+class SemiFactor2VAE(SemiFactorVAE, Factor2VAE):
   r""" Combination of Semi-supervised VAE and Factor-2 VAE which leverages
   both labelled samples and the use of 2 latents space (1 for contents, and
   1 for factors)

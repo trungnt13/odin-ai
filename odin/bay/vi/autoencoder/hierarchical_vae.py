@@ -10,7 +10,7 @@ from tensorflow_probability.python.layers import DistributionLambda
 
 from odin.bay.helpers import kl_divergence
 from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.beta_vae import annealingVAE, betaVAE
+from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE, BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.networks import NetConf
 from odin.utils import as_tuple
@@ -19,7 +19,7 @@ from odin.utils import as_tuple
 # ===========================================================================
 # Hierarchical VAE
 # ===========================================================================
-class stackedVAE(annealingVAE):
+class StackedVAE(AnnealingVAE):
   """ A hierachical VAE with multiple stochastic layers stacked on top of the previous one
   (autoregressive):
 
@@ -100,33 +100,33 @@ class stackedVAE(annealingVAE):
     self.stochastic_inference = bool(stochastic_inference)
     self.only_mean_up = bool(only_mean_up)
     self.ladder_encoder = [
-        NetConf([units] * ladder_layers,
-                activation=activation,
-                batchnorm=batchnorm,
-                batchnorm_kw=batchnorm_kw,
-                dropout=dropout,
-                name=f'LadderEncoder{i}').create_network()
-        for i, units in enumerate(ladder_hiddens)
+      NetConf([units] * ladder_layers,
+              activation=activation,
+              batchnorm=batchnorm,
+              batchnorm_kw=batchnorm_kw,
+              dropout=dropout,
+              name=f'LadderEncoder{i}').create_network()
+      for i, units in enumerate(ladder_hiddens)
     ]
     self.ladder_decoder = [
-        NetConf([units] * ladder_layers,
-                activation=activation,
-                batchnorm=batchnorm,
-                batchnorm_kw=batchnorm_kw,
-                dropout=dropout,
-                name=f'LadderDecoder{i}').create_network()
-        for i, units in enumerate(ladder_hiddens[::-1])
+      NetConf([units] * ladder_layers,
+              activation=activation,
+              batchnorm=batchnorm,
+              batchnorm_kw=batchnorm_kw,
+              dropout=dropout,
+              name=f'LadderDecoder{i}').create_network()
+      for i, units in enumerate(ladder_hiddens[::-1])
     ]
     self.ladder_qz = [
-        _parse_layers(RVmeta(units, 'normal', projection=True, name=f'qZ{i}'))
-        for i, units in enumerate(as_tuple(ladder_latents))
+      _parse_layers(RVmeta(units, 'normal', projection=True, name=f'qZ{i}'))
+      for i, units in enumerate(as_tuple(ladder_latents))
     ]
     if tie_latents:
       self.ladder_pz = self.ladder_qz
     else:
       self.ladder_pz = [
-          _parse_layers(RVmeta(units, 'normal', projection=True, name=f'pZ{i}'))
-          for i, units in enumerate(as_tuple(ladder_latents))
+        _parse_layers(RVmeta(units, 'normal', projection=True, name=f'pZ{i}'))
+        for i, units in enumerate(as_tuple(ladder_latents))
       ]
 
   @classmethod
@@ -182,12 +182,12 @@ class stackedVAE(annealingVAE):
     for q, p, z in zip(Qz, Pz, self.ladder_qz):
       if self.all_standard_prior:
         for name, dist in [('q', i) for i in as_tuple(q)
-                          ] + [('p', i) for i in as_tuple(p)]:
+                           ] + [('p', i) for i in as_tuple(p)]:
           kl[f'kl{name}_{z.name}'] = self.beta * dist.KL_divergence(
-              analytic=self.analytic, reverse=self.reverse)
+            analytic=self.analytic, reverse=self.reverse)
       else:
         kl[f'kl_{z.name}'] = self.beta * kl_divergence(
-            q, p, analytic=self.analytic, reverse=self.reverse)
+          q, p, analytic=self.analytic, reverse=self.reverse)
     return llk, kl
 
   def __str__(self):
@@ -237,7 +237,7 @@ class LadderMergeDistribution(DistributionLambda):
     return dist
 
 
-class ladderVAE(stackedVAE):
+class LadderVAE(StackedVAE):
   """ The ladder variational autoencoder
 
   Similar to hierarchical VAE with 2 improvements:
@@ -294,26 +294,26 @@ class ladderVAE(stackedVAE):
     return tuple([outputs[-1]] + outputs[:-1])
 
   def elbo_components(self, inputs, training=None, mask=None):
-    llk, kl = super(stackedVAE, self).elbo_components(inputs=inputs,
+    llk, kl = super(StackedVAE, self).elbo_components(inputs=inputs,
                                                       mask=mask,
                                                       training=training)
     P, Q = self.last_outputs
     for (qz, pz), lz in zip(P[1:], self.ladder_qz[::-1]):
       if self.all_standard_prior:
         kl[f'kl_{lz.name}'] = self.beta * qz.KL_divergence(
-            analytic=self.analytic, reverse=self.reverse)
+          analytic=self.analytic, reverse=self.reverse)
       else:
         # z = tf.convert_to_tensor(qz) # sampling
         # kl[f'kl_{lz.name}'] = self.beta * (qz.log_prob(z) - pz.log_prob(z))
         kl[f'kl_{lz.name}'] = self.beta * kl_divergence(
-            qz, pz, analytic=self.analytic, reverse=self.reverse)
+          qz, pz, analytic=self.analytic, reverse=self.reverse)
     return llk, kl
 
 
 # ===========================================================================
 # HVAE
 # ===========================================================================
-class HVAE(annealingVAE):
+class HVAE(AnnealingVAE):
   """ Hierarchical VAE
 
   References
@@ -333,37 +333,37 @@ class HVAE(annealingVAE):
     super().__init__(latents=latents, name=name, **kwargs)
     ## create the hierarchical latents
     self.ladder_q = [
-        RVmeta(units, 'mvndiag', projection=True,
-               name=f'ladder_q{i}').create_posterior()
-        for i, units in enumerate(ladder_latents)
+      RVmeta(units, 'mvndiag', projection=True,
+             name=f'ladder_q{i}').create_posterior()
+      for i, units in enumerate(ladder_latents)
     ]
     self.ladder_p = [
-        RVmeta(units, 'mvndiag', projection=True,
-               name=f'ladder_p{i}').create_posterior()
-        for i, units in enumerate(ladder_latents)
+      RVmeta(units, 'mvndiag', projection=True,
+             name=f'ladder_p{i}').create_posterior()
+      for i, units in enumerate(ladder_latents)
     ]
     self.n_ladder = len(ladder_latents)
     ## create the connections
     self.qz_to_qz = [
-        connection.create_network(name=f'qz{i}_to_qz{i+1}')
-        for i in range(self.n_ladder)
+      connection.create_network(name=f'qz{i}_to_qz{i + 1}')
+      for i in range(self.n_ladder)
     ]
     self.qz_to_pz = [
-        connection.create_network(name=f'qz{i}_to_pz{i+1}')
-        for i in range(self.n_ladder)
+      connection.create_network(name=f'qz{i}_to_pz{i + 1}')
+      for i in range(self.n_ladder)
     ]
     self.qz_to_px = [
-        connection.create_network(name=f'qz{i}_to_px')
-        for i in range(self.n_ladder + 1)
+      connection.create_network(name=f'qz{i}_to_px')
+      for i in range(self.n_ladder + 1)
     ]
     ## other layers
     self.ladder_encoders = [
-        keras.models.clone_model(self.encoder) for _ in range(self.n_ladder)
+      keras.models.clone_model(self.encoder) for _ in range(self.n_ladder)
     ]
     self.concat = keras.layers.Concatenate(axis=-1)
     units = sum(
-        np.prod(i.event_shape)
-        for i in as_tuple(self.ladder_q) + as_tuple(self.latents))
+      np.prod(i.event_shape)
+      for i in as_tuple(self.ladder_q) + as_tuple(self.latents))
     self.pre_decoder = keras.layers.Dense(units,
                                           activation='linear',
                                           name='pre_decoder')
@@ -458,7 +458,7 @@ def _prepare_encoder_decoder(encoder, decoder):
   return encoder, decoder
 
 
-class unetVAE(betaVAE):
+class UnetVAE(BetaVAE):
   """ Unet-VAE """
 
   def __init__(
@@ -466,9 +466,9 @@ class unetVAE(betaVAE):
       encoder: List[keras.layers.Layer],
       decoder: List[keras.layers.Layer],
       layers_map: List[Tuple[str, str]] = [
-          ('encoder2', 'decoder2'),
-          ('encoder1', 'decoder3'),
-          ('encoder0', 'decoder4'),
+        ('encoder2', 'decoder2'),
+        ('encoder1', 'decoder3'),
+        ('encoder0', 'decoder4'),
       ],
       dropout: float = 0.,
       noise: float = 0.,
@@ -487,7 +487,7 @@ class unetVAE(betaVAE):
     encoder_layers = set(l.name for l in self.encoder)
     # mappping from layers in decoder to encoder
     self.layers_map = dict(
-        (j, i) if i in encoder_layers else (i, j) for i, j in layers_map)
+      (j, i) if i in encoder_layers else (i, j) for i, j in layers_map)
     if dropout > 0.:
       self.dropout = keras.layers.Dropout(rate=dropout)
     else:
@@ -498,7 +498,7 @@ class unetVAE(betaVAE):
       self.noise = None
 
   @classmethod
-  def is_hierarchical(self) -> bool:
+  def is_hierarchical(cls) -> bool:
     return True
 
   def encode(self,
@@ -544,7 +544,7 @@ class unetVAE(betaVAE):
     return px_z
 
 
-class punetVAE(betaVAE):
+class PUnetVAE(BetaVAE):
   """ Probabilistic Unet-VAE
 
   # TODO
@@ -560,11 +560,11 @@ class punetVAE(betaVAE):
       self,
       encoder: List[keras.layers.Layer],
       decoder: List[keras.layers.Layer],
-      layers_map: List[Tuple[str, str, int]] = [
+      layers_map: List[Tuple[str, str, int]] = (
           ('encoder2', 'decoder2', 16),
           ('encoder1', 'decoder3', 16),
           ('encoder0', 'decoder4', 16),
-      ],
+      ),
       beta: float = 10.,
       free_bits: float = 2.,
       name: str = 'PUnetVAE',
@@ -577,8 +577,8 @@ class punetVAE(betaVAE):
                      name=name,
                      free_bits=free_bits,
                      **kwargs)
-    encoder_name = {i.name: i  for i in self.encoder}
-    decoder_name = {i.name: i  for i in self.decoder}
+    encoder_name = {i.name: i for i in self.encoder}
+    decoder_name = {i.name: i for i in self.decoder}
     n_latents = 0
     ladder_latents = {}
     for i, j, units in layers_map:
@@ -652,10 +652,11 @@ class punetVAE(betaVAE):
                                                       reverse=self.reverse)
     return llk, kl
 
+
 # ===========================================================================
 # Very Deep VAE
 # ===========================================================================
-class vdVAE(annealingVAE):
+class VeryDeepVAE(AnnealingVAE):
   """ Very Deep Variational AutoEncoder
 
   References

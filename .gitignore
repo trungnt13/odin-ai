@@ -5,6 +5,7 @@ sftp-config*
 .sync
 Icon*
 .vscode
+.idea
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

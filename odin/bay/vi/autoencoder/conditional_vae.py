@@ -16,7 +16,7 @@ from tensorflow_probability.python.internal import prefer_static as ps
 from odin import backend as bk
 from odin.backend import TensorTypes
 from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              _parse_layers)
 from odin.bay.vi.utils import (marginalize_categorical_labels,
@@ -25,7 +25,7 @@ from odin.networks import NetConf
 from odin.networks.conditional_embedding import get_embedding
 
 __all__ = [
-    'conditionalM2VAE',
+  'ConditionalM2VAE',
     'reparamsM3VAE',
 ]
 
@@ -54,7 +54,7 @@ def _prepare_elbo(self, inputs, training=None, mask=None):
 # ===========================================================================
 # main classes
 # ===========================================================================
-class conditionalM2VAE(betaVAE):
+class ConditionalM2VAE(BetaVAE):
   """Implementation of M2 model (Kingma et al. 2014). The default
   configuration of this layer is optimized for MNIST.
 
@@ -354,7 +354,7 @@ class conditionalM2VAE(betaVAE):
     return text
 
 
-class StructuredSemiVAE(betaVAE):
+class StructuredSemiVAE(BetaVAE):
   r"""
   Reference:
     Siddharth, N., Paige, B., et al., 2017. "Learning Disentangled
@@ -388,7 +388,7 @@ class PriorRegressor(keras.layers.Layer):
     return self.dist(tf.concat([loc, scale], axis=-1))
 
 
-class reparamsM3VAE(betaVAE):
+class reparamsM3VAE(BetaVAE):
 
   def __init__(
       self,

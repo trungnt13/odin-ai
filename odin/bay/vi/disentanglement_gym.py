@@ -12,7 +12,7 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from odin import visual as vs
 from odin.bay.distributions import Batchwise
-from odin.bay.vi.autoencoder import VariationalAutoencoder, semafoVAE
+from odin.bay.vi.autoencoder import VariationalAutoencoder, SemafoVAE
 from sklearn.mixture import GaussianMixture
 from odin.bay.vi.metrics import (Correlation, beta_vae_score, dci_scores,
                                  factor_vae_score, mutual_info_gap,
@@ -558,7 +558,7 @@ class DisentanglementGym:
     ## prepare
     P, Q = vae(x, training=False)
     P, Q = as_tuple(P), as_tuple(Q)
-    if isinstance(self.vae, semafoVAE):
+    if isinstance(self.vae, SemafoVAE):
       z_mean = tf.reduce_mean(Q[0].mean(), axis=0)
       z_std = tf.reduce_mean(Q[0].stddev(), axis=0)
     else:
@@ -612,7 +612,7 @@ class DisentanglementGym:
       outputs['latents_stats'] = image_latents
     ## latents traverse
     if self._latents_traverse:
-      if isinstance(self.vae, semafoVAE):
+      if isinstance(self.vae, SemafoVAE):
         z = Q[0].mean()
       else:
         z = tf.concat([q.mean() for q in Q], axis=-1)

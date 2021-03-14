@@ -9,7 +9,7 @@ from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
 from odin.backend.interpolation import linear
 from odin.backend.types_helpers import Coefficient
 from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.utils import as_tuple
 
@@ -26,7 +26,7 @@ def _clip_binary(x, eps=1e-7):
 # ===========================================================================
 # InfoVAE
 # ===========================================================================
-class infoVAE(betaVAE):
+class InfoVAE(BetaVAE):
   """ For MNIST, the authors used scaling coefficient `lambda=1000`,
   and information preference `alpha=0`.
 
@@ -94,7 +94,7 @@ class infoVAE(betaVAE):
 # ===========================================================================
 # Mutual Information VAE
 # ===========================================================================
-class miVAE(betaVAE):
+class MIVAE(BetaVAE):
   """ Mutual-information VAE
 
   The algorithm of MI-VAE is as following:

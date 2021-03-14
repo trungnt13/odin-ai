@@ -22,8 +22,8 @@ from typing_extensions import Literal
 
 from odin import visual as vs
 from odin.backend.interpolation import Interpolation, linear
-from odin.bay.vi import (VAE, beta10VAE, conditionalM2VAE, factorVAE, miVAE,
-                         multiheadVAE, remafoVAE, semafoVAE, skiptaskVAE)
+from odin.bay.vi import (VAE, Beta10VAE, ConditionalM2VAE, FactorVAE, MIVAE,
+                         MultiheadVAE, RemafoVAE, SemafoVAE, SkiptaskVAE)
 from odin.ml import DimReduce
 from odin.utils import MPI, as_tuple, batching, get_all_files, ArgController
 
@@ -31,8 +31,8 @@ N_CPU = 2
 OVERRIDE = False
 configs = dict(
     vae=[
-        semafoVAE,
-        remafoVAE,
+        SemafoVAE,
+        RemafoVAE,
     ],
     py=[
         0.004,
@@ -275,7 +275,7 @@ def run_task(args, evaluation=False):
   from odin.networks import get_networks, get_optimizer_info
   from odin.bay.vi import DisentanglementGym, Correlation, DimReduce
   ######## arguments
-  model: semafoVAE = args['vae']
+  model: SemafoVAE = args['vae']
   dsname: str = args['ds']
   py: float = args['py']
   coef: Interpolation = args['coef']

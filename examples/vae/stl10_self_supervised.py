@@ -8,7 +8,7 @@ from matplotlib import pyplot as plt
 from tqdm import tqdm
 
 from odin.bay.vi import RVmeta as RV
-from odin.bay.vi.autoencoder import betaVAE, multitaskVAE, SemifactorVAE
+from odin.bay.vi.autoencoder import BetaVAE, MultitaskVAE, SemifactorVAE
 from odin.fuel import MNIST, STL10, LegoFaces
 
 tf.random.set_seed(1)
@@ -22,7 +22,7 @@ train_u = ds.create_dataset(partition='train', label_percent=False)
 test_u = ds.create_dataset(partition='test', label_percent=False)
 save_path = f'/tmp/{ds.name}.w'
 
-vae = multitaskVAE(encoder=ds.name,
+vae = MultitaskVAE(encoder=ds.name,
                    alpha=10.,
                    outputs=RV(ds.shape,
                               'bernoulli',

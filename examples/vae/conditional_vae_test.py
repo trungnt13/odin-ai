@@ -13,7 +13,7 @@ from torch import nn
 from tqdm import tqdm
 
 from odin import backend as bk
-from odin.bay.vi.autoencoder import (conditionalM2VAE, FactorDiscriminator,
+from odin.bay.vi.autoencoder import (ConditionalM2VAE, FactorDiscriminator,
                                      ImageNet, create_image_autoencoder)
 from odin.bay.vi.utils import marginalize_categorical_labels
 from odin.fuel import MNIST, STL10, CelebA, LegoFaces, Shapes3D, dSprites
@@ -34,7 +34,7 @@ encoder, decoder = create_image_autoencoder(image_shape=(28, 28, 1),
                                             input_shape=(28, 28, 2),
                                             center0=True,
                                             latent_shape=20)
-vae = conditionalM2VAE(encoder=encoder,
+vae = ConditionalM2VAE(encoder=encoder,
                        decoder=decoder,
                        conditional_embedding='embed',
                        alpha=0.1 * 10)

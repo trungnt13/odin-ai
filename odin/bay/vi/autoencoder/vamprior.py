@@ -3,8 +3,8 @@ from typing import Callable, List, Optional, Union
 import numpy as np
 import tensorflow as tf
 from odin.backend.interpolation import Interpolation, linear
-from odin.bay.vi.autoencoder.beta_vae import betaVAE
-from odin.bay.vi.autoencoder.hierarchical_vae import stackedVAE, ladderVAE
+from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.hierarchical_vae import StackedVAE, LadderVAE
 from odin.utils import as_tuple
 from tensorflow import keras
 from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
@@ -104,7 +104,7 @@ class Vamprior(Distribution):
     return qz._sample_n(1, seed=seed)
 
 
-class vampriorVAE(betaVAE):
+class vampriorVAE(BetaVAE):
   """ An example of Vamprior VAE. In practice, vamprior could be integrated into
   any VAE model by changing the prior of specified latents variable.
 
@@ -144,7 +144,7 @@ class vampriorVAE(betaVAE):
 # ===========================================================================
 # Hierarchical models
 # ===========================================================================
-class hierarchicalVPVAE(stackedVAE):
+class hierarchicalVPVAE(StackedVAE):
   """ Stacked-hierarchical VAE with Vamprior applied to the latent variable in the
   middle of the networks
 
@@ -185,7 +185,7 @@ class hierarchicalVPVAE(stackedVAE):
     return ret
 
 
-class ladderVPVAE(ladderVAE):
+class ladderVPVAE(LadderVAE):
   """ Ladder VAE with Vamprior applied to the latent variable in the
   middle of the networks
 

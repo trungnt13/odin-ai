@@ -2,15 +2,17 @@ from typing import List, Union, Tuple
 
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow_probability.python.distributions import NOT_REPARAMETERIZED, Distribution
+from tensorflow_probability.python.distributions import NOT_REPARAMETERIZED, \
+  Distribution
 
 from odin.backend.interpolation import Interpolation, linear
 from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.beta_vae import annealingVAE
+from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.bay.layers import DistributionDense
 from odin.utils import as_tuple
+from odin.networks import TrainStep
 
 
 # ===========================================================================
@@ -27,10 +29,10 @@ def _get_llk_y(py, y, mask, alpha):
     llk_y = py.log_prob(y)
     if mask is not None:
       llk_y = tf.cond(
-          tf.reduce_any(mask),
-          true_fn=lambda: tf.transpose(
-              tf.boolean_mask(tf.transpose(llk_y), mask, axis=0)),
-          false_fn=lambda: 0.,
+        tf.reduce_any(mask),
+        true_fn=lambda: tf.transpose(
+          tf.boolean_mask(tf.transpose(llk_y), mask, axis=0)),
+        false_fn=lambda: 0.,
       )
     llk_y = tf.reduce_mean(alpha * llk_y)
     llk_y = tf.cond(tf.abs(llk_y) < 1e-8,
@@ -39,7 +41,7 @@ def _get_llk_y(py, y, mask, alpha):
   return llk_y
 
 
-class _semafo(annealingVAE):
+class SemafoBase(AnnealingVAE):
 
   def __init__(
       self,
@@ -59,13 +61,26 @@ class _semafo(annealingVAE):
     self.steps_without_mi = int(steps_without_mi)
     self.reverse_mi = bool(reverse_mi)
 
+  def encode(self, inputs, training=None, mask=None, **kwargs):
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    # don't condition on the labels, only accept inputs
+    X = X[0]
+    qz_x = super().encode(X, training=training, mask=None, **kwargs)
+    return qz_x
+
+  def decode(self, latents, training=None, mask=None, **kwargs):
+    px_z = super().decode(latents, training, mask, **kwargs)
+    py_z = self.predict_factors(latents=latents, training=training, mask=mask)
+    return as_tuple(px_z) + (py_z,)
+
   def predict_factors(self,
                       inputs=None,
                       latents=None,
                       training=None,
                       mask=None,
                       **kwargs) -> Distribution:
-    """Return the predictive distribution of the factors (a.k.a labels) `p(y|z)`"""
+    """Return the predictive distribution of the factors (a.k.a labels) 
+    `p(y|z)`"""
     if inputs is not None:
       latents = self.encode(inputs, training=training, mask=mask, **kwargs)
     elif latents is None:
@@ -84,7 +99,7 @@ class _semafo(annealingVAE):
     return tf.constant(self._mi_coef, dtype=self.dtype)
 
   @classmethod
-  def is_hierarchical(self) -> bool:
+  def is_hierarchical(cls) -> bool:
     return False
 
   @classmethod
@@ -95,77 +110,7 @@ class _semafo(annealingVAE):
 # ===========================================================================
 # SemafoVAE
 # ===========================================================================
-class semafoCVAE(_semafo):
-  """ Semafo Conditional VAE
-  """
-
-  def __init__(
-      self,
-      mi_coef: Union[float, Interpolation] = linear(vmin=1.0,
-                                                    vmax=0.5,
-                                                    length=20000),
-      name: str = 'SemafoCVAE',
-      **kwargs,
-  ):
-    super().__init__(mi_coef=mi_coef, name=name, **kwargs)
-
-  def sample_prior(self,
-                   sample_shape: Union[int, List[int]] = (),
-                   seed: int = 1) -> tf.Tensor:
-    r""" Sampling from prior distribution """
-    z1 = super().sample_prior(sample_shape=sample_shape, seed=seed)
-    z2 = self.mutual_codes.prior.sample(sample_shape, seed=seed)
-    return (z1, z2)
-
-  def encode(self, inputs, **kwargs):
-    h_e = self.encoder(inputs, **kwargs)
-    # create the latents distribution
-    qz_x = self.latents(h_e, **kwargs)
-    qy_x = self.labels(h_e, **kwargs)
-    # need to keep the keras mask
-    mask = kwargs.get('mask', None)
-    qz_x._keras_mask = mask
-    qy_x._keras_mask = mask
-    return (qz_x, qy_x)
-
-  def decode(self, latents, **kwargs):
-    latents = tf.concat(latents, axis=-1)
-    return super().decode(latents, **kwargs)
-
-  def elbo_components(self, inputs, training=None, mask=None):
-    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
-    if mask is not None:
-      mask = tf.reshape(mask, (-1,))
-    llk, kl = super().elbo_components(X[0], mask=mask, training=training)
-    px_z, (qz_x, py_x) = self.last_outputs
-    ## supervised loss
-    llk[f"llk_{self.labels.name}"] = _get_llk_y(py_x, y, mask, self.alpha)
-    ## mutual information estimation
-    batch_shape = px_z.batch_shape
-    z_samples = qz_x.KL_divergence.prior.sample(batch_shape)
-    y_samples = py_x.KL_divergence.prior.sample(batch_shape)
-    ## decoding
-    px = self.decode([z_samples, y_samples], training=training)
-    if px.reparameterization_type == NOT_REPARAMETERIZED:
-      x = px.mean()
-    else:
-      x = tf.convert_to_tensor(px)
-    qz_xprime, qy_x = self.encode(x, training=training)
-    #' mutual information (we want to maximize this, hence, add it to the llk)
-    llk[f'mi_{self.labels.name}'] = self.mi_coef * tf.cond(
-        self.step > self.steps_without_mi,
-        true_fn=lambda: qy_x.log_prob(y_samples),
-        false_fn=lambda: 0.)
-    ## this value is just for monitoring
-    mi_z = tf.reduce_mean(tf.stop_gradient(qz_xprime.log_prob(z_samples)))
-    mi_z = tf.cond(tf.math.is_nan(mi_z),
-                   true_fn=lambda: 0.,
-                   false_fn=lambda: tf.clip_by_value(mi_z, -1e8, 1e8))
-    llk['mi_latents'] = mi_z
-    return llk, kl
-
-
-class semafoVAE(_semafo):
+class SemafoVAE(SemafoBase):
   """A semaphore is a variable or abstract data type used to control access to
   a common resource by multiple processes and avoid critical section problems in
   a concurrent system
@@ -204,18 +149,6 @@ class semafoVAE(_semafo):
   def __init__(self, name: str = 'SemafoVAE', **kwargs):
     super().__init__(name=name, **kwargs)
 
-  def encode(self, inputs, training=None, mask=None, **kwargs):
-    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
-    # don't condition on the labels, only accept inputs
-    X = X[0]
-    qz_x = super().encode(X, training=training, mask=None, **kwargs)
-    return qz_x
-
-  def decode(self, latents, training=None, mask=None, **kwargs):
-    px_z = super().decode(latents, training, mask, **kwargs)
-    py_z = self.predict_factors(latents=latents, training=training, mask=mask)
-    return as_tuple(px_z) + (py_z,)
-
   def _mi_loss(self,
                Q,
                py_z,
@@ -251,9 +184,9 @@ class semafoVAE(_semafo):
     ## mutual information (we want to maximize this, hence, add it to the llk)
     if training:
       mi_y = tf.cond(
-          self.step >= self.steps_without_mi,
-          true_fn=lambda: self.mi_coef * mi_y,
-          false_fn=lambda: tf.stop_gradient(mi_y),
+        self.step >= self.steps_without_mi,
+        true_fn=lambda: self.mi_coef * mi_y,
+        false_fn=lambda: tf.stop_gradient(mi_y),
       )
     else:
       mi_y = tf.stop_gradient(mi_y)
@@ -287,7 +220,7 @@ class semafoVAE(_semafo):
     return llk, kl
 
 
-class remafoVAE(semafoVAE):
+class RemafoVAE(SemafoVAE):
   """ semafoVAE with reversed KL for the mutual information
 
   (i.e. minimize `D_kl(p(y|z)||q(y|z))`)
@@ -297,12 +230,12 @@ class remafoVAE(semafoVAE):
     super().__init__(reverse_mi=True, name=name, **kwargs)
 
 
-class semafoDVAE(semafoVAE):
+class semafod(SemafoVAE):
   """Semafo VAE using generative method for density-ratio estimation of
   `D(q(y|z)||p(y|z))`
   """
 
-  def __init__(self, name: str = 'SemafoDVAE', **kwargs):
+  def __init__(self, name: str = 'semafod', **kwargs):
     super().__init__(name=name, **kwargs)
     labels_kw = self.labels.get_config()
     labels_kw['name'] += '_q'
@@ -319,7 +252,7 @@ class semafoDVAE(semafoVAE):
     X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
     if mask is not None:
       mask = tf.reshape(mask, (-1,))
-    llk, kl = super(annealingVAE, self).elbo_components(X[0],
+    llk, kl = super(AnnealingVAE, self).elbo_components(X[0],
                                                         mask=mask,
                                                         training=training)
     P, Q = self.last_outputs
@@ -340,29 +273,112 @@ class semafoDVAE(semafoVAE):
 
 
 # ===========================================================================
-# Pairwise
+# Separated step for supervised and unsupervised examples
+# Having separated networks for p(y|z) and q(y|z) does not work.
 # ===========================================================================
-class semafoPVAE(semafoVAE):
-  """Semafo VAE using generative method for density-ratio estimation of
-  `D(q(y|z)||p(y|z))`
-  """
+class semafos(SemafoBase):
+  """Semafo with multiple steps training"""
 
-  def __init__(self, mi_coef=1.0, name: str = 'SemafoPVAE', **kwargs):
+  def __init__(self, mi_coef=1.0, name='semafos', **kwargs):
+    super().__init__(mi_coef=mi_coef, name=name, **kwargs)
+
+  def encode(self, inputs, training=None, mask=None, **kwargs):
+    inputs = as_tuple(inputs)
+    if len(inputs) == 1:
+      inputs = inputs[0]
+      labels = None
+    else:
+      inputs, labels = inputs
+    qz_x = super().encode(inputs, training=training, mask=None, **kwargs)
+    # hidden trick to pass the labels to decode method
+    qz_x._labeled = labels
+    return qz_x
+
+  def decode(self, latents, training=None, mask=None, **kwargs):
+    py_z = self.predict_factors(latents=latents, training=training, mask=mask)
+    # if labeled data is provided, use them in p(x|y,z)
+    if hasattr(latents, '_labeled') and latents._labeled is not None:
+      y = latents._labeled
+    else:
+      y = tf.stop_gradient(tf.convert_to_tensor(py_z))
+    h = tf.concat(as_tuple(latents) + (y,), axis=-1)
+    px_z = super(AnnealingVAE, self).decode(h, training, mask, **kwargs)
+    return as_tuple(px_z) + (py_z,)
+
+  def elbo_components(self, inputs, training=None, mask=None):
+    inputs = as_tuple(inputs)
+    if len(inputs) == 1:
+      X, y = inputs[0], None
+      is_supervised = False
+    else:
+      X, y = inputs
+      is_supervised = True
+    # === 0. ELBO
+    llk, kl = super(AnnealingVAE, self).elbo_components(inputs,
+                                                        training=training,
+                                                        mask=mask)
+    P, Q = self.last_outputs
+    P = as_tuple(P)
+    py_z = P[-1]
+    qz_x = Q
+    assert isinstance(qz_x, Distribution), \
+      f'Only support single latents, but given {Q}'
+    # === 1. Supervised case E_q(z|x)[log p(y|z)]
+    if is_supervised:
+      llk[f'llk_{self.labels.name}'] = self.alpha * py_z.log_prob(y)
+    # === 2. Unsupervised case E_q(z|x)[D_kl(q(y|z)||p(y|z))]
+    else:
+      z = qz_x.KL_divergence.prior.sample(qz_x.batch_shape_tensor())
+      px_z = self.decode(z, training=training)[0]
+      px_z: Distribution
+      x = px_z.mean() \
+        if px_z.reparameterization_type == NOT_REPARAMETERIZED else \
+        tf.convert_to_tensor(px_z)
+      qy_z = self.predict_factors(inputs=x, training=training)
+      y = tf.convert_to_tensor(qy_z)
+      kl[f'kl_{self.labels.name}'] = self.mi_coef * (
+          qy_z.log_prob(y) - py_z.log_prob(y))
+    return llk, kl
+
+  def train_steps(self, inputs, training=None, mask=None, call_kw={}):
+    X, y, mask = prepare_ssl_inputs(inputs, mask, n_unsupervised_inputs=1)
+    X = X[0]
+    mask = tf.reshape(mask, (-1,))
+    X_u = tf.boolean_mask(X, tf.logical_not(mask), axis=0)
+    if len(y) > 0:
+      X_l = tf.boolean_mask(X, mask, axis=0)
+      y_l = tf.boolean_mask(y[0], mask, axis=0)
+      yield from super(semafos, self).train_steps(inputs=[X_l, y_l], mask=None,
+                                                  training=training,
+                                                  call_kw=call_kw)
+    yield from super(semafos, self).train_steps(inputs=X_u, mask=None,
+                                                training=training,
+                                                call_kw=call_kw)
+
+
+# ===========================================================================
+# Failed system
+# ===========================================================================
+class semafop(SemafoVAE):
+  """ Semafo VAE minimize directly `D(p(y|z_u)||p(y|z_l))` instead
+  `D(q(y|z_u)||p(y|z_l))` """
+
+  def __init__(self, mi_coef=1.0, name: str = 'semafop', **kwargs):
     super().__init__(mi_coef=mi_coef, name=name, **kwargs)
 
   def elbo_components(self, inputs, training=None, mask=None):
-    ## unsupervised ELBO
     X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
     X = X[0]
     mask = tf.reshape(mask, (-1,))
     X_u = tf.boolean_mask(X, tf.logical_not(mask), axis=0)
     X_l = tf.boolean_mask(X, mask, axis=0)
     y_l = tf.boolean_mask(y[0], mask, axis=0)
-    ## normal ELBO
-    llk_l, kl_l = super(annealingVAE, self).elbo_components(X_l,
+    ## supervised
+    llk_l, kl_l = super(AnnealingVAE, self).elbo_components(X_l,
                                                             training=training)
     P_l, Q_l = self.last_outputs
-    llk_u, kl_u = super(annealingVAE, self).elbo_components(X_u,
+    ## unsupervised
+    llk_u, kl_u = super(AnnealingVAE, self).elbo_components(X_u,
                                                             training=training)
     P_u, Q_u = self.last_outputs
     ## merge the losses
@@ -376,13 +392,45 @@ class semafoPVAE(semafoVAE):
     py_z = P_l[-1]
     llk[f"llk_{self.labels.name}"] = tf.reduce_mean(self.alpha *
                                                     py_z.log_prob(y_l))
-    ## minimizing D(q(y|z)||p(y|z)) objective
+    ## minimizing D(q(y|z_u)||p(y|z_l)) objective
     # calculate the pair-wise distance between q(y|z) and p(y|z)
     qy_z = P_u[-1]
-    z = tf.convert_to_tensor(qy_z)
-    llk_q = tf.expand_dims(qy_z.log_prob(z), axis=-1)
-    llk_p = py_z.log_prob(tf.expand_dims(z, axis=-2))
-    mi_y = tf.reduce_mean(llk_q - llk_p)
-    kl[f'kl_{self.labels.name}'] = self.mi_coef * mi_y
+    y = tf.convert_to_tensor(qy_z)
+    tf.assert_equal(
+      tf.shape(X_u), tf.shape(X_l),
+      'Require number of labeled examples equal unlabeled examples')
+    kl[f'kl_{self.labels.name}'] = self.alpha * tf.reduce_mean(
+      qy_z.log_prob(y) - py_z.log_prob(y))
+    # llk_q = tf.expand_dims(qy_z.log_prob(y), axis=-1)
+    # llk_p = py_z.log_prob(tf.expand_dims(y, axis=-2))
+    # mi_y = tf.reduce_mean(llk_q - llk_p)
+    # kl[f'kl_{self.labels.name}'] = self.mi_coef * mi_y
     ## return
+    return llk, kl
+
+
+class semafot(SemafoVAE):
+  """SemafoVAE with tied q(y|z) and p(y|z)
+  """
+
+  def __init__(self, name: str = 'semafot', **kwargs):
+    super().__init__(name=name, **kwargs)
+
+  def elbo_components(self, inputs, training=None, mask=None):
+    ## unsupervised ELBO
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    if mask is not None:
+      mask = tf.reshape(mask, (-1,))
+    llk, kl = super().elbo_components(X[0], mask=mask, training=training)
+    P, Q = self.last_outputs
+    px_z = P[:-1]
+    py_z = P[-1]
+    Q = as_tuple(Q)  # q(z|x)
+    ## supervised loss
+    llk[f"llk_{self.labels.name}"] = _get_llk_y(py_z, y, mask, self.alpha)
+    ## MI objective
+    mi_y, mi_z = self._mi_loss(Q, py_z, training=training, mask=mask)
+    llk[f'mi_{self.labels.name}'] = mi_y
+    for z, mi in zip(as_tuple(self.latents), mi_z):
+      llk[f'mi_{z.name}'] = mi
     return llk, kl

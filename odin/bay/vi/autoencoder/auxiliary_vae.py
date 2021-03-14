@@ -6,7 +6,7 @@ from odin import backend as bk
 from odin.bay.helpers import coercible_tensor
 from odin.bay.layers import DistributionNetwork
 from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.conditional_vae import (conditionalM2VAE,
+from odin.bay.vi.autoencoder.conditional_vae import (ConditionalM2VAE,
                                                      prepare_ssl_inputs)
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              _parse_layers)
@@ -18,7 +18,7 @@ from tensorflow_probability.python.distributions import (Distribution,
 from typing_extensions import Literal
 
 
-class auxiliaryVAE(conditionalM2VAE):
+class auxiliaryVAE(ConditionalM2VAE):
   """
   The inference model:
   ```
@@ -195,7 +195,7 @@ class auxiliaryVAE(conditionalM2VAE):
     if 0.0 < self.dropout < 1.0:
       h_ = self.px_zy_drop(h_, training=training)
     h_ = self.zy_to_px_net(h_, training=training, mask=mask)
-    px_ayz = super(conditionalM2VAE, self).decode(h_,
+    px_ayz = super(ConditionalM2VAE, self).decode(h_,
                                                   training=training,
                                                   mask=mask)
     ## generate the auxiliary variable

@@ -1,16 +1,13 @@
 import os
-from typing import Union, Optional
-from typing_extensions import Literal
 
 import numpy as np
-import tensorflow as tf
+
 from odin.fuel.image_data._base import ImageDataset
-from odin.fuel.dataset_base import get_partition
 from odin.utils.crypto import md5_checksum
 
 
 class YDisentanglement(ImageDataset):
-  r"""
+  """
   Attributes :
     number of letter "Y" : an Integer
     xoffset : a Float
@@ -30,9 +27,9 @@ class YDisentanglement(ImageDataset):
     # create new dataset if not exist
     if not os.path.exists(path):
       images_train, attributes_train = YDisentanglement.generate_data(
-          training=True)
+        training=True)
       images_test, attributes_test = YDisentanglement.generate_data(
-          training=False)
+        training=False)
       with open(path, 'wb') as f:
         np.savez(f,
                  images_train=images_train,
@@ -58,70 +55,11 @@ class YDisentanglement(ImageDataset):
 
   @property
   def shape(self):
-    return (48, 48, 1)
-
-  def create_dataset(self,
-                     partition: Literal['train', 'valid', 'test'] = 'train',
-                     *,
-                     batch_size: Optional[int] = 32,
-                     drop_remainder: bool = False,
-                     shuffle: int = 1000,
-                     cache: Optional[str] = '',
-                     prefetch: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     parallel: Optional[int] = tf.data.experimental.AUTOTUNE,
-                     label_percent: Union[bool, float] = False,
-                     seed: int = 1) -> tf.data.Dataset:
-    r"""
-    Arguments:
-      partition : {'train', 'valid', 'test'}
-      label_percent : a Boolean or Scalar. If True, return both image and label,
-        otherwise, only image is returned.
-        If a scalar is provided, it indicate the percent of labelled data
-        in the mask.
-
-    Return :
-      tensorflow.data.Dataset :
-        image - `(tf.float32, (None, 48, 48, 1))`
-        label - `(tf.float32, (None, 4))`
-        mask  - `(tf.bool, (None, 1))` if 0. < label_percent < 1.
-      where, `mask=1` mean labelled data, and `mask=0` for unlabelled data
-    """
-    images, attributes = get_partition(partition,
-                                       train=(self.images_train,
-                                              self.attributes_train),
-                                       test=(self.images_test,
-                                             self.attributes_test))
-    images = tf.data.Dataset.from_tensor_slices(images)
-    attributes = tf.data.Dataset.from_tensor_slices(attributes)
-    ds = tf.data.Dataset.zip((images, attributes)) if label_percent else images
-    label_percent = float(label_percent)
-    gen = tf.random.experimental.Generator.from_seed(seed=seed)
-
-    def _process(*data):
-      image = tf.expand_dims(tf.cast(data[0], tf.float32), -1)
-      if label_percent:
-        label = tf.cast(data[1], tf.float32)
-        if 0. < label_percent < 1.:  # semi-supervised mask
-          mask = gen.uniform(shape=(1,)) < label_percent
-          return dict(inputs=(image, label), mask=mask)
-        return image, label
-      return image
-
-    if cache is not None:
-      ds = ds.cache(str(cache))
-    ds = ds.map(_process)
-    # shuffle must be called after cache
-    if shuffle is not None and shuffle > 0:
-      ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
-    if batch_size is not None:
-      ds = ds.batch(batch_size, drop_remainder)
-    if prefetch is not None:
-      ds = ds.prefetch(prefetch)
-    return ds
+    return 48, 48, 1
 
   @staticmethod
   def generate_data(num=16, image_path=None, training=True, seed=1):
-    from PIL import Image, ImageChops, ImageColor, ImageDraw
+    from PIL import Image, ImageChops, ImageDraw
     size = 48
     resample = Image.BICUBIC
     org = Image.new("1", (size, size))

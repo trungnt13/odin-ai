@@ -13,7 +13,6 @@ from six import string_types
 from tensorflow import Tensor
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
-from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python import layers as tfl
 from tensorflow_probability.python.distributions import Distribution
 
@@ -25,12 +24,13 @@ from odin.bay.vi._base import VariationalModel
 from odin.networks import Identity, NetConf, TrainStep
 from odin.utils import as_tuple
 from tqdm import tqdm
+from odin.bay.layers.dense_distribution import DistributionDense
 
 __all__ = [
-    'LayerCreator',
-    'VAEStep',
-    'VariationalAutoencoder',
-    'VAE',
+  'LayerCreator',
+  'VAEStep',
+  'VariationalAutoencoder',
+  'VAE',
 ]
 
 # ===========================================================================
@@ -55,12 +55,12 @@ def _net2str(net):
   return str(net)
 
 
-def _parse_layers(network, is_decoding=False, name=None) -> Layer:
+def _parse_layers(network, name=None) -> Union[Layer, DistributionDense]:
   ## make sure is a list
   if isinstance(network, (tuple, list)):
     if len(network) != 1:
       raise ValueError(
-          f'Only support single neural network but provide {network}')
+        f'Only support single neural network but provide {network}')
     network = network[0]
   assert network is not None, 'network cannot be None'
   ## check different options
@@ -87,7 +87,7 @@ def _parse_layers(network, is_decoding=False, name=None) -> Layer:
   ## no support
   else:
     raise ValueError(
-        f"No support for network configuration of type: {type(cfg)}")
+      f"No support for network configuration of type: {type(cfg)}")
   return layer
 
 
@@ -105,7 +105,7 @@ def _iter_lists(X, Y):
 # ===========================================================================
 @dataclass
 class VAEStep(TrainStep):
-  r""" A single train step (iteration) for Variational Autoencoder """
+  """ A single train step (iteration) for Variational Autoencoder """
 
   vae: 'VariationalAutoencoder'
   call_kw: Dict[str, Any]
@@ -184,8 +184,8 @@ class VariationalAutoencoder(VariationalModel):
     # encoder
     if isinstance(encoder, (tuple, list)):
       self._encoder = [
-          _parse_layers(network=e, name=f"encoder{i}")
-          for i, e in enumerate(encoder)
+        _parse_layers(network=e, name=f"encoder{i}")
+        for i, e in enumerate(encoder)
       ]
       self._encoder_args = [_get_args(e) for e in self._encoder]
     else:
@@ -194,8 +194,8 @@ class VariationalAutoencoder(VariationalModel):
     # latents
     if isinstance(latents, (tuple, list)):
       self._latents = [
-          _parse_layers(network=z, name=f"latents{i}")
-          for i, z in enumerate(latents)
+        _parse_layers(network=z, name=f"latents{i}")
+        for i, z in enumerate(latents)
       ]
       self._latents_args = [_get_args(z) for z in self.latents]
     else:
@@ -204,8 +204,8 @@ class VariationalAutoencoder(VariationalModel):
     # decoder
     if isinstance(decoder, (tuple, list)):
       self._decoder = [
-          _parse_layers(network=d, name=f"decoder{i}")
-          for i, d in enumerate(decoder)
+        _parse_layers(network=d, name=f"decoder{i}")
+        for i, d in enumerate(decoder)
       ]
       self._decoder_args = [_get_args(d) for d in self.decoder]
     else:
@@ -214,8 +214,8 @@ class VariationalAutoencoder(VariationalModel):
     # observation
     if isinstance(observation, (tuple, list)):
       self._observation = [
-          _parse_layers(network=observation, name=f"observation{i}")
-          for i, o in enumerate(observation)
+        _parse_layers(network=observation, name=f"observation{i}")
+        for i, o in enumerate(observation)
       ]
       self._observation_args = [_get_args(o) for o in self.observation]
     else:
@@ -231,7 +231,7 @@ class VariationalAutoencoder(VariationalModel):
     return self._decoder
 
   @property
-  def latents(self) -> Union[Layer, List[Layer]]:
+  def latents(self) -> Union[DistributionDense, List[DistributionDense]]:
     return self._latents
 
   @property
@@ -263,7 +263,7 @@ class VariationalAutoencoder(VariationalModel):
                    seed: int = 1) -> Tensor:
     r""" Sampling from prior distribution """
     return bk.atleast_2d(
-        self.latents.sample(sample_shape=sample_shape, seed=seed))
+      self.latents.sample(sample_shape=sample_shape, seed=seed))
 
   def sample_data(self,
                   sample_shape: Union[int, List[int]] = (),
@@ -271,7 +271,7 @@ class VariationalAutoencoder(VariationalModel):
     r""" Sample from p(X) given that the prior of X is known, this could be
     wrong since `RVmeta` often has a default prior. """
     return bk.atleast_2d(
-        self.observation.sample(sample_shape=sample_shape, seed=seed))
+      self.observation.sample(sample_shape=sample_shape, seed=seed))
 
   def generate(self,
                sample_shape: List[int] = (),
@@ -332,7 +332,7 @@ class VariationalAutoencoder(VariationalModel):
              mask: Optional[Tensor] = None,
              only_decoding: bool = False,
              **kwargs) -> Distribution:
-    r""" Decoding latent codes, this does not guarantee output the
+    """ Decoding latent codes, this does not guarantee output the
     reconstructed distribution """
     # stop tensorflow complaining about tensor inputs for Sequential
     c = tf.constant(0., dtype=self.dtype)
@@ -356,7 +356,7 @@ class VariationalAutoencoder(VariationalModel):
     # recover the sample shape
     if self.sample_ndim > 0:
       org_shape = tf.concat(
-          [self.sample_shape, [-1], tf.shape(h_d)[1:]], axis=0)
+        [self.sample_shape, [-1], tf.shape(h_d)[1:]], axis=0)
       h_d = tf.reshape(h_d, org_shape)
     # only return hidden states from the decoder
     if only_decoding:
@@ -397,10 +397,10 @@ class VariationalAutoencoder(VariationalModel):
     """
     # encode
     qz_x = self.encode(
-        inputs,
-        training=training,
-        mask=mask,
-        **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
+      inputs,
+      training=training,
+      mask=mask,
+      **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
     )
     # transfer the mask from encoder to decoder here
     for qz in as_tuple(qz_x):
@@ -409,10 +409,10 @@ class VariationalAutoencoder(VariationalModel):
         break
     # decode
     px_z = self.decode(
-        qz_x,
-        training=training,
-        mask=mask,
-        **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
+      qz_x,
+      training=training,
+      mask=mask,
+      **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
     )
     return (px_z, qz_x)
 
@@ -447,16 +447,12 @@ class VariationalAutoencoder(VariationalModel):
         inputs' Tensors
     training : Optional[bool], optional
         training or evaluation mode, by default None
-    mask : Optional[Tensor], optional
-        mask Tensor, by default None
 
     Returns
     -------
-    Tuple[Tensor, Tensor]
-      marginal log-likelihood : a Tensor of shape `[batch_size]`
-        marginal log-likelihood of p(X)
-      distortion (a.k.a reconstruction): a Dictionary mapping from distribution
-        name to Tensor of shape `[batch_size]`, the negative reconstruction cost.
+    Tuple[Dict[str, Tensor], Dict[str, Tensor]]
+      reconstruction : mapping from name to marginal reconstruction
+      KL divergence: mapping from name to the divergence
     """
     ## prepare data
     if isinstance(inputs, (tuple, list)):
@@ -520,16 +516,18 @@ class VariationalAutoencoder(VariationalModel):
     inputs.close()
     # concatenate
     C = tf.math.log(tf.cast(n_mcmc, self.dtype))
-    logsumexp_concat = lambda x: \
-      tf.reduce_logsumexp(tf.concat(x, axis=-1), axis=0)
+
+    def logsumexp_concat(x):
+      return tf.reduce_logsumexp(tf.concat(x, axis=-1), axis=0)
+
     llk = {
-        name: logsumexp_concat(logprobs) - C for name, logprobs in llk.items()
+      name: logsumexp_concat(logprobs) - C for name, logprobs in llk.items()
     }
     kl = {
-        name: (
-            logsumexp_concat([i for i, _ in llkqp]) - C,
-            logsumexp_concat([i for _, i in llkqp]) - C,
-        ) for name, llkqp in kl.items()
+      name: (
+        logsumexp_concat([i for i, _ in llkqp]) - C,
+        logsumexp_concat([i for _, i in llkqp]) - C,
+      ) for name, llkqp in kl.items()
     }
     ## Marginal LLK
     if reduce is not None:
@@ -571,19 +569,18 @@ class VariationalAutoencoder(VariationalModel):
                   inputs: TensorTypes,
                   training: Optional[bool] = None,
                   mask: Optional[Tensor] = None,
-                  call_kw: Dict[str, Any] = {}) -> Iterator[VAEStep]:
-    r""" Facilitate multiple steps training for each iteration
-    (similar to GAN) """
+                  **kwargs) -> Iterator[VAEStep]:
+    """Support multiple steps training for each iteration (similar to GAN)"""
     yield VAEStep(vae=self,
                   parameters=self.trainable_variables,
                   inputs=inputs,
                   training=training,
                   mask=mask,
-                  call_kw=call_kw)
+                  call_kw=kwargs)
 
   def __str__(self):
     cls = [
-        i for i in type.mro(type(self)) if issubclass(i, VariationalAutoencoder)
+      i for i in type.mro(type(self)) if issubclass(i, VariationalAutoencoder)
     ]
     text = (f"{'->'.join([i.__name__ for i in cls[::-1]])} "
             f"(semi:{type(self).is_semi_supervised()})")
@@ -615,7 +612,7 @@ class VariationalAutoencoder(VariationalModel):
         if isinstance(opt, tf.optimizers.Optimizer):
           text += f"\n Optimizer#{i}:\n  "
           text += "\n  ".join(
-              ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
+            ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
     return text
 
 

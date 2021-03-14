@@ -688,7 +688,8 @@ class Trainer(object):
     return self
 
   def print(self, *msg):
-    """ Print log message without interfering the current `tqdm` progress bar """
+    """Print log message without interfering the current `tqdm`
+    progress bar"""
     for m in msg:
       if self._current_train_progress is None:
         print(m)
@@ -701,7 +702,7 @@ class Trainer(object):
                         model: Union[Model, Sequential],
                         step: int = 0,
                         name: str = "keras"):
-    r""" Writes Keras graph networks to TensorBoard. """
+    """Writes Keras graph networks to TensorBoard. """
     with self.summary_writer.as_default():
       with summary_ops_v2.always_record_summaries():
         if not model.run_eagerly:

@@ -6,7 +6,7 @@ import tensorflow as tf
 from odin.backend.maths import softplus1
 from odin.bay.layers.dense_distribution import DistributionDense
 from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python.distributions import (PowerSpherical,
                                                          SphericalUniform,
@@ -43,7 +43,7 @@ class _power_spherical:
     )
 
 
-class hypersphericalVAE(betaVAE):
+class hypersphericalVAE(BetaVAE):
   """
 
   References
@@ -96,5 +96,5 @@ class powersphericalVAE(hypersphericalVAE):
     super().__init__(distribution='powerspherical', name=name, **kwargs)
 
 
-class poincareVAE(betaVAE):
+class poincareVAE(BetaVAE):
   ...

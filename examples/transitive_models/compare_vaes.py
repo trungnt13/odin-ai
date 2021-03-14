@@ -8,8 +8,8 @@ import numpy as np
 import tensorflow as tf
 
 from odin.backend.interpolation import linear
-from odin.bay.vi import (VAE, beta10VAE, conditionalM2VAE, factorVAE, miVAE,
-                         multiheadVAE, semafoVAE, remafoVAE, skiptaskVAE)
+from odin.bay.vi import (VAE, Beta10VAE, ConditionalM2VAE, FactorVAE, MIVAE,
+                         MultiheadVAE, SemafoVAE, RemafoVAE, SkiptaskVAE)
 from odin.utils import MPI, as_tuple
 
 N_CPU = 2
@@ -18,7 +18,7 @@ OVERRIDE = False
 all_vaes = [
     # semafoVAE,
     # remafoVAE,
-    miVAE,
+    MIVAE,
     # factorVAE,
     # beta10VAE,
     # VAE,
@@ -55,7 +55,7 @@ def train_task(args):
   from odin.networks import get_networks, get_optimizer_info
   model, dsname, py, is_semi_supervised = args
   ## special case
-  if (model is conditionalM2VAE and
+  if (model is ConditionalM2VAE and
       dsname not in ('mnist', 'fashionmnist', 'celeba')):
     return
   ######## prepare path
@@ -83,7 +83,7 @@ def train_task(args):
   kw = {}
   if is_semi_supervised:
     kw['alpha'] = 1 / py
-    if model == semafoVAE:
+    if model == SemafoVAE:
       kw['mi_coef'] = all_dsinfo[dsname]
   vae = model(**networks, **kw)
   vae.build((None,) + ds.shape)
@@ -111,7 +111,7 @@ def train_task(args):
 
   opt_info = get_optimizer_info(dsname)
   # extra 20000 iterations for semafoVAE
-  if isinstance(vae, semafoVAE):
+  if isinstance(vae, SemafoVAE):
     opt_info['max_iter'] += 20000
   vae.load_weights(modelpath)
   vae.fit(

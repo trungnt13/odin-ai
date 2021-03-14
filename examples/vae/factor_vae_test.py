@@ -13,7 +13,7 @@ from odin import visual as vs
 from odin.bay import RVmeta
 from odin.bay.vi import Criticizer
 from odin.bay.vi.autoencoder import (Factor2VAE, FactorDiscriminator,
-                                     SemiFactor2VAE, SemifactorVAE, factorVAE)
+                                     SemiFactor2VAE, SemifactorVAE, FactorVAE)
 from odin.training import Experimenter, pretty_config
 from odin.fuel import get_dataset
 from odin.utils import md5_folder
@@ -104,7 +104,7 @@ class Factor(Experimenter):
               path=os.path.join(model_dir, 'weight'))
     if cfg.vae == 'factor':
       del kw['alpha']
-      model = factorVAE(
+      model = FactorVAE(
           encoder=cfg.ds,
           outputs=RVmeta(self.ds.shape, 'bern', name="Image"),
           latents=RVmeta(20, 'mvndiag', projection=True, name="Latents"),

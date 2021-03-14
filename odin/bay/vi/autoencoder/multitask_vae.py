@@ -7,7 +7,7 @@ from tensorflow.python import keras
 from tensorflow_probability.python import distributions as tfd
 
 from odin.bay.random_variable import RVmeta
-from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              NetConf,
                                                              _parse_layers)
@@ -16,7 +16,7 @@ from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
 
 
-class multitaskVAE(betaVAE):
+class MultitaskVAE(BetaVAE):
   """Multi-tasks VAE for semi-supervised learning
 
   Parameters
@@ -74,20 +74,20 @@ class multitaskVAE(betaVAE):
     ## prepare encoder for Y
     if encoder_y is not None:
       units_z = sum(
-          np.prod(
-              z.event_shape if hasattr(z, 'event_shape') else z.output_shape)
-          for z in as_tuple(self.latents))
+        np.prod(
+          z.event_shape if hasattr(z, 'event_shape') else z.output_shape)
+        for z in as_tuple(self.latents))
       if isinstance(encoder_y, string_types):  # copy
         layers = [
-            keras.models.clone_model(self.encoder),
-            keras.layers.Flatten()
+          keras.models.clone_model(self.encoder),
+          keras.layers.Flatten()
         ]
       else:  # different network
         layers = [_parse_layers(encoder_y)]
       if probabilistic_encoder_y:
         layers.append(
-            RVmeta(units_z, 'mvndiag', projection=True,
-                   name='qzy_x').create_posterior())
+          RVmeta(units_z, 'mvndiag', projection=True,
+                 name='qzy_x').create_posterior())
       else:
         layers.append(keras.layers.Dense(units_z, activation='linear'))
       encoder_y = keras.Sequential(layers, name='encoder_y')
@@ -102,9 +102,9 @@ class multitaskVAE(betaVAE):
     super().build(input_shape)
     if self.semi_discriminator is not None:
       units_z = sum(
-          np.prod(
-              z.event_shape if hasattr(z, 'event_shape') else z.output_shape)
-          for z in as_tuple(self.latents))
+        np.prod(
+          z.event_shape if hasattr(z, 'event_shape') else z.output_shape)
+        for z in as_tuple(self.latents))
       # units_y = sum(
       #     np.prod(
       #         y.event_shape if hasattr(y, 'event_shape') else y.output_shape)
@@ -181,10 +181,10 @@ class multitaskVAE(betaVAE):
           # the first dimension
           # need to check the mask here, otherwise the loss can be NaN
           llk_y = tf.cond(
-              tf.reduce_all(tf.logical_not(mask)),
-              lambda: 0.,
-              lambda: tf.transpose(
-                  tf.boolean_mask(tf.transpose(llk_y), mask, axis=0)),
+            tf.reduce_all(tf.logical_not(mask)),
+            lambda: 0.,
+            lambda: tf.transpose(
+              tf.boolean_mask(tf.transpose(llk_y), mask, axis=0)),
           )
         # this is important, if loss=0 when using one-hot log_prob,
         # the gradient is NaN
@@ -204,9 +204,9 @@ class multitaskVAE(betaVAE):
       #   tf.math.log(tf.cast(self.n_samples_semi, self.dtype))
       y_pred = self.semi_discriminator(z)
       loss = tf.reduce_mean(
-          tf.losses.binary_crossentropy(y_true=y_true,
-                                        y_pred=y_pred,
-                                        from_logits=True))
+        tf.losses.binary_crossentropy(y_true=y_true,
+                                      y_pred=y_pred,
+                                      from_logits=True))
     else:
       loss = 0.
     # have to minimize this loss
@@ -214,7 +214,7 @@ class multitaskVAE(betaVAE):
     if self.encoder_y is not None and self.probabilistic_encoder_y:
       qz_x = Q[0]  # prior
       kl['kl_qzy_x'] = self.beta * kl_divergence(
-          q=qzy_x, p=qz_x, analytic=False, free_bits=self.free_bits)
+        q=qzy_x, p=qz_x, analytic=False, free_bits=self.free_bits)
       # (qzy_x.log_prob(z) - tf.stop_gradient(qz_x.log_prob(z)))
       # self._last_xy.KL_divergence(
       #     analytic=self.analytic,
@@ -245,7 +245,7 @@ class multitaskVAE(betaVAE):
     return text
 
 
-class skiptaskVAE(multitaskVAE):
+class SkiptaskVAE(MultitaskVAE):
   """The supervised outputs, skip the decoder, and directly connect to
   the latents"""
 
@@ -262,13 +262,13 @@ class skiptaskVAE(multitaskVAE):
                      **kwargs)
 
 
-class multiheadVAE(multitaskVAE):
+class MultiheadVAE(MultitaskVAE):
   """Similar to skiptaskVAE, the supervised outputs, skip the decoder,
   and directly connect to the via non-linear layers latents"""
 
   def __init__(
       self,
-      decoder_y: LayerCreator = NetConf([256, 256],
+      decoder_y: LayerCreator = NetConf((256, 256),
                                         flatten_inputs=True,
                                         name='decoder_y'),
       name: str = 'MultiheadVAE',

@@ -1,24 +1,27 @@
 from typing import Dict, List, Optional, Tuple, Union
 
 import tensorflow as tf
-from odin.bay.vi.autoencoder.beta_vae import betaVAE
+from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.losses import disentangled_inferred_prior_loss
 from odin.utils import as_tuple
 
 
-class dipVAE(betaVAE):
-  r""" Implementation of disentangled infered prior VAE
+class DIPVAE(BetaVAE):
+  """ Implementation of disentangled infered prior VAE
 
-  Arguments:
-    only_mean : A Boolean. If `True`, applying DIP constraint only on the
+  Parameters
+  ----------
+  only_mean : A Boolean. If `True`, applying DIP constraint only on the
       mean of latents `Cov[E(z)]` (i.e. type 'i'), otherwise,
       `E[Cov(z)] + Cov[E(z)]` (i.e. type 'ii')
-    lambda_offdiag : A Scalar. Weight for penalizing the off-diagonal part of
+  lambda_offdiag : A Scalar. Weight for penalizing the off-diagonal part of
       covariance matrix.
-    lambda_diag : A Scalar. Weight for penalizing the diagonal.
+  lambda_diag : A Scalar.
+      Weight for penalizing the diagonal.
 
-  Reference:
-    Kumar, A., Sattigeri, P., Balakrishnan, A., 2018. "Variational Inference
+  References
+  ----------
+  Kumar, A., Sattigeri, P., Balakrishnan, A., 2018. "Variational Inference
       of Disentangled Latent Concepts from Unlabeled Observations".
       arXiv:1711.00848 [cs, stat].
   """
