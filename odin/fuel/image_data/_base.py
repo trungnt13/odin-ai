@@ -121,7 +121,7 @@ class ImageDataset(IterableDataset):
       plt.close(fig)
     return images
 
-  def normalize_255(self, image: tf.Tensor) -> tf.Tensor:
+  def normalize255(self, image: tf.Tensor) -> tf.Tensor:
     return tf.clip_by_value(image / 255., 1e-6, 1. - 1e-6)
 
   def normalize(self, image: tf.Tensor,
@@ -134,7 +134,7 @@ class ImageDataset(IterableDataset):
     else:
       image = tf.clip_by_value(image, 0.0, 255.0)
       if 'probs' in normalize:
-        image = self.normalize_255(image)
+        image = self.normalize255(image)
       elif 'tanh' in normalize:
         image = tf.clip_by_value(image / 255. * 2.0 - 1.0, -1.0 + 1e-6,
                                  1.0 - 1e-6)

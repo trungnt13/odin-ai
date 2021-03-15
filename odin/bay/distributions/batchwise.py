@@ -1,13 +1,11 @@
-from typing import List, Optional
+from typing import List, Optional, Sequence
+
+import tensorflow as tf
+from tensorflow_probability.python.distributions import (Distribution,
+                                                         kullback_leibler)
 
 from odin.backend.types_helpers import Axis
-import numpy as np
-import tensorflow as tf
 from odin.utils import as_tuple
-from typeguard import typechecked
-from tensorflow_probability.python.distributions import (Distribution,
-                                                         kullback_leibler,
-                                                         Blockwise)
 
 __all__ = [
     'Batchwise',
@@ -28,7 +26,7 @@ class Batchwise(Distribution):
   """
 
   def __init__(self,
-               distributions: List[Distribution],
+               distributions: Sequence[Distribution],
                axis: Axis = 0,
                validate_args: bool = False,
                name: Optional[str] = None,

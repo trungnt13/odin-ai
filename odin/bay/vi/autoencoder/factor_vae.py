@@ -64,7 +64,7 @@ def _split_inputs(inputs, mask, call_kw):
 
 @dataclass
 class FactorDiscriminatorStep(VAEStep):
-  vae: 'FactorVAE'
+  vae: 'FactorVAE' = None
 
   def call(self):
     px_z, qz_x = self.vae.last_outputs
@@ -83,7 +83,7 @@ class FactorDiscriminatorStep(VAEStep):
     # if model is semi-supervised and the labels is given
     supervised_loss = 0.
     inputs = as_tuple(self.inputs)
-    if (self.vae.is_semi_supervised() and len(inputs) > 1):
+    if self.vae.__class__.is_semi_supervised() and len(inputs) > 1:
       labels = inputs[1:]
       supervised_loss = self.vae.supervised_loss(labels,
                                                  qz_x=qz_x,
@@ -231,10 +231,13 @@ class FactorVAE(AnnealingVAE):
                   inputs: Union[TensorTypes, List[TensorTypes]],
                   training: bool = True,
                   mask: Optional[TensorTypes] = None,
-                  call_kw: Dict[str, Any] = {}) -> TrainStep:
+                  name: str = '',
+                  **kwargs) -> TrainStep:
     """ Facilitate multiple steps training for each iteration (similar to GAN)
 
-    Example:
+    Example
+    -------
+
     ```
     vae = FactorVAE()
     x = vae.sample_data()
@@ -253,25 +256,25 @@ class FactorVAE(AnnealingVAE):
     """
     # split the data
     (x1, mask1, call_kw1), \
-    (x2, mask2, call_kw2) = _split_inputs(inputs, mask, call_kw)
+    (x2, mask2, call_kw2) = _split_inputs(inputs, mask, kwargs)
     # first step optimize VAE with total correlation loss
-    step1 = VAEStep(vae=self,
-                    inputs=x1,
-                    training=training,
-                    mask=mask1,
-                    call_kw=call_kw1,
-                    parameters=self.vae_params)
-    yield step1
+    yield VAEStep(vae=self,
+                  inputs=x1,
+                  training=training,
+                  mask=mask1,
+                  call_kw=call_kw1,
+                  parameters=self.vae_params,
+                  name=f'{name}elbo')
     # second step optimize the discriminator for discriminate permuted code
     # skip training Discriminator of pretraining
     if not self.is_pretraining:
-      step2 = FactorDiscriminatorStep(vae=self,
-                                      inputs=x2,
-                                      training=training,
-                                      mask=mask2,
-                                      call_kw=call_kw2,
-                                      parameters=self.disc_params)
-      yield step2
+      yield FactorDiscriminatorStep(vae=self,
+                                    inputs=x2,
+                                    training=training,
+                                    mask=mask2,
+                                    call_kw=call_kw2,
+                                    parameters=self.disc_params,
+                                    name=f'{name}disc')
 
   def fit(self,
           train,

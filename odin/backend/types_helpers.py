@@ -1,5 +1,5 @@
 from numbers import Number
-from typing import Callable, List, Union
+from typing import Callable, List, Union, Sequence
 
 from numpy import ndarray
 from scipy.sparse import spmatrix
@@ -11,22 +11,22 @@ from typing_extensions import Literal
 from odin.backend.interpolation import Interpolation
 
 __all__ = [
-    'Coefficient',
-    'NoneType',
-    'TensorTypes',
-    'LayerTypes',
-    'BATCH',
-    'EVENT',
-    'MCMC',
-    'CorrelationMethod',
-    'Axes',
-    'Axis',
+  'Coefficient',
+  'NoneType',
+  'TensorTypes',
+  'LayerTypes',
+  'BATCH',
+  'EVENT',
+  'MCMC',
+  'CorrelationMethod',
+  'Axes',
+  'Axis',
 ]
 
 Coefficient = Union[Number, Interpolation]
 
-CorrelationMethod = Literal['spearman', 'lasso', 'pearson', 'mutualinfo',
-                            'importance']
+CorrelationMethod = Literal[
+  'spearman', 'lasso', 'pearson', 'mutualinfo', 'importance']
 
 NoneType = type(None)
 TensorTypes = Union[spmatrix, ndarray, Tensor]
@@ -37,5 +37,5 @@ BATCH = Union[int, NoneType]
 EVENT = int
 MCMC = Union[int, NoneType]
 
-Axes = Union[int, List[int]]
+Axes = Union[int, Sequence[int]]
 Axis = int

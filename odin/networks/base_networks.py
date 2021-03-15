@@ -12,7 +12,7 @@ import types
 from functools import partial
 from numbers import Number
 from typing import (Any, Callable, Dict, Iterator, List, Optional, Text, Tuple,
-                    Union)
+                    Union, Sequence)
 
 import numpy as np
 import tensorflow as tf
@@ -21,7 +21,7 @@ from six import string_types
 from tensorflow import Tensor
 from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.python import keras
-from tensorflow.python.data.ops.dataset_ops import DatasetV2
+from tensorflow.python.data import Dataset
 from tensorflow.python.keras.layers import Layer
 from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
 from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
@@ -146,10 +146,15 @@ class TrainStep:
       list of trainable parameters
 
   """
-  inputs: TensorTypes
-  training: bool
-  mask: Optional[TensorTypes]
-  parameters: List[tf.Variable]
+  inputs: Union[TensorTypes, Sequence[TensorTypes]]
+  training: Optional[bool] = dataclasses.field(default=None)
+  mask: Optional[TensorTypes] = dataclasses.field(default=None)
+  parameters: List[tf.Variable] = dataclasses.field(default_factory=list)
+  name: str = dataclasses.field(default_factory=str)
+
+  def set_name(self, name: str) -> 'TrainStep':
+    self.name = name
+    return self
 
   def call(self) -> Tuple[Tensor, Dict[str, Any]]:
     return tf.constant(0., dtype=tf.float32), {}
@@ -215,7 +220,7 @@ class Networks(keras.Model, MD5object):
       self._trainer = None
       self._early_stopping = EarlyStopping()
 
-  def build(self, input_shape: List[Union[None, int]]) -> 'Networks':
+  def build(self, input_shape: Sequence[Union[None, int]]) -> 'Networks':
     """Build the networks for given input or list of inputs
 
     Parameters
@@ -233,7 +238,7 @@ class Networks(keras.Model, MD5object):
     return self
 
   @property
-  def learning_rate(self) -> Union[Tensor, List[Tensor]]:
+  def learning_rate(self) -> Union[Tensor, Sequence[Tensor]]:
     """Return the current learning rate"""
     lrs = []
     for optim in as_tuple(self.optimizer):
@@ -358,27 +363,29 @@ class Networks(keras.Model, MD5object):
   def train_steps(self,
                   inputs: TensorTypes,
                   training: bool = True,
+                  name: str = '',
                   *args,
                   **kwargs
                   ) -> Iterator[Callable[[], Tuple[Tensor, Dict[str, Any]]]]:
     yield TrainStep(inputs=inputs,
                     training=training,
                     parameters=self.trainable_variables,
+                    name=name,
                     *args,
                     **kwargs)
 
   def optimize(
       self,
-      inputs: Union[TensorTypes, List[TensorTypes]],
+      inputs: Union[TensorTypes, Sequence[TensorTypes]],
       training: bool = True,
-      optimizer: Optional[Union[List[OptimizerV2], OptimizerV2]] = None,
+      optimizer: Optional[Union[Sequence[OptimizerV2], OptimizerV2]] = None,
       clipnorm: Optional[float] = None,
       clipvalue: Optional[float] = None,
       global_clipnorm: Optional[float] = None,
       skip_update_threshold: Optional[float] = None,
       when_skip_update: int = 0,
-      nan_gradients_policy: Literal['ignore', 'skip', 'raise',
-                                    'restore'] = 'skip',
+      nan_gradients_policy: Literal[
+        'ignore', 'skip', 'raise', 'restore'] = 'skip',
       allow_none_gradients: bool = False,
       track_gradients: bool = False,
       *args,
@@ -388,7 +395,7 @@ class Networks(keras.Model, MD5object):
 
     Parameters
     ----------
-    inputs : Union[TensorTypes, List[TensorTypes]]
+    inputs : Union[TensorTypes, Sequence[TensorTypes]]
         a single or list of input tensors
     training : bool, optional
         indicating the training mode for call method, by default True
@@ -396,8 +403,15 @@ class Networks(keras.Model, MD5object):
         optimizer, by default None
     clipnorm : Optional[float], optional
         global L2-norm value for clipping the gradients, by default None
+    clipvalue : Optional[float]
+        clip gradient by value
+    global_clipnorm : Optional[float]
+        global gradient clipping by L2-norm
     skip_update_threshold : Optional[float], optional
         if gradients value pass this threshold, it will be set to 0.
+    when_skip_update : int
+        number of iteration after which the update skipping allowed to start,
+        default 0
     nan_gradients_policy : ['stop', 'skip', 'ignore', 'raise', 'restore']
         Policies for handling NaNs value gradients:
           - 'stop': skip the current updates and stop training
@@ -434,6 +448,8 @@ class Networks(keras.Model, MD5object):
     iterator = enumerate(
       self.train_steps(inputs=inputs, training=training, *args, **kwargs))
     for step_idx, step in iterator:
+      step: TrainStep
+      step_name = step.name
       assert isinstance(step, TrainStep) or callable(step), \
         ("method train_steps must return an Iterator of TrainStep or callable, "
          f"but return type: {type(step)}")
@@ -544,8 +560,8 @@ class Networks(keras.Model, MD5object):
         loss, metrics = step()
       ## update metrics and loss
       for k, v in metrics.items():
-        if k in all_metrics:
-          k = f'{k}_{step_idx}'
+        if len(step_name) > 0:
+          k = f'{k}_{step_name}'
         all_metrics[k] = v
       total_loss += loss
     ## return
@@ -554,12 +570,12 @@ class Networks(keras.Model, MD5object):
 
   def fit(
       self,
-      train: Union[TensorTypes, DatasetV2],
+      train: Union[TensorTypes, Dataset],
       *,
-      valid: Optional[Union[TensorTypes, DatasetV2]] = None,
+      valid: Optional[Union[TensorTypes, Dataset]] = None,
       valid_freq: int = 500,
       valid_interval: float = 0,
-      optimizer: Union[str, List[str], OptimizerV2, List[OptimizerV2]] = 'adam',
+      optimizer: Union[str, Sequence[str], OptimizerV2, Sequence[OptimizerV2]] = 'adam',
       learning_rate: Union[float, TensorTypes, LearningRateSchedule] = 1e-4,
       clipnorm: Optional[float] = None,
       global_clipnorm: Optional[float] = None,
@@ -569,10 +585,10 @@ class Networks(keras.Model, MD5object):
       epochs: int = -1,
       max_iter: int = 1000,
       batch_size: int = 32,
-      callback: Union[Callback, List[Callback]] = lambda: None,
+      callback: Union[Callback, Sequence[Callback]] = lambda: None,
       compile_graph: bool = True,
       autograph: bool = False,
-      logging_interval: float = 3,
+      logging_interval: float = 5,
       skip_fitted: Union[bool, int] = False,
       nan_gradients_policy: Literal['stop', 'skip', 'ignore', 'raise'] = 'stop',
       logdir: Optional[str] = None,
@@ -584,9 +600,9 @@ class Networks(keras.Model, MD5object):
 
     Parameters
     ----------
-    train : Union[TensorTypes, DatasetV2]
+    train : Union[TensorTypes, Dataset]
         tensorflow Dataset for training
-    valid : Optional[Union[TensorTypes, DatasetV2]], optional
+    valid : Optional[Union[TensorTypes, Dataset]], optional
         tensorflow Dataset for validation, by default None
     valid_freq : int, optional
         the frequency, in steps, for performing validation, by default 500
@@ -799,7 +815,7 @@ class SequentialNetwork(keras.Sequential):
 # ===========================================================================
 # Networks
 # ===========================================================================
-def dense_network(units: List[int],
+def dense_network(units: Sequence[int],
                   activation: str = 'relu',
                   use_bias: bool = True,
                   kernel_initializer: str = 'glorot_uniform',
@@ -814,7 +830,7 @@ def dense_network(units: List[int],
                   batchnorm_kw: Dict[str, Any] = {},
                   input_dropout: float = 0.,
                   dropout: float = 0.,
-                  input_shape: Optional[List[int]] = None,
+                  input_shape: Optional[Sequence[int]] = None,
                   prefix: Optional[str] = 'Layer') -> List[Layer]:
   r""" Multi-layers dense feed-forward neural network """
   if prefix is None:
@@ -856,7 +872,7 @@ def dense_network(units: List[int],
   return layers
 
 
-def conv_network(units: List[int],
+def conv_network(units: Sequence[int],
                  rank: int = 2,
                  kernel: int = 3,
                  strides: int = 1,
@@ -876,7 +892,7 @@ def conv_network(units: List[int],
                  input_dropout: float = 0.,
                  dropout: float = 0.,
                  projection: bool = False,
-                 input_shape: Optional[List[int]] = None,
+                 input_shape: Optional[Sequence[int]] = None,
                  prefix: Optional[str] = 'Layer') -> List[Layer]:
   """ Multi-layers convolutional neural network
 
@@ -950,12 +966,12 @@ def conv_network(units: List[int],
   return layers
 
 
-def deconv_network(units: List[int],
+def deconv_network(units: Sequence[int],
                    rank: int = 2,
                    kernel: int = 3,
                    strides: int = 1,
                    padding: Literal['same', 'valid', 'causal'] = 'same',
-                   output_padding: Optional[List[int]] = None,
+                   output_padding: Optional[Sequence[int]] = None,
                    dilation: int = 1,
                    activation: str = 'relu',
                    use_bias: bool = True,
@@ -971,7 +987,7 @@ def deconv_network(units: List[int],
                    input_dropout: float = 0.,
                    dropout: float = 0.,
                    projection: Optional[int] = None,
-                   input_shape: Optional[List[int]] = None,
+                   input_shape: Optional[Sequence[int]] = None,
                    prefix: Optional[str] = 'Layer') -> List[Layer]:
   r""" Multi-layers transposed convolutional neural network """
   if prefix is None:
@@ -1070,29 +1086,29 @@ class NetConf(dict):
 
   """
 
-  units: Union[int, List[int]] = 64
-  kernel: Union[int, List[int]] = 3
-  strides: Union[int, List[int]] = 1
-  dilation: Union[int, List[int]] = 1
-  padding: Union[str, List[str]] = 'same'
-  activation: Union[str, List[str]] = 'relu'
-  use_bias: Union[bool, List[bool]] = True
-  kernel_initializer: Union[str, List[str]] = 'glorot_uniform'
-  bias_initializer: Union[str, List[str]] = 'zeros'
-  kernel_regularizer: Union[str, List[str]] = None
-  bias_regularizer: Union[str, List[str]] = None
-  activity_regularizer: Union[str, List[str]] = None
-  kernel_constraint: Union[str, List[str]] = None
-  bias_constraint: Union[str, List[str]] = None
-  batchnorm: Union[bool, List[bool]] = False
+  units: Union[int, Sequence[int]] = 64
+  kernel: Union[int, Sequence[int]] = 3
+  strides: Union[int, Sequence[int]] = 1
+  dilation: Union[int, Sequence[int]] = 1
+  padding: Union[str, Sequence[str]] = 'same'
+  activation: Union[str, Sequence[str]] = 'relu'
+  use_bias: Union[bool, Sequence[bool]] = True
+  kernel_initializer: Union[str, Sequence[str]] = 'glorot_uniform'
+  bias_initializer: Union[str, Sequence[str]] = 'zeros'
+  kernel_regularizer: Union[str, Sequence[str]] = None
+  bias_regularizer: Union[str, Sequence[str]] = None
+  activity_regularizer: Union[str, Sequence[str]] = None
+  kernel_constraint: Union[str, Sequence[str]] = None
+  bias_constraint: Union[str, Sequence[str]] = None
+  batchnorm: Union[bool, Sequence[bool]] = False
   batchnorm_kw: Dict[str, Any] = dataclasses.field(default_factory=dict)
   input_dropout: float = 0.
-  dropout: Union[float, List[float]] = 0.
+  dropout: Union[float, Sequence[float]] = 0.
   linear_decoder: bool = False
   network: Literal['conv', 'deconv', 'dense'] = 'dense'
   flatten_inputs: bool = False
   projection: Optional[int] = None
-  input_shape: List[int] = None
+  input_shape: Sequence[int] = None
   name: Optional[str] = None
 
   def __post_init__(self):

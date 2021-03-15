@@ -2,7 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 import inspect
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from functools import partial
 from itertools import zip_longest
 from typing import (Any, Callable, Dict, Iterator, List, Optional, Tuple, Type,
@@ -107,17 +107,23 @@ def _iter_lists(X, Y):
 class VAEStep(TrainStep):
   """ A single train step (iteration) for Variational Autoencoder """
 
-  vae: 'VariationalAutoencoder'
-  call_kw: Dict[str, Any]
+  vae: 'VariationalAutoencoder' = None
+  call_kw: Dict[str, Any] = field(default_factory=dict)
 
   def call(self) -> Tuple[Tensor, Dict[str, Any]]:
     llk, kl = self.vae.elbo_components(self.inputs,
                                        training=self.training,
-                                       mask=self.mask)
+                                       mask=self.mask,
+                                       **self.call_kw)
     elbo = self.vae.elbo(llk, kl)
     loss = -tf.reduce_mean(elbo)
-    metrics = dict(**llk, **kl)
-    return loss, {k: tf.reduce_mean(v) for k, v in metrics.items()}
+    metrics = {k: tf.reduce_mean(v) for k, v in dict(**llk, **kl).items()}
+    # check if array is empty, return 0s
+    is_empty = tf.equal(tf.size(as_tuple(self.inputs)[0]), 0)
+    loss = tf.cond(is_empty, true_fn=lambda: 0., false_fn=lambda: loss)
+    metrics = {k: tf.cond(is_empty, true_fn=lambda: 0., false_fn=lambda: v)
+               for k, v in metrics.items()}
+    return loss, metrics
 
 
 # ===========================================================================
@@ -569,6 +575,7 @@ class VariationalAutoencoder(VariationalModel):
                   inputs: TensorTypes,
                   training: Optional[bool] = None,
                   mask: Optional[Tensor] = None,
+                  name: str = '',
                   **kwargs) -> Iterator[VAEStep]:
     """Support multiple steps training for each iteration (similar to GAN)"""
     yield VAEStep(vae=self,
@@ -576,6 +583,7 @@ class VariationalAutoencoder(VariationalModel):
                   inputs=inputs,
                   training=training,
                   mask=mask,
+                  name=name,
                   call_kw=kwargs)
 
   def __str__(self):
