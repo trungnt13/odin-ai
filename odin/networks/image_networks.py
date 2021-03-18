@@ -801,6 +801,8 @@ def get_networks(dataset_name: str,
                  **kwargs) -> Dict[str, Layer]:
   """ Return dictionary of networks for encoder, decoder, observation, latents
   and labels (in case of semi-supervised learning) """
+  if zdim is not None and zdim <= 0:
+    zdim = None
   dataset_name = str(dataset_name).lower().strip()
   for k, fn in globals().items():
     if isinstance(k, string_types) and (inspect.isfunction(fn) or
@@ -826,6 +828,8 @@ def get_optimizer_info(
   ----------
   dataset_name : str
       name of datasets, e.g. 'mnist', 'dsprites', 'shapes3d'
+  batch_size : int
+      mini-batch size
 
   Returns
   -------
@@ -848,10 +852,10 @@ def get_optimizer_info(
     n_epochs = 1000
     n_samples = 19280
   elif 'svhn' in dataset_name:
-    n_epochs = 1500
+    n_epochs = 2000
     n_samples = 69594
   elif 'cifar' in dataset_name:
-    n_epochs = 2000
+    n_epochs = 2500
     n_samples = 48000
   # dsrpites datasets
   elif 'dsprites' in dataset_name:

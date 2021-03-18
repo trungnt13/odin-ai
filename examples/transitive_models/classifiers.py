@@ -1,6 +1,8 @@
 # This code try to find the best classifier for the SemafoVAE latents
 import os
 import numpy as np
+from typing import List
+import tensorflow as tf
 from sklearn.metrics import classification_report, accuracy_score, f1_score
 from sklearn.linear_model import LogisticRegression
 from sklearn.svm import LinearSVC, SVC, NuSVC
@@ -10,53 +12,81 @@ from sklearn.model_selection import train_test_split
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.gaussian_process import GaussianProcessClassifier
 from sklearn.gaussian_process.kernels import RBF
+import cloudpickle as pickle
+from tensorflow_probability.python.distributions import Distribution
+from collections import Counter
 
 seed = 1
+n_samples = 100
+np.random.seed(seed)
+tf.random.set_seed(seed)
 
 ######## load the arrays
-basedir = '/home/trung/exp/hyperparams'
-dsdir = 'mnist_0.004'
-expdir = 'semafovae_linear_0.2_0.02_20000_0_0_lin'
-path = f'{basedir}/{dsdir}/{expdir}/analysis/arrays.npz'
+model_name = 'mnist_variationalautoencoder'
+model_name = 'mnist_semafovae_a10_r0_c0.1'
+# model_name = 'mnist_skiptaskvae_a10_r0'
+# model_name = 'mnist_semafod_a10_r0_c0.1'
+path = f'/home/trung/exp/fastexp/{model_name}/arrays'
 if not os.path.exists(path):
   raise ValueError(f'path not found "{path}"')
-
+with open(path, 'rb') as f:
+  arrs = pickle.load(f)
 ### load arrays
-arrs = np.load(path)
-x_train = arrs['x_train']
-y_train = arrs['y_train']
-x_test = arrs['x_test']
-y_test = arrs['y_test']
+z_train = arrs['z_train']
+y_pred_train = arrs['y_pred_train']
+y_true_train = arrs['y_true_train']
 
-zdim = arrs['zdim']
+z_test = arrs['z_test']
+y_pred_test = arrs['y_pred_test']
+y_true_test = arrs['y_true_test']
+
+z_train: List[Distribution]
+y_pred_train: Distribution
+z_test: List[Distribution]
+y_pred_test: Distribution
+
 labels = arrs['labels']
+ds = arrs['ds']
+label_type = arrs['label_type']
 
-z_train = x_train[:, :zdim]
-y_pred_train = x_train[:, zdim:]
-z_test = x_test[:, :zdim]
-y_pred_test = x_test[:, zdim:]
+is_semi = isinstance(y_pred_train, Distribution)
+
+n_train = y_true_train.shape[0]
+n_test = y_true_test.shape[0]
+zdim = [int(np.prod(z.event_shape)) for z in z_train]
 
 ######## load the arrays
-print('X_train:', x_train.shape)
-print('z_train:', z_train.shape)
-print('y_train:', y_train.shape)
-print('X_test :', x_test.shape)
-print('z_test :', z_test.shape)
-print('y_test :', y_test.shape)
-print('zdim   :', zdim)
-print('labels :', labels)
+print('z_train:', z_train)
+print('z_test :', z_test)
+print('y_train:')
+print('  pred :', y_pred_train)
+print('  true :', y_true_train.shape)
+print('y_test:')
+print('  pred :', y_pred_test)
+print('  true :', y_true_test.shape)
+print('Meta:')
+print('  labels     :', labels)
+print('  ds         :', ds)
+print('  label_type :', label_type)
 
-if (x_train.shape[-1] - zdim) == len(np.unique(y_test)):
-  print('Train:', accuracy_score(np.argmax(x_train[:, zdim:], -1), y_train))
-  print('Test :', accuracy_score(np.argmax(x_test[:, zdim:], -1), y_test))
+if is_semi:
+  print('Train:', accuracy_score(np.argmax(y_pred_train.mean(), -1),
+                                 np.argmax(y_true_train, -1)))
+  print('Test :', accuracy_score(np.argmax(y_pred_test.mean(), -1),
+                                 np.argmax(y_true_test, -1)))
+
+
+# === Helper
+def feat(zs: List[Distribution], py: Distribution) -> np.ndarray:
+  x = np.concatenate([np.concatenate([z.mean(), z.stddev()], 1)
+                      for z in zs], 1)
+  if is_semi:
+    y = np.concatenate([py.mean(), py.stddev()], 1)
+    x = np.concatenate([x, y], 1)
+  return x
 
 
 ######## Testing the semi-supervised
-def fusion(ypred1, ypred2):
-  ypred = (ypred1 + ypred2) / 2.0
-  return np.argmax(ypred, axis=-1)
-
-
 for m in (
     # LogisticRegression(max_iter=3000, random_state=seed),
     # LinearSVC(max_iter=3000, random_state=seed),
@@ -77,32 +107,29 @@ for m in (
 ):
   print(m.__class__.__name__)
   for p in [
-      0.004,
-      0.06,
-      0.2,
-      # 0.5,
-      # 0.99,
+    100,
+    0.004,
+    0.06,
+    0.2,
+    # 0.5,
+    # 0.99,
   ]:
     print(' ****', p, '****')
-    x1, x2, y1, y2 = train_test_split(x_train,
-                                      y_train,
-                                      train_size=int(p * x_train.shape[0]),
-                                      random_state=seed,
-                                      shuffle=True)
-    # y_pred1 = x1[:, zdim:]
-    # y_pred2 = x2[:, zdim:]
-    # x1 = x1[:, :zdim]
-    # x2 = x2[:, :zdim]
-    m.fit(x1, y1)
-    print('  Valid       :', accuracy_score(y_true=y2, y_pred=m.predict(x2)))
-    # print('  Valid Pred  :',
-    #       accuracy_score(y_true=y2, y_pred=np.argmax(y_pred2, axis=1)))
-    # print(
-    #     '  Valid Fusion:',
-    #     accuracy_score(y_true=y2, y_pred=fusion(y_pred2, m.predict_proba(x2))))
-    print('  Test        :',
-          accuracy_score(y_true=y_test, y_pred=m.predict(x_test)))
-    # print(
-    #     '  Test  Fusion:',
-    #     accuracy_score(y_true=y_test,
-    #                    y_pred=fusion(y_pred_test, m.predict_proba(z_test))))
+    ids = np.arange(n_train)
+    train_ids, valid_ids = train_test_split(
+      ids,
+      train_size=int(p * n_train) if p <= 1.0 else int(p),
+      random_state=seed,
+      shuffle=True,
+      stratify=np.argmax(y_true_train, -1))
+    x = feat(z_train, y_pred_train)
+    x_train = x[train_ids]
+    x_valid = x[valid_ids]
+    y_train = np.argmax(y_true_train[train_ids], -1)
+    y_valid = np.argmax(y_true_train[valid_ids], -1)
+    x_test = feat(z_test, y_pred_test)
+    y_test = np.argmax(y_true_test, -1)
+    m.fit(x_train, y_train)
+    print('  Train:', accuracy_score(y_true=y_train, y_pred=m.predict(x_train)))
+    print('  Valid:', accuracy_score(y_true=y_valid, y_pred=m.predict(x_valid)))
+    print('  Test :', accuracy_score(y_true=y_test, y_pred=m.predict(x_test)))

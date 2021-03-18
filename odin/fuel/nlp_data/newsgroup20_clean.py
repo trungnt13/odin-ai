@@ -8,6 +8,7 @@ import numpy as np
 import scipy as sp
 import tensorflow as tf
 from odin.fuel.dataset_base import IterableDataset, get_partition
+from odin.backend.types_helpers import DataType, LabelType
 
 
 def _download_newsgroup20(
@@ -65,9 +66,13 @@ class Newsgroup20_clean(IterableDataset):
     self.train = train[ids[start:]]
     self.test = data['test']
 
-  @classmethod
-  def data_type(cls) -> str:
+  @property
+  def data_type(self) -> DataType:
     return 'text'
+
+  @property
+  def label_type(self) -> LabelType:
+    return 'categorical'
 
   @property
   def vocabulary(self) -> Dict[int, str]:

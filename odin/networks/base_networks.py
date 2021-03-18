@@ -30,7 +30,7 @@ from tensorflow.python.training.tracking import base as trackable
 from typing_extensions import Literal
 
 from odin.backend.keras_helpers import layer2text
-from odin.backend.types_helpers import TensorTypes
+from odin.backend.types_helpers import TensorType
 from odin.networks.util_layers import (Conv1DTranspose, Identity)
 from odin.training import Callback, EarlyStopping, Trainer
 from odin.utils import MD5object, as_tuple, classproperty
@@ -146,9 +146,9 @@ class TrainStep:
       list of trainable parameters
 
   """
-  inputs: Union[TensorTypes, Sequence[TensorTypes]]
+  inputs: Union[TensorType, Sequence[TensorType]]
   training: Optional[bool] = dataclasses.field(default=None)
-  mask: Optional[TensorTypes] = dataclasses.field(default=None)
+  mask: Optional[TensorType] = dataclasses.field(default=None)
   parameters: List[tf.Variable] = dataclasses.field(default_factory=list)
   name: str = dataclasses.field(default_factory=str)
 
@@ -361,7 +361,7 @@ class Networks(keras.Model, MD5object):
     return self
 
   def train_steps(self,
-                  inputs: TensorTypes,
+                  inputs: TensorType,
                   training: bool = True,
                   name: str = '',
                   *args,
@@ -376,7 +376,7 @@ class Networks(keras.Model, MD5object):
 
   def optimize(
       self,
-      inputs: Union[TensorTypes, Sequence[TensorTypes]],
+      inputs: Union[TensorType, Sequence[TensorType]],
       training: bool = True,
       optimizer: Optional[Union[Sequence[OptimizerV2], OptimizerV2]] = None,
       clipnorm: Optional[float] = None,
@@ -395,7 +395,7 @@ class Networks(keras.Model, MD5object):
 
     Parameters
     ----------
-    inputs : Union[TensorTypes, Sequence[TensorTypes]]
+    inputs : Union[TensorType, Sequence[TensorType]]
         a single or list of input tensors
     training : bool, optional
         indicating the training mode for call method, by default True
@@ -570,13 +570,13 @@ class Networks(keras.Model, MD5object):
 
   def fit(
       self,
-      train: Union[TensorTypes, Dataset],
+      train: Union[TensorType, Dataset],
       *,
-      valid: Optional[Union[TensorTypes, Dataset]] = None,
+      valid: Optional[Union[TensorType, Dataset]] = None,
       valid_freq: int = 500,
       valid_interval: float = 0,
       optimizer: Union[str, Sequence[str], OptimizerV2, Sequence[OptimizerV2]] = 'adam',
-      learning_rate: Union[float, TensorTypes, LearningRateSchedule] = 1e-4,
+      learning_rate: Union[float, TensorType, LearningRateSchedule] = 1e-4,
       clipnorm: Optional[float] = None,
       global_clipnorm: Optional[float] = None,
       clipvalue: Optional[float] = None,
@@ -600,9 +600,9 @@ class Networks(keras.Model, MD5object):
 
     Parameters
     ----------
-    train : Union[TensorTypes, Dataset]
+    train : Union[TensorType, Dataset]
         tensorflow Dataset for training
-    valid : Optional[Union[TensorTypes, Dataset]], optional
+    valid : Optional[Union[TensorType, Dataset]], optional
         tensorflow Dataset for validation, by default None
     valid_freq : int, optional
         the frequency, in steps, for performing validation, by default 500

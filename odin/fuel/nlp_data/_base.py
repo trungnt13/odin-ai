@@ -8,6 +8,7 @@ from types import MethodType
 from typing import Dict, Generator, Iterable, List, Optional, Tuple, Union
 from typing_extensions import Literal
 from urllib.request import urlretrieve
+from odin.backend.types_helpers import DataType, LabelType
 
 import numpy as np
 import tensorflow as tf
@@ -124,9 +125,13 @@ class NLPDataset(IterableDataset):
     self.algorithm = algorithm
     self._tokenizer = None
 
-  @classmethod
-  def data_type(cls) -> str:
+  @property
+  def data_type(self) -> DataType:
     return 'text'
+
+  @property
+  def label_type(self) -> LabelType:
+    raise NotImplementedError
 
   @property
   def shape(self) -> List[int]:

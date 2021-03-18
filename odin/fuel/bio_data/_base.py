@@ -2,6 +2,7 @@ import base64
 import os
 from typing import Dict, List, Optional, Union
 from urllib.request import urlretrieve
+from odin.backend.types_helpers import DataType, LabelType
 
 import numpy as np
 import tensorflow as tf
@@ -31,9 +32,13 @@ class GeneDataset(IterableDataset):
     self.valid_ids = None
     self.test_ids = None
 
-  @classmethod
-  def data_type(cls) -> str:
+  @property
+  def data_type(self) -> DataType:
     return 'gene'
+
+  @property
+  def label_type(self) -> LabelType:
+    return 'factor'
 
   def __str__(self):
     return (f"<{self.__class__.__name__} "

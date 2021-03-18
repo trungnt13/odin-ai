@@ -13,14 +13,16 @@ from odin.backend.interpolation import Interpolation
 __all__ = [
   'Coefficient',
   'NoneType',
-  'TensorTypes',
-  'LayerTypes',
+  'TensorType',
+  'LayerType',
   'BATCH',
   'EVENT',
   'MCMC',
   'CorrelationMethod',
   'Axes',
   'Axis',
+  'DataType',
+  'LabelType'
 ]
 
 Coefficient = Union[Number, Interpolation]
@@ -29,9 +31,9 @@ CorrelationMethod = Literal[
   'spearman', 'lasso', 'pearson', 'mutualinfo', 'importance']
 
 NoneType = type(None)
-TensorTypes = Union[spmatrix, ndarray, Tensor]
-LayerTypes = Union[Layer, Model, Sequential, Callable[..., Layer],
-                   Callable[[Tensor], Tensor]]
+TensorType = Union[spmatrix, ndarray, Tensor]
+LayerType = Union[Layer, Model, Sequential, Callable[..., Layer],
+                  Callable[[Tensor], Tensor]]
 
 BATCH = Union[int, NoneType]
 EVENT = int
@@ -39,3 +41,6 @@ MCMC = Union[int, NoneType]
 
 Axes = Union[int, Sequence[int]]
 Axis = int
+
+DataType = Literal['image', 'audio', 'text', 'gene']
+LabelType = Literal['binary', 'categorical', 'factor']

@@ -1,16 +1,17 @@
 import os
-from typing import Optional, Union, List, Dict
-from typing_extensions import Literal
 import pickle
+from collections import defaultdict
 from functools import partial
+from typing import Optional, List, Dict
 
 import numpy as np
 import tensorflow as tf
-from odin.utils import as_tuple
-from collections import defaultdict
 from tqdm import tqdm
+from typing_extensions import Literal
 
+from odin.backend.types_helpers import DataType, LabelType
 from odin.fuel.dataset_base import IterableDataset, get_partition
+from odin.utils import as_tuple
 from odin.utils.cache_utils import get_cache_path
 
 
@@ -32,8 +33,8 @@ class ImageDataset(IterableDataset):
   def binarized(self) -> bool:
     raise NotImplementedError
 
-  @classmethod
-  def data_type(self) -> str:
+  @property
+  def data_type(self) -> DataType:
     return 'image'
 
   @property
@@ -41,15 +42,17 @@ class ImageDataset(IterableDataset):
     raise NotImplementedError
 
   @property
-  def is_binary_labels(self) -> bool:
-    if not hasattr(self, '_is_binary_labels'):
-      self._is_binary_labels = True
-      for _, y in self.train.take(10):
-        if y.shape.ndims == 0 and 'int' in str(y.dtype):
-          continue
-        if np.any(np.unique(y) != [0., 1.]):
-          self._is_binary_labels = False
-    return self._is_binary_labels
+  def label_type(self) -> LabelType:
+    if not hasattr(self, '_label_type'):
+      y = tf.concat([i for _, i in self.train.take(10)], axis=0).numpy()
+      if np.all(np.sum(y, axis=-1) == 1.) or \
+        (y.ndim == 1 and 'int' in str(y.dtype)):
+        self._label_type = 'categorical'
+      elif np.all(np.unique(y) == (0., 1.)):
+        self._label_type = 'binary'
+      else:
+        self._label_type = 'factor'
+    return self._label_type
 
   def sample_images(self,
                     save_path=None,
@@ -244,7 +247,7 @@ class ImageDataset(IterableDataset):
       n_unlabeled = length - n_labeled
       n_per_classes = int(n_labeled / len(self.labels))
       # for binary labels we could do stratified sampling
-      if self.is_binary_labels:
+      if self.label_type == 'categorical':
         y_map = self._build_stratified_map(partition)
         labeled_ids = np.stack([
             rand.choice(v, size=n_per_classes, replace=False)

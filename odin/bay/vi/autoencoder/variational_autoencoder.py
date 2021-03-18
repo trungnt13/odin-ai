@@ -17,7 +17,7 @@ from tensorflow_probability.python import layers as tfl
 from tensorflow_probability.python.distributions import Distribution
 
 from odin import backend as bk
-from odin.backend import TensorTypes
+from odin.backend import TensorType
 from odin.backend.keras_helpers import layer2text
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi._base import VariationalModel
@@ -305,12 +305,12 @@ class VariationalAutoencoder(VariationalModel):
     return self.decode(z, training=training, **kwargs)
 
   def encode(self,
-             inputs: Union[TensorTypes, List[TensorTypes]],
+             inputs: Union[TensorType, List[TensorType]],
              training: Optional[bool] = None,
-             mask: Optional[TensorTypes] = None,
+             mask: Optional[TensorType] = None,
              only_encoding: bool = False,
              **kwargs) -> Distribution:
-    r""" Encoding inputs to latent codes """
+    """ Encoding inputs to latent codes """
     kw = dict(kwargs)
     if 'mask' in self._encoder_args:
       kw['mask'] = mask
@@ -333,7 +333,7 @@ class VariationalAutoencoder(VariationalModel):
     return qz_x
 
   def decode(self,
-             latents: Union[TensorTypes, List[TensorTypes]],
+             latents: Union[TensorType, List[TensorType]],
              training: Optional[bool] = None,
              mask: Optional[Tensor] = None,
              only_decoding: bool = False,
@@ -379,7 +379,7 @@ class VariationalAutoencoder(VariationalModel):
     return px_z
 
   def call(self,
-           inputs: TensorTypes,
+           inputs: TensorType,
            training: Optional[bool] = None,
            mask: Optional[Tensor] = None,
            **kwargs) -> Tuple[Distribution, Distribution]:
@@ -424,7 +424,7 @@ class VariationalAutoencoder(VariationalModel):
 
   def marginal_log_prob(
       self,
-      inputs: Union[TensorTypes, List[TensorTypes]],
+      inputs: Union[TensorType, List[TensorType]],
       training: Optional[bool] = None,
       n_mcmc: Optional[int] = 100,
       reduce: Optional[Callable[[Tensor], Tensor]] = tf.reduce_mean,
@@ -543,7 +543,7 @@ class VariationalAutoencoder(VariationalModel):
 
   def elbo_components(
       self,
-      inputs: Union[TensorTypes, List[TensorTypes]],
+      inputs: Union[TensorType, List[TensorType]],
       training: Optional[bool] = None,
       mask: Optional[Tensor] = None,
       **kwargs,
@@ -572,7 +572,7 @@ class VariationalAutoencoder(VariationalModel):
 
   ################## For training
   def train_steps(self,
-                  inputs: TensorTypes,
+                  inputs: TensorType,
                   training: Optional[bool] = None,
                   mask: Optional[Tensor] = None,
                   name: str = '',

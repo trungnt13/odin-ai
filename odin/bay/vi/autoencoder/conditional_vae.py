@@ -14,7 +14,7 @@ from typing_extensions import Literal
 from tensorflow_probability.python.internal import prefer_static as ps
 
 from odin import backend as bk
-from odin.backend import TensorTypes
+from odin.backend import TensorType
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
@@ -221,7 +221,7 @@ class ConditionalM2VAE(BetaVAE):
       self.px_zy_drop = Dropout(rate=self.dropout, name='px_zy_drop')
 
   def classify(self,
-               inputs: TensorTypes,
+               inputs: TensorType,
                training: bool = False) -> Distribution:
     """Return the prediction of labels"""
     if isinstance(inputs, (tuple, list)) and len(inputs) == 1:
@@ -444,7 +444,7 @@ class reparamsM3VAE(BetaVAE):
     return super().build(input_shape)
 
   def classify(self,
-               inputs: TensorTypes,
+               inputs: TensorType,
                training: bool = False) -> Distribution:
     """Return the prediction of labels"""
     if isinstance(inputs, (tuple, list)) and len(inputs) == 1:

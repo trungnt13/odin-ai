@@ -1,5 +1,6 @@
 from typing import List, Union, Optional
 from six import string_types
+from typing_extensions import Literal
 
 import numpy as np
 import tensorflow as tf
@@ -14,6 +15,7 @@ from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
 from odin.bay.helpers import kl_divergence
 from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.utils import as_tuple
+from odin.bay.layers import DistributionDense
 
 
 class MultitaskVAE(BetaVAE):
@@ -48,17 +50,18 @@ class MultitaskVAE(BetaVAE):
                                                    'onehot',
                                                    projection=True,
                                                    name="digits"),
-      encoder_y: Optional[Union[LayerCreator, str]] = None,
-      decoder_y: Union[LayerCreator, str] = None,
-      probabilistic_encoder_y: bool = True,
+      encoder_y: Optional[Union[LayerCreator, Literal['tie', 'copy']]] = None,
+      decoder_y: Optional[Union[LayerCreator, Literal['tie', 'copy']]] = None,
       alpha: float = 10.,
       skip_decoder: bool = False,
+      separated_latents: bool = False,
       n_samples_semi: int = 0,
       name: str = 'MultitaskVAE',
       **kwargs,
   ):
     super().__init__(name=name, **kwargs)
     self.labels = [_parse_layers(y) for y in as_tuple(labels)]
+    self.labels: List[DistributionDense]
     self.alpha = alpha
     self.skip_decoder = bool(skip_decoder)
     self.n_samples_semi = int(n_samples_semi)
@@ -78,21 +81,23 @@ class MultitaskVAE(BetaVAE):
           z.event_shape if hasattr(z, 'event_shape') else z.output_shape)
         for z in as_tuple(self.latents))
       if isinstance(encoder_y, string_types):  # copy
-        layers = [
-          keras.models.clone_model(self.encoder),
-          keras.layers.Flatten()
-        ]
+        if encoder_y == 'tie':
+          layers = []
+        elif encoder_y == 'copy':
+          layers = [
+            keras.models.clone_model(self.encoder),
+            keras.layers.Flatten()
+          ]
+        else:
+          raise ValueError(f'No support for encoder_y={encoder_y}')
       else:  # different network
         layers = [_parse_layers(encoder_y)]
-      if probabilistic_encoder_y:
-        layers.append(
-          RVmeta(units_z, 'mvndiag', projection=True,
-                 name='qzy_x').create_posterior())
-      else:
-        layers.append(keras.layers.Dense(units_z, activation='linear'))
+      layers.append(
+        RVmeta(units_z, 'mvndiag', projection=True,
+               name='qzy_x').create_posterior())
       encoder_y = keras.Sequential(layers, name='encoder_y')
     self.encoder_y = encoder_y
-    self.probabilistic_encoder_y = probabilistic_encoder_y
+    self.separated_latents = bool(separated_latents)
     ## prepare decoder for Y
     if decoder_y is not None:
       decoder_y = _parse_layers(decoder_y)
@@ -120,41 +125,60 @@ class MultitaskVAE(BetaVAE):
   def alpha(self, a):
     self._alpha = tf.convert_to_tensor(a, dtype=self.dtype, name='alpha')
 
-  def encode(self, inputs, training=None, mask=None, **kwargs):
-    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
-    # don't condition on the labels, only accept inputs
-    X = X[0]
-    qz_x = super().encode(X, training=training, mask=None, **kwargs)
-    if self.encoder_y is not None:
-      X_y = self.encoder_y(X, training=training, mask=mask)
-    else:
-      X_y = None
-    if X_y is not None:
-      return as_tuple(qz_x) + (X_y,)
-    return qz_x
-
-  def decode(self, latents, training=None, mask=None, **kwargs):
+  def predict_labels(self, inputs=None, latents=None, training=None, mask=None,
+                     **kwargs):
+    if latents is None:
+      latents = self.encode(inputs, training=training, mask=mask, **kwargs)
+    # === 1. skip x-to-y connection
     qzy_x = None  # q(z_y|x)
     if self.encoder_y is not None:
       qzy_x = latents[-1]
       latents = latents[:-1]
-      if len(latents) == 1:
-        latents = latents[0]
+    if isinstance(latents, (tuple, list)):
+      latents = latents[0] if len(latents) == 1 else tf.concat(latents, axis=-1)
+    # === 2. decode p(y|x,z)
+    h_y = latents \
+      if self.skip_decoder else \
+      self.decode(latents, training=training, mask=mask, only_decoding=True,
+                  **kwargs)
+    if self.decoder_y is not None:
+      h_y = self.decoder_y(h_y, training=training, mask=mask)
+    # add skip connection
+    if qzy_x is not None:
+      if self.separated_latents:
+        h_y = tf.convert_to_tensor(qzy_x)
+      else:
+        h_y = tf.concat([h_y, qzy_x], axis=-1)
+    py_z = [fy(h_y, training=training, mask=mask) for fy in self.labels]
+    return py_z
+
+  def encode(self, inputs, training=None, mask=None, **kwargs):
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    # don't condition on the labels, only accept inputs
+    X = X[0]
+    h_e = super().encode(X, training=training, mask=None, only_encoding=True,
+                         **kwargs)
+    qz_x = self.latents(h_e, training=training, mask=None,
+                        sample_shape=self.sample_shape)
+    if self.encoder_y is not None:
+      # tied encoder
+      h_y = h_e if len(self.encoder_y.layers) == 1 else X
+      qzy_x = self.encoder_y(h_y, training=training, mask=None)
+      return as_tuple(qz_x) + (qzy_x,)
+    return qz_x
+
+  def decode(self, latents, training=None, mask=None, **kwargs):
+    ## decode py_zx
+    py_z = self.predict_labels(latents=latents, training=training, mask=mask)
+    ## decoder px_z
+    if self.encoder_y is not None:
+      latents = tf.concat(latents, axis=1)
     h_d = super().decode(latents,
                          training=training,
                          mask=mask,
                          only_decoding=True,
                          **kwargs)
     px_z = self.observation(h_d, training=training, mask=mask)
-    if isinstance(latents, (tuple, list)):
-      latents = tf.concat(latents, axis=-1)
-    ## decode py_zx
-    h_y = latents if self.skip_decoder else h_d
-    if self.decoder_y is not None:
-      h_y = self.decoder_y(h_y, training=training, mask=mask)
-    if qzy_x is not None:  # add skip connection
-      h_y = tf.concat([h_y, qzy_x], axis=-1)
-    py_z = [fy(h_y, training=training, mask=mask) for fy in self.labels]
     return as_tuple(px_z) + tuple(py_z)
 
   def elbo_components(self, inputs, training=None, mask=None, **kwargs):
@@ -211,15 +235,15 @@ class MultitaskVAE(BetaVAE):
       loss = 0.
     # have to minimize this loss
     kl['discr_loss'] = loss
-    if self.encoder_y is not None and self.probabilistic_encoder_y:
-      qz_x = Q[0]  # prior
-      kl['kl_qzy_x'] = self.beta * kl_divergence(
-        q=qzy_x, p=qz_x, analytic=False, free_bits=self.free_bits)
+    if qzy_x is not None:
+      # qz_x = Q[0]  # prior
+      # kl['kl_qzy_x'] = self.beta * kl_divergence(
+      #   q=qzy_x, p=qz_x, analytic=False, free_bits=self.free_bits)
       # (qzy_x.log_prob(z) - tf.stop_gradient(qz_x.log_prob(z)))
-      # self._last_xy.KL_divergence(
-      #     analytic=self.analytic,
-      #     free_bits=self.free_bits,
-      #     reverse=self.reverse)
+      kl[f'kl_{self.latents.name}_y'] = qzy_x.KL_divergence(
+        analytic=self.analytic,
+        free_bits=self.free_bits,
+        reverse=self.reverse)
     return llk, kl
 
   @classmethod
@@ -258,6 +282,17 @@ class SkiptaskVAE(MultitaskVAE):
     super().__init__(encoder_y=encoder_y,
                      decoder_y=None,
                      skip_decoder=True,
+                     name=name,
+                     **kwargs)
+
+
+class Skiptask2VAE(SkiptaskVAE):
+  """The supervised outputs, skip the decoder, and directly connect to
+  the latents"""
+
+  def __init__(self, name: str = 'Skiptask2VAE', **kwargs):
+    super().__init__(encoder_y='tie',
+                     separated_latents=True,
                      name=name,
                      **kwargs)
 

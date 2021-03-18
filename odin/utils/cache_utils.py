@@ -11,7 +11,7 @@ from decorator import FunctionMaker
 from six import string_types
 from six.moves import builtins
 
-__all__ = ['lru_cache', 'cache_disk', 'cache_memory']
+__all__ = ['get_cache_path', 'lru_cache', 'cache_disk', 'cache_memory']
 
 # to set the cache dir, set the environment CACHE_DIR
 __cache_dir = os.environ.get(

@@ -7,7 +7,7 @@ import tensorflow as tf
 from tensorflow_probability.python.distributions import Distribution
 from typing_extensions import Literal
 
-from odin.backend import TensorTypes
+from odin.backend import TensorType
 from odin.bay.random_variable import RVmeta
 from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
@@ -228,9 +228,9 @@ class FactorVAE(AnnealingVAE):
                                        training=training)
 
   def train_steps(self,
-                  inputs: Union[TensorTypes, List[TensorTypes]],
+                  inputs: Union[TensorType, List[TensorType]],
                   training: bool = True,
-                  mask: Optional[TensorTypes] = None,
+                  mask: Optional[TensorType] = None,
                   name: str = '',
                   **kwargs) -> TrainStep:
     """ Facilitate multiple steps training for each iteration (similar to GAN)
@@ -335,7 +335,7 @@ class SemiFactorVAE(FactorVAE):
     return super().encode(X[0], training=training, mask=None, **kwargs)
 
   def classify(self,
-               inputs: Union[TensorTypes, List[TensorTypes]],
+               inputs: Union[TensorType, List[TensorType]],
                training: Optional[bool] = None) -> Distribution:
     qz_x = self.encode(inputs, training=training)
     if hasattr(self.discriminator, '_to_samples'):
@@ -350,7 +350,7 @@ class SemiFactorVAE(FactorVAE):
   def supervised_loss(self,
                       labels: tf.Tensor,
                       qz_x: Distribution,
-                      mask: Optional[TensorTypes] = None,
+                      mask: Optional[TensorType] = None,
                       training: Optional[bool] = None) -> tf.Tensor:
     """The semi-supervised classifier loss, `mask` is given to indicate
     labelled examples (i.e. `mask=1`), and otherwise, unlabelled examples.

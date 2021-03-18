@@ -4,7 +4,7 @@ import dataclasses
 import inspect
 from collections import MutableSequence, Sequence
 from copy import deepcopy
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, Sequence
 
 import numpy as np
 import tensorflow as tf
@@ -221,8 +221,8 @@ class RVmeta:
   x = RVmeta(event_shape=12, posterior='gaus')
   dist = x.create_posterior()
   """
-  event_shape: List[int] = ()
-  posterior: Union[str] = 'normal'
+  event_shape: Union[int, Sequence[int]] = ()
+  posterior: str = 'normal'
   projection: bool = False
   autoregressive: bool = False
   dropout: float = 0.0

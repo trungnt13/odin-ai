@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import tensorflow as tf
 from odin.networks import Networks
-from odin.backend import TensorTypes
+from odin.backend import TensorType
 from odin.utils import as_tuple
 from scipy import sparse
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
@@ -84,7 +84,7 @@ class VariationalModel(Networks):
     self.free_bits = free_bits
     return self
 
-  def importance_weighted(self, elbo: TensorTypes, axis: int = 0) -> tf.Tensor:
+  def importance_weighted(self, elbo: TensorType, axis: int = 0) -> tf.Tensor:
     """VAE objective can lead to overly simplified representations which
     fail to use the network’s entire modeling capacity.
 
@@ -119,7 +119,7 @@ class VariationalModel(Networks):
 
   def elbo_components(
       self,
-      inputs: Union[TensorTypes, List[TensorTypes]],
+      inputs: Union[TensorType, List[TensorType]],
       training: Optional[bool] = None,
       *args,
       **kwargs) -> Tuple[Dict[str, tf.Tensor], Dict[str, tf.Tensor]]:
@@ -190,7 +190,7 @@ class VariationalModel(Networks):
     return elbo
 
   def marginal_log_prob(self,
-                        inputs: Union[TensorTypes, List[TensorTypes]],
+                        inputs: Union[TensorType, List[TensorType]],
                         training: Optional[bool] = None,
                         *args,
                         **kwargs) -> Tuple[tf.Tensor, Dict[str, tf.Tensor]]:
@@ -227,9 +227,9 @@ class VariationalModel(Networks):
     raise NotImplementedError
 
   def perplexity(self,
-                 inputs: Union[TensorTypes, DatasetV2],
+                 inputs: Union[TensorType, DatasetV2],
                  training: Optional[bool] = None,
-                 elbo: Optional[TensorTypes] = None,
+                 elbo: Optional[TensorType] = None,
                  verbose: bool = False,
                  *args,
                  **kwargs) -> tf.Tensor:
@@ -292,7 +292,7 @@ class VariationalModel(Networks):
     yield loss
 
   def encode(self,
-             inputs: Union[TensorTypes, List[TensorTypes]],
+             inputs: Union[TensorType, List[TensorType]],
              training: Optional[bool] = None,
              *args,
              **kwargs) -> Union[Distribution, List[Distribution]]:
@@ -313,7 +313,7 @@ class VariationalModel(Networks):
     raise NotImplementedError
 
   def decode(self,
-             latents: Union[TensorTypes, Distribution, List[TensorTypes],
+             latents: Union[TensorType, Distribution, List[TensorType],
                             List[Distribution]],
              training: Optional[bool] = None,
              *args,

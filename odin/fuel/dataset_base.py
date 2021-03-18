@@ -1,8 +1,10 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Sequence
 
 import numpy as np
 import tensorflow as tf
 from typing_extensions import Literal
+
+from odin.backend.types_helpers import DataType, LabelType
 
 
 # ===========================================================================
@@ -37,9 +39,9 @@ def get_partition(part,
 
 def _merge_list(data):
   return [
-      np.concatenate([x[i].numpy()
-                      for x in data], axis=0)
-      for i in range(len(data[0]))
+    np.concatenate([x[i].numpy()
+                    for x in data], axis=0)
+    for i in range(len(data[0]))
   ]
 
 
@@ -65,13 +67,17 @@ def _merge_tensor(data):
 # ===========================================================================
 class IterableDataset:
 
-  @classmethod
-  def data_type(cls) -> Literal['image', 'audio', 'text', 'gene']:
+  @property
+  def data_type(self) -> DataType:
+    raise NotImplementedError
+
+  @property
+  def label_type(self) -> LabelType:
     raise NotImplementedError
 
   @property
   def name(self) -> str:
-    """name of the dataset (all lowered characters)"""
+    """name of the dataset (all lower-case characters)"""
     return self.__class__.__name__.lower()
 
   @property
@@ -98,7 +104,7 @@ class IterableDataset:
     raise NotImplementedError()
 
   @property
-  def full_shape(self) -> List[Union[None, int]]:
+  def full_shape(self) -> Sequence[Union[None, int]]:
     """Return the shape with batch dimension"""
     return (None,) + tuple([i for i in self.shape])
 

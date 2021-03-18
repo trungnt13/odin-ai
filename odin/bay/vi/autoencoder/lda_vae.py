@@ -20,7 +20,7 @@ from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              VAEStep)
-from odin.backend import TensorTypes
+from odin.backend import TensorType
 from odin.networks import NetConf
 from scipy import sparse
 from tensorflow import Tensor, Variable
@@ -256,9 +256,9 @@ class LatentDirichletDecoder(Model):
 
   def encode(
       self,
-      inputs: Union[TensorTypes, List[TensorTypes]],
+      inputs: Union[TensorType, List[TensorType]],
       training: Optional[bool] = None,
-      mask: Optional[TensorTypes] = None,
+      mask: Optional[TensorType] = None,
       sample_shape: List[int] = ()
   ) -> Distribution:
     docs_topics_dist = self.posterior_layer(inputs,
@@ -267,7 +267,7 @@ class LatentDirichletDecoder(Model):
     return docs_topics_dist
 
   def decode(self,
-             docs_topics_dist: Union[Distribution, TensorTypes],
+             docs_topics_dist: Union[Distribution, TensorType],
              training: Optional[bool] = None) -> Distribution:
     if self.posterior == 'dirichlet':
       docs_topics_probs = docs_topics_dist
@@ -306,9 +306,9 @@ class LatentDirichletDecoder(Model):
     return docs_words_dist
 
   def call(self,
-           inputs: Union[TensorTypes, List[TensorTypes]],
+           inputs: Union[TensorType, List[TensorType]],
            training: Optional[bool] = None,
-           mask: Optional[TensorTypes] = None,
+           mask: Optional[TensorType] = None,
            sample_shape: List[int] = (),
            **kwargs) -> Tuple[Distribution, Distribution]:
     r"""
@@ -422,7 +422,7 @@ class amortizedLDA(BetaVAE):
   ######## Utilities methods
   def predict_topics(
       self,
-      inputs: Union[TensorTypes, List[TensorTypes], DatasetV2],
+      inputs: Union[TensorType, List[TensorType], DatasetV2],
       hard_topics: bool = False,
       verbose: bool = False
   ) -> Union[Dirichlet, MultivariateNormalDiag, tf.Tensor]:

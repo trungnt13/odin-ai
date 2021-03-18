@@ -85,9 +85,9 @@ def linear_classifier(X: np.ndarray,
     f_init = f_init.__wrapped__
   args = inspect.getfullargspec(f_init)
   args = set(
-      list(args.args) +
-      (list(args.defaults) if args.defaults is not None else []) +
-      list(args.kwonlyargs))
+    list(args.args) +
+    (list(args.defaults) if args.defaults is not None else []) +
+    list(args.kwonlyargs))
   ## update the kwargs
   kwargs.update(random_state=seed)
   kwargs.setdefault('max_iter', max_iter)
@@ -133,6 +133,7 @@ def dimension_reduce(*X,
                      max_samples: Optional[int] = None,
                      return_model: bool = False,
                      random_state: int = 1,
+                     framework: Optional[str] = None,
                      **kwargs) -> np.ndarray:
   """Applying dimension reduction algorithm on a list of array
 
@@ -142,6 +143,8 @@ def dimension_reduce(*X,
       the algorithm, by default pca
   n_components : int, optional
       number of components or cluster, by default 2
+  max_samples : int, optional
+      maximum number of samples for processing
   return_model : bool, optional
       If `True`, return both transformed array and trained models,
       otherwise, only return the array., by default False
@@ -176,7 +179,7 @@ def dimension_reduce(*X,
     X_train = X[0]
   else:
     raise ValueError(
-        f"No support for dimension reduction algorithm with name: '{algo}'")
+      f"No support for dimension reduction algorithm with name: '{algo}'")
   ## prepare k
   kw = dict(max_samples=max_samples,
             return_model=return_model,
@@ -188,6 +191,8 @@ def dimension_reduce(*X,
   kw.update(kwargs)
   args = set(get_function_arguments(fn))
   kw = {k: v for k, v in kw.items() if k in args}
+  if framework is not None and 'framework' in args:
+    kw['framework'] = framework
   ## train and predict
   outputs = fn(X_train, **kw)
   if algo == 'knn':
@@ -245,15 +250,16 @@ class DimReduce(IntFlag):
                max_samples: Optional[int] = None,
                return_model: bool = False,
                random_state: int = 1,
+               framework: Optional[str] = None,
                **kwargs) -> np.ndarray:
     if len(self) > 1:
       return [
-          method(*X,
-                 n_components=n_components,
-                 max_samples=max_samples,
-                 return_model=return_model,
-                 random_state=random_state,
-                 **kwargs) for method in self
+        method(*X,
+               n_components=n_components,
+               max_samples=max_samples,
+               return_model=return_model,
+               random_state=random_state,
+               **kwargs) for method in self
       ]
     return dimension_reduce(*X,
                             algo=self.name.lower(),
@@ -261,4 +267,5 @@ class DimReduce(IntFlag):
                             max_samples=max_samples,
                             return_model=return_model,
                             random_state=random_state,
+                            framework=framework,
                             **kwargs)
