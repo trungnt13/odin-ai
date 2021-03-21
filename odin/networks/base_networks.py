@@ -225,7 +225,7 @@ class Networks(keras.Model, MD5object):
 
     Parameters
     ----------
-    input_shape : List[Union[None, int]]
+    input_shape : Sequence[Union[None, int]]
         the input shape include the batch dimension, this could be single shape
         or list of shape (for multiple-inputs).
 
@@ -575,7 +575,8 @@ class Networks(keras.Model, MD5object):
       valid: Optional[Union[TensorType, Dataset]] = None,
       valid_freq: int = 500,
       valid_interval: float = 0,
-      optimizer: Union[str, Sequence[str], OptimizerV2, Sequence[OptimizerV2]] = 'adam',
+      optimizer: Union[
+        str, Sequence[str], OptimizerV2, Sequence[OptimizerV2]] = 'adam',
       learning_rate: Union[float, TensorType, LearningRateSchedule] = 1e-4,
       clipnorm: Optional[float] = None,
       global_clipnorm: Optional[float] = None,
@@ -804,6 +805,39 @@ class SequentialNetwork(keras.Sequential):
 
   def __init__(self, layers=None, name=None):
     super().__init__(layers=None if layers is None else layers, name=name)
+    self._track_outputs = False
+
+  @property
+  def track_outputs(self) -> bool:
+    """Track the sequence of output by assign `_last_outputs` attribute to the
+    outputs of the Layer"""
+    return self._track_outputs
+
+  @track_outputs.setter
+  def track_outputs(self, val: bool):
+    self._track_outputs = bool(val)
+
+  def call(self, inputs, training=None, mask=None):
+    outputs = inputs  # handle the corner case where self.layers is empty
+    last_outputs = []
+    for layer in self.layers:
+      # During each iteration, `inputs` are the inputs to `layer`, and `outputs`
+      # are the outputs of `layer` applied to `inputs`. At the end of each
+      # iteration `inputs` is set to `outputs` to prepare for the next layer.
+      kwargs = {}
+      argspec = self._layer_call_argspecs[layer].args
+      if 'mask' in argspec:
+        kwargs['mask'] = mask
+      if 'training' in argspec:
+        kwargs['training'] = training
+      outputs = layer(inputs, **kwargs)
+      last_outputs.append((layer, outputs))
+      # `outputs` will be the inputs to the next layer.
+      inputs = outputs
+      mask = getattr(outputs, '_keras_mask', None)
+    if self._track_outputs:
+      outputs._last_outputs = last_outputs
+    return outputs
 
   def __repr__(self):
     return self.__str__()

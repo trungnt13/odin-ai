@@ -15,7 +15,7 @@ from tensorflow_probability.python.internal import prefer_static as ps
 
 from odin import backend as bk
 from odin.backend import TensorType
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              _parse_layers)
@@ -126,12 +126,12 @@ class ConditionalM2VAE(BetaVAE):
 
   def __init__(
       self,
-      labels: RVmeta = RVmeta(10, 'onehot', name='digits'),
-      observation: RVmeta = RVmeta((28, 28, 1),
+      labels: RVconf = RVconf(10, 'onehot', name='digits'),
+      observation: RVconf = RVconf((28, 28, 1),
                                    'bernoulli',
                                    projection=True,
                                    name='image'),
-      latents: RVmeta = RVmeta(64, 'mvndiag', projection=True, name='latents'),
+      latents: RVconf = RVconf(64, 'mvndiag', projection=True, name='latents'),
       classifier: LayerCreator = NetConf([128, 128],
                                          flatten_inputs=True,
                                          name='classifier'),
@@ -193,7 +193,7 @@ class ConditionalM2VAE(BetaVAE):
       posterior = 'relaxedonehot'
       dist_kw = dict(temperature=temperature)
       self.relaxed = True
-    self.labels = RVmeta(self.n_classes,
+    self.labels = RVconf(self.n_classes,
                          posterior,
                          projection=True,
                          prior=OneHotCategorical(probs=[1. / self.n_classes] *
@@ -392,12 +392,12 @@ class reparamsM3VAE(BetaVAE):
 
   def __init__(
       self,
-      labels: RVmeta = RVmeta(10, 'relaxedonehot', name='digits'),
-      observation: RVmeta = RVmeta((28, 28, 1),
+      labels: RVconf = RVconf(10, 'relaxedonehot', name='digits'),
+      observation: RVconf = RVconf((28, 28, 1),
                                    'bernoulli',
                                    projection=True,
                                    name='image'),
-      latents: RVmeta = RVmeta(54, 'mvndiag', projection=True, name='latents'),
+      latents: RVconf = RVconf(54, 'mvndiag', projection=True, name='latents'),
       classifier: LayerCreator = NetConf([128, 128],
                                          flatten_inputs=True,
                                          name='classifier'),
@@ -425,14 +425,14 @@ class reparamsM3VAE(BetaVAE):
     self.n_classes = int(np.prod(labels.event_shape))
     self.n_resamples = int(n_resamples)
     self.regressor = PriorRegressor(self.n_classes)
-    self.labels = RVmeta(
+    self.labels = RVconf(
         self.n_classes,
         posterior='relaxedonehot',
         projection=True,
         prior=OneHotCategorical(probs=[1. / self.n_classes] * self.n_classes),
         name=labels.name,
         kwargs=dict(temperature=temperature)).create_posterior()
-    self.denotations = RVmeta(event_shape=(self.n_classes,),
+    self.denotations = RVconf(event_shape=(self.n_classes,),
                               posterior='normal',
                               projection=True,
                               name='denotations').create_posterior()

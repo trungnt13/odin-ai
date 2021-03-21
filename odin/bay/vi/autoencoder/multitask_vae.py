@@ -7,7 +7,7 @@ import tensorflow as tf
 from tensorflow.python import keras
 from tensorflow_probability.python import distributions as tfd
 
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              NetConf,
@@ -46,7 +46,7 @@ class MultitaskVAE(BetaVAE):
 
   def __init__(
       self,
-      labels: Union[RVmeta, List[RVmeta]] = RVmeta(10,
+      labels: Union[RVconf, List[RVconf]] = RVconf(10,
                                                    'onehot',
                                                    projection=True,
                                                    name="digits"),
@@ -93,7 +93,7 @@ class MultitaskVAE(BetaVAE):
       else:  # different network
         layers = [_parse_layers(encoder_y)]
       layers.append(
-        RVmeta(units_z, 'mvndiag', projection=True,
+        RVconf(units_z, 'mvndiag', projection=True,
                name='qzy_x').create_posterior())
       encoder_y = keras.Sequential(layers, name='encoder_y')
     self.encoder_y = encoder_y

@@ -5,7 +5,7 @@ import numpy as np
 import tensorflow as tf
 from odin.backend.maths import softplus1
 from odin.bay.layers.dense_distribution import DistributionDense
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python.distributions import (PowerSpherical,
@@ -59,7 +59,7 @@ class hypersphericalVAE(BetaVAE):
   """
 
   def __init__(self,
-               latents: Union[RVmeta, Layer] = RVmeta(64, name="latents"),
+               latents: Union[RVconf, Layer] = RVconf(64, name="latents"),
                distribution: str = 'powerspherical',
                beta: Union[float, Interpolation] = linear(vmin=1e-6,
                                                           vmax=1.,

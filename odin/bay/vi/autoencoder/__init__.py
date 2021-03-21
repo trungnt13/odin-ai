@@ -1,7 +1,7 @@
 import inspect
 from typing import Optional, Type
 
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.auxiliary_vae import *
 from odin.bay.vi.autoencoder.beta_vae import *
 from odin.bay.vi.autoencoder.conditional_vae import *

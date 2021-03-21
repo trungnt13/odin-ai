@@ -4,7 +4,7 @@ import numpy as np
 import tensorflow as tf
 from odin.bay.layers import DistributionDense, VectorDeterministicLayer
 from odin.bay.vi.autoencoder.variational_autoencoder import (
-    LayerCreator, RVmeta, VariationalAutoencoder, _iter_lists)
+  LayerCreator, RVconf, VariationalAutoencoder, _iter_lists)
 from odin.networks import SequentialNetwork
 from odin.utils import as_tuple
 from tensorflow.python import keras
@@ -118,7 +118,7 @@ class irmVAE(VariationalAutoencoder):
   """
 
   def __init__(self,
-               latents: LayerCreator = RVmeta(64,
+               latents: LayerCreator = RVconf(64,
                                               'mvndiag',
                                               projection=True,
                                               name='Latents'),
@@ -148,14 +148,14 @@ class irmVAE(VariationalAutoencoder):
 class irmAE(irmVAE):
 
   def __init__(self,
-               latents: LayerCreator = RVmeta(64,
+               latents: LayerCreator = RVconf(64,
                                               'vdeterministic',
                                               projection=True,
                                               name='Latents'),
                name: str = 'irmAE',
                **kwargs):
     for qz in tf.nest.flatten(latents):
-      if isinstance(qz, RVmeta):
+      if isinstance(qz, RVconf):
         qz.posterior = 'vdeterministic'
       elif isinstance(qz, DistributionDense):
         assert qz.posterior == VectorDeterministicLayer, \

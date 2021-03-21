@@ -19,7 +19,7 @@ from tensorflow_probability.python.distributions import Distribution
 from odin import backend as bk
 from odin.backend import TensorType
 from odin.backend.keras_helpers import layer2text
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi._base import VariationalModel
 from odin.networks import Identity, NetConf, TrainStep
 from odin.utils import as_tuple
@@ -37,7 +37,7 @@ __all__ = [
 # Types
 # ===========================================================================
 LayerCreator = Union[str, Layer, Type[Layer], \
-                     NetConf, RVmeta, \
+                     NetConf, RVconf, \
                      Callable[[Optional[List[int]]], Layer]]
 
 
@@ -76,7 +76,7 @@ def _parse_layers(network, name=None) -> Union[Layer, DistributionDense]:
         isinstance(cfg, type)):
     layer = cfg()
   ## RVmeta
-  elif isinstance(cfg, RVmeta):
+  elif isinstance(cfg, RVconf):
     layer = cfg.create_posterior(name=name if cfg.name is None else None)
   ## the NetConf
   elif isinstance(cfg, NetConf):
@@ -168,22 +168,20 @@ class VariationalAutoencoder(VariationalModel):
 
   def __init__(
       self,
-      observation: LayerCreator = RVmeta((28, 28, 1),
-                                         'bernoulli',
+      observation: LayerCreator = RVconf((28, 28, 1), 'bernoulli',
                                          projection=True,
                                          name='image'),
-      encoder: LayerCreator = NetConf([512, 512],
-                                      flatten_inputs=True,
-                                      name="encoder"),
-      decoder: LayerCreator = NetConf([512, 512],
-                                      flatten_inputs=True,
-                                      name="decoder"),
-      latents: LayerCreator = RVmeta(16,
-                                     'mvndiag',
-                                     projection=True,
-                                     name="latents"),
+      latents: Optional[LayerCreator] = RVconf(16, 'mvndiag',
+                                               projection=True,
+                                               name="latents"),
+      encoder: Optional[LayerCreator] = None,
+      decoder: Optional[LayerCreator] = None,
       **kwargs,
   ):
+    if encoder is None:
+      encoder = NetConf((512, 512), flatten_inputs=True, name="encoder")
+    if decoder is None:
+      decoder = NetConf((512, 512), flatten_inputs=True, name="decoder")
     ### keras want this supports_masking on to enable support masking
     super().__init__(**kwargs)
     ### create layers
@@ -229,11 +227,11 @@ class VariationalAutoencoder(VariationalModel):
       self._observation_args = _get_args(self.observation)
 
   @property
-  def encoder(self) -> Union[Layer, List[Layer]]:
+  def encoder(self) -> Union[keras.Model, List[keras.Model]]:
     return self._encoder
 
   @property
-  def decoder(self) -> Union[Layer, List[Layer]]:
+  def decoder(self) -> Union[keras.Model, List[keras.Model]]:
     return self._decoder
 
   @property
@@ -241,7 +239,7 @@ class VariationalAutoencoder(VariationalModel):
     return self._latents
 
   @property
-  def observation(self) -> Union[Layer, List[Layer]]:
+  def observation(self) -> Union[DistributionDense, List[DistributionDense]]:
     return self._observation
 
   @property
@@ -572,7 +570,7 @@ class VariationalAutoencoder(VariationalModel):
 
   ################## For training
   def train_steps(self,
-                  inputs: TensorType,
+                  inputs: Union[TensorType, List[TensorType]],
                   training: Optional[bool] = None,
                   mask: Optional[Tensor] = None,
                   name: str = '',

@@ -3,11 +3,12 @@ from typing import List, Union, Tuple, Dict, Sequence, Optional
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
+from tensorflow.python.keras.layers.convolutional import Conv
 from tensorflow_probability.python.distributions import NOT_REPARAMETERIZED, \
   Distribution
 
 from odin.backend.interpolation import Interpolation, linear
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.bay.vi.utils import prepare_ssl_inputs
@@ -41,11 +42,57 @@ def _get_llk_y(py, y, mask, alpha):
   return llk_y
 
 
+class SplitVAE(AnnealingVAE):
+
+  def __init__(self, n_split: int = 3, name: str = 'SplitVAE', **kwargs):
+    super(SplitVAE, self).__init__(name=name, **kwargs)
+    zdim = sum(int(np.prod(z.event_shape)) for z in as_tuple(self.latents))
+    units = [zdim // n_split for i in range(n_split - 1)]
+    units.append(zdim - sum(units))
+    del self._latents
+    self._latents = [
+      RVconf(units[i], 'mvndiag', projection=True,
+             name=f'latents{i}').create_posterior()
+      for i in range(n_split)]
+    self.encoder.track_outputs = True
+    self.flatten = keras.layers.Flatten()
+    self.project = keras.layers.Dense(256)
+
+  def encode(self,
+             inputs,
+             training=None,
+             mask=None,
+             only_encoding=False,
+             **kwargs):
+    h = super(SplitVAE, self).encode(inputs, training=training, mask=mask,
+                                     only_encoding=True, **kwargs)
+    skip = []
+    for layer, outputs in h._last_outputs:
+      if isinstance(layer, (keras.layers.Dense, Conv)):
+        skip.append(self.flatten(outputs))
+    h = self.project(tf.concat(skip, -1))
+    if only_encoding:
+      return h
+    return tuple(
+      [qz(h, training=training, mask=mask, sample_shape=self.sample_shape)
+       for qz in self.latents])
+
+  def decode(self,
+             latents,
+             training=None,
+             mask=None,
+             only_decoding=False,
+             **kwargs):
+    latents = tf.concat(latents, 1)
+    return super().decode(latents, training=training, mask=mask,
+                          only_decoding=only_decoding, **kwargs)
+
+
 class SemafoBase(AnnealingVAE):
 
   def __init__(
       self,
-      labels: RVmeta = RVmeta(10, 'onehot', projection=True, name="digits"),
+      labels: RVconf = RVconf(10, 'onehot', projection=True, name="digits"),
       alpha: float = 10.0,
       mi_coef: Union[float, Interpolation] = linear(vmin=0.1,
                                                     vmax=0.05,
@@ -263,14 +310,17 @@ class RemafoVAE(SemafoVAE):
     super().__init__(reverse_mi=True, name=name, **kwargs)
 
 
+# ===========================================================================
+# Hierarchical latents model
+# ===========================================================================
 class semafod(SemafoVAE):
   """Semafo VAE with double latents"""
 
   def __init__(self, name: str = 'semafod', **kwargs):
     super().__init__(name=name, **kwargs)
-    zdim = int(np.prod(self.latents.event_shape))
+    # zdim = int(np.prod(self.latents.event_shape))
     zdim = int(np.prod(self.labels.event_shape))
-    self.latents_y = RVmeta(zdim, 'mvndiag', projection=True,
+    self.latents_y = RVconf(zdim, 'mvndiag', projection=True,
                             name=f'{self.latents.name}_y').create_posterior()
 
   @classmethod
@@ -329,6 +379,97 @@ class semafod(SemafoVAE):
     for z, mi in zip(as_tuple(self.latents), mi_z):
       llk[f'mi_{z.name}'] = mi
     return llk, kl
+
+  class semafod(SemafoVAE):
+    """Semafo VAE with double latents"""
+
+    def __init__(self, name: str = 'semafod', **kwargs):
+      super().__init__(name=name, **kwargs)
+      zdim = int(np.prod(self.latents.event_shape))
+      zdim = int(np.prod(self.labels.event_shape))
+      self.latents_y = RVconf(zdim, 'mvndiag', projection=True,
+                              name=f'{self.latents.name}_y').create_posterior()
+
+    @classmethod
+    def is_hierarchical(cls) -> bool:
+      return True
+
+    def predict_factors(self,
+                        inputs=None,
+                        latents=None,
+                        training=None,
+                        mask=None,
+                        **kwargs) -> Distribution:
+      """Return the predictive distribution of the factors (a.k.a labels)
+      `p(y|z)`"""
+      if isinstance(latents, (tuple, list)):
+        latents = latents[-1]
+      return super().predict_factors(inputs=inputs, latents=latents,
+                                     training=training, mask=mask, **kwargs)
+
+    def encode(self, inputs, training=None, mask=None, only_encoding=False,
+               **kwargs):
+      h = super().encode(inputs, training=training, mask=mask,
+                         only_encoding=True, **kwargs)
+      if only_encoding:
+        return h
+      qz1_x = self.latents(h, training=training, mask=mask,
+                           sample_shape=self.sample_shape)
+      qz2_x = self.latents_y(h, training=training, mask=mask,
+                             sample_shape=self.sample_shape)
+      return qz1_x, qz2_x
+
+    def decode(self, latents, training=None, mask=None, **kwargs):
+      qz1_x, qz2_x = latents
+      py_z = self.predict_factors(latents=qz2_x, training=training, mask=mask)
+      px_z = super(AnnealingVAE, self).decode(tf.concat(latents, axis=-1),
+                                              training, mask, **kwargs)
+      return as_tuple(px_z) + (py_z,)
+
+    def elbo_components(self, inputs, training=None, mask=None):
+      ## unsupervised ELBO
+      X, y, mask = prepare_ssl_inputs(inputs, mask=mask,
+                                      n_unsupervised_inputs=1)
+      if mask is not None:
+        mask = tf.reshape(mask, (-1,))
+      llk, kl = super(AnnealingVAE, self).elbo_components(X[0],
+                                                          mask=mask,
+                                                          training=training)
+      P, Q = self.last_outputs
+      kl[f'kl_{self.latents_y.name}'] = self.beta * Q[-1].KL_divergence(
+        analytic=self.analytic, free_bits=self.free_bits, reverse=self.reverse)
+      py_z = P[-1]
+      ## supervised loss
+      llk[f"llk_{self.labels.name}"] = _get_llk_y(py_z, y, mask, self.alpha)
+      ## MI objective
+      mi_y, mi_z = self._mi_loss(Q, py_z, training=training, mask=mask,
+                                 which_latents_sampling=[1])
+      ## maximizing the MI
+      llk[f'mi_{self.labels.name}'] = mi_y
+      for z, mi in zip(as_tuple(self.latents), mi_z):
+        llk[f'mi_{z.name}'] = mi
+      return llk, kl
+
+
+class semafoh(semafod):
+  """Semafo VAE with double hierarchical latents"""
+
+  def __init__(self, name: str = 'semafoh', **kwargs):
+    super().__init__(name=name, **kwargs)
+
+  def encode(self, inputs, training=None, mask=None, only_encoding=False,
+             **kwargs):
+    h = super(SemafoVAE, self).encode(inputs, training=training, mask=mask,
+                                      only_encoding=True, **kwargs)
+    if only_encoding:
+      return h
+    qz1_x = self.latents(h, training=training, mask=mask,
+                         sample_shape=self.sample_shape)
+    qz2_x = self.latents_y(tf.concat([h, qz1_x], -1),
+                           training=training,
+                           mask=mask,
+                           sample_shape=self.sample_shape)
+    return qz1_x, qz2_x
 
 
 # ===========================================================================

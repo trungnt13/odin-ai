@@ -1,6 +1,6 @@
 import tensorflow as tf
 from odin.bay.vi.autoencoder.variational_autoencoder import VariationalAutoencoder, LayerCreator
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.utils import as_tuple
 from odin.bay.layers import DistributionDense, VectorDeterministicLayer, DeterministicLayer
 
@@ -41,7 +41,7 @@ class _DeterministicLatents(VariationalAutoencoder):
 
   def __init__(
       self,
-      latents: LayerCreator = RVmeta(64,
+      latents: LayerCreator = RVconf(64,
                                      'vdeterministic',
                                      projection=True,
                                      name="Latents"),
@@ -54,7 +54,7 @@ class _DeterministicLatents(VariationalAutoencoder):
   ):
     deterministic_latents = []
     for qz in as_tuple(latents):
-      if isinstance(qz, RVmeta):
+      if isinstance(qz, RVconf):
         qz.posterior = 'vdeterministic'
       elif (isinstance(qz, DistributionDense) and
             qz.posterior != VectorDeterministicLayer):
@@ -118,7 +118,7 @@ class Autoencoder(_DeterministicLatents):
 
   def __init__(
       self,
-      observation: LayerCreator = RVmeta((28, 28, 1),
+      observation: LayerCreator = RVconf((28, 28, 1),
                                          'bernoulli',
                                          projection=True,
                                          name='image'),
@@ -127,7 +127,7 @@ class Autoencoder(_DeterministicLatents):
   ):
     deterministic_obs = []
     for px in as_tuple(observation):
-      if isinstance(px, RVmeta):
+      if isinstance(px, RVconf):
         px.posterior = 'deterministic'
         px.kwargs['log_prob'] = _mse_log_prob
         px.kwargs['reinterpreted_batch_ndims'] = len(observation.event_shape)

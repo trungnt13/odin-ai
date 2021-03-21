@@ -10,7 +10,7 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from odin import search
 from odin import visual as vs
-from odin.bay import RVmeta
+from odin.bay import RVconf
 from odin.bay.vi import Criticizer
 from odin.bay.vi.autoencoder import (Factor2VAE, FactorDiscriminator,
                                      SemiFactor2VAE, SemifactorVAE, FactorVAE)
@@ -106,24 +106,24 @@ class Factor(Experimenter):
       del kw['alpha']
       model = FactorVAE(
           encoder=cfg.ds,
-          outputs=RVmeta(self.ds.shape, 'bern', name="Image"),
-          latents=RVmeta(20, 'mvndiag', projection=True, name="Latents"),
+          outputs=RVconf(self.ds.shape, 'bern', name="Image"),
+          latents=RVconf(20, 'mvndiag', projection=True, name="Latents"),
           **kw,
       )
     elif cfg.vae == 'factor2':
       del kw['alpha']
       model = Factor2VAE(
           encoder=cfg.ds,
-          outputs=RVmeta(self.ds.shape, 'bern', name="Image"),
-          latents=RVmeta(10, 'mvndiag', projection=True, name='Latents'),
-          factors=RVmeta(10, 'mvndiag', projection=True, name='Factors'),
+          outputs=RVconf(self.ds.shape, 'bern', name="Image"),
+          latents=RVconf(10, 'mvndiag', projection=True, name='Latents'),
+          factors=RVconf(10, 'mvndiag', projection=True, name='Factors'),
           **kw,
       )
     elif cfg.vae == 'semi':
       model = SemifactorVAE(
           encoder=cfg.ds,
-          outputs=RVmeta(self.ds.shape, 'bern', name="Image"),
-          latents=RVmeta(20, 'mvndiag', projection=True, name="Latents"),
+          outputs=RVconf(self.ds.shape, 'bern', name="Image"),
+          latents=RVconf(20, 'mvndiag', projection=True, name="Latents"),
           n_labels=self.ds.n_labels,
           ss_strategy=cfg.strategy,
           **kw,

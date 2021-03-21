@@ -60,12 +60,12 @@ class RestoreMCMCdim(Layer):
 
 
 class Resampling2D(Layer):
-  """ Support upsampling and downsampling """
+  """Support upsampling and downsampling"""
 
   def __init__(self,
                size: Tuple[int, int] = (2, 2),
-               mode: Literal['max', 'avg', 'global', 'pad', 'nearest',
-                             'bilinear'] = 'avg',
+               mode: Literal[
+                 'max', 'avg', 'global', 'pad', 'nearest', 'bilinear'] = 'avg',
                **kwargs):
     super().__init__(**kwargs)
     self.downsampling = False
@@ -94,8 +94,8 @@ class Resampling2D(Layer):
           self.size = list(self.size) * 2
         # this doesn't take into account odd number
         self.pool = ZeroPadding2D(padding=[
-            (i - 1) * s // 2 for i, s in zip(self.size, input_shape[1:])
-        ],)
+          (i - 1) * s // 2 for i, s in zip(self.size, input_shape[1:])
+        ], )
       else:
         self.pool = UpSampling2D(size=self.size, interpolation=self.mode)
     self.reshape = Reshape((1, 1, input_shape[-1]))
@@ -109,21 +109,21 @@ class Resampling2D(Layer):
 
 
 class ConvGating(Layer):
-  """ Split the filters in two parts then applying sigmoid gating """
+  """Split the filters in two parts then applying sigmoid gating"""
 
-  def call(self, inputs):
+  def call(self, inputs, **kwargs):
     activation, gate_logits = tf.split(inputs, 2, axis=-1)
     gate = tf.nn.sigmoid(gate_logits)
     return tf.multiply(gate, activation)
 
 
 class SqueezeExcitation(Layer):
-  """ Squeeze and Excitation """
+  """Squeeze and Excitation"""
 
   def __init__(self,
                se_ratio: float = 0.25,
                pool_mode: Literal['max', 'avg'] = 'avg',
-               activation: Callable[..., tf.Tensor] = tf.nn.swish,
+               activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.swish,
                name: str = 'squeeze_excitation'):
     super().__init__(name=name)
     self.se_ratio = se_ratio
@@ -161,8 +161,7 @@ class SqueezeExcitation(Layer):
 
 
 class SkipAndForget(Layer):
-  """ Add skip connection then gradually forget the connection
-  during training """
+  """Add skip connection then gradually forget the connection during training"""
 
   def __init__(self, max_step: int = 10000, name: str = 'skip_and_forget'):
     super().__init__(name=name)
@@ -215,6 +214,31 @@ class ResidualSequential(keras.Sequential):
     if self.merger is None:
       return x
     return self.merger([inputs, x])
+
+
+class MaskedConv2D(keras.layers.Conv2D):
+
+  def __init__(self,
+               filters,
+               kernel_size,
+               strides=(1, 1),
+               padding='valid',
+               data_format=None,
+               dilation_rate=(1, 1),
+               groups=1,
+               activation=None,
+               use_bias=True,
+               kernel_initializer='glorot_uniform',
+               bias_initializer='zeros',
+               kernel_regularizer=None,
+               bias_regularizer=None,
+               activity_regularizer=None,
+               kernel_constraint=None,
+               bias_constraint=None,
+               **kwargs):
+    # kernel_constraint = _make_kernel_constraint(
+    #   kernel_size, (0, h), (0, w))
+    super(MaskedConv2D, self).__init__(**locals(), **kwargs)
 
 
 # ===========================================================================
@@ -451,12 +475,12 @@ def residual_bottleneck(
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
     layers.append(Activation(activation, name=f'{name}_act1'))
   layers.append(
-      Conv2D(filters=int(filters),
-             kernel_size=kernel_size,
-             use_bias=use_bias,
-             strides=strides,
-             padding=pad_mode,
-             name=f'{name}_conv1'))
+    Conv2D(filters=int(filters),
+           kernel_size=kernel_size,
+           use_bias=use_bias,
+           strides=strides,
+           padding=pad_mode,
+           name=f'{name}_conv1'))
   if order == 'cba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
@@ -467,9 +491,9 @@ def residual_bottleneck(
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn2'))
     layers.append(Activation(activation, name=f'{name}_act2'))
   layers.append(
-      Conv2D(filters=int(filters),
-             kernel_size=kernel_size,
-             name=f'{name}_conv2'))
+    Conv2D(filters=int(filters),
+           kernel_size=kernel_size,
+           name=f'{name}_conv2'))
   if order == 'cba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn2'))
@@ -477,14 +501,14 @@ def residual_bottleneck(
   ## expand
   if se_ratio:
     layers.append(
-        SqueezeExcitation(se_ratio=se_ratio,
-                          activation=activation,
-                          name=f'{name}_se'))
+      SqueezeExcitation(se_ratio=se_ratio,
+                        activation=activation,
+                        name=f'{name}_se'))
   layers.append(
-      Conv2D(filters=filters_out * (2 if gated else 1),
-             kernel_size=(1, 1),
-             use_bias=use_bias,
-             name=f'{name}_proj1'))
+    Conv2D(filters=filters_out * (2 if gated else 1),
+           kernel_size=(1, 1),
+           use_bias=use_bias,
+           name=f'{name}_proj1'))
   if batchnorm:
     layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn3'))
   if gated:
@@ -529,7 +553,7 @@ def residual_inverted(
   x = inputs
   if np.any(np.asarray(strides) >= 2):
     layers.append(
-        ZeroPadding2D(padding=correct_pad(x, kernel_size), name=f'{name}_pad'))
+      ZeroPadding2D(padding=correct_pad(x, kernel_size), name=f'{name}_pad'))
     pad_mode = 'valid'
   else:
     pad_mode = 'same'
@@ -539,12 +563,12 @@ def residual_inverted(
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
     layers.append(Activation(activation, name=f'{name}_act1'))
   layers.append(
-      Conv2D(filters=filters,
-             kernel_size=kernel_size,
-             padding=pad_mode,
-             strides=strides,
-             use_bias=use_bias,
-             name=f'{name}_conv1'))
+    Conv2D(filters=filters,
+           kernel_size=kernel_size,
+           padding=pad_mode,
+           strides=strides,
+           use_bias=use_bias,
+           name=f'{name}_conv1'))
   if order == 'cba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
@@ -563,14 +587,14 @@ def residual_inverted(
   ## final
   if se_ratio:
     layers.append(
-        SqueezeExcitation(se_ratio=se_ratio,
-                          activation=activation,
-                          name=f'{name}_se'))
+      SqueezeExcitation(se_ratio=se_ratio,
+                        activation=activation,
+                        name=f'{name}_se'))
   layers.append(
-      Conv2D(filters=filters_out * (2 if gated else 1),
-             kernel_size=(1, 1),
-             use_bias=use_bias,
-             name=f'{name}_proj1'))
+    Conv2D(filters=filters_out * (2 if gated else 1),
+           kernel_size=(1, 1),
+           use_bias=use_bias,
+           name=f'{name}_proj1'))
   if batchnorm:
     layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn3'))
   if gated:

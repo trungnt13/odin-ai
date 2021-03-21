@@ -24,8 +24,10 @@ tf.random.set_seed(seed)
 ######## load the arrays
 model_name = 'mnist_variationalautoencoder'
 model_name = 'mnist_semafovae_a10_r0_c0.1'
-# model_name = 'mnist_skiptaskvae_a10_r0'
-# model_name = 'mnist_semafod_a10_r0_c0.1'
+model_name = 'mnist_skiptaskvae_a10_r0'
+model_name = 'mnist_skiptask2vae_a10_r0'
+model_name = 'mnist_semafod_a10_r0_c0.1'
+
 path = f'/home/trung/exp/fastexp/{model_name}/arrays'
 if not os.path.exists(path):
   raise ValueError(f'path not found "{path}"')

@@ -15,7 +15,7 @@ from odin.bay.layers import (BinomialLayer, DistributionDense, DirichletLayer,
                              MultivariateNormalLayer, NegativeBinomialLayer,
                              OneHotCategoricalLayer, PoissonLayer,
                              ZINegativeBinomialLayer)
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
@@ -482,7 +482,7 @@ class auxiliaryLDA(amortizedLDA):
       decoder: LayerCreator = NetConf([300, 300, 300],
                                             flatten_inputs=True,
                                             name="Decoder"),
-      latents: LayerCreator = RVmeta(10, 'mvndiag', True, name='Latents'),
+      latents: LayerCreator = RVconf(10, 'mvndiag', True, name='Latents'),
       warmup: Optional[int] = None,
       beta: float = 1.0,
       alpha: float = 1.0,
@@ -504,7 +504,7 @@ class nonlinearLDA(amortizedLDA):
                                             name="Encoder"),
       decoder: LayerCreator = NetConf(flatten_inputs=True,
                                             name="Decoder"),
-      latents: LayerCreator = RVmeta(10,
+      latents: LayerCreator = RVconf(10,
                                      posterior='mvndiag',
                                      projection=True,
                                      name="Latents"),

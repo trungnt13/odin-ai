@@ -1,10 +1,10 @@
 import warnings
-from typing import Any, Callable, List, Optional, Union
+from typing import Any, Callable, List, Optional, Union, Sequence
 
 import numpy as np
 import tensorflow as tf
 from odin.bay.layers import DistributionDense
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.utils import permute_dims
 from odin.networks import SequentialNetwork, dense_network
 from odin.utils import as_tuple
@@ -68,12 +68,13 @@ class FactorDiscriminator(SequentialNetwork):
       batchnorm: bool = False,
       input_dropout: float = 0.,
       dropout: float = 0.,
-      units: List[int] = [1000, 1000, 1000, 1000, 1000],
-      observation: Union[RVmeta, List[RVmeta]] = RVmeta(1,
-                                                        'bernoulli',
-                                                        projection=True,
-                                                        name="discriminator"),
-      activation: Union[str, Callable[[], Any]] = tf.nn.leaky_relu,
+      units: Sequence[int] = (1000, 1000, 1000, 1000, 1000),
+      observation: Union[RVconf, Sequence[RVconf]] = RVconf(1,
+                                                            'bernoulli',
+                                                            projection=True,
+                                                            name="discriminator"),
+      activation: Union[
+        str, Callable[[tf.Tensor], tf.Tensor]] = tf.nn.leaky_relu,
       ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
                            'min'] = 'logsumexp',
       name: str = "FactorDiscriminator",
@@ -81,8 +82,9 @@ class FactorDiscriminator(SequentialNetwork):
     if not isinstance(observation, (tuple, list)):
       observation = [observation]
     assert len(observation) > 0, "No output is given for FactorDiscriminator"
-    assert all(isinstance(o, (RVmeta, DistributionDense)) for o in observation), \
-      (f"outputs must be instance of RVmeta, but given:{observation}")
+    assert all(
+      isinstance(o, (RVconf, DistributionDense)) for o in observation), (
+      f"outputs must be instance of RVmeta, but given:{observation}")
     n_outputs = 0
     for o in observation:
       if not o.projection:
@@ -103,12 +105,12 @@ class FactorDiscriminator(SequentialNetwork):
     self._distributions = []
     assert self.ss_strategy in {'sum', 'logsumexp', 'mean', 'max', 'min'}
 
-  def build(self, input_shape):
+  def build(self, input_shape=None):
     super().build(input_shape)
     shape = self.output_shape[1:]
     self._distributions = [
-        o.create_posterior(shape) if isinstance(o, RVmeta) else o
-        for o in self.observation
+      o.create_posterior(shape) if isinstance(o, RVconf) else o
+      for o in self.observation
     ]
     self.input_ndim = len(self.input_shape) - 1
     return self
@@ -146,14 +148,14 @@ class FactorDiscriminator(SequentialNetwork):
           x = x.concentration
         else:
           raise RuntimeError(
-              f"Distribution {x} doesn't has 'logits' or 'concentration' "
-              "attributes, cannot not be used for estimating total correlation."
+            f"Distribution {x} doesn't has 'logits' or 'concentration' "
+            "attributes, cannot not be used for estimating total correlation."
           )
       Xs.append(x)
     # concatenate the outputs
     if len(Xs) == 0:
       raise RuntimeError(
-          f"No logits values found for total correlation: {logits}")
+        f"No logits values found for total correlation: {logits}")
     elif len(Xs) == 1:
       Xs = Xs[0]
     else:
@@ -260,7 +262,7 @@ class FactorDiscriminator(SequentialNetwork):
     # check non-zero, if zero the gradient must be stop or NaN gradient happen
     loss = tf.reduce_mean(loss)
     loss = tf.cond(
-        tf.abs(loss) < 1e-8, lambda: tf.stop_gradient(loss), lambda: loss)
+      tf.abs(loss) < 1e-8, lambda: tf.stop_gradient(loss), lambda: loss)
     return loss
 
   @property

@@ -25,8 +25,8 @@ from odin.bay.helpers import (is_binary_distribution, is_discrete_distribution,
 from odin.utils.cache_utils import cache_memory
 
 __all__ = [
-    'RVmeta',
-    'RandomVariable',
+  'RVconf',
+  'RandomVariable',
 ]
 
 
@@ -72,17 +72,17 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   ## Normal
   if layer == obl.GaussianLayer:
     prior = obd.Independent(
-        obd.Normal(**_kwargs(loc=tf.zeros(shape=event_shape),
-                             scale=tf.ones(shape=event_shape))),
-        reinterpreted_batch_ndims=1,
+      obd.Normal(**_kwargs(loc=tf.zeros(shape=event_shape),
+                           scale=tf.ones(shape=event_shape))),
+      reinterpreted_batch_ndims=1,
     )
   ## Multivariate Normal
   elif issubclass(layer, obl.MultivariateNormalLayer):
     cov = layer._partial_kwargs['covariance']
     prior = obd.Independent(
-        obd.Normal(**_kwargs(loc=tf.zeros(shape=event_shape),
-                             scale=tf.ones(shape=event_shape))),
-        reinterpreted_batch_ndims=1,
+      obd.Normal(**_kwargs(loc=tf.zeros(shape=event_shape),
+                           scale=tf.ones(shape=event_shape))),
+      reinterpreted_batch_ndims=1,
     )
     # if cov == 'mvndiag':  # diagonal covariance
     #   loc = tf.zeros(shape=event_shape)
@@ -102,9 +102,9 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
   ## Log Normal
   elif layer == obl.LogNormalLayer:
     prior = obd.Independent(
-        obd.LogNormal(**_kwargs(loc=tf.zeros(shape=event_shape),
-                                scale=tf.ones(shape=event_shape))),
-        reinterpreted_batch_ndims=1,
+      obd.LogNormal(**_kwargs(loc=tf.zeros(shape=event_shape),
+                              scale=tf.ones(shape=event_shape))),
+      reinterpreted_batch_ndims=1,
     )
   ## mixture
   elif issubclass(layer, obl.MixtureGaussianLayer):
@@ -120,15 +120,15 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
     elif cov == 'none':
       scale_shape = [n_components, event_size]
       fn = lambda l, s: obd.Independent(
-          obd.Normal(loc=l, scale=tf.math.softplus(s)),
-          reinterpreted_batch_ndims=1,
+        obd.Normal(loc=l, scale=tf.math.softplus(s)),
+        reinterpreted_batch_ndims=1,
       )
     elif cov in ('full', 'tril'):
       scale_shape = [n_components, event_size * (event_size + 1) // 2]
       fn = lambda l, s: obd.MultivariateNormalTriL(
-          loc=l,
-          scale_tril=tfp.bijectors.FillScaleTriL(diag_shift=1e-5)
-          (tf.math.softplus(s)))
+        loc=l,
+        scale_tril=tfp.bijectors.FillScaleTriL(diag_shift=1e-5)
+        (tf.math.softplus(s)))
     loc = tf.cast(tf.fill([n_components, event_size], 0.), dtype=tf.float32)
     log_scale = tf.cast(tf.fill(scale_shape, np.log(np.expm1(1.))),
                         dtype=tf.float32)
@@ -136,11 +136,11 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
     mixture_logits = tf.cast(tf.fill([n_components], np.log(p / (1 - p))),
                              dtype=tf.float32)
     prior = obd.MixtureSameFamily(
-        components_distribution=fn(loc, log_scale),
-        mixture_distribution=obd.Categorical(logits=mixture_logits))
+      components_distribution=fn(loc, log_scale),
+      mixture_distribution=obd.Categorical(logits=mixture_logits))
   ## discrete
   elif dist in (obd.OneHotCategorical, obd.Categorical) or \
-    layer == obl.RelaxedOneHotCategoricalLayer:
+      layer == obl.RelaxedOneHotCategoricalLayer:
     p = 1. / event_size
     prior = dist(**_kwargs(logits=[np.log(p / (1 - p))] * event_size),
                  dtype=tf.float32)
@@ -148,9 +148,9 @@ def _default_prior(event_shape, posterior, prior, posterior_kwargs):
     prior = dist(**_kwargs(concentration=[1.] * event_size))
   elif dist == obd.Bernoulli:
     prior = obd.Independent(
-        obd.Bernoulli(**_kwargs(logits=np.zeros(event_shape)),
-                      dtype=tf.float32),
-        reinterpreted_batch_ndims=len(event_shape),
+      obd.Bernoulli(**_kwargs(logits=np.zeros(event_shape)),
+                    dtype=tf.float32),
+      reinterpreted_batch_ndims=len(event_shape),
     )
   ## other
   return prior
@@ -172,7 +172,7 @@ def is_random_variable(x: Any) -> bool:
                        order=False,
                        unsafe_hash=False,
                        frozen=False)
-class RVmeta:
+class RVconf:
   """ Description of a random variable for the Bayesian model.
 
   Parameters
@@ -334,7 +334,7 @@ class RVmeta:
     if 'deterministic' in self.posterior:
       return True
     if self.posterior in dir(tf.losses) or \
-      self.posterior in dir(keras.activations):
+        self.posterior in dir(keras.activations):
       return True
     return False
 
@@ -364,9 +364,9 @@ class RVmeta:
     # use Gaussian noise as prior distribution for  deterministic case
     if self.is_deterministic:
       prior = obd.Independent(
-          obd.Normal(loc=tf.zeros(shape=self.event_shape),
-                     scale=tf.ones(shape=self.event_shape)),
-          reinterpreted_batch_ndims=1,
+        obd.Normal(loc=tf.zeros(shape=self.event_shape),
+                   scale=tf.ones(shape=self.event_shape)),
+        reinterpreted_batch_ndims=1,
       )
     else:
       prior = _default_prior(self.event_shape, self.posterior, self.prior,
@@ -405,10 +405,10 @@ class RVmeta:
                                         loc_activation=activation,
                                         scale_activation='softplus1',
                                         covariance=dict(
-                                            mdn='none',
-                                            mdndiag='diag',
-                                            mdnfull='tril',
-                                            mdntril='tril')[posterior],
+                                          mdn='none',
+                                          mdndiag='diag',
+                                          mdnfull='tril',
+                                          mdntril='tril')[posterior],
                                         name=name,
                                         prior=prior,
                                         dropout=self.dropout,

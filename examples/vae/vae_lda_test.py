@@ -14,7 +14,7 @@ import tensorflow as tf
 from odin.bay import concat_distributions
 from odin.bay.layers import DistributionDense
 from odin.bay.vi import (AmortizedLDA, LatentDirichletDecoder, NetConf,
-                         RVmeta, TwoStageLDA, VariationalAutoencoder,
+                         RVconf, TwoStageLDA, VariationalAutoencoder,
                          BetaVAE, FactorVAE, MIVAE)
 from odin.training import Trainer, get_current_trainer
 from odin.training.experimenter import get_output_dir, run_hydra, save_to_yaml
@@ -178,17 +178,17 @@ def main(cfg):
                 compile_graph=True,
                 logdir=output_dir,
                 skip_fitted=True)
-  output_dist = RVmeta(
+  output_dist = RVconf(
       n_words,
       cfg.distribution,
       projection=True,
       preactivation='softmax' if cfg.distribution == 'onehot' else 'linear',
       kwargs=dict(probs_input=True) if cfg.distribution == 'onehot' else {},
       name="Words")
-  latent_dist = RVmeta(cfg.n_topics,
+  latent_dist = RVconf(cfg.n_topics,
                                'mvndiag',
-                               projection=True,
-                               name="Latents")
+                       projection=True,
+                       name="Latents")
   ######## AmortizedLDA
   if cfg.model == 'lda':
     vae = AmortizedLDA(lda=lda,
@@ -207,11 +207,11 @@ def main(cfg):
         beta=cfg.beta,
         encoder=NetConf([300, 150], name='Encoder'),
         decoder=NetConf([150, 300], name='Decoder'),
-        latents=RVmeta(cfg.n_topics,
+        latents=RVconf(cfg.n_topics,
                                'dirichlet',
-                               projection=True,
-                               prior=None,
-                               name="Topics"),
+                       projection=True,
+                       prior=None,
+                       name="Topics"),
         outputs=output_dist,
         # important, MCMC KL for Dirichlet is very unstable
         analytic=True,
@@ -276,10 +276,10 @@ def main(cfg):
                        posterior_kwargs=dict(probs_input=True),
                        activation='softmax',
                        name="Words"),
-                   latents=RVmeta(cfg.n_topics,
+                   latents=RVconf(cfg.n_topics,
                                           'mvndiag',
-                                          projection=True,
-                                          name="Latents"),
+                                  projection=True,
+                                  name="Latents"),
                    input_shape=(n_words,),
                    path=model_path + '_vae0')
     vae0.fit(callback=lambda: None

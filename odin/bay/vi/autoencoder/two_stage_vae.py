@@ -1,5 +1,5 @@
 from odin.bay.vi.autoencoder.variational_autoencoder import (
-    RVmeta, VariationalAutoencoder)
+  RVconf, VariationalAutoencoder)
 
 from tensorflow_probability.python.experimental import nn
 nn.Sequential

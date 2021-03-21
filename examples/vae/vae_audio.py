@@ -14,7 +14,7 @@ from odin import bay
 from odin import networks as net
 from odin import visual as vs
 from odin.backend import interpolation
-from odin.bay.vi.autoencoder import RVmeta, VariationalAutoencoder
+from odin.bay.vi.autoencoder import RVconf, VariationalAutoencoder
 from odin.training import Trainer
 from odin.fuel import AudioFeatureLoader
 from odin.utils import ArgController, clean_folder, partialclass
@@ -84,10 +84,10 @@ input_shape = tf.data.experimental.get_structure(train).shape[1:]
 # ===========================================================================
 # Create the model
 # ===========================================================================
-outputs = RVmeta(event_shape=input_shape,
-                         posterior='gaus',
-                         projection=False,
-                         name="Spectrogram")
+outputs = RVconf(event_shape=input_shape,
+                 posterior='gaus',
+                 projection=False,
+                 name="Spectrogram")
 latents = bay.layers.MultivariateNormalDiagLatent(ZDIM, name="Latents")
 encoder = keras.Sequential(
     [

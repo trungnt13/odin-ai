@@ -9,7 +9,7 @@ from tensorflow_probability.python.distributions import Independent, Normal
 from tensorflow_probability.python.layers import DistributionLambda
 
 from odin.bay.helpers import kl_divergence
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE, BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.networks import NetConf
@@ -82,7 +82,7 @@ class StackedVAE(AnnealingVAE):
       batchnorm_kw: Dict[str, Any] = {'momentum': 0.9},
       dropout: float = 0.0,
       activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
-      latents: Union[Layer, RVmeta] = RVmeta(32,
+      latents: Union[Layer, RVconf] = RVconf(32,
                                              'mvndiag',
                                              projection=True,
                                              name="latents"),
@@ -118,14 +118,14 @@ class StackedVAE(AnnealingVAE):
       for i, units in enumerate(ladder_hiddens[::-1])
     ]
     self.ladder_qz = [
-      _parse_layers(RVmeta(units, 'normal', projection=True, name=f'qZ{i}'))
+      _parse_layers(RVconf(units, 'normal', projection=True, name=f'qZ{i}'))
       for i, units in enumerate(as_tuple(ladder_latents))
     ]
     if tie_latents:
       self.ladder_pz = self.ladder_qz
     else:
       self.ladder_pz = [
-        _parse_layers(RVmeta(units, 'normal', projection=True, name=f'pZ{i}'))
+        _parse_layers(RVconf(units, 'normal', projection=True, name=f'pZ{i}'))
         for i, units in enumerate(as_tuple(ladder_latents))
       ]
 
@@ -324,7 +324,7 @@ class HVAE(AnnealingVAE):
 
   def __init__(
       self,
-      latents: RVmeta = RVmeta(32, 'mvndiag', projection=True, name="latents1"),
+      latents: RVconf = RVconf(32, 'mvndiag', projection=True, name="latents1"),
       ladder_latents: List[int] = [16],
       connection: NetConf = NetConf(300, activation='relu'),
       name: str = 'HierarchicalVAE',
@@ -333,12 +333,12 @@ class HVAE(AnnealingVAE):
     super().__init__(latents=latents, name=name, **kwargs)
     ## create the hierarchical latents
     self.ladder_q = [
-      RVmeta(units, 'mvndiag', projection=True,
+      RVconf(units, 'mvndiag', projection=True,
              name=f'ladder_q{i}').create_posterior()
       for i, units in enumerate(ladder_latents)
     ]
     self.ladder_p = [
-      RVmeta(units, 'mvndiag', projection=True,
+      RVconf(units, 'mvndiag', projection=True,
              name=f'ladder_p{i}').create_posterior()
       for i, units in enumerate(ladder_latents)
     ]
@@ -583,11 +583,11 @@ class PUnetVAE(BetaVAE):
     ladder_latents = {}
     for i, j, units in layers_map:
       if i in encoder_name and j in decoder_name:
-        q = RVmeta(units,
+        q = RVconf(units,
                    'mvndiag',
                    projection=True,
                    name=f'ladder_q{n_latents}').create_posterior()
-        p = RVmeta(units,
+        p = RVconf(units,
                    'mvndiag',
                    projection=True,
                    name=f'ladder_p{n_latents}').create_posterior()

@@ -73,7 +73,7 @@ class _ShapeDataset(ImageDataset):
                                 method=tf.image.ResizeMethod.BILINEAR,
                                 preserve_aspect_ratio=True,
                                 antialias=True)
-      # resize sampling would result numerical instable values
+      # resize sampling would result numerical unstable values
       image = tf.clip_by_value(image, 0.0, 255.0)
       # dSprites shapes attribute is encoded as [1, 2, 3], should be [0, 1, 2]
       label = []
@@ -106,7 +106,7 @@ class _ShapeDataset(ImageDataset):
 
   @property
   def shape(self):
-    return (self.image_size, self.image_size, self.n_channels)
+    return self.image_size, self.image_size, self.n_channels
 
 
 # ===========================================================================

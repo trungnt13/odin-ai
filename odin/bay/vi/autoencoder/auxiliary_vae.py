@@ -5,7 +5,7 @@ import tensorflow as tf
 from odin import backend as bk
 from odin.bay.helpers import coercible_tensor
 from odin.bay.layers import DistributionNetwork
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.conditional_vae import (ConditionalM2VAE,
                                                      prepare_ssl_inputs)
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
@@ -48,15 +48,15 @@ class auxiliaryVAE(ConditionalM2VAE):
   def __init__(
       self,
       n_classes: int = 10,
-      observation=RVmeta((28, 28, 1),
+      observation=RVconf((28, 28, 1),
                          'bernoulli',
                          projection=True,
                          name='image'),
-      latents: RVmeta = RVmeta(64, 'mvndiag', projection=True, name='latents'),
+      latents: RVconf = RVconf(64, 'mvndiag', projection=True, name='latents'),
       classifier: LayerCreator = NetConf([128, 128],
                                                flatten_inputs=True,
                                                name='classifier'),
-      auxiliary: RVmeta = RVmeta(64,
+      auxiliary: RVconf = RVconf(64,
                                  'mvndiag',
                                  projection=True,
                                  name='auxiliary'),

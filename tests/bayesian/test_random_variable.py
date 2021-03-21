@@ -6,7 +6,7 @@ from tempfile import mkstemp
 
 import numpy as np
 
-from odin.bay import RVmeta
+from odin.bay import RVconf
 
 np.random.seed(8)
 

@@ -9,7 +9,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow_probability as tfp
 from odin.bay import vi
-from odin.bay.vi import RVmeta, VariationalAutoencoder, FactorVAE
+from odin.bay.vi import RVconf, VariationalAutoencoder, FactorVAE
 from tensorflow.python import keras
 from tqdm import tqdm
 
@@ -78,11 +78,11 @@ def create_networks():
       ],
       name='decoder',
   )
-  latents = RVmeta(event_shape=(encoded_size,),
+  latents = RVconf(event_shape=(encoded_size,),
                    posterior='mvntril',
                    projection=False,
                    name="latents"),
-  observation = RVmeta(event_shape=input_shape[1:],
+  observation = RVconf(event_shape=input_shape[1:],
                        posterior="bernoulli",
                        projection=False,
                        name="image"),

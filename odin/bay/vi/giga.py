@@ -9,7 +9,7 @@ from sklearn.metrics.cluster import entropy as entropy1D
 from tensorflow_probability.python import distributions as tfd
 
 from odin.utils import one_hot
-from odin.bay.vi import VAE, RVmeta, NetConf, Beta10VAE, FactorVAE
+from odin.bay.vi import VAE, RVconf, NetConf, Beta10VAE, FactorVAE
 from odin.fuel import dSprites
 from odin.networks import get_networks, get_optimizer_info
 from tqdm import tqdm

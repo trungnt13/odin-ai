@@ -10,7 +10,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 import tensorflow_probability as tfp
 from odin import visual as vs
-from odin.bay.vi import RVmeta, get_vae
+from odin.bay.vi import RVconf, get_vae
 from odin.fuel import MNIST, BinarizedMNIST, FashionMNIST, dSprites
 from odin.ml import fast_umap
 from odin.training import (Trainer, get_current_trainer, get_output_dir,
@@ -136,11 +136,11 @@ def main(cfg: dict):
         encoder=encoder,
         decoder=decoder,
         # latents=tfpl.MultivariateNormalTriL(encoded_size),
-        latents=RVmeta(event_shape=(encoded_size,),
+        latents=RVconf(event_shape=(encoded_size,),
                        posterior='mvntril',
                        projection=False,
                        name="latents"),
-        observation=RVmeta(event_shape=input_shape,
+        observation=RVconf(event_shape=input_shape,
                            posterior="bernoulli",
                            projection=False,
                            name="image"),

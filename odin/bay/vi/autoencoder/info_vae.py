@@ -8,7 +8,7 @@ from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
 
 from odin.backend.interpolation import linear
 from odin.backend.types_helpers import Coefficient
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.losses import maximum_mean_discrepancy
 from odin.utils import as_tuple
@@ -131,8 +131,8 @@ class MIVAE(BetaVAE):
   def __init__(
       self,
       mi_coef: Coefficient = 0.2,
-      latents: RVmeta = RVmeta(32, 'mvndiag', projection=True, name='latents'),
-      mutual_codes: RVmeta = RVmeta(10,
+      latents: RVconf = RVconf(32, 'mvndiag', projection=True, name='latents'),
+      mutual_codes: RVconf = RVconf(10,
                                     'mvndiag',
                                     projection=True,
                                     name='codes'),
@@ -144,7 +144,7 @@ class MIVAE(BetaVAE):
   ):
     super().__init__(beta=beta, latents=latents, name=name, **kwargs)
     self.is_binary_code = mutual_codes.is_binary
-    if isinstance(mutual_codes, RVmeta):
+    if isinstance(mutual_codes, RVconf):
       mutual_codes = mutual_codes.create_posterior()
     self.mutual_codes = mutual_codes
     self._mi_coef = mi_coef

@@ -1,6 +1,6 @@
 import collections
 from dataclasses import dataclass
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union, Sequence
 
 import numpy as np
 import tensorflow as tf
@@ -8,7 +8,7 @@ from tensorflow_probability.python.distributions import Distribution
 from typing_extensions import Literal
 
 from odin.backend import TensorType
-from odin.bay.random_variable import RVmeta
+from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE
 from odin.bay.vi.autoencoder.factor_discriminator import FactorDiscriminator
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep, VAEStep
@@ -147,7 +147,7 @@ class FactorVAE(AnnealingVAE):
   """
 
   def __init__(self,
-               discriminator_units: List[int] = [1000, 1000, 1000, 1000, 1000],
+               discriminator_units: Sequence[int] = (1000, 1000, 1000, 1000, 1000),
                activation: Union[str, Callable[[], Any]] = tf.nn.relu,
                batchnorm: bool = False,
                tc_coef: float = 7.0,
@@ -156,7 +156,7 @@ class FactorVAE(AnnealingVAE):
                **kwargs):
     ss_strategy = kwargs.pop('ss_strategy', 'logsumexp')
     labels = kwargs.pop(
-      'labels', RVmeta(1, 'bernoulli', projection=True, name="discriminator"))
+      'labels', RVconf(1, 'bernoulli', projection=True, name="discriminator"))
     super().__init__(name=name, **kwargs)
     self.tc_coef = tf.convert_to_tensor(tc_coef,
                                         dtype=self.dtype,
@@ -168,16 +168,19 @@ class FactorVAE(AnnealingVAE):
       batchnorm=batchnorm,
       ss_strategy=ss_strategy,
       observation=labels)
-    # VAE and discriminator must be trained separated so we split their params here
+    ## Discriminator and VAE must be trained separately
+    self.disc_params = []
+    self.vae_params = []
     self.maximize_tc = bool(maximize_tc)
     ## For training
     # store class for training factor discriminator, this allow later
     # modification without re-writing the train_steps method
     self._is_pretraining = False
 
-  def build(self, input_shape) -> 'FactorVAE':
+  def build(self, input_shape=None) -> 'FactorVAE':
     super().build(input_shape)
-    self.discriminator.build(self.latent_shape)
+    zdim = int(sum(np.prod(z.event_shape) for z in as_tuple(self.latents)))
+    self.discriminator.build((None, zdim))
     # split the parameters
     self.disc_params = self.discriminator.trainable_variables
     exclude = set(id(p) for p in self.disc_params)
@@ -280,10 +283,10 @@ class FactorVAE(AnnealingVAE):
           train,
           *,
           valid=None,
-          optimizer=[
+          optimizer=(
             tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
             tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
-          ],
+          ),
           **kwargs):
     """ Override the original fit method of keras to provide simplified
     procedure with `VariationalAutoencoder.optimize` and
@@ -316,7 +319,7 @@ class SemiFactorVAE(FactorVAE):
 
   def __init__(
       self,
-      labels: RVmeta = RVmeta(10, 'onehot', projection=True, name="Labels"),
+      labels: RVconf = RVconf(10, 'onehot', projection=True, name="Labels"),
       alpha: float = 10.,
       ss_strategy: Literal['sum', 'logsumexp', 'mean', 'max',
                            'min'] = 'logsumexp',
@@ -372,17 +375,17 @@ class Factor2VAE(FactorVAE):
   invariant factors."""
 
   def __init__(self,
-               latents: RVmeta = RVmeta(5,
+               latents: RVconf = RVconf(5,
                                         'mvndiag',
                                         projection=True,
                                         name='Latents'),
-               factors: RVmeta = RVmeta(5,
+               factors: RVconf = RVconf(5,
                                         'mvndiag',
                                         projection=True,
                                         name="Factors"),
                **kwargs):
     latents = tf.nest.flatten(latents)
-    assert isinstance(factors, RVmeta), \
+    assert isinstance(factors, RVconf), \
       "factors must be instance of RVmeta, but given: %s" % \
       str(type(factors))
     latents.append(factors)
@@ -442,7 +445,7 @@ class SemiFactor2VAE(SemiFactorVAE, Factor2VAE):
   """
 
   def __init__(self,
-               latents=RVmeta(5, 'mvndiag', projection=True, name='Latents'),
-               factors=RVmeta(5, 'mvndiag', projection=True, name='Factors'),
+               latents=RVconf(5, 'mvndiag', projection=True, name='Latents'),
+               factors=RVconf(5, 'mvndiag', projection=True, name='Factors'),
                **kwargs):
     super().__init__(latents=latents, factors=factors, **kwargs)

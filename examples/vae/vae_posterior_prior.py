@@ -154,11 +154,11 @@ def main(cfg: dict):
     model_path = os.path.join(path, 'model')
     vae = vae_class(encoder=encoder.create_network(),
                     decoder=decoder.create_network(),
-                    observation=vi.RVmeta(shape,
+                    observation=vi.RVconf(shape,
                                           'bernoulli',
                                           projection=True,
                                           name='Image'),
-                    latents=vi.RVmeta(encoded_size,
+                    latents=vi.RVconf(encoded_size,
                                       posterior,
                                       projection=True,
                                       prior=prior,

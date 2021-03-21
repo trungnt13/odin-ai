@@ -6,22 +6,23 @@ import tensorflow as tf
 import tensorflow_probability as tfp
 from tensorflow.python import keras
 from tensorflow_probability.python.internal import \
-    distribution_util as dist_util
+  distribution_util as dist_util
 from tensorflow_probability.python.layers import (
-    CategoricalMixtureOfOneHotCategorical, MixtureLogistic, MixtureSameFamily)
+  CategoricalMixtureOfOneHotCategorical, MixtureLogistic, MixtureSameFamily)
 
 from odin.backend import parse_activation
 from odin.backend.maths import softplus1
-from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated, MixtureQLogistic
+from odin.bay.distributions import NegativeBinomialDisp, ZeroInflated, \
+  MixtureQLogistic
 from odin.bay.layers.count_layers import _dispersion
 
 __all__ = [
-    'MixtureLogisticLayer',
-    'MixtureSameFamilyLayer',
-    'MixtureGaussianLayer',
-    'CategoricalMixtureOfOneHotCategorical',
-    'MixtureNegativeBinomialLayer',
-    'MixtureQLogisticLayer',
+  'MixtureLogisticLayer',
+  'MixtureSameFamilyLayer',
+  'MixtureGaussianLayer',
+  'CategoricalMixtureOfOneHotCategorical',
+  'MixtureNegativeBinomialLayer',
+  'MixtureQLogisticLayer',
 ]
 MixtureLogisticLayer = MixtureLogistic
 MixtureSameFamilyLayer = MixtureSameFamily
@@ -119,8 +120,8 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
     if not tie_mixtures:
       if tie_loc and tie_scale:
         raise ValueError(
-            "Mixture distribution has no support for tie_mixtures=False "
-            "and both loc and scale are tied")
+          "Mixture distribution has no support for tie_mixtures=False "
+          "and both loc and scale are tied")
     logits, loc, scale = None, None, None
     if tie_mixtures:
       logits = tf.Variable([0.] * n_components,
@@ -130,41 +131,41 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
     if tie_loc:
       if covariance == 'none':
         shape = tf.concat(
-            [[n_components], tf.nest.flatten(event_shape)], axis=0)
+          [[n_components], tf.nest.flatten(event_shape)], axis=0)
       else:
         shape = (n_components, event_size)
       loc = tf.Variable(
-          tf.random.normal(shape),
-          trainable=True,
-          dtype=keras.backend.floatx(),
-          name="components_loc",
+        tf.random.normal(shape),
+        trainable=True,
+        dtype=keras.backend.floatx(),
+        name="components_loc",
       )
     if tie_scale:
       if covariance == 'none':
         shape = tf.concat(
-            [[n_components], tf.nest.flatten(event_shape)], axis=0)
+          [[n_components], tf.nest.flatten(event_shape)], axis=0)
       elif covariance == 'diag':
         shape = (n_components, event_size)
       else:
         shape = (n_components, event_size * (event_size + 1) // 2)
       scale = tf.Variable(
-          tf.random.normal(shape),
-          trainable=True,
-          dtype=keras.backend.floatx(),
-          name="components_scale",
+        tf.random.normal(shape),
+        trainable=True,
+        dtype=keras.backend.floatx(),
+        name="components_scale",
       )
     super().__init__(
-        lambda params: MixtureGaussianLayer.new(
-            params,
-            event_shape,
-            n_components=n_components,
-            covariance=covariance,
-            loc_activation=parse_activation(loc_activation, self),
-            scale_activation=parse_activation(scale_activation, self),
-            validate_args=validate_args,
-            logits=logits,
-            loc=loc,
-            scale=scale), convert_to_tensor_fn, **kwargs)
+      lambda params: MixtureGaussianLayer.new(
+        params,
+        event_shape,
+        n_components=n_components,
+        covariance=covariance,
+        loc_activation=parse_activation(loc_activation, self),
+        scale_activation=parse_activation(scale_activation, self),
+        validate_args=validate_args,
+        logits=logits,
+        loc=loc,
+        scale=scale), convert_to_tensor_fn, **kwargs)
     self.logits = logits
     self.loc = loc
     self.scale = scale
@@ -190,20 +191,20 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
                                         dtype_hint=tf.int32)
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
-        value=event_shape, name='event_shape', dtype=tf.int32),
-                                             tensor_name='event_shape')
+      value=event_shape, name='event_shape', dtype=tf.int32),
+      tensor_name='event_shape')
     event_size = tf.reduce_prod(event_shape)
     components_size = MixtureGaussianLayer.components_size(
-        event_shape,
-        covariance=covariance,
-        tie_loc=loc is not None,
-        tie_scale=scale is not None)
+      event_shape,
+      covariance=covariance,
+      tie_loc=loc is not None,
+      tie_scale=scale is not None)
     ### shapes
     params_shape = tf.shape(input=params)[:-1]
     output_shape = tf.concat(
-        (params_shape, [n_components],
-         event_shape if covariance == 'none' else [event_size]),
-        axis=0)
+      (params_shape, [n_components],
+       event_shape if covariance == 'none' else [event_size]),
+      axis=0)
     ### Create the mixture
     if logits is None:
       logits = params[..., :n_components]
@@ -212,7 +213,7 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
                                             name="MixtureWeights")
     ## loc-scale params
     shape = tf.concat(
-        [tf.shape(input=params)[:-1], [n_components, components_size]], axis=0)
+      [tf.shape(input=params)[:-1], [n_components, components_size]], axis=0)
     params = tf.cond(tf.greater(components_size, 0),
                      true_fn=lambda: tf.reshape(params, shape),
                      false_fn=lambda: params)
@@ -228,10 +229,10 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
       loc = loc_activation(loc)
       scale = scale_activation(scale)
       components = tfp.distributions.Independent(
-          tfp.distributions.Normal(loc=loc,
-                                   scale=scale,
-                                   validate_args=validate_args),
-          reinterpreted_batch_ndims=tf.size(input=event_shape))
+        tfp.distributions.Normal(loc=loc,
+                                 scale=scale,
+                                 validate_args=validate_args),
+        reinterpreted_batch_ndims=tf.size(input=event_shape))
     # Diagonal
     elif covariance == 'diag':
       def_name = 'MultivariateGaussianDiag'
@@ -249,29 +250,29 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
     elif covariance in ('full', 'tril'):
       def_name = 'MultivariateGaussianTriL'
       scale_shape = tf.concat(
-          (params_shape, [n_components], [event_size * (event_size + 1) // 2]),
-          axis=0)
+        (params_shape, [n_components], [event_size * (event_size + 1) // 2]),
+        axis=0)
       loc, scale = _to_loc_scale(
-          lambda: (params[..., :event_size], params[..., event_size:]),
-          params,
-          loc,
-          scale,
-          loc_shape=output_shape,
-          scale_shape=scale_shape)
+        lambda: (params[..., :event_size], params[..., event_size:]),
+        params,
+        loc,
+        scale,
+        loc_shape=output_shape,
+        scale_shape=scale_shape)
       loc = loc_activation(loc)
       scale = scale_activation(scale)
       scale_tril = tfp.bijectors.FillScaleTriL(
-          diag_shift=np.array(1e-5, params.dtype.as_numpy_dtype()))
+        diag_shift=np.array(1e-5, params.dtype.as_numpy_dtype()))
       components = tfp.distributions.MultivariateNormalTriL(
-          loc=loc, scale_tril=scale_tril(scale))
+        loc=loc, scale_tril=scale_tril(scale))
     # error
     else:
       raise NotImplementedError("No support for covariance: '%s'" % covariance)
     ### the mixture distribution
     return tfp.distributions.MixtureSameFamily(
-        mixture_distribution=mixture,
-        components_distribution=components,
-        name="Mixture%s" % def_name if name is None else str(name))
+      mixture_distribution=mixture,
+      components_distribution=components,
+      name="Mixture%s" % def_name if name is None else str(name))
 
   @staticmethod
   def components_size(event_shape, covariance, tie_loc, tie_scale):
@@ -317,10 +318,10 @@ class MixtureGaussianLayer(tfp.layers.DistributionLambda):
                                         dtype_hint=tf.int32)
     n_components = dist_util.prefer_static_value(n_components)
     component_params_size = MixtureGaussianLayer.components_size(
-        event_shape,
-        covariance=covariance,
-        tie_loc=tie_loc,
-        tie_scale=tie_scale)
+      event_shape,
+      covariance=covariance,
+      tie_loc=tie_loc,
+      tie_scale=tie_scale)
     total = n_components + n_components * component_params_size
     if tie_mixtures:
       total -= n_components
@@ -393,8 +394,8 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
     if not tie_mixtures:
       if tie_mean and dispersion != 'full':
         raise ValueError(
-            "Mixture distribution has no support for tie_mixtures=False "
-            "and both mean and dispersion are tied")
+          "Mixture distribution has no support for tie_mixtures=False "
+          "and both mean and dispersion are tied")
     if zero_inflated:
       if inflation == 'full' and tie_mean and dispersion != 'full':
         raise ValueError("ZeroInflated distribution has no support for "
@@ -425,19 +426,19 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
     if disp_activation is None:
       disp_activation = 'softplus1' if alternative else 'linear'
     super().__init__(
-        lambda params: MixtureNegativeBinomialLayer.new(
-            params,
-            event_shape,
-            n_components=n_components,
-            mean_activation=parse_activation(mean_activation, self),
-            disp_activation=parse_activation(disp_activation, self),
-            alternative=alternative,
-            zero_inflated=zero_inflated,
-            validate_args=validate_args,
-            logits=logits,
-            mean=mean,
-            disp=disp,
-            rate=rate), convert_to_tensor_fn, **kwargs)
+      lambda params: MixtureNegativeBinomialLayer.new(
+        params,
+        event_shape,
+        n_components=n_components,
+        mean_activation=parse_activation(mean_activation, self),
+        disp_activation=parse_activation(disp_activation, self),
+        alternative=alternative,
+        zero_inflated=zero_inflated,
+        validate_args=validate_args,
+        logits=logits,
+        mean=mean,
+        disp=disp,
+        rate=rate), convert_to_tensor_fn, **kwargs)
     self.logits = logits
     self.mean = mean
     self.disp = disp
@@ -464,21 +465,21 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
                                         name='n_components',
                                         dtype_hint=tf.int32)
     event_size = tf.convert_to_tensor(
-        tf.reduce_prod(event_shape),
-        dtype_hint=tf.int32,
-        name='event_size',
+      tf.reduce_prod(event_shape),
+      dtype_hint=tf.int32,
+      name='event_size',
     )
     ### prepare params
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
-        value=event_shape, name='event_shape', dtype=tf.int32),
-                                             tensor_name='event_shape')
+      value=event_shape, name='event_shape', dtype=tf.int32),
+      tensor_name='event_shape')
     output_shape = tf.concat([
-        tf.shape(input=params)[:-1],
-        [n_components],
-        event_shape,
+      tf.shape(input=params)[:-1],
+      [n_components],
+      event_shape,
     ],
-                             axis=0)
+      axis=0)
     ### Create the mixture
     if logits is None:
       logits = params[..., :n_components]
@@ -516,9 +517,9 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
       NBtype = tfp.distributions.NegativeBinomial
       name = 'NegBin'
     components = tfp.distributions.Independent(
-        NBtype(mean, disp, validate_args=validate_args),
-        reinterpreted_batch_ndims=tf.size(input=event_shape),
-        validate_args=validate_args)
+      NBtype(mean, disp, validate_args=validate_args),
+      reinterpreted_batch_ndims=tf.size(input=event_shape),
+      validate_args=validate_args)
     ### zero-inflated
     if zero_inflated:
       name = 'ZI' + name
@@ -546,14 +547,14 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
        distribution.
     """
     n_components = tf.convert_to_tensor(
-        n_components,
-        dtype_hint=tf.int32,
-        name='n_components',
+      n_components,
+      dtype_hint=tf.int32,
+      name='n_components',
     )
     event_size = tf.convert_to_tensor(
-        tf.reduce_prod(event_shape),
-        dtype_hint=tf.int32,
-        name='event_size',
+      tf.reduce_prod(event_shape),
+      dtype_hint=tf.int32,
+      name='event_size',
     )
     n_components = dist_util.prefer_static_value(n_components)
     event_size = dist_util.prefer_static_value(event_size)
@@ -573,7 +574,7 @@ class MixtureNegativeBinomialLayer(tfp.layers.DistributionLambda):
 
 
 # ===========================================================================
-# Mixture of Quantized logistic distribution
+# Mixture Quantized logistic distribution
 # ===========================================================================
 class MixtureQLogisticLayer(tfp.layers.DistributionLambda):
 
@@ -586,20 +587,21 @@ class MixtureQLogisticLayer(tfp.layers.DistributionLambda):
       loc_activation: Union[str, Callable[..., tf.Tensor]] = 'identity',
       scale_activation: Union[str, Callable[..., tf.Tensor]] = 'softplus',
       convert_to_tensor_fn: Callable[
-          ..., tf.Tensor] = tfp.distributions.Distribution.sample,
+        ..., tf.Tensor] = tfp.distributions.Distribution.sample,
       validate_args: bool = False,
       **kwargs,
   ):
     super().__init__(
-        lambda params: MixtureQLogisticLayer.new(
-            params,
-            event_shape=event_shape,
-            n_components=n_components,
-            low=low,
-            bits=bits,
-            loc_activation=parse_activation(loc_activation, self),
-            scale_activation=parse_activation(scale_activation, self),
-        ), convert_to_tensor_fn, **kwargs)
+      lambda params: MixtureQLogisticLayer.new(
+        params,
+        event_shape=event_shape,
+        n_components=n_components,
+        low=low,
+        bits=bits,
+        loc_activation=parse_activation(loc_activation, self),
+        scale_activation=parse_activation(scale_activation, self),
+        validate_args=validate_args
+      ), convert_to_tensor_fn, **kwargs)
 
   @staticmethod
   def new(params,
@@ -615,18 +617,18 @@ class MixtureQLogisticLayer(tfp.layers.DistributionLambda):
                                         name='n_components',
                                         dtype_hint=tf.int32)
     event_size = tf.convert_to_tensor(
-        tf.reduce_prod(event_shape),
-        dtype_hint=tf.int32,
-        name='event_size',
+      tf.reduce_prod(event_shape),
+      dtype_hint=tf.int32,
+      name='event_size',
     )
     ### prepare params
     params = tf.convert_to_tensor(value=params, name='params')
     event_shape = dist_util.expand_to_vector(tf.convert_to_tensor(
-        value=event_shape, name='event_shape', dtype=tf.int32),
-                                             tensor_name='event_shape')
+      value=event_shape, name='event_shape', dtype=tf.int32),
+      tensor_name='event_shape')
     output_shape = tf.concat(
-        (tf.shape(input=params)[:-1], [n_components], event_shape),
-        axis=0,
+      (tf.shape(input=params)[:-1], [n_components], event_shape),
+      axis=0,
     )
     ### Create the mixture
     logits = params[..., :n_components]
@@ -656,14 +658,14 @@ class MixtureQLogisticLayer(tfp.layers.DistributionLambda):
         distribution.
     """
     n_components = tf.convert_to_tensor(
-        n_components,
-        dtype_hint=tf.int32,
-        name='n_components',
+      n_components,
+      dtype_hint=tf.int32,
+      name='n_components',
     )
     event_size = tf.convert_to_tensor(
-        tf.reduce_prod(event_shape),
-        dtype_hint=tf.int32,
-        name='event_size',
+      tf.reduce_prod(event_shape),
+      dtype_hint=tf.int32,
+      name='event_size',
     )
     n_components = dist_util.prefer_static_value(n_components)
     event_size = dist_util.prefer_static_value(event_size)

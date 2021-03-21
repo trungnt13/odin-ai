@@ -7,7 +7,7 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
-from odin.bay.vi import RVmeta as RV
+from odin.bay.vi import RVconf as RV
 from odin.bay.vi.autoencoder import BetaVAE, MultitaskVAE, SemifactorVAE
 from odin.fuel import MNIST, STL10, LegoFaces
 
