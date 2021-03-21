@@ -210,7 +210,7 @@ def mnist_networks(
   )
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
-    keras.layers.Reshape((7, 7, 4)),
+    keras.layers.Reshape((7, 7, proj_dim // 49)),
     deconv(64, 5, strides=2, name='decoder2'),
     deconv(64, 5, strides=1, name='decoder3'),
     deconv(32, 5, strides=2, name='decoder4'),
@@ -304,7 +304,7 @@ def cifar_networks(
   )
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
-    keras.layers.Reshape((8, 8, 4)),
+    keras.layers.Reshape((8, 8, proj_dim // 64)),
     deconv(64, 4, strides=1, name='decoder1'),
     deconv(64, 4, strides=2, name='decoder2'),
     deconv(32, 4, strides=1, name='decoder3'),
@@ -401,15 +401,18 @@ def dsprites_networks(
   )
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
-    keras.layers.Dense(4 * 4 * 64, activation=activation, name='decoder1'),
-    keras.layers.Reshape((4, 4, 64)),
+    keras.layers.Reshape((4, 4, proj_dim // 16)),
+    deconv(64, 4, strides=2, name='decoder1'),
     deconv(64, 4, strides=2, name='decoder2'),
     deconv(32, 4, strides=2, name='decoder3'),
     deconv(32, 4, strides=2, name='decoder4'),
-    deconv(n_channels * (1 if distribution == 'bernoulli' else 2),
-           4,
-           strides=2,
-           name='decoder5'),
+    # NOTE: this last projection layer with linear activation is crucial
+    # otherwise the distribution parameterized by this layer won't converge
+    conv(n_channels * (1 if distribution == 'bernoulli' else 2),
+         1,
+         strides=1,
+         activation='linear',
+         name='decoder6'),
     keras.layers.Flatten()
   ]
   if skip_generator:
@@ -427,7 +430,7 @@ def dsprites_networks(
                   observation=observation,
                   latents=latents)
   if is_semi_supervised:
-    from odin.bay.layers import DistributionDense
+    from odin.bay.layers.dense_distribution import DistributionDense
     networks['labels'] = DistributionDense(event_shape=(5,),
                                            posterior=_dsprites_distribution,
                                            units=8,
@@ -601,7 +604,7 @@ def celeba_networks(qz: str = 'mvndiag',
   )
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
-    keras.layers.Reshape((4, 4, 16)),
+    keras.layers.Reshape((4, 4, proj_dim // 16)),
     deconv(64, 4, strides=2, name='decoder1'),
     deconv(64, 4, strides=2, name='decoder2'),
     deconv(32, 4, strides=2, name='decoder3'),

@@ -860,6 +860,7 @@ def dense_network(units: Sequence[int],
                   kernel_constraint: Optional[str] = None,
                   bias_constraint: Optional[str] = None,
                   flatten_inputs: bool = True,
+                  flatten_outputs: bool = False,
                   batchnorm: bool = True,
                   batchnorm_kw: Dict[str, Any] = {},
                   input_dropout: float = 0.,
@@ -903,6 +904,8 @@ def dense_network(units: Sequence[int],
     layers.append(keras.layers.Activation(activation[i]))
     if dropout[i] > 0:
       layers.append(keras.layers.Dropout(rate=dropout[i]))
+  if flatten_outputs:
+    layers.append(keras.layers.Flatten())
   return layers
 
 
@@ -922,10 +925,11 @@ def conv_network(units: Sequence[int],
                  kernel_constraint: Optional[str] = None,
                  bias_constraint: Optional[str] = None,
                  batchnorm: bool = True,
-                 batchnorm_kw: Dict[str, Any] = {},
+                 batchnorm_kw: Optional[Dict[str, Any]] = None,
                  input_dropout: float = 0.,
                  dropout: float = 0.,
                  projection: bool = False,
+                 flatten_outputs: bool = False,
                  input_shape: Optional[Sequence[int]] = None,
                  prefix: Optional[str] = 'Layer') -> List[Layer]:
   """ Multi-layers convolutional neural network
@@ -937,6 +941,8 @@ def conv_network(units: Sequence[int],
       If an Integer, use a `Dense` layer with linear activation to project
       the output in to 2-D
   """
+  if batchnorm_kw is None:
+    batchnorm_kw = {}
   if prefix is None:
     prefix = 'Layer'
   rank, input_shape = _infer_rank_and_input_shape(rank, input_shape)
@@ -965,7 +971,7 @@ def conv_network(units: Sequence[int],
 
   for i in range(nlayers):
     layers.append(
-      layer_type( \
+      layer_type(
         filters=units[i],
         kernel_size=kernel[i],
         strides=strides[i],
@@ -997,6 +1003,8 @@ def conv_network(units: Sequence[int],
                          activation='linear',
                          use_bias=True,
                          name=f'{prefix}proj'))
+  if flatten_outputs:
+    layers.append(keras.layers.Flatten())
   return layers
 
 
@@ -1017,13 +1025,16 @@ def deconv_network(units: Sequence[int],
                    kernel_constraint: Optional[str] = None,
                    bias_constraint: Optional[str] = None,
                    batchnorm: bool = True,
-                   batchnorm_kw: Dict[str, Any] = {},
+                   batchnorm_kw: Optional[Dict[str, Any]] = None,
                    input_dropout: float = 0.,
                    dropout: float = 0.,
                    projection: Optional[int] = None,
+                   flatten_outputs: bool = False,
                    input_shape: Optional[Sequence[int]] = None,
                    prefix: Optional[str] = 'Layer') -> List[Layer]:
   r""" Multi-layers transposed convolutional neural network """
+  if batchnorm_kw is None:
+    batchnorm_kw = {}
   if prefix is None:
     prefix = 'Layer'
   rank, input_shape = _infer_rank_and_input_shape(rank, input_shape)
@@ -1084,6 +1095,8 @@ def deconv_network(units: Sequence[int],
                          activation='linear',
                          use_bias=True,
                          name=f'{prefix}proj'))
+  if flatten_outputs:
+    layers.append(keras.layers.Flatten())
   return layers
 
 
@@ -1141,6 +1154,7 @@ class NetConf(dict):
   linear_decoder: bool = False
   network: Literal['conv', 'deconv', 'dense'] = 'dense'
   flatten_inputs: bool = False
+  flatten_outputs: bool = False
   projection: Optional[int] = None
   input_shape: Sequence[int] = None
   name: Optional[str] = None
@@ -1251,6 +1265,7 @@ class NetConf(dict):
         activity_regularizer=self.activity_regularizer,
         kernel_constraint=self.kernel_constraint,
         bias_constraint=self.bias_constraint,
+        flatten_outputs=self.flatten_outputs,
         prefix=name,
       )
       decoder = start_layers + decoder
@@ -1272,6 +1287,7 @@ class NetConf(dict):
         kernel_constraint=self.kernel_constraint,
         bias_constraint=self.bias_constraint,
         flatten_inputs=self.flatten_inputs,
+        flatten_outputs=self.flatten_outputs,
         input_shape=latent_shape,
         prefix=name,
       )
@@ -1342,6 +1358,7 @@ class NetConf(dict):
         kernel_constraint=self.kernel_constraint,
         bias_constraint=self.bias_constraint,
         projection=self.projection,
+        flatten_outputs=self.flatten_outputs,
         input_shape=input_shape,
         prefix=name,
       )
@@ -1363,6 +1380,7 @@ class NetConf(dict):
         kernel_constraint=self.kernel_constraint,
         bias_constraint=self.bias_constraint,
         flatten_inputs=self.flatten_inputs,
+        flatten_outputs=self.flatten_outputs,
         input_shape=input_shape,
         prefix=name,
       )
@@ -1388,6 +1406,7 @@ class NetConf(dict):
         kernel_constraint=self.kernel_constraint,
         bias_constraint=self.bias_constraint,
         projection=self.projection,
+        flatten_outputs=self.flatten_outputs,
         input_shape=input_shape,
         prefix=name,
       )

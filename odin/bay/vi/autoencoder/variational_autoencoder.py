@@ -36,8 +36,7 @@ __all__ = [
 # ===========================================================================
 # Types
 # ===========================================================================
-LayerCreator = Union[str, Layer, Type[Layer], \
-                     NetConf, RVconf, \
+LayerCreator = Union[str, Layer, Type[Layer], NetConf, RVconf,
                      Callable[[Optional[List[int]]], Layer]]
 
 
@@ -181,7 +180,8 @@ class VariationalAutoencoder(VariationalModel):
     if encoder is None:
       encoder = NetConf((512, 512), flatten_inputs=True, name="encoder")
     if decoder is None:
-      decoder = NetConf((512, 512), flatten_inputs=True, name="decoder")
+      decoder = NetConf((512, 512), flatten_inputs=True, flatten_outputs=True,
+                        name="decoder")
     ### keras want this supports_masking on to enable support masking
     super().__init__(**kwargs)
     ### create layers
@@ -400,25 +400,15 @@ class VariationalAutoencoder(VariationalModel):
         `q_{\phi}(z||x)` the latent distribution(s)
     """
     # encode
-    qz_x = self.encode(
-      inputs,
-      training=training,
-      mask=mask,
-      **{k: v for k, v in kwargs.items() if k in self._encode_func_args},
-    )
+    qz_x = self.encode(inputs, training=training, mask=mask, **kwargs)
     # transfer the mask from encoder to decoder here
     for qz in as_tuple(qz_x):
       if hasattr(qz, '_keras_mask') and qz._keras_mask is not None:
         mask = qz._keras_mask
         break
     # decode
-    px_z = self.decode(
-      qz_x,
-      training=training,
-      mask=mask,
-      **{k: v for k, v in kwargs.items() if k in self._decode_func_args},
-    )
-    return (px_z, qz_x)
+    px_z = self.decode(qz_x, training=training, mask=mask, **kwargs)
+    return px_z, qz_x
 
   def marginal_log_prob(
       self,
