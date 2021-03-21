@@ -1,12 +1,3 @@
-# He, K., et al. Identity Mappings in Deep Residual Networks.
-#   X -> BN -> ReLU -> Conv -> BN -> ReLU -> Conv -> Add(X)
-#
-# Tan, M., et al. EfficientNet: Rethinking Model Scaling for Convolutional Neural Networks.
-#   X -> Conv -> BN -> ReLU -> DepthWise -> BN -> ReLU ->
-#     SE -> Conv -> BN -> Dropout -> Add(X)
-#
-# All Convolutions are without biases if using BN
-
 from functools import partial
 from typing import Any, Callable, Dict, Optional, Tuple, List, Union
 
@@ -30,6 +21,8 @@ DepthwiseConv2D = partial(_DepthwiseConv2D, padding='same')
 
 
 def last_layer(inputs: tf.Tensor) -> Layer:
+  """Return the last layer stored in the `_keras_history` of the output
+  tensor"""
   if not hasattr(inputs, '_keras_history'):
     raise ValueError(f'inputs of type {inputs} has no _keras_history')
   return inputs._keras_history.layer
@@ -108,13 +101,13 @@ class Resampling2D(Layer):
     return x
 
 
-class ConvGating(Layer):
+class SigmoidGating(Layer):
   """Split the filters in two parts then applying sigmoid gating"""
 
   def call(self, inputs, **kwargs):
     activation, gate_logits = tf.split(inputs, 2, axis=-1)
     gate = tf.nn.sigmoid(gate_logits)
-    return tf.multiply(gate, activation)
+    return keras.layers.multiply([gate, activation])
 
 
 class SqueezeExcitation(Layer):
@@ -129,6 +122,10 @@ class SqueezeExcitation(Layer):
     self.se_ratio = se_ratio
     self.pool_mode = pool_mode
     self.activation = activation
+
+  def get_config(self):
+    return dict(se_ratio=self.se_ratio, pool_mode=self.pool_mode,
+                activation=self.activation)
 
   def build(self, input_shape):
     self.filters_in = input_shape[-1]
@@ -187,13 +184,17 @@ class SkipAndForget(Layer):
 class ResidualSequential(keras.Sequential):
 
   def __init__(self,
-               merge_mode: Literal['add', 'concat', 'none'] = 'add',
+               skip_mode: Literal['add', 'concat', 'none'] = 'add',
+               skip_ratio: float = 1.0,
                layers: Optional[List[Layer]] = None,
                name: Optional[str] = None):
     super().__init__(layers=layers, name=name)
-    if merge_mode == 'add':
+    self.track_outputs = False
+    self.skip_ratio = tf.convert_to_tensor(skip_ratio, dtype=self.dtype)
+    self.skip_mode = skip_mode
+    if skip_mode == 'add':
       self.merger = Add()
-    elif merge_mode == 'concat':
+    elif skip_mode == 'concat':
       self.merger = Concatenate(axis=-1)
     else:
       self.merger = None
@@ -209,20 +210,69 @@ class ResidualSequential(keras.Sequential):
     for line in text:
       print_fn(line)
 
+  def __repr__(self):
+    text = f'Name: {self.name}\n'
+    text += f'skip_mode: {self.skip_mode}\n'
+    text += f'skip_ratio: {self.skip_ratio}\n'
+    text += f'track_outputs: {self.track_outputs}\n'
+    for l in self.layers:
+      l: Layer
+      text += f'{l.__class__.__name__}:\n '
+      for k, v in l.get_config().items():
+        if any(i in k for i in ('_initializer', '_regularizer', '_constraint')):
+          continue
+        text += f'{k}:{v} '
+      text += '\n'
+    return text[:-1]
+
   def call(self, inputs, training=None, mask=None):
-    x = super().call(inputs, training=training, mask=mask)
-    if self.merger is None:
-      return x
-    return self.merger([inputs, x])
+    skip_inputs = inputs
+    outputs = inputs  # handle the corner case where self.layers is empty
+    last_outputs = []
+    for layer in self.layers:
+      # During each iteration, `inputs` are the inputs to `layer`, and `outputs`
+      # are the outputs of `layer` applied to `inputs`. At the end of each
+      # iteration `inputs` is set to `outputs` to prepare for the next layer.
+      kwargs = {}
+      argspec = self._layer_call_argspecs[layer].args
+      if 'mask' in argspec:
+        kwargs['mask'] = mask
+      if 'training' in argspec:
+        kwargs['training'] = training
+
+      outputs = layer(inputs, **kwargs)
+      last_outputs.append((layer, outputs))
+
+      if len(tf.nest.flatten(outputs)) != 1:
+        raise ValueError('Sequential layer only support single outputs')
+      # `outputs` will be the inputs to the next layer.
+      inputs = outputs
+      mask = getattr(outputs, '_keras_mask', None)
+
+    if self.merger is not None:
+      outputs = self.merger([self.skip_ratio * skip_inputs, outputs])
+    if self.track_outputs:
+      outputs._last_outputs = tuple(last_outputs)
+    return outputs
 
 
 class MaskedConv2D(keras.layers.Conv2D):
+  """Masked convolution 2D, type 'A' mask doesn't include the center entry,
+  while type 'B' include the center of the kernel.
+
+  References
+  ----------
+  Aaron van den Oord, et al. Conditional Image Generation with PixelCNN Decoders.
+      In _Neural Information Processing Systems_, 2016.
+      https://arxiv.org/abs/1606.05328
+  """
 
   def __init__(self,
                filters,
                kernel_size,
                strides=(1, 1),
-               padding='valid',
+               mask_type: Literal['A', 'B'] = 'A',
+               padding='same',
                data_format=None,
                dilation_rate=(1, 1),
                groups=1,
@@ -236,34 +286,52 @@ class MaskedConv2D(keras.layers.Conv2D):
                kernel_constraint=None,
                bias_constraint=None,
                **kwargs):
-    # kernel_constraint = _make_kernel_constraint(
-    #   kernel_size, (0, h), (0, w))
-    super(MaskedConv2D, self).__init__(**locals(), **kwargs)
+    args = dict(locals())
+    [args.pop(key) for key in ('self', '__class__', 'kwargs', 'mask_type')]
+    super(MaskedConv2D, self).__init__(**args, **kwargs)
+    h, w = self.kernel_size
+    mask = np.zeros((h, w))
+    mask[:h // 2, :] = 1.
+    if 'a' in mask_type.lower():
+      mask[h // 2, :w // 2] = 1.
+    elif 'b' in mask_type.lower():
+      mask[h // 2, :w // 2 + 1] = 1
+    else:
+      raise ValueError(f'mask_type must be "A" or "B", but given "{mask_type}"')
+    mask = tf.convert_to_tensor(mask[:, :, np.newaxis, np.newaxis],
+                                dtype=self.dtype,
+                                name='kernel_mask')
+    self.kernel_mask = mask
+
+    # initializer
+    old_initializer = self.kernel_initializer
+
+    def init_and_apply_mask(*a, **k):
+      return old_initializer(*a, **k) * mask
+
+    self.kernel_initializer = init_and_apply_mask
+
+    # constraint
+    old_constraint = self.kernel_constraint
+
+    def mask_constrain(w):
+      if old_constraint is not None:
+        w = old_constraint(w)
+      return w * mask
+
+    self.kernel_constraint = mask_constrain
 
 
 # ===========================================================================
 # Main layers
 # ===========================================================================
-def merge(
-    inputs: Optional[tf.Tensor] = None,
-    outputs: Optional[tf.Tensor] = None,
-    mode: Literal['add', 'concat'] = 'add',
-) -> Union[tf.Tensor, Layer]:
-  if merge == 'add':
-    layer = Add()
-  elif merge == 'concat':
-    layer = Concatenate(axis=-1)
-  if inputs is None or outputs is None:
-    return layer
-  return layer([inputs, outputs])
-
-
 def skip_and_forget(
     inputs: Optional[tf.Tensor] = None,
     max_step: int = 10000,
     name: str = 'skip_and_forget',
 ) -> Union[tf.Tensor, SkipAndForget]:
-  """ Add skip connection then gradually forget the connection during training """
+  """ Add skip connection then gradually forget the connection during
+  training"""
   layer = SkipAndForget(max_step=max_step, name=name)
   if inputs is None:
     return layer
@@ -352,7 +420,7 @@ def unpooling2D(
 def project_1_1(
     inputs: Optional[tf.Tensor] = None,
     filters: int = 32,
-    activation: Optional[Callable[..., tf.Tensor]] = None,
+    activation: Optional[Callable[[tf.Tensor], tf.Tensor]] = None,
     use_bias: bool = True,
     name: str = 'project_11',
 ) -> Union[tf.Tensor, Layer]:
@@ -372,7 +440,7 @@ def strides2D(
     kernel_size: Tuple[int, int] = (3, 3),
     strides: Tuple[int, int] = (2, 2),
     filters: int = 32,
-    activation: Optional[Callable[..., tf.Tensor]] = None,
+    activation: Optional[Callable[[tf.Tensor], tf.Tensor]] = None,
     use_bias: bool = True,
     name: str = 'strides2D',
     **kwargs,
@@ -395,82 +463,156 @@ def dropout2D(
     rate: float = 0.0,
     name: str = 'dropout2D',
 ) -> Union[tf.Tensor, Layer]:
-  x = inputs
   if rate > 0:
     layer = Dropout(rate, noise_shape=(None, 1, 1, 1), name=name)
     if inputs is None:
       return layer
-    x = layer(x)
+    inputs = layer(inputs)
   elif inputs is None:
     return Activation('linear', name=name)
-  return x
+  return inputs
 
 
 # ===========================================================================
 # Main bottleneck
 # ===========================================================================
 def residual(
-    inputs: tf.Tensor,
-    ratio: float = 0.5,
+    inputs: Optional[tf.Tensor] = None,
+    filters_in: Optional[int] = None,
     filters_out: Optional[int] = None,
+    ratio: float = 2.0,
     se_ratio: float = 0.25,
-    gated: bool = False,
+    sigmoid_gating: bool = False,
     batchnorm: bool = True,
-    batchnorm_kw: Dict[str, Any] = {},
+    batchnorm_kw: Optional[Dict[str, Any]] = None,
     dropout: float = 0.0,
     kernel_size: Tuple[int, int] = (3, 3),
-    order: Literal['bac', 'cba'] = 'cba',
+    order: Literal['baw', 'wba'] = 'wba',
     design: Literal['bottleneck', 'inverted'] = 'inverted',
     strides: Tuple[int, int] = (1, 1),
-    activation: Callable[..., tf.Tensor] = tf.nn.swish,
-    merge: Literal['add', 'concat'] = 'add',
-    name: str = 'residual',
-) -> tf.Tensor:
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.swish,
+    skip_mode: Literal['add', 'concat'] = 'add',
+    skip_ratio: float = 1.0,
+    name: Optional[str] = None,
+) -> Union[tf.Tensor, ResidualSequential]:
+  """A residual block, two designs are implemented:
+
+  - 'wba', i.e. weight-batchnorm-activation (Tan et al. 2019):
+    `X -> Conv -> BN -> ReLU -> DepthWise -> BN -> ReLU -> SE ->
+    Conv -> BN -> Dropout -> Add(X)`
+  - 'baw', i.e. batchnorm-activation-weight (He et al. 2016):
+    `X -> BN -> ReLU -> Conv -> BN -> ReLU -> Conv -> Add(X)`
+
+  All Convolutions are without biases if using BN
+
+  Parameters
+  ----------
+  inputs : Tensor (optional)
+      inputs tensor, if not provided (None), return the `ResidualSequential`
+      layer
+  ratio : float
+      shrink ratio for bottleneck residual, and expand ratio for inverted
+      residual.
+  filters_in : int
+      number of input filter, must be provided if inputs is None
+  filters_out : int
+      number of output filter for the output convolution
+  se_ratio : float
+      squeeze-and-excitation shrink ratio
+  sigmoid_gating : boolean
+      sigmoid gating the output convolution
+  batchnorm : boolean
+      enable batch normalization
+  batchnorm_kw : Dict[str, Any] (optional)
+      keyword arguments for batch normalization
+  dropout : float
+      dropout value on outputs before skip connection
+  kernel_size : Tuple[int, int]
+      filters dimensions
+  order : {'baw', 'wba'}
+      specific order of the residual block, 'baw' is batchnorm-activation-weight,
+      and 'wba' is weight-batchnorm-activation, default 'wba'
+  design : {'bottleneck', 'inverted'}
+      residual block design, bottleneck residual or inverted residual with
+      depthwise separated convolution.
+  strides : Tuple[int, int]
+      convolution strides
+  activation : Callable[[tf.Tensor], tf.Tensor]
+      activation function
+  skip_mode : {'add', 'concat'}
+      how to combine the outputs and the inputs in the final skip connection.
+  skip_ratio : float
+      scalar for scaling the inputs before adding to the skip connection
+  name : str
+      name for the layer
+
+  Returns
+  -------
+  `tf.Tensor` or `ResidualSequential`
+
+  References
+  ----------
+  He, K., et al. Identity Mappings in Deep Residual Networks. 2016
+  Tan, M., et al. EfficientNet: Rethinking Model Scaling for Convolutional
+      Neural Networks. 2019
+  """
+  if filters_in is None and inputs is None:
+    raise ValueError('Unknown number of inputs filters, '
+                     'either filters_in or inputs must be provided')
+  if name is None:
+    name = (
+      'residual_bottleneck' if design == 'bottleneck' else 'residual_inverted')
   kw = locals()
   kw.pop('design')
   kw.pop('ratio')
   if design == 'bottleneck':
     kw['shrink_ratio'] = ratio
-    return residual_bottleneck(kw)
+    return residual_bottleneck(**kw)
   elif design == 'inverted':
     kw['expand_ratio'] = ratio
-    return residual_inverted(kw)
+    return residual_inverted(**kw)
   raise NotImplementedError(f'No support for residual design: "{design}"')
 
 
 def residual_bottleneck(
     inputs: Optional[tf.Tensor] = None,
-    shrink_ratio: float = 0.5,
+    filters_in: Optional[int] = None,
     filters_out: Optional[int] = None,
+    shrink_ratio: float = 0.5,
     se_ratio: float = 0.25,
-    gated: bool = False,
+    sigmoid_gating: bool = False,
     batchnorm: bool = True,
-    batchnorm_kw: Dict[str, Any] = {},
+    batchnorm_kw: Optional[Dict[str, Any]] = None,
     dropout: float = 0.0,
     kernel_size: Tuple[int, int] = (3, 3),
-    order: Literal['bac', 'cba'] = 'cba',
+    order: Literal['baw', 'wba'] = 'wba',
     strides: Tuple[int, int] = (1, 1),
-    activation: Callable[..., tf.Tensor] = tf.nn.swish,
-    merge_mode: Literal['add', 'concat'] = 'add',
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.swish,
+    skip_mode: Literal['add', 'concat'] = 'add',
+    skip_ratio: float = 1.0,
     name: str = 'residual_bottleneck',
-) -> Union[tf.Tensor, Layer]:
-  assert 0.0 < shrink_ratio <= 1.0
+) -> Union[tf.Tensor, ResidualSequential]:
+  if batchnorm_kw is None:
+    batchnorm_kw = {}
+  assert 0.0 < shrink_ratio <= 1.0, (
+    f'Bottleneck residual require 0 <= shrink_ratio <= 1, given {shrink_ratio}')
   ## prepare
   layers = []
   batchnorm_kw = dict(axis=3, **batchnorm_kw)
-  filters = max(1, int(inputs.shape[-1] * shrink_ratio))
+  if filters_in is None:
+    filters_in = inputs.shape[-1]  # assume NHWC
+  filters = max(1, int(filters_in * shrink_ratio))
   if filters_out is None:
-    filters_out = inputs.shape[-1]
+    filters_out = filters_in
   use_bias = not batchnorm
-  x = inputs
   if np.any(np.asarray(strides) >= 2):
-    x = ZeroPadding2D(padding=correct_pad(x, kernel_size),
-                      name=name + f'{name}_pad')(x)
+    inputs = ZeroPadding2D(padding=correct_pad(inputs, kernel_size),
+                           name=name + f'{name}_pad')(inputs)
     pad_mode = 'valid'
   else:
     pad_mode = 'same'
   ## squeeze
-  if order == 'bac':
+  if order == 'baw':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
     layers.append(Activation(activation, name=f'{name}_act1'))
@@ -481,12 +623,12 @@ def residual_bottleneck(
            strides=strides,
            padding=pad_mode,
            name=f'{name}_conv1'))
-  if order == 'cba':
+  if order == 'wba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
     layers.append(Activation(activation, name=f'{name}_act1'))
   ## squeeze
-  if order == 'bac':
+  if order == 'baw':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn2'))
     layers.append(Activation(activation, name=f'{name}_act2'))
@@ -494,7 +636,7 @@ def residual_bottleneck(
     Conv2D(filters=int(filters),
            kernel_size=kernel_size,
            name=f'{name}_conv2'))
-  if order == 'cba':
+  if order == 'wba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn2'))
     layers.append(Activation(activation, name=f'{name}_act2'))
@@ -505,22 +647,23 @@ def residual_bottleneck(
                         activation=activation,
                         name=f'{name}_se'))
   layers.append(
-    Conv2D(filters=filters_out * (2 if gated else 1),
+    Conv2D(filters=filters_out * (2 if sigmoid_gating else 1),
            kernel_size=(1, 1),
            use_bias=use_bias,
            name=f'{name}_proj1'))
   if batchnorm:
     layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn3'))
-  if gated:
-    layers.append(ConvGating(name=f'{name}_gating'))
+  if sigmoid_gating:
+    layers.append(SigmoidGating(name=f'{name}_gating'))
   # no residual connection if strides > 1
-  if filters_out == inputs.shape[-1] and np.all(np.asarray(strides) == 1):
+  if filters_out == filters_in and np.all(np.asarray(strides) == 1):
     if dropout > 0:
-      layers.append(dropout2D(dropout, name=f'{name}_drop'))
+      layers.append(dropout2D(rate=dropout, name=f'{name}_drop'))
   else:
-    merge_mode = 'none'
+    skip_mode = 'none'
   ## final layer
-  res = ResidualSequential(merge_mode=merge_mode, layers=layers, name=name)
+  res = ResidualSequential(skip_mode=skip_mode, skip_ratio=skip_ratio,
+                           layers=layers, name=name)
   if inputs is None:
     return res
   return res(inputs)
@@ -528,37 +671,44 @@ def residual_bottleneck(
 
 def residual_inverted(
     inputs: Optional[tf.Tensor] = None,
-    expand_ratio: float = 2.,
+    filters_in: Optional[int] = None,
     filters_out: Optional[int] = None,
+    expand_ratio: float = 2.,
     se_ratio: float = 0.25,
-    gated: bool = False,
+    sigmoid_gating: bool = False,
     batchnorm: bool = True,
-    batchnorm_kw: Dict[str, Any] = {},
+    batchnorm_kw: Optional[Dict[str, Any]] = None,
     dropout: float = 0.0,
     kernel_size: Tuple[int, int] = (3, 3),
-    order: Literal['bac', 'cba'] = 'cba',
+    order: Literal['baw', 'wba'] = 'wba',
     strides: Tuple[int, int] = (1, 1),
-    activation: Callable[..., tf.Tensor] = tf.nn.swish,
-    merge_mode: Literal['add', 'concat'] = 'add',
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.swish,
+    skip_mode: Literal['add', 'concat'] = 'add',
+    skip_ratio: float = 1.0,
     name: str = 'residual_inverted',
-) -> Union[tf.Tensor, Layer]:
-  assert expand_ratio >= 1
+) -> Union[tf.Tensor, ResidualSequential]:
+  if batchnorm_kw is None:
+    batchnorm_kw = {}
+  assert expand_ratio >= 1, (
+    f'Inverted residual only support expand_ratio >= 1, given {expand_ratio}')
   ## prepare
   layers = []
   batchnorm_kw = dict(axis=3, **batchnorm_kw)
-  filters = max(1, int(expand_ratio * inputs.shape[-1]))
+  if filters_in is None:
+    filters_in = inputs.shape[-1]  # assume NHWC
+  filters = max(1, int(expand_ratio * filters_in))
   if filters_out is None:
-    filters_out = inputs.shape[-1]
+    filters_out = filters_in
   use_bias = not batchnorm
-  x = inputs
   if np.any(np.asarray(strides) >= 2):
     layers.append(
-      ZeroPadding2D(padding=correct_pad(x, kernel_size), name=f'{name}_pad'))
+      ZeroPadding2D(padding=correct_pad(inputs, kernel_size),
+                    name=f'{name}_pad'))
     pad_mode = 'valid'
   else:
     pad_mode = 'same'
   ## expand
-  if order == 'bac':
+  if order == 'baw':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
     layers.append(Activation(activation, name=f'{name}_act1'))
@@ -569,18 +719,18 @@ def residual_inverted(
            strides=strides,
            use_bias=use_bias,
            name=f'{name}_conv1'))
-  if order == 'cba':
+  if order == 'wba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
     layers.append(Activation(activation, name=f'{name}_act1'))
   ## squeeze
-  if order == 'bac':
+  if order == 'baw':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn2'))
     layers.append(Activation(activation, name=f'{name}_act2'))
   layers.append(DepthwiseConv2D(kernel_size=kernel_size,
                                 name=f'{name}_dwconv1'))
-  if order == 'cba':
+  if order == 'wba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn2'))
     layers.append(Activation(activation, name=f'{name}_act2'))
@@ -591,22 +741,23 @@ def residual_inverted(
                         activation=activation,
                         name=f'{name}_se'))
   layers.append(
-    Conv2D(filters=filters_out * (2 if gated else 1),
+    Conv2D(filters=filters_out * (2 if sigmoid_gating else 1),
            kernel_size=(1, 1),
            use_bias=use_bias,
            name=f'{name}_proj1'))
   if batchnorm:
     layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn3'))
-  if gated:
-    layers.append(ConvGating(name=f'{name}_gating'))
+  if sigmoid_gating:
+    layers.append(SigmoidGating(name=f'{name}_gating'))
   # no residual connection if strides > 1
-  if filters_out == inputs.shape[-1] and np.all(np.asarray(strides) == 1):
+  if filters_out == filters_in and np.all(np.asarray(strides) == 1):
     if dropout > 0:
-      layers.append(dropout2D(dropout, name=f'{name}_drop'))
+      layers.append(dropout2D(rate=dropout, name=f'{name}_drop'))
   else:
-    merge_mode = 'none'
+    skip_mode = 'none'
   ## final layer
-  res = ResidualSequential(merge_mode=merge_mode, layers=layers, name=name)
+  res = ResidualSequential(skip_mode=skip_mode, skip_ratio=skip_ratio,
+                           layers=layers, name=name)
   if inputs is None:
     return res
   return res(inputs)
