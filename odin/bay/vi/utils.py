@@ -144,7 +144,7 @@ def prepare_ssl_inputs(
   -------
   Tuple[tf.Tensor, tf.Tensor, tf.Tensor]
       - List of inputs tensors
-      - List of labels tensors
+      - List of labels tensors (empty if there is only unsupervised data)
       - mask tensor
   """
   inputs = tf.nest.flatten(as_tuple(inputs))
@@ -153,13 +153,13 @@ def prepare_ssl_inputs(
   if len(inputs) == n_unsupervised_inputs:
     X = inputs
     y = []
-    mask = tf.cast(tf.zeros(shape=(batch_size, 1)), dtype=tf.bool)
+    mask = tf.cast(tf.zeros(shape=(batch_size,)), dtype=tf.bool)
   ## labels is provided
   else:
     X = inputs[:n_unsupervised_inputs]
     y = inputs[n_unsupervised_inputs:]
     if mask is None:  # all data is labelled
-      mask = tf.cast(tf.ones(shape=(batch_size, 1)), tf.bool)
+      mask = tf.cast(tf.ones(shape=(batch_size,)), dtype=tf.bool)
   y = [i for i in y if i is not None]
   return X, y, mask
 

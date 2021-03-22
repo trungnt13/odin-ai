@@ -13,6 +13,7 @@ from functools import partial
 from numbers import Number
 from typing import (Any, Callable, Dict, Iterator, List, Optional, Text, Tuple,
                     Union, Sequence)
+from collections import defaultdict
 
 import numpy as np
 import tensorflow as tf
@@ -23,7 +24,8 @@ from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.python import keras
 from tensorflow.python.data import Dataset
 from tensorflow.python.keras.layers import Layer
-from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
+from tensorflow.python.keras.optimizer_v2.optimizer_v2 import \
+  OptimizerV2 as Optimizer
 from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training.tracking import base as trackable
@@ -100,10 +102,10 @@ def _to_optimizer(optimizer, learning_rate):
       config = dict(learning_rate=lr)
       opt = tf.optimizers.get({'class_name': opt, 'config': config})
     # the instance
-    elif isinstance(opt, OptimizerV2):
+    elif isinstance(opt, Optimizer):
       pass
     # type
-    elif inspect.isclass(opt) and issubclass(opt, OptimizerV2):
+    elif inspect.isclass(opt) and issubclass(opt, Optimizer):
       opt = opt(learning_rate=float(learning_rate))
     # no support
     else:
@@ -150,6 +152,7 @@ class TrainStep:
   training: Optional[bool] = dataclasses.field(default=None)
   mask: Optional[TensorType] = dataclasses.field(default=None)
   parameters: List[tf.Variable] = dataclasses.field(default_factory=list)
+  optimizer: Optional[Optimizer] = dataclasses.field(default=None)
   name: str = dataclasses.field(default_factory=str)
 
   def set_name(self, name: str) -> 'TrainStep':
@@ -199,6 +202,7 @@ class Networks(keras.Model, MD5object):
   def __init__(self,
                path: Optional[str] = None,
                step: int = 0,
+               aggregate_gradients: bool = False,
                *args,
                **kwargs):
     super().__init__(name=kwargs.pop('name',
@@ -215,6 +219,7 @@ class Networks(keras.Model, MD5object):
                                       trainable=False,
                                       name='SkippedUpdate')
     self._save_path = path
+    self._aggregate_gradients = aggregate_gradients
     with trackable.no_automatic_dependency_tracking_scope(self):
       self._last_outputs = None
       self._trainer = None
@@ -292,7 +297,7 @@ class Networks(keras.Model, MD5object):
 
   @classproperty
   def default_args(cls) -> Dict[str, Any]:
-    """Return a dictionary of the default keyword arguments of all subclass start"""
+    """Return a dictionary of the default keyword arguments of all subclass"""
     kw = dict()
     args = []
     for c in type.mro(cls)[::-1]:
@@ -378,7 +383,7 @@ class Networks(keras.Model, MD5object):
       self,
       inputs: Union[TensorType, Sequence[TensorType]],
       training: bool = True,
-      optimizer: Optional[Union[Sequence[OptimizerV2], OptimizerV2]] = None,
+      optimizer: Optional[Union[Sequence[Optimizer], Optimizer]] = None,
       clipnorm: Optional[float] = None,
       clipvalue: Optional[float] = None,
       global_clipnorm: Optional[float] = None,
@@ -387,6 +392,7 @@ class Networks(keras.Model, MD5object):
       nan_gradients_policy: Literal[
         'ignore', 'skip', 'raise', 'restore'] = 'skip',
       allow_none_gradients: bool = False,
+      aggregate_gradients: Optional[bool] = None,
       track_gradients: bool = False,
       *args,
       **kwargs,
@@ -399,7 +405,7 @@ class Networks(keras.Model, MD5object):
         a single or list of input tensors
     training : bool, optional
         indicating the training mode for call method, by default True
-    optimizer : Optional[OptimizerV2], optional
+    optimizer : Optional[Optimizer], optional
         optimizer, by default None
     clipnorm : Optional[float], optional
         global L2-norm value for clipping the gradients, by default None
@@ -422,6 +428,10 @@ class Networks(keras.Model, MD5object):
         ,default is 'skip'
     allow_none_gradients : bool, optional
         allow variables with None gradients during training, by default False
+    aggregate_gradients : bool, optional
+        only used in multi-steps training, if True, aggregate gradients
+        from multiple steps before updating. Otherwise, make updates
+        separately for each returned step.
     track_gradients : bool, optional
         track and return the metrics includes the gradients' L2-norm for each
         trainable variable, by default False
@@ -432,6 +442,8 @@ class Networks(keras.Model, MD5object):
         loss : a Scalar, the loss Tensor used for optimization
         metrics : a Dictionary, mapping from name to values
     """
+    if aggregate_gradients is None:
+      aggregate_gradients = self._aggregate_gradients
     if training:
       self.step.assign_add(1)
     ## prepare the optimizer
@@ -445,15 +457,17 @@ class Networks(keras.Model, MD5object):
     optimizer = tf.nest.flatten(optimizer)
     n_optimizer = len(optimizer)
     ## start optimizing step-by-step
-    iterator = enumerate(
-      self.train_steps(inputs=inputs, training=training, *args, **kwargs))
-    for step_idx, step in iterator:
+    all_updates = []  # [(opt, grad_params), ...]
+    for step_idx, step in enumerate(
+        self.train_steps(inputs=inputs, training=training, *args, **kwargs)):
       step: TrainStep
       step_name = step.name
       assert isinstance(step, TrainStep) or callable(step), \
         ("method train_steps must return an Iterator of TrainStep or callable, "
          f"but return type: {type(step)}")
-      opt = optimizer[step_idx % n_optimizer]
+      opt = step.optimizer
+      if opt is None:
+        opt = optimizer[step_idx % n_optimizer]
       if isinstance(step, TrainStep):
         parameters = step.parameters
       else:
@@ -550,11 +564,14 @@ class Networks(keras.Model, MD5object):
         grads_params = [(g, p)
                         for g, p in zip(gradients, parameters)
                         if g is not None or allow_none_gradients]
-        opt.apply_gradients(grads_params)
+        if aggregate_gradients:
+          all_updates.append((opt, grads_params))
+        else:
+          opt.apply_gradients(grads_params)
         # tracking the gradient norms for debugging
         if track_gradients:
           for g, p in grads_params:
-            metrics[f"_grad/{p.name}"] = g
+            metrics[f"_grad/{step_name}/{p.name}"] = g
       ## for validation
       else:
         loss, metrics = step()
@@ -564,8 +581,12 @@ class Networks(keras.Model, MD5object):
           k = f'{k}_{step_name}'
         all_metrics[k] = v
       total_loss += loss
+    ## aggregate the updates
+    if aggregate_gradients:
+      for optimizer, grads_params in all_updates:
+        optimizer: Optimizer
+        optimizer.apply_gradients(grads_params)
     ## return
-    # all_metrics = {i: j for i, j in all_metrics.items()}
     return total_loss, all_metrics
 
   def fit(
@@ -576,7 +597,7 @@ class Networks(keras.Model, MD5object):
       valid_freq: int = 500,
       valid_interval: float = 0,
       optimizer: Union[
-        str, Sequence[str], OptimizerV2, Sequence[OptimizerV2]] = 'adam',
+        str, Sequence[str], Optimizer, Sequence[Optimizer]] = 'adam',
       learning_rate: Union[float, TensorType, LearningRateSchedule] = 1e-4,
       clipnorm: Optional[float] = None,
       global_clipnorm: Optional[float] = None,
@@ -609,7 +630,7 @@ class Networks(keras.Model, MD5object):
         the frequency, in steps, for performing validation, by default 500
     valid_interval : float, optional
         the interval, in second, for performing validation, by default 0
-    optimizer : Union[str, OptimizerV2], optional
+    optimizer : Union[str, Optimizer], optional
         A list of optimizers is accepted in case of multiple steps training.
         If `None`, re-use stored optimizer, raise `RuntimeError` if no
         predefined optimizer found., by default 'adam'

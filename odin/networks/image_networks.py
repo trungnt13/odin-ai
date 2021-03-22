@@ -874,11 +874,11 @@ def get_optimizer_info(
     n_samples = 48000
   # dsrpites datasets
   elif 'dsprites' in dataset_name:
-    n_epochs = 200 if 'small' in dataset_name else 400
+    n_epochs = 400 if 'small' in dataset_name else 500
     n_samples = 663552
   # sahpes datasets
   elif 'shapes3d' in dataset_name:
-    n_epochs = 500 if 'small' in dataset_name else 800
+    n_epochs = 500 if 'small' in dataset_name else 600
     n_samples = 432000
     init_lr = 1e-4
   elif 'celeba' in dataset_name:

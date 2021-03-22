@@ -272,8 +272,8 @@ class ImageDataset(IterableDataset):
       # mixing the label into minibatches
       elif label_weight > 0.0:
         # for some reason sample_from_datasets significantly slowed down
-        # if we sample from a single dataset that splitted into two by filtering,
-        # and one of which is repeated
+        # if we sample from a single dataset that splitted into two by
+        # filtering, and one of which is repeated
         # (e.g. 7000 samples/s dropped down to 1000 samples/s)
         x_labeled, y_labeled = _extract_labeled_examples(ds, None)
         mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)

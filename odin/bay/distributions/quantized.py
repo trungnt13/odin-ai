@@ -52,6 +52,8 @@ class QuantizedLogistic(Distribution):
 
   Builds a mixture of quantized logistic distributions.
 
+  The inputs to this distribution should be logits values
+
   Note: this distribution assumes the input and output value is pixel value
   (i.e. [0, 255]), this could be changed by `inputs_domain` argument.
 
@@ -204,20 +206,22 @@ class QuantizedLogistic(Distribution):
 class MixtureQuantizedLogistic(Distribution):
   """ PixelCNN++ Mixture of Quantized Logistic Distribution
 
-  Builds a mixture of quantized logistic distributions.
+  The inputs to this distribution should be logits values
 
   Parameters
   ----------
-  params :
-    component_logits: 4D `Tensor` of logits for the Categorical distribution
-      over Quantized Logistic mixture components. Dimensions are `[batch_size,
-      height, width, num_logistic_mix]`.
-    locs: 4D `Tensor` of location parameters for the Quantized Logistic
-      mixture components. Dimensions are `[batch_size, height, width,
-      num_logistic_mix, num_channels]`.
-    scales: 4D `Tensor` of location parameters for the Quantized Logistic
-      mixture components. Dimensions are `[batch_size, height, width,
-      num_logistic_mix, num_channels]`.
+  params : Tensor
+    Concatenation of three parameters:
+
+    - component_logits: 4D `Tensor` of logits for the Categorical distribution
+        over Quantized Logistic mixture components. Dimensions are `[batch_size,
+        height, width, num_logistic_mix]`.
+    - locs: 4D `Tensor` of location parameters for the Quantized Logistic
+        mixture components. Dimensions are `[batch_size, height, width,
+        num_logistic_mix, num_channels]`.
+    - scales: 4D `Tensor` of location parameters for the Quantized Logistic
+        mixture components. Dimensions are `[batch_size, height, width,
+        num_logistic_mix, num_channels]`.
 
   Example
   -------

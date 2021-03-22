@@ -1,4 +1,4 @@
-from typing import List, Union, Tuple, Dict, Sequence, Optional
+from typing import List, Union, Tuple, Sequence, Optional
 
 import numpy as np
 import tensorflow as tf
@@ -8,37 +8,27 @@ from tensorflow_probability.python.distributions import NOT_REPARAMETERIZED, \
   Distribution
 
 from odin.backend.interpolation import Interpolation, linear
+from odin.bay.layers import DistributionDense
 from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE
-from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
+from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers, \
+  SemiSupervisedVAE
 from odin.bay.vi.utils import prepare_ssl_inputs
-from odin.bay.layers import DistributionDense
 from odin.utils import as_tuple
 
 
 # ===========================================================================
 # helpers
 # ===========================================================================
-def _get_llk_y(py, y, mask, alpha):
-  llk_y = 0.
+def _get_llk_y(py, y, alpha):
   # if labels is provided,
   # p(y|z) is q(y|z) here since we use the same network for both
-  if len(y) > 0:
-    # support only 1 labels set provided
-    if isinstance(y, (tuple, list)):
-      y = y[0]
-    llk_y = py.log_prob(y)
-    if mask is not None:
-      llk_y = tf.cond(
-        tf.reduce_any(mask),
-        true_fn=lambda: tf.transpose(
-          tf.boolean_mask(tf.transpose(llk_y), mask, axis=0)),
-        false_fn=lambda: 0.,
-      )
-    llk_y = tf.reduce_mean(alpha * llk_y)
-    llk_y = tf.cond(tf.abs(llk_y) < 1e-8,
-                    true_fn=lambda: 0.,
-                    false_fn=lambda: llk_y)
+  # support only 1 labels set provided
+  if isinstance(y, (tuple, list)):
+    y = y[0]
+  llk_y = py.log_prob(y)
+  llk_y = tf.reduce_mean(alpha * llk_y)
+  llk_y = tf.cond(tf.abs(llk_y) < 1e-8, lambda: 0., lambda: llk_y)
   return llk_y
 
 
@@ -88,7 +78,7 @@ class SplitVAE(AnnealingVAE):
                           only_decoding=only_decoding, **kwargs)
 
 
-class SemafoBase(AnnealingVAE):
+class SemafoBase(AnnealingVAE, SemiSupervisedVAE):
 
   def __init__(
       self,
@@ -154,31 +144,6 @@ class SemafoBase(AnnealingVAE):
   def is_semi_supervised(cls) -> bool:
     return True
 
-  def train_steps(self, inputs, training=None, mask=None, name='', **kwargs):
-    if not self._separated_steps:
-      yield from super().train_steps(inputs, training=training, mask=mask,
-                                     name=name, **kwargs)
-    else:
-      X, y, mask = prepare_ssl_inputs(inputs, mask, n_unsupervised_inputs=1)
-      X = X[0]
-      mask = tf.reshape(mask, (-1,))
-      X_u = tf.boolean_mask(X, tf.logical_not(mask), axis=0)
-      # === 1. supervised steps
-      if len(y) > 0:
-        X_l = tf.boolean_mask(X, mask, axis=0)
-        y_l = tf.boolean_mask(y[0], mask, axis=0)
-        yield from super().train_steps(inputs=[X_l, y_l],
-                                       mask=None,
-                                       training=training,
-                                       name=f'{name}labeled',
-                                       **kwargs)
-        # === 2. unsupervised steps
-        yield from super().train_steps(inputs=X_u,
-                                       mask=None,
-                                       training=training,
-                                       name=f'{name}unlabeled',
-                                       **kwargs)
-
 
 # ===========================================================================
 # SemafoVAE
@@ -226,11 +191,10 @@ class SemafoVAE(SemafoBase):
                Q: Sequence[Distribution],
                py_z: Distribution,
                training: Optional[bool] = None,
-               mask: Optional[bool] = None,
                which_latents_sampling: Optional[List[int]] = None,
                ) -> Tuple[tf.Tensor, List[tf.Tensor]]:
     ## sample the prior
-    batch_shape = Q[0].batch_shape
+    batch_shape = Q[0].batch_shape_tensor()
     if which_latents_sampling is None:
       which_latents_sampling = list(range(len(Q)))
     z_prime = [q.KL_divergence.prior.sample(batch_shape)
@@ -259,17 +223,17 @@ class SemafoVAE(SemafoBase):
       y_samples = tf.stop_gradient(qy_z.sample())
       Dkl = qy_z.log_prob(y_samples) - py_z.log_prob(y_samples)
     ## only calculate MI for unsupervised data
-    mi_mask = tf.logical_not(mask)  # TODO: tf.reduce_any(mi_mask)
-    mi_y = tf.reduce_mean(tf.boolean_mask(Dkl, mask=mi_mask, axis=0))
+    mi_y = tf.reduce_mean(Dkl)
     ## mutual information (we want to maximize this, hence, add it to the llk)
     if training:
       mi_y = tf.cond(
         self.step >= self.steps_without_mi,
-        true_fn=lambda: self.mi_coef * mi_y,
+        true_fn=lambda: mi_y,
         false_fn=lambda: tf.stop_gradient(mi_y),
       )
     else:
       mi_y = tf.stop_gradient(mi_y)
+    mi_y = self.mi_coef * mi_y
     ## this value is just for monitoring
     mi_z = []
     for q, z in zip(as_tuple(Q_prime), as_tuple(z_prime)):
@@ -282,21 +246,22 @@ class SemafoVAE(SemafoBase):
 
   def elbo_components(self, inputs, training=None, mask=None):
     ## unsupervised ELBO
-    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
-    if mask is not None:
-      mask = tf.reshape(mask, (-1,))
-    llk, kl = super().elbo_components(X[0], mask=mask, training=training)
+    inputs = as_tuple(inputs)
+    X = inputs[0]
+    y = inputs[1:]
+    llk, kl = super().elbo_components(X, mask=mask, training=training)
     P, Q = self.last_outputs
-    px_z = P[:-1]
     py_z = P[-1]
     Q = as_tuple(Q)  # q(z|x)
     ## supervised loss
-    llk[f"llk_{self.labels.name}"] = _get_llk_y(py_z, y, mask, self.alpha)
-    ## MI objective
-    mi_y, mi_z = self._mi_loss(Q, py_z, training=training, mask=mask)
-    llk[f'mi_{self.labels.name}'] = mi_y
-    for z, mi in zip(as_tuple(self.latents), mi_z):
-      llk[f'mi_{z.name}'] = mi
+    if len(y) > 0:
+      llk[f"llk_{self.labels.name}"] = _get_llk_y(py_z, y, self.alpha)
+    ## MI objective (unsupervised)
+    else:
+      mi_y, mi_z = self._mi_loss(Q, py_z, training=training)
+      llk[f'mi_{self.labels.name}'] = mi_y
+      for z, mi in zip(as_tuple(self.latents), mi_z):
+        llk[f'mi_{z.name}'] = mi
     return llk, kl
 
 

@@ -15,21 +15,23 @@ from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python import layers as tfl
 from tensorflow_probability.python.distributions import Distribution
+from tqdm import tqdm
 
 from odin import backend as bk
 from odin.backend import TensorType
 from odin.backend.keras_helpers import layer2text
+from odin.bay.layers.dense_distribution import DistributionDense
 from odin.bay.random_variable import RVconf
 from odin.bay.vi._base import VariationalModel
+from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.networks import Identity, NetConf, TrainStep
 from odin.utils import as_tuple
-from tqdm import tqdm
-from odin.bay.layers.dense_distribution import DistributionDense
 
 __all__ = [
   'LayerCreator',
   'VAEStep',
   'VariationalAutoencoder',
+  'SemiSupervisedVAE',
   'VAE',
 ]
 
@@ -119,9 +121,14 @@ class VAEStep(TrainStep):
     metrics = {k: tf.reduce_mean(v) for k, v in dict(**llk, **kl).items()}
     # check if array is empty, return 0s
     is_empty = tf.equal(tf.size(as_tuple(self.inputs)[0]), 0)
-    loss = tf.cond(is_empty, true_fn=lambda: 0., false_fn=lambda: loss)
-    metrics = {k: tf.cond(is_empty, true_fn=lambda: 0., false_fn=lambda: v)
-               for k, v in metrics.items()}
+    loss = tf.cond(is_empty,
+                   true_fn=lambda: tf.zeros((), dtype=loss.dtype),
+                   false_fn=lambda: loss)
+    metrics = {
+      k: tf.cond(is_empty,
+                 true_fn=lambda: tf.zeros((), dtype=v.dtype),
+                 false_fn=lambda: v)
+      for k, v in metrics.items()}
     return loss, metrics
 
 
@@ -611,5 +618,44 @@ class VariationalAutoencoder(VariationalModel):
             ["%s:%s" % (k, str(v)) for k, v in opt.get_config().items()])
     return text
 
+
+# ===========================================================================
+# Semi-supervised VAE
+# ===========================================================================
+class SemiSupervisedVAE(VariationalAutoencoder):
+  """ NOTE: this layer only 1 inputs and multi-labels"""
+
+  def __init__(self, *args, **kwargs):
+    super(SemiSupervisedVAE, self).__init__(*args, **kwargs)
+    self._aggregate_gradients = True
+
+  @classmethod
+  def is_semi_supervised(cls) -> bool:
+    return True
+
+  def train_steps(self, inputs, training=None, mask=None, name='', **kwargs):
+    X, y, mask = prepare_ssl_inputs(inputs, mask, n_unsupervised_inputs=1)
+    X = X[0]
+    # === 1. unsupervised steps
+    X_u = tf.boolean_mask(X, tf.logical_not(mask), axis=0)
+    yield from super().train_steps(inputs=X_u,
+                                   mask=None,
+                                   training=training,
+                                   name=f'{name}unlabeled',
+                                   **kwargs)
+    # === 2. supervised steps
+    if len(y) > 0:
+      X_l = tf.boolean_mask(X, mask, axis=0)
+      y_l = [tf.boolean_mask(i, mask, axis=0) for i in y]
+      yield from super().train_steps(inputs=[X_l] + y_l,
+                                     mask=None,
+                                     training=training,
+                                     name=f'{name}labeled',
+                                     **kwargs)
+
+
+# ===========================================================================
+# Others
+# ===========================================================================
 
 VAE = VariationalAutoencoder
