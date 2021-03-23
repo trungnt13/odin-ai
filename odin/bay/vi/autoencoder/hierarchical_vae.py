@@ -31,7 +31,10 @@ __all__ = [
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _copy_layer(layer: Layer, units: Optional[int], n_params: int = 2) -> Layer:
+def _copy_layer(layer: Layer,
+                *,
+                units: Optional[int] = None,
+                n_params: int = 2) -> Layer:
   cfg = layer.get_config()
   key = 'filters' if 'filters' in cfg else 'units'
   if units is None:

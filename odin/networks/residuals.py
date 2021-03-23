@@ -11,7 +11,7 @@ from tensorflow.keras.layers import Dense
 from tensorflow.keras.layers import DepthwiseConv2D as _DepthwiseConv2D
 from tensorflow.keras.layers import (Dropout, Flatten, GlobalAvgPool2D,
                                      GlobalMaxPool2D, Lambda, Layer, MaxPool2D,
-                                     Multiply, Reshape, UpSampling2D,
+                                     Reshape, UpSampling2D,
                                      ZeroPadding2D)
 from tensorflow.python.keras.applications.imagenet_utils import correct_pad
 from typing_extensions import Literal
@@ -215,10 +215,10 @@ class ResidualSequential(keras.Sequential):
     text += f'skip_mode: {self.skip_mode}\n'
     text += f'skip_ratio: {self.skip_ratio}\n'
     text += f'track_outputs: {self.track_outputs}\n'
-    for l in self.layers:
-      l: Layer
-      text += f'{l.__class__.__name__}:\n '
-      for k, v in l.get_config().items():
+    for layer in self.layers:
+      layer: Layer
+      text += f'{layer.__class__.__name__}:\n '
+      for k, v in layer.get_config().items():
         if any(i in k for i in ('_initializer', '_regularizer', '_constraint')):
           continue
         text += f'{k}:{v} '
@@ -262,8 +262,8 @@ class MaskedConv2D(keras.layers.Conv2D):
 
   References
   ----------
-  Aaron van den Oord, et al. Conditional Image Generation with PixelCNN Decoders.
-      In _Neural Information Processing Systems_, 2016.
+  Aaron van den Oord, et al. Conditional Image Generation with
+      PixelCNN Decoders. In _Neural Information Processing Systems_, 2016.
       https://arxiv.org/abs/1606.05328
   """
 
@@ -391,26 +391,26 @@ def restore_mcmc_dim(
   return layer(inputs)
 
 
-def pooling2D(
+def downsampling2D(
     inputs: Optional[tf.Tensor] = None,
     size: Tuple[int, int] = (2, 2),
     mode: Literal['max', 'avg', 'global'] = 'avg',
     name: str = 'pooling2D',
 ) -> Union[tf.Tensor, Resampling2D]:
-  """ Pooling """
+  """Pooling"""
   layer = Resampling2D(size, mode, name=name)
   if inputs is None:
     return layer
   return layer(inputs)
 
 
-def unpooling2D(
+def upsampling2D(
     inputs: Optional[tf.Tensor] = None,
     size: Tuple[int, int] = (2, 2),
     mode: Literal['pad', 'nearest', 'bilinear'] = 'nearest',
-    name: str = 'unpooling2D',
+    name: str = 'upsampling2D',
 ) -> Union[tf.Tensor, Resampling2D]:
-  """ Upsampling or Unpooling """
+  """ Upsampling"""
   layer = Resampling2D(size, mode, name=name)
   if inputs is None:
     return layer
@@ -530,8 +530,9 @@ def residual(
   kernel_size : Tuple[int, int]
       filters dimensions
   order : {'baw', 'wba'}
-      specific order of the residual block, 'baw' is batchnorm-activation-weight,
-      and 'wba' is weight-batchnorm-activation, default 'wba'
+      specific order of the residual block, 'baw' is
+      batchnorm-activation-weight, and 'wba' is weight-batchnorm-activation,
+      default 'wba'
   design : {'bottleneck', 'inverted'}
       residual block design, bottleneck residual or inverted residual with
       depthwise separated convolution.

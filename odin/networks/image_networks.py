@@ -19,6 +19,7 @@ from odin.bay.distributions import (Blockwise, Categorical, ContinuousBernoulli,
                                     MixtureQuantizedLogistic, QuantizedLogistic,
                                     VonMises, Bernoulli, Independent)
 from odin.networks.base_networks import SequentialNetwork
+from odin.networks import residuals as rd
 
 __all__ = [
   'PixelCNNDecoder',
@@ -95,6 +96,12 @@ class CenterAt0(keras.layers.Layer):
 
   def get_config(self):
     return dict(enable=self.enable, div_255=self.div_255)
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    return f'<Center [-1,1] enable:{self.enable} div255:{self.div_255}>'
 
 
 class LogNorm(keras.layers.Layer):
@@ -309,9 +316,9 @@ def cifar_networks(
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((8, 8, proj_dim // 64)),
     deconv(64, 4, strides=2, name='decoder1'),
-    deconv(64, 4, strides=1, name='decoder2'),
+    conv(64, 4, strides=1, name='decoder2'),
     deconv(32, 4, strides=2, name='decoder3'),
-    deconv(32, 4, strides=1, name='decoder4'),
+    conv(32, 4, strides=1, name='decoder4'),
     conv(n_channels * 2,
          1,
          strides=1,
@@ -592,14 +599,14 @@ def celeba_networks(qz: str = 'mvndiag',
   n_components = 10  # for Mixture Quantized Logistic
   n_channels = input_shape[-1]
   conv, deconv = _prepare_cnn(activation=activation)
-  proj_dim = 256
+  proj_dim = 512
   encoder = SequentialNetwork(
     [
       CenterAt0(enable=centerize_image),
       conv(32, 4, strides=2, name='encoder0'),
       conv(32, 4, strides=2, name='encoder1'),
       conv(64, 4, strides=2, name='encoder2'),
-      conv(64, 4, strides=2, name='encoder3'),
+      conv(64, 4, strides=1, name='encoder3'),
       keras.layers.Flatten(),
       keras.layers.Dense(proj_dim, activation='linear', name='encoder5')
     ],
@@ -607,8 +614,8 @@ def celeba_networks(qz: str = 'mvndiag',
   )
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
-    keras.layers.Reshape((4, 4, proj_dim // 16)),
-    deconv(64, 4, strides=2, name='decoder1'),
+    keras.layers.Reshape((8, 8, proj_dim // 64)),
+    deconv(64, 4, strides=1, name='decoder1'),
     deconv(64, 4, strides=2, name='decoder2'),
     deconv(32, 4, strides=2, name='decoder3'),
     deconv(32, 4, strides=2, name='decoder4'),
