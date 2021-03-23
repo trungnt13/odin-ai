@@ -25,7 +25,6 @@ __all__ = [
   'PixelCNNDecoder',
   'mnist_networks',
   'dsprites_networks',
-  'shapes3dsmall_networks',
   'shapes3d_networks',
   'cifar_networks',
   'svhn_networks',
@@ -191,7 +190,7 @@ class SkipSequential(keras.Model):
 @typechecked
 def mnist_networks(
     qz: str = 'mvndiag',
-    zdim: Optional[int] = 16,
+    zdim: Optional[int] = None,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
@@ -204,7 +203,7 @@ def mnist_networks(
   proj_dim = 196
   input_shape = (28, 28, n_channels)
   if zdim is None:
-    zdim = 16
+    zdim = 32
   conv, deconv = _prepare_cnn(activation=activation)
   encoder = SequentialNetwork(
     [
@@ -284,7 +283,7 @@ class PixelCNNDecoder(keras.Model):
 @typechecked
 def cifar_networks(
     qz: str = 'mvndiag',
-    zdim: Optional[int] = 32,
+    zdim: Optional[int] = None,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
@@ -294,11 +293,11 @@ def cifar_networks(
   """Network for CIFAR dataset image size (32, 32, 3)"""
   from odin.bay.random_variable import RVconf
   if zdim is None:
-    zdim = 32
+    zdim = 256
   n_channels = kwargs.get('n_channels', 3)
   conv, deconv = _prepare_cnn(activation=activation)
   n_classes = kwargs.get('n_classes', 10)
-  proj_dim = 8 * 8 * 4
+  proj_dim = 8 * 8 * 8
   ## encoder
   encoder = SequentialNetwork(
     [
@@ -376,7 +375,7 @@ def _dsprites_distribution(x: tf.Tensor) -> Blockwise:
 @typechecked
 def dsprites_networks(
     qz: str = 'mvndiag',
-    zdim: Optional[int] = 10,
+    zdim: Optional[int] = None,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
@@ -448,34 +447,6 @@ def dsprites_networks(
   return networks
 
 
-def dspritessmall_networks(
-    qz: str = 'mvndiag',
-    zdim: Optional[int] = 10,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
-    is_semi_supervised: bool = False,
-    centerize_image: bool = True,
-    skip_generator: bool = False,
-    **kwargs,
-) -> Dict[str, Layer]:
-  if zdim is None:
-    zdim = 10
-  networks = mnist_networks(qz=qz,
-                            zdim=zdim,
-                            activation=activation,
-                            is_semi_supervised=False,
-                            centerize_image=centerize_image,
-                            skip_generator=skip_generator,
-                            n_channels=1,
-                            proj_dim=128)
-  if is_semi_supervised:
-    from odin.bay.layers import DistributionDense
-    networks['labels'] = DistributionDense(event_shape=(5,),
-                                           posterior=_dsprites_distribution,
-                                           units=8,
-                                           name='geometry2d')
-  return networks
-
-
 # ===========================================================================
 # Shapes 3D
 # ===========================================================================
@@ -496,34 +467,8 @@ def _shapes3d_distribution(x: tf.Tensor) -> Blockwise:
   return Blockwise(py, name='shapes3d')
 
 
-def shapes3dsmall_networks(qz: str = 'mvndiag',
-                           zdim: Optional[int] = 6,
-                           activation: Union[Callable, str] = tf.nn.elu,
-                           is_semi_supervised: bool = False,
-                           centerize_image: bool = True,
-                           skip_generator: bool = False,
-                           **kwargs) -> Dict[str, Layer]:
-  if zdim is None:
-    zdim = 6
-  networks = mnist_networks(qz=qz,
-                            zdim=zdim,
-                            activation=activation,
-                            is_semi_supervised=False,
-                            centerize_image=centerize_image,
-                            skip_generator=skip_generator,
-                            n_channels=3,
-                            proj_dim=128)
-  if is_semi_supervised:
-    from odin.bay.layers import DistributionDense
-    networks['labels'] = DistributionDense(event_shape=(6,),
-                                           posterior=_shapes3d_distribution,
-                                           units=10,
-                                           name='geometry3d')
-  return networks
-
-
 def shapes3d_networks(qz: str = 'mvndiag',
-                      zdim: Optional[int] = 6,
+                      zdim: Optional[int] = None,
                       activation: Union[Callable, str] = tf.nn.elu,
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
@@ -884,11 +829,11 @@ def get_optimizer_info(
     n_samples = 48000
   # dsrpites datasets
   elif 'dsprites' in dataset_name:
-    n_epochs = 300 if 'small' in dataset_name else 400
+    n_epochs = 400
     n_samples = 663552
   # sahpes datasets
   elif 'shapes3d' in dataset_name:
-    n_epochs = 400 if 'small' in dataset_name else 500
+    n_epochs = 500
     n_samples = 432000
     init_lr = 1e-4
   elif 'celeba' in dataset_name:

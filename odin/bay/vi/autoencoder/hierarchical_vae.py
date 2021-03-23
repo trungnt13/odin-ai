@@ -6,7 +6,8 @@ from typing import Union, Optional, Sequence
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.python.keras.layers import Layer, Wrapper
+from tensorflow.python.keras.layers import Layer, Wrapper, Dense
+from tensorflow.python.keras.layers.convolutional import Conv
 from tensorflow_probability.python.distributions import Distribution, Normal, \
   MultivariateNormalDiag, Independent
 from tensorflow_probability.python.layers.distribution_layer import (
@@ -34,8 +35,11 @@ __all__ = [
 def _copy_layer(layer: Layer,
                 *,
                 units: Optional[int] = None,
-                n_params: int = 2) -> Layer:
+                n_params: int = 2,
+                downsample_shape: Optional[Sequence[int]] = None,
+                proj_1x1: bool = False) -> Layer:
   cfg = layer.get_config()
+  cls = layer.__class__
   key = 'filters' if 'filters' in cfg else 'units'
   if units is None:
     cfg[key] *= n_params
@@ -44,9 +48,18 @@ def _copy_layer(layer: Layer,
   cfg['name'] += '_clone'
   cfg['activation'] = 'linear'
   cfg['use_bias'] = True
-  if 'strides' in cfg:
+  ## convolution
+  if issubclass(cls, Conv):
     cfg['strides'] = 1
-  return layer.__class__(**cfg)
+    # 1x1 projection
+    if proj_1x1:
+      cfg['padding'] = 'SAME'
+      cfg['kernel_size'] = 1
+    # downsample
+    elif downsample_shape is not None:
+      cfg['padding'] = 'VALID'
+      cfg['kernel_size'] = downsample_shape[1:-1]
+  return cls(**cfg)
 
 
 def _call(self, inputs, **kwargs):
@@ -89,17 +102,20 @@ class HierarchicalLatents(Wrapper):
   """
 
   def __init__(self,
-               layer,
+               layer: Union[Dense, Conv],
                encoder: Optional[Layer] = None,
-               latent_units: Optional[int] = 32,
+               latent_units: Optional[int] = None,
+               downsample: bool = False,
                merge_normal: bool = False,
-               forward_mode: Literal['sample', 'mean'] = 'sample',
                distribution: Literal['mvndiag', 'normal'] = 'normal',
+               forward_mode: Literal['sample', 'mean'] = 'sample',
                disable: bool = False,
                **kwargs):
     super().__init__(layer=layer, **kwargs)
     self.latent_units = latent_units
+    self._total_units = None
     self.event_ndim = self.layer.input_spec.min_ndim - 1
+    self.downsample = bool(downsample)
     self._disable = bool(disable)
     if encoder is not None:
       encoder._old_call = encoder.call
@@ -126,6 +142,8 @@ class HierarchicalLatents(Wrapper):
     self._dist_posterior = None
     self._proj_posterior = None
     self._proj_prior = None
+    # for final output
+    self._pre_proj = None
     self._proj_out = None
     # store the last distributions
     self._posterior = None
@@ -188,18 +206,38 @@ class HierarchicalLatents(Wrapper):
     # === 1. create projection layer
     if self.encoder is not None:
       # posterior projection
-      self._proj_posterior = _copy_layer(self.layer, units=self.latent_units,
-                                         n_params=2)
+      self._proj_posterior = _copy_layer(
+        self.layer,
+        units=self.latent_units,
+        n_params=2,
+        downsample_shape=output_shape if self.downsample else None,
+        proj_1x1=False)
       shape = output_shape[:-1] + (
         self.encoder.output_shape[-1] + output_shape[-1],)
       self._proj_posterior.build(shape)
     # prior projection
-    self._proj_prior = _copy_layer(self.layer, units=self.latent_units,
-                                   n_params=2)
+    self._proj_prior = _copy_layer(
+      self.layer,
+      units=self.latent_units,
+      n_params=2,
+      downsample_shape=output_shape if self.downsample else None,
+      proj_1x1=False)
     self._proj_prior.build(output_shape)
     shape = self._proj_prior.compute_output_shape(output_shape)
-    # output projection
-    self._proj_out = _copy_layer(self.layer, units=None, n_params=1)
+    self._total_units = int(np.prod(shape[1:]) // 2)
+    # pre-output latents projection
+    if self.downsample:
+      self._pre_proj = keras.layers.Conv2DTranspose(
+        filters=self.latent_units, kernel_size=output_shape[1:-1])
+      self._pre_proj.build(shape[:-1] + (self.latent_units,))
+    else:
+      self._pre_proj = lambda x: x  # identity layer
+    # final output affine (1x1 projection is faster)
+    self._proj_out = _copy_layer(self.layer,
+                                 units=None,
+                                 n_params=1,
+                                 downsample_shape=None,
+                                 proj_1x1=True)
     self._proj_out.build(
       output_shape[:-1] + (self.latent_units + output_shape[-1],))
 
@@ -232,22 +270,35 @@ class HierarchicalLatents(Wrapper):
         self.encoder is not None and \
         hasattr(self.encoder, '_last_outputs'):
       hidden_e = self.encoder._last_outputs
-      posterior = self._dist_posterior(
-        self._proj_posterior(tf.concat([hidden_e, hidden_d], axis=-1),
-                             **kwargs))
+      # (Kingma 2016) use add, we concat here
+      h = tf.concat([hidden_e, hidden_d], axis=-1)
+      posterior = self._dist_posterior(self._proj_posterior(h, **kwargs))
+      # (Maaloe 2016) merging two Normal distribution
       if self._merge_normal is not None:
         posterior = self._merge_normal([posterior, prior])
       self._posterior = posterior
       dist = posterior
-    # === 4. outputs
+    # === 4. sampling
     if self.forward_mode == 'mean':
       z = dist.mean()
     else:  # sample
       z = tf.convert_to_tensor(dist)
+    # === 5. output projection
+    z = self._pre_proj(z, **kwargs)
     outputs = tf.concat([z, hidden_d], axis=-1)
     outputs = self._proj_out(outputs)
     outputs = self.layer.activation(outputs)
     return outputs
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    return ("<HVars "
+            f"name={self.name} enable:{self.is_stochastic} "
+            f"units:{self._total_units} mode:{self.forward_mode} "
+            f"dist:{self.distribution} ds:{self.downsample} "
+            f"merge:{True if self._merge_normal else False}>")
 
 
 # ===========================================================================

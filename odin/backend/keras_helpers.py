@@ -76,14 +76,15 @@ def layer2text(layer: Layer,
       text += padding + layer_text + '\n'
     return text[:-1]
   ## Dense
-  text = str(layer)
   if isinstance(layer, keras.layers.Wrapper):
-    text = f' {layer2text(layer.layer)} <{layer.__class__.__name__}>'
+    text = f'{padding}{layer}\n'
+    text += f"{layer2text(layer.layer, padding=padding + ' ')}>"
   elif isinstance(layer, keras.layers.Dense):
-    text = '%sunits:%d bias:%s activ:%s %s' % \
-           (name, layer.units, layer.use_bias, layer.activation.__name__,
-            layer.posterior_layer.__class__.__name__
-            if hasattr(layer, 'posterior_layer') else '')
+    act_name = layer.activation.__name__
+    post_name = (layer.posterior_layer.__class__.__name__
+                 if hasattr(layer, 'posterior_layer') else '')
+    text = (f'{name}units:{layer.units} bias:{layer.use_bias} '
+            f'activ:{act_name} {post_name}')
   ## Conv
   elif isinstance(layer, Conv):
     text = '%sf:%d k:%s s:%s d:%s pad:%s bias:%s activ:%s' % \
