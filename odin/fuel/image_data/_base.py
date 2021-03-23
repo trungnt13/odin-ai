@@ -46,7 +46,7 @@ class ImageDataset(IterableDataset):
     if not hasattr(self, '_label_type'):
       y = tf.concat([i for _, i in self.train.take(10)], axis=0).numpy()
       if np.all(np.sum(y, axis=-1) == 1.) or \
-        (y.ndim == 1 and 'int' in str(y.dtype)):
+          (y.ndim == 1 and 'int' in str(y.dtype)):
         self._label_type = 'categorical'
       elif np.all(np.unique(y) == (0., 1.)):
         self._label_type = 'binary'
@@ -110,12 +110,12 @@ class ImageDataset(IterableDataset):
         if labels is not None:
           if labels_type == 'binary':
             y = [
-                str(j) for j in self.labels[np.array(labels[i], dtype=np.bool)]
+              str(j) for j in self.labels[np.array(labels[i], dtype=np.bool)]
             ]
             lab = ('\n'.join(y) + '\n') if len(y) > 1 else (y[0] + ' ')
           else:
             lab = '\n'.join(
-                ["%s=%s" % (l, str(j)) for l, j in zip(self.labels, labels[i])])
+              ["%s=%s" % (l, str(j)) for l, j in zip(self.labels, labels[i])])
             lab += '\n'
           m = True if mask is None else mask[i]
           plt.title("%s[Mask:%s]" % (lab, m), fontsize=6)
@@ -243,15 +243,15 @@ class ImageDataset(IterableDataset):
     x_labeled, y_labeled, mask_labeled, ds_labeled = [], [], None, None
     if 0. < label_percent < 1. or label_percent > 1.:
       n_labeled = int(label_percent * length \
-        if 0. < label_percent < 1. else int(label_percent))
+                        if 0. < label_percent < 1. else int(label_percent))
       n_unlabeled = length - n_labeled
       n_per_classes = int(n_labeled / len(self.labels))
       # for binary labels we could do stratified sampling
       if self.label_type == 'categorical':
         y_map = self._build_stratified_map(partition)
         labeled_ids = np.stack([
-            rand.choice(v, size=n_per_classes, replace=False)
-            for k, v in y_map.items()
+          rand.choice(v, size=n_per_classes, replace=False)
+          for k, v in y_map.items()
         ])
         labeled = np.full((length,), False, dtype=np.bool)
         labeled[labeled_ids] = True
@@ -260,11 +260,11 @@ class ImageDataset(IterableDataset):
         labeled = np.array([True] * n_labeled + [False] * (length - n_labeled))
         rand.shuffle(labeled)
       ds = tf.data.Dataset.zip(
-          (tf.data.Dataset.from_tensor_slices(labeled), ds))
+        (tf.data.Dataset.from_tensor_slices(labeled), ds))
       # repeat the label data in every minibatch
       if label_weight == 1.0:
         x_labeled, y_labeled = _extract_labeled_examples(
-            ds, partial(self.normalize, normalize=normalize))
+          ds, partial(self.normalize, normalize=normalize))
         if y_labeled.shape.ndims == 1:
           y_labeled = tf.one_hot(y_labeled, len(self.labels))
         mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
@@ -278,20 +278,20 @@ class ImageDataset(IterableDataset):
         x_labeled, y_labeled = _extract_labeled_examples(ds, None)
         mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
         ds_labeled = tf.data.Dataset.from_tensor_slices(
-            (mask_labeled, (x_labeled, y_labeled)))
+          (mask_labeled, (x_labeled, y_labeled)))
         n_repeat = int(
-            np.ceil(label_weight * n_unlabeled / (1 - label_weight) /
-                    n_labeled))
+          np.ceil(label_weight * n_unlabeled / (1 - label_weight) /
+                  n_labeled))
         ds_labeled = ds_labeled.shuffle(
-            min(n_labeled, 1000),
-            seed=seed,
-            reshuffle_each_iteration=True,
+          min(n_labeled, 1000),
+          seed=seed,
+          reshuffle_each_iteration=True,
         ).repeat(n_repeat)
         ds_unlabeled = ds.filter(lambda i, x: tf.logical_not(i))
         ds = tf.data.experimental.sample_from_datasets(
-            [ds_unlabeled, ds_labeled],
-            weights=[1. - label_weight, label_weight],
-            seed=seed)
+          [ds_unlabeled, ds_labeled],
+          weights=[1. - label_weight, label_weight],
+          seed=seed)
     ######## other cases
     elif label_percent == 0:
       ds = ds.map(lambda *x: (False, x))
@@ -307,16 +307,19 @@ class ImageDataset(IterableDataset):
         # covert to one-hot
         if len(labels.shape) == 1:
           labels = tf.one_hot(labels, len(self.labels))
-        labels = labels * tf.cast(tf.expand_dims(mask, -1), tf.float32)
+      # unsupervised task
       if label_percent == 0:
         return images
+      # supervised task
       elif label_percent == 1:
         return images, labels
+      # semi-supervised task
       if label_weight == 1.0:
-        images = tf.concat([images, x_labeled], axis=0)
-        labels = tf.concat([labels, y_labeled], axis=0)
-        mask = tf.concat([mask, mask_labeled], axis=0)
-      return dict(inputs=(images, labels), mask=mask)
+        return images, x_labeled, y_labeled
+      X_sup = tf.boolean_mask(images, mask, 0)
+      y_sup = tf.boolean_mask(labels, mask, 0)
+      X_uns = tf.boolean_mask(images, tf.logical_not(mask), 0)
+      return X_uns, X_sup, y_sup
 
     # shuffle must be called after cache
     if shuffle is not None and shuffle > 0:

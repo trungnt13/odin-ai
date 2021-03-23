@@ -24,58 +24,12 @@ def _get_llk_y(py, y, alpha):
   # if labels is provided,
   # p(y|z) is q(y|z) here since we use the same network for both
   # support only 1 labels set provided
-  if isinstance(y, (tuple, list)):
-    y = y[0]
   llk_y = py.log_prob(y)
   llk_y = tf.reduce_mean(alpha * llk_y)
-  llk_y = tf.cond(tf.abs(llk_y) < 1e-8, lambda: 0., lambda: llk_y)
+  llk_y = tf.cond(tf.abs(llk_y) < 1e-8,
+                  true_fn=lambda: tf.stop_gradient(llk_y),
+                  false_fn=lambda: llk_y)
   return llk_y
-
-
-class SplitVAE(AnnealingVAE):
-
-  def __init__(self, n_split: int = 3, name: str = 'SplitVAE', **kwargs):
-    super(SplitVAE, self).__init__(name=name, **kwargs)
-    zdim = sum(int(np.prod(z.event_shape)) for z in as_tuple(self.latents))
-    units = [zdim // n_split for i in range(n_split - 1)]
-    units.append(zdim - sum(units))
-    del self._latents
-    self._latents = [
-      RVconf(units[i], 'mvndiag', projection=True,
-             name=f'latents{i}').create_posterior()
-      for i in range(n_split)]
-    self.encoder.track_outputs = True
-    self.flatten = keras.layers.Flatten()
-    self.project = keras.layers.Dense(256)
-
-  def encode(self,
-             inputs,
-             training=None,
-             mask=None,
-             only_encoding=False,
-             **kwargs):
-    h = super(SplitVAE, self).encode(inputs, training=training, mask=mask,
-                                     only_encoding=True, **kwargs)
-    skip = []
-    for layer, outputs in h._last_outputs:
-      if isinstance(layer, (keras.layers.Dense, Conv)):
-        skip.append(self.flatten(outputs))
-    h = self.project(tf.concat(skip, -1))
-    if only_encoding:
-      return h
-    return tuple(
-      [qz(h, training=training, mask=mask, sample_shape=self.sample_shape)
-       for qz in self.latents])
-
-  def decode(self,
-             latents,
-             training=None,
-             mask=None,
-             only_decoding=False,
-             **kwargs):
-    latents = tf.concat(latents, 1)
-    return super().decode(latents, training=training, mask=mask,
-                          only_decoding=only_decoding, **kwargs)
 
 
 class SemafoBase(AnnealingVAE, SemiSupervisedVAE):
@@ -111,19 +65,22 @@ class SemafoBase(AnnealingVAE, SemiSupervisedVAE):
     py_z = self.predict_factors(latents=latents, training=training, mask=mask)
     return as_tuple(px_z) + (py_z,)
 
-  def predict_factors(self,
-                      inputs=None,
-                      latents=None,
-                      training=None,
-                      mask=None,
-                      **kwargs) -> Distribution:
+  def predict_factors(self, inputs=None, latents=None, training=None,
+                      mask=None, n_mcmc=(), mean=False, **kwargs
+                      ) -> Distribution:
     """Return the predictive distribution of the factors (a.k.a labels) 
     `p(y|z)`"""
     if inputs is not None:
       latents = self.encode(inputs, training=training, mask=mask, **kwargs)
     elif latents is None:
       raise ValueError("Either 'inputs' or 'latents' must be provided")
-    py_z = self.labels(tf.concat(as_tuple(latents), axis=-1),
+    latents = as_tuple(latents)
+    latents: Sequence[Distribution]
+    if mean:
+      latents = [z.mean() for z in latents]
+    else:
+      latents = [z.sample(n_mcmc) for z in latents]
+    py_z = self.labels(tf.concat(latents, axis=-1),
                        training=training,
                        mask=mask)
     return py_z
@@ -247,22 +204,36 @@ class SemafoVAE(SemafoBase):
   def elbo_components(self, inputs, training=None, mask=None):
     ## unsupervised ELBO
     inputs = as_tuple(inputs)
-    X = inputs[0]
-    y = inputs[1:]
-    llk, kl = super().elbo_components(X, mask=mask, training=training)
+    # === 1. unsupervised
+    X_uns = inputs[0]
+    llk_uns, kl_uns = super().elbo_components(X_uns, mask=mask,
+                                              training=training)
     P, Q = self.last_outputs
     py_z = P[-1]
     Q = as_tuple(Q)  # q(z|x)
-    ## supervised loss
-    if len(y) > 0:
-      llk[f"llk_{self.labels.name}"] = _get_llk_y(py_z, y, self.alpha)
-    ## MI objective (unsupervised)
+    # MI objective
+    mi_y, mi_z = self._mi_loss(Q, py_z, training=training)
+    llk_uns[f'mi_{self.labels.name}'] = mi_y
+    for z, mi in zip(as_tuple(self.latents), mi_z):
+      llk_uns[f'mi_{z.name}'] = mi
+    # === 2. unsupervised
+    if len(inputs) > 1:
+      X_sup, y_sup = inputs[1:]
+      is_empty = tf.size(X_sup) == 0
+      llk_sup, kl_sup = super().elbo_components(X_sup, mask=mask,
+                                                training=training)
+      P, Q = self.last_outputs
+      # ignore if data is empty
+      llk_sup = self.ignore_empty(is_empty, llk_sup)
+      kl_sup = self.ignore_empty(is_empty, kl_sup)
+      llk_sup[f'llk_{self.labels.name}'] = tf.cond(
+        is_empty,
+        lambda: 0.,
+        lambda: _get_llk_y(P[-1], y_sup, self.alpha))
     else:
-      mi_y, mi_z = self._mi_loss(Q, py_z, training=training)
-      llk[f'mi_{self.labels.name}'] = mi_y
-      for z, mi in zip(as_tuple(self.latents), mi_z):
-        llk[f'mi_{z.name}'] = mi
-    return llk, kl
+      llk_sup, kl_sup = {}, {}
+    # === 3. merge objectives
+    return self.merge_objectives(llk_uns, kl_uns, llk_sup, kl_sup)
 
 
 class RemafoVAE(SemafoVAE):

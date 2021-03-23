@@ -1,6 +1,6 @@
 import inspect
 from functools import partial
-from typing import Callable, Dict, List, Optional, Tuple, Union, Any
+from typing import Callable, Dict, List, Optional, Tuple, Union, Any, Sequence
 
 import numpy as np
 import tensorflow as tf
@@ -116,12 +116,15 @@ class LogNorm(keras.layers.Layer):
     return dict(enable=self.enable)
 
 
-def _prepare_cnn(activation=tf.nn.relu):
-  # he_uniform is better for leaky_relu
+def _prepare_cnn(activation=tf.nn.elu):
+  # he_uniform is better for leaky_relu, relu
+  # while he_normal is good for elu
   if activation is tf.nn.leaky_relu:
-    init = 'he_uniform'
+    init = tf.initializers.HeUniform()
+  elif activation is tf.nn.elu:
+    init = tf.initializers.HeNormal()
   else:
-    init = 'glorot_uniform'
+    init = tf.initializers.HeUniform()
   conv = partial(keras.layers.Conv2D,
                  padding='same',
                  kernel_initializer=init,
@@ -182,7 +185,7 @@ class SkipSequential(keras.Model):
 def mnist_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 16,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
@@ -212,9 +215,9 @@ def mnist_networks(
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((7, 7, proj_dim // 49)),
     deconv(64, 5, strides=2, name='decoder2'),
-    deconv(64, 5, strides=1, name='decoder3'),
+    conv(64, 5, strides=1, name='decoder3'),
     deconv(32, 5, strides=2, name='decoder4'),
-    deconv(32, 5, strides=1, name='decoder5'),
+    conv(32, 5, strides=1, name='decoder5'),
     conv(n_channels, 1, strides=1, activation='linear', name='decoder6'),
     keras.layers.Flatten()
   ]
@@ -275,7 +278,7 @@ class PixelCNNDecoder(keras.Model):
 def cifar_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 32,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
@@ -305,10 +308,10 @@ def cifar_networks(
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((8, 8, proj_dim // 64)),
-    deconv(64, 4, strides=1, name='decoder1'),
-    deconv(64, 4, strides=2, name='decoder2'),
-    deconv(32, 4, strides=1, name='decoder3'),
-    deconv(32, 4, strides=2, name='decoder4'),
+    deconv(64, 4, strides=2, name='decoder1'),
+    deconv(64, 4, strides=1, name='decoder2'),
+    deconv(32, 4, strides=2, name='decoder3'),
+    deconv(32, 4, strides=1, name='decoder4'),
     conv(n_channels * 2,
          1,
          strides=1,
@@ -367,7 +370,7 @@ def _dsprites_distribution(x: tf.Tensor) -> Blockwise:
 def dsprites_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 10,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
@@ -441,7 +444,7 @@ def dsprites_networks(
 def dspritessmall_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 10,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
@@ -488,7 +491,7 @@ def _shapes3d_distribution(x: tf.Tensor) -> Blockwise:
 
 def shapes3dsmall_networks(qz: str = 'mvndiag',
                            zdim: Optional[int] = 6,
-                           activation: Union[Callable, str] = tf.nn.relu,
+                           activation: Union[Callable, str] = tf.nn.elu,
                            is_semi_supervised: bool = False,
                            centerize_image: bool = True,
                            skip_generator: bool = False,
@@ -514,7 +517,7 @@ def shapes3dsmall_networks(qz: str = 'mvndiag',
 
 def shapes3d_networks(qz: str = 'mvndiag',
                       zdim: Optional[int] = 6,
-                      activation: Union[Callable, str] = tf.nn.relu,
+                      activation: Union[Callable, str] = tf.nn.elu,
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
                       skip_generator: bool = False,
@@ -549,7 +552,7 @@ def _celeba_distribution(x: tf.Tensor) -> Blockwise:
 
 def celebasmall_networks(qz: str = 'mvndiag',
                          zdim: Optional[int] = None,
-                         activation: Union[Callable, str] = tf.nn.relu,
+                         activation: Union[Callable, str] = tf.nn.elu,
                          is_semi_supervised: bool = False,
                          centerize_image: bool = True,
                          skip_generator: bool = False,
@@ -576,7 +579,7 @@ def celebasmall_networks(qz: str = 'mvndiag',
 
 def celeba_networks(qz: str = 'mvndiag',
                     zdim: Optional[int] = None,
-                    activation: Union[Callable, str] = tf.nn.relu,
+                    activation: Union[Callable, str] = tf.nn.elu,
                     is_semi_supervised: bool = False,
                     centerize_image: bool = True,
                     skip_generator: bool = False,
@@ -643,11 +646,11 @@ def celeba_networks(qz: str = 'mvndiag',
 def cortex_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 10,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
     log_norm: bool = True,
     cnn: bool = False,
-    units: List[int] = [256, 256, 256],
+    units: Sequence[int] = (256, 256, 256),
     **kwargs,
 ) -> Dict[str, Layer]:
   """Network for Cortex mRNA sequencing datasets"""
@@ -725,11 +728,11 @@ def cortex_networks(
 def pbmc_networks(
     qz: str = 'mvndiag',
     zdim: Optional[int] = 32,
-    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.relu,
+    activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
     log_norm: bool = True,
     cnn: bool = True,
-    units: List[int] = [512, 512, 512],
+    units: Sequence[int] = (512, 512, 512),
     **kwargs,
 ) -> Dict[str, Layer]:
   """Network for Cortex mRNA sequencing datasets"""
@@ -854,7 +857,7 @@ def get_optimizer_info(
   """
   dataset_name = str(dataset_name).strip().lower()
   decay_rate = 0.996
-  decay_steps = 20000
+  decay_steps = 10000
   init_lr = 1e-3
   ### image networks
   if dataset_name == 'mnist':
@@ -874,11 +877,11 @@ def get_optimizer_info(
     n_samples = 48000
   # dsrpites datasets
   elif 'dsprites' in dataset_name:
-    n_epochs = 400 if 'small' in dataset_name else 500
+    n_epochs = 300 if 'small' in dataset_name else 400
     n_samples = 663552
   # sahpes datasets
   elif 'shapes3d' in dataset_name:
-    n_epochs = 500 if 'small' in dataset_name else 600
+    n_epochs = 400 if 'small' in dataset_name else 500
     n_samples = 432000
     init_lr = 1e-4
   elif 'celeba' in dataset_name:

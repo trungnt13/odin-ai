@@ -541,13 +541,11 @@ class Networks(keras.Model, MD5object):
                   false_fn=lambda: tf.constant(0, dtype=tf.int64)))
         ## clip norm
         if clipnorm is not None:
-          clipnorm = tf.constant(clipnorm, dtype=self.dtype)
           gradients = [
             None if g is None else tf.clip_by_norm(g, clipnorm)
             for g in gradients
           ]
         if global_clipnorm is not None:
-          global_clipnorm = tf.constant(global_clipnorm, dtype=self.dtype)
           not_none = [g for g in gradients if g is not None]
           if len(not_none) > 0:
             not_none, _ = tf.clip_by_global_norm(not_none, global_clipnorm)
@@ -555,7 +553,6 @@ class Networks(keras.Model, MD5object):
               None if g is None else not_none.pop(0) for g in gradients
             ]
         if clipvalue is not None:
-          clipvalue = tf.constant(clipvalue, dtype=self.dtype)
           gradients = [
             None if g is None else tf.clip_by_value(g, -clipvalue, clipvalue)
             for g in gradients
@@ -827,6 +824,31 @@ class SequentialNetwork(keras.Sequential):
   def __init__(self, layers=None, name=None):
     super().__init__(layers=None if layers is None else layers, name=name)
     self._track_outputs = False
+    self._input_shape = None
+
+  @property
+  def input_shape(self) -> Sequence[Union[None, int]]:
+    """Retrieves the input shape(s) of a layer.
+
+    Only applicable if the layer has exactly one input,
+    i.e. if it is connected to one incoming layer, or if all inputs
+    have the same shape.
+
+    Returns:
+        Input shape, as an integer shape tuple
+        (or list of shape tuples, one tuple per input tensor).
+
+    Raises:
+        AttributeError: if the layer has no defined input_shape.
+        RuntimeError: if called in Eager mode.
+    """
+    if self._input_shape is not None:
+      return self._input_shape
+    return tf.nest.map_structure(tf.keras.backend.int_shape, self.input)
+
+  def build(self, input_shape=None):
+    self._input_shape = input_shape
+    return super().build(input_shape)
 
   @property
   def track_outputs(self) -> bool:
@@ -864,7 +886,7 @@ class SequentialNetwork(keras.Sequential):
     return self.__str__()
 
   def __str__(self):
-    return layer2text(self)
+    return layer2text(self, input_shape=self.input_shape)
 
 
 # ===========================================================================
@@ -1159,7 +1181,7 @@ class NetConf(dict):
   strides: Union[int, Sequence[int]] = 1
   dilation: Union[int, Sequence[int]] = 1
   padding: Union[str, Sequence[str]] = 'same'
-  activation: Union[str, Sequence[str]] = 'relu'
+  activation: Union[str, Sequence[str], Callable[[Tensor], Tensor]] = 'relu'
   use_bias: Union[bool, Sequence[bool]] = True
   kernel_initializer: Union[str, Sequence[str]] = 'glorot_uniform'
   bias_initializer: Union[str, Sequence[str]] = 'zeros'

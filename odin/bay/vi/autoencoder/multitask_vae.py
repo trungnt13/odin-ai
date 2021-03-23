@@ -45,22 +45,23 @@ class MultitaskVAE(AnnealingVAE, SemiSupervisedVAE):
 
   def __init__(
       self,
-      labels: Union[RVconf, List[RVconf]] = RVconf(10,
-                                                   'onehot',
-                                                   projection=True,
-                                                   name="digits"),
+      labels: RVconf = RVconf(10,
+                              'onehot',
+                              projection=True,
+                              name="digits"),
       encoder_y: Optional[Union[LayerCreator, Literal['tie', 'copy']]] = None,
       decoder_y: Optional[Union[LayerCreator, Literal['tie', 'copy']]] = None,
       alpha: float = 10.,
+      n_semi_iw: int = 10,
       skip_decoder: bool = False,
-      separated_latents: bool = False,
       name: str = 'MultitaskVAE',
       **kwargs,
   ):
     super().__init__(name=name, **kwargs)
-    self.labels = [_parse_layers(y) for y in as_tuple(labels)]
-    self.labels: List[DistributionDense]
-    self.alpha = alpha
+    self.labels = _parse_layers(labels)
+    self.labels: DistributionDense
+    self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
+    self.n_semi_iw = int(n_semi_iw)
     self.skip_decoder = bool(skip_decoder)
     ## prepare encoder for Y
     if encoder_y is not None:
@@ -85,50 +86,45 @@ class MultitaskVAE(AnnealingVAE, SemiSupervisedVAE):
                name='qzy_x').create_posterior())
       encoder_y = keras.Sequential(layers, name='encoder_y')
     self.encoder_y = encoder_y
-    self.separated_latents = bool(separated_latents)
     ## prepare decoder for Y
     if decoder_y is not None:
       decoder_y = _parse_layers(decoder_y)
     self.decoder_y = decoder_y
 
-  def build(self, input_shape):
-    super().build(input_shape)
-    return self
-
-  @property
-  def alpha(self):
-    return self._alpha
-
-  @alpha.setter
-  def alpha(self, a):
-    self._alpha = tf.convert_to_tensor(a, dtype=self.dtype, name='alpha')
-
-  def predict_labels(self, inputs=None, latents=None, training=None, mask=None,
+  def predict_labels(self,
+                     inputs=None,
+                     latents=None,
+                     training=None,
+                     mask=None,
+                     n_mcmc=(),
+                     mean=False,
                      **kwargs):
     if latents is None:
       latents = self.encode(inputs, training=training, mask=mask, **kwargs)
-    # === 1. skip x-to-y connection
-    qzy_x = None  # q(z_y|x)
-    if self.encoder_y is not None:
-      qzy_x = latents[-1]
-      latents = latents[:-1]
-    if isinstance(latents, (tuple, list)):
-      latents = latents[0] if len(latents) == 1 else tf.concat(latents, axis=-1)
-    # === 2. decode p(y|x,z)
-    h_y = latents \
-      if self.skip_decoder else \
-      self.decode(latents, training=training, mask=mask, only_decoding=True,
-                  **kwargs)
+    # === 0. preprocessing latents
+    if mean:
+      latents = [z.mean() for z in as_tuple(latents)]
+    else:
+      latents = [z.sample(n_mcmc) for z in as_tuple(latents)]
+    if len(latents) > 1:
+      latents = tf.concat(latents, axis=-1)
+    else:
+      latents = latents[0]
+    # === 1. decode p(y|x,z)
+    if not self.skip_decoder:
+      h = self.decode(tf.reshape(latents, (-1, latents.shape[-1])),
+                      training=training,
+                      mask=mask,
+                      only_decoding=True,
+                      **kwargs)
+      if not mean:
+        h = tf.reshape(h, (n_mcmc, -1, h.shape[-1]))
+    else:
+      h = latents
+    # === 2. decoder Y
     if self.decoder_y is not None:
-      h_y = self.decoder_y(h_y, training=training, mask=mask)
-    # add skip connection
-    if qzy_x is not None:
-      if self.separated_latents:
-        h_y = tf.convert_to_tensor(qzy_x)
-      else:
-        h_y = tf.concat([h_y, qzy_x], axis=-1)
-    py_z = [fy(h_y, training=training, mask=mask) for fy in self.labels]
-    return py_z
+      h = self.decoder_y(h, training=training, mask=mask)
+    return self.labels(h, training=training, mask=mask)
 
   def encode(self, inputs, training=None, mask=None, **kwargs):
     X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
@@ -157,45 +153,56 @@ class MultitaskVAE(AnnealingVAE, SemiSupervisedVAE):
                          only_decoding=True,
                          **kwargs)
     px_z = self.observation(h_d, training=training, mask=mask)
-    return as_tuple(px_z) + tuple(py_z)
+    return as_tuple(px_z) + (py_z,)
+
+  def _kl_qzy_x(self, Q):
+    qzy_x = Q[-1]
+    return qzy_x.KL_divergence(analytic=self.analytic,
+                               free_bits=self.free_bits,
+                               reverse=self.reverse)
 
   def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     # unsupervised ELBO
     inputs = as_tuple(inputs)
-    X = inputs[0]
-    y = inputs[1:]
-    llk, kl = super().elbo_components(X, training=training)
+    X_uns = inputs[0]
+    # === 1. unsupervised
+    llk_uns, kl_uns = super().elbo_components(X_uns, training=training)
     P, Q = self.last_outputs
-    qzy_x = None
     if self.encoder_y is not None:
-      qzy_x = Q[-1]
-      Q = Q[:-1]
-    else:
-      Q = as_tuple(Q)
-    ## supervised log-likelihood
-    if len(y) > 0:
-      # iterate over each pair
-      for layer, yi, py in zip(self.labels, y, P[1:]):
-        name = layer.name
-        llk_y = py.log_prob(yi)
+      kl_uns[f'kl_{self.latents.name}_y'] = self._kl_qzy_x(Q)
+    # === 2. supervised
+    if len(inputs) > 1:
+      X_sup, y_sup = inputs[1:]
+      is_empty = tf.size(X_sup) == 0
+      llk_sup, kl_sup = super().elbo_components(X_sup, training=training)
+      P, Q = self.last_outputs
+      if self.encoder_y is not None:
+        kl_sup[f'kl_{self.latents.name}_y'] = self._kl_qzy_x(Q)
+
+      def zeros_loss():
+        return 0.
+
+      def supervised_llk():
+        py = self.predict_labels(latents=Q, training=training, mask=mask,
+                                 n_mcmc=self.n_semi_iw)
+        llk_y = py.log_prob(
+          tf.tile(tf.expand_dims(y_sup, 0), (self.n_semi_iw, 1, 1)))
         # this is important, if loss=0 when using one-hot log_prob,
         # the gradient is NaN
         llk_y = tf.reduce_mean(self.alpha * llk_y)
         llk_y = tf.cond(tf.abs(llk_y) < 1e-8,
                         true_fn=lambda: tf.stop_gradient(llk_y),
                         false_fn=lambda: llk_y)
-        llk[f"llk_{name}"] = llk_y
-    ## KL for specific labels latents
-    if qzy_x is not None:
-      # qz_x = Q[0]  # prior
-      # kl['kl_qzy_x'] = self.beta * kl_divergence(
-      #   q=qzy_x, p=qz_x, analytic=False, free_bits=self.free_bits)
-      # (qzy_x.log_prob(z) - tf.stop_gradient(qz_x.log_prob(z)))
-      kl[f'kl_{self.latents.name}_y'] = qzy_x.KL_divergence(
-        analytic=self.analytic,
-        free_bits=self.free_bits,
-        reverse=self.reverse)
-    return llk, kl
+        return llk_y
+
+      llk_sup = self.ignore_empty(is_empty, llk_sup)
+      kl_sup = self.ignore_empty(is_empty, kl_sup)
+      llk_sup[f"llk_{self.labels.name}"] = tf.cond(
+        is_empty, zeros_loss, supervised_llk)
+    else:
+      llk_sup, kl_sup = {}, {}
+    # === 3. merge all objectives
+    return self.merge_objectives(llk_uns, kl_uns, llk_sup, kl_sup)
 
   def __str__(self):
     text = super().__str__()
@@ -227,17 +234,6 @@ class SkiptaskVAE(MultitaskVAE):
     super().__init__(encoder_y=encoder_y,
                      decoder_y=None,
                      skip_decoder=True,
-                     name=name,
-                     **kwargs)
-
-
-class Skiptask2VAE(SkiptaskVAE):
-  """The supervised outputs, skip the decoder, and directly connect to
-  the latents"""
-
-  def __init__(self, name: str = 'Skiptask2VAE', **kwargs):
-    super().__init__(encoder_y='tie',
-                     separated_latents=True,
                      name=name,
                      **kwargs)
 

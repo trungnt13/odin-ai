@@ -36,7 +36,7 @@ class BetaVAE(VAE):
       return self._beta(self.step)
     return tf.constant(self._beta, dtype=self.dtype)
 
-  def elbo_components(self, inputs, training=None, mask=None):
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     llk, kl = super().elbo_components(inputs=inputs,
                                       mask=mask,
                                       training=training)
@@ -92,7 +92,7 @@ class BetaTCVAE(BetaVAE):
       arXiv:1802.04942 [cs, stat].
   """
 
-  def elbo_components(self, inputs, training=None, mask=None):
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     llk, kl = super().elbo_components(inputs, mask=mask, training=training)
     px_z, qz_x = self.last_outputs
     for z, qz in zip(as_tuple(self.latents), as_tuple(qz_x)):
@@ -141,7 +141,7 @@ class CapacitateVAE(VAE):
       vmax=tf.constant(c_max, self.dtype),
       norm=int(iter_max))
 
-  def elbo_components(self, inputs, training=None, mask=None):
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     llk, kl = super().elbo_components(inputs, mask=mask, training=training)
     # step : training step, updated when call `.train_steps()`
     c = self.interpolation(self.step)

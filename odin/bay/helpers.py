@@ -4,7 +4,7 @@ import collections
 import inspect
 from enum import Flag, auto
 from numbers import Number
-from typing import Callable, List, Optional, Text, Union
+from typing import Callable, List, Optional, Text, Union, Sequence
 
 import numpy as np
 import tensorflow as tf
@@ -178,9 +178,9 @@ def kl_divergence(
     q: Union[Distribution, Callable[[], Distribution]],
     p: Union[Distribution, Callable[[], Distribution]],
     analytic: bool = False,
-    q_sample: Union[int, Callable[[Distribution],
-                                  Tensor]] = lambda q: q.sample(),
-    reduce_axis: List[int] = (),
+    q_sample: Union[int,
+                    Callable[[Distribution], Tensor]] = lambda q: q.sample(),
+    reduce_axis: Sequence[int] = (),
     reverse: bool = True,
     free_bits: Optional[float] = None,
 ) -> Tensor:
@@ -198,7 +198,7 @@ def kl_divergence(
   q_sample : {callable, Tensor, Number}
       callable for extracting sample from `q(x)` (takes `q` posterior distribution
       as input argument)
-  reudce_axis : {None, int, tuple}. Reduce axis when use MCMC to estimate KL
+  reduce_axis : {None, int, tuple}. Reduce axis when use MCMC to estimate KL
       divergence, default `()` mean keep all original dimensions.
   reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
       (or p_model) by greedily filling in the highest modes of data (or, in

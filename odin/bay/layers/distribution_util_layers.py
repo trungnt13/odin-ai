@@ -1,35 +1,30 @@
-from __future__ import absolute_import, division, print_function
-
-import collections
 from functools import partial
 
 import tensorflow as tf
 from tensorflow.python.keras.layers import Layer
 from tensorflow_probability.python.distributions import Distribution
-from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
-    DistributionLambda, _get_convert_to_tensor_fn, _serialize)
+  DistributionLambda)
 from tensorflow_probability.python.layers.internal import \
-    distribution_tensor_coercible as dtc
-from tensorflow_probability.python.layers.internal import \
-    tensor_tuple as tensor_tuple
+  distribution_tensor_coercible as dtc
 
 from odin.bay.distributions.conditional import ConditionalTensor
 
 __all__ = [
-    'ConditionalTensorLayer',
-    'Sampling',
-    'Moments',
-    'Stddev',
-    'DistributionAttr',
+  'ConditionalTensorLayer',
+  'Sampling',
+  'Moments',
+  'Stddev',
+  'DistributionAttr',
 ]
+
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
 def _check_distribution(x):
   assert isinstance(x, Distribution), \
-  "Input to this layer must be instance of tensorflow_probability Distribution"
+    "Input to this layer must be instance of tensorflow_probability Distribution"
 
 
 # ===========================================================================
@@ -48,9 +43,9 @@ class ConditionalTensorLayer(DistributionLambda):
       convert_to_tensor_fn = partial(Distribution.sample,
                                      sample_shape=sample_shape)
     super().__init__(
-        lambda params: ConditionalTensor(distribution=params[0],
-                                         conditional_tensor=params[1]),
-        convert_to_tensor_fn, **kwargs)
+      lambda params: ConditionalTensor(distribution=params[0],
+                                       conditional_tensor=params[1]),
+      convert_to_tensor_fn, **kwargs)
 
 
 class Sampling(Layer):
@@ -152,7 +147,7 @@ class DistributionAttr(Layer):
     # special case a distribution is returned
     if isinstance(x, Distribution) and not isinstance(x, dtc._TensorCoercible):
       dist = dtc._TensorCoercible(
-          distribution=x, convert_to_tensor_fn=self.convert_to_tensor_fn)
+        distribution=x, convert_to_tensor_fn=self.convert_to_tensor_fn)
       value = tf.convert_to_tensor(value=dist)
       value._tfp_distribution = dist
       dist.shape = value.shape

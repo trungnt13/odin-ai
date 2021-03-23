@@ -24,7 +24,7 @@ from odin.bay.layers.dense_distribution import DistributionDense
 from odin.bay.random_variable import RVconf
 from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.utils import prepare_ssl_inputs
-from odin.networks import Identity, NetConf, TrainStep
+from odin.networks import Identity, NetConf, TrainStep, SequentialNetwork
 from odin.utils import as_tuple
 
 __all__ = [
@@ -56,7 +56,8 @@ def _net2str(net):
   return str(net)
 
 
-def _parse_layers(network, name=None) -> Union[Layer, DistributionDense]:
+def _parse_layers(network, name=None
+                  ) -> Union[Layer, DistributionDense, SequentialNetwork]:
   ## make sure is a list
   if isinstance(network, (tuple, list)):
     if len(network) != 1:
@@ -116,19 +117,10 @@ class VAEStep(TrainStep):
                                        training=self.training,
                                        mask=self.mask,
                                        **self.call_kw)
-    elbo = self.vae.elbo(llk, kl)
-    loss = -tf.reduce_mean(elbo)
-    metrics = {k: tf.reduce_mean(v) for k, v in dict(**llk, **kl).items()}
     # check if array is empty, return 0s
-    is_empty = tf.equal(tf.size(as_tuple(self.inputs)[0]), 0)
-    loss = tf.cond(is_empty,
-                   true_fn=lambda: tf.zeros((), dtype=loss.dtype),
-                   false_fn=lambda: loss)
-    metrics = {
-      k: tf.cond(is_empty,
-                 true_fn=lambda: tf.zeros((), dtype=v.dtype),
-                 false_fn=lambda: v)
-      for k, v in metrics.items()}
+    loss = -tf.reduce_mean(self.vae.elbo(llk, kl))
+    metrics = dict(**{k: tf.reduce_mean(v) for k, v in llk.items()},
+                   **{k: tf.reduce_mean(v) for k, v in kl.items()})
     return loss, metrics
 
 
@@ -234,11 +226,11 @@ class VariationalAutoencoder(VariationalModel):
       self._observation_args = _get_args(self.observation)
 
   @property
-  def encoder(self) -> Union[keras.Model, List[keras.Model]]:
+  def encoder(self) -> Union[SequentialNetwork, List[SequentialNetwork]]:
     return self._encoder
 
   @property
-  def decoder(self) -> Union[keras.Model, List[keras.Model]]:
+  def decoder(self) -> Union[SequentialNetwork, List[SequentialNetwork]]:
     return self._decoder
 
   @property
@@ -622,36 +614,37 @@ class VariationalAutoencoder(VariationalModel):
 # ===========================================================================
 # Semi-supervised VAE
 # ===========================================================================
+def _is_empty_zero():
+  return 0.
+
+
 class SemiSupervisedVAE(VariationalAutoencoder):
   """ NOTE: this layer only 1 inputs and multi-labels"""
-
-  def __init__(self, *args, **kwargs):
-    super(SemiSupervisedVAE, self).__init__(*args, **kwargs)
-    self._aggregate_gradients = True
 
   @classmethod
   def is_semi_supervised(cls) -> bool:
     return True
 
-  def train_steps(self, inputs, training=None, mask=None, name='', **kwargs):
-    X, y, mask = prepare_ssl_inputs(inputs, mask, n_unsupervised_inputs=1)
-    X = X[0]
-    # === 1. unsupervised steps
-    X_u = tf.boolean_mask(X, tf.logical_not(mask), axis=0)
-    yield from super().train_steps(inputs=X_u,
-                                   mask=None,
-                                   training=training,
-                                   name=f'{name}unlabeled',
-                                   **kwargs)
-    # === 2. supervised steps
-    if len(y) > 0:
-      X_l = tf.boolean_mask(X, mask, axis=0)
-      y_l = [tf.boolean_mask(i, mask, axis=0) for i in y]
-      yield from super().train_steps(inputs=[X_l] + y_l,
-                                     mask=None,
-                                     training=training,
-                                     name=f'{name}labeled',
-                                     **kwargs)
+  def ignore_empty(self,
+                   is_empty: Tensor,
+                   loss_dict: Dict[str, Tensor]
+                   ) -> Dict[str, Tensor]:
+    return {k: tf.cond(is_empty,
+                       true_fn=_is_empty_zero,
+                       false_fn=lambda: v)
+            for k, v in loss_dict.items()}
+
+  def merge_objectives(self,
+                       llk_uns: Dict[str, Tensor],
+                       kl_uns: Dict[str, Tensor],
+                       llk_sup: Dict[str, Tensor],
+                       kl_sup: Dict[str, Tensor],
+                       ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
+    llk = dict(**{f'uns/{k}': v for k, v in llk_uns.items()},
+               **{f'sup/{k}': tf.reduce_mean(v) for k, v in llk_sup.items()})
+    kl = dict(**{f'uns/{k}': v for k, v in kl_uns.items()},
+              **{f'sup/{k}': tf.reduce_mean(v) for k, v in kl_sup.items()})
+    return llk, kl
 
 
 # ===========================================================================

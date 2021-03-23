@@ -1,12 +1,17 @@
-from typing import Any, Callable, Dict, List, Tuple, Union
-
 import inspect
+from types import MethodType
+from typing import Any, Callable, Dict, List, Tuple
+from typing import Union, Optional, Sequence
+
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.keras.layers import Layer
-from tensorflow_probability.python.distributions import Independent, Normal
-from tensorflow_probability.python.layers import DistributionLambda
+from tensorflow.python.keras.layers import Layer, Wrapper
+from tensorflow_probability.python.distributions import Distribution, Normal, \
+  MultivariateNormalDiag, Independent
+from tensorflow_probability.python.layers.distribution_layer import (
+  DistributionLambda)
+from typing_extensions import Literal
 
 from odin.bay.helpers import kl_divergence
 from odin.bay.random_variable import RVconf
@@ -14,6 +19,232 @@ from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE, BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import _parse_layers
 from odin.networks import NetConf
 from odin.utils import as_tuple
+
+__all__ = [
+  'MergeNormal',
+  'HierarchicalLatents',
+  'LadderVAE',
+  'UnetVAE'
+]
+
+
+# ===========================================================================
+# Helpers
+# ===========================================================================
+def _copy_layer(layer: Layer, units: Optional[int], n_params: int = 2) -> Layer:
+  cfg = layer.get_config()
+  key = 'filters' if 'filters' in cfg else 'units'
+  if units is None:
+    cfg[key] *= n_params
+  else:
+    cfg[key] = units * n_params
+  cfg['name'] += '_clone'
+  cfg['activation'] = 'linear'
+  cfg['use_bias'] = True
+  if 'strides' in cfg:
+    cfg['strides'] = 1
+  return layer.__class__(**cfg)
+
+
+def _call(self, inputs, **kwargs):
+  outputs = self._old_call(inputs, **kwargs)
+  self._last_outputs = outputs
+  return outputs
+
+
+class MergeNormal(DistributionLambda):
+  """ Merge two Gaussian based on weighed variance
+
+  https://github.com/casperkaae/LVAE/blob/066858a3fb53bb1c529a6f12ae5afb0955722845/run_models.py#L106
+  """
+
+  def __init__(self, name='MergeNormal'):
+    super().__init__(make_distribution_fn=MergeNormal.new,
+                     name=name)
+
+  @staticmethod
+  def new(dists):
+    q_e, q_d = dists
+    mu_e = q_e.mean()
+    mu_d = q_d.mean()
+    prec_e = 1 / q_e.variance()
+    prec_d = 1 / q_d.variance()
+    mu = (mu_e * prec_e + mu_d * prec_d) / (prec_e + prec_d)
+    scale = tf.math.sqrt(1 / (prec_e + prec_d))
+    dist = Normal(loc=mu, scale=scale)
+    if isinstance(q_e, Independent):
+      ndim = q_e.reinterpreted_batch_ndims
+      dist = Independent(dist, reinterpreted_batch_ndims=ndim)
+    return dist
+
+
+# ===========================================================================
+# Wrapper for hierarchical latent variable
+# ===========================================================================
+class HierarchicalLatents(Wrapper):
+  """
+  """
+
+  def __init__(self,
+               layer,
+               encoder: Optional[Layer] = None,
+               latent_units: Optional[int] = 32,
+               merge_normal: bool = False,
+               forward_mode: Literal['sample', 'mean'] = 'sample',
+               distribution: Literal['mvndiag', 'normal'] = 'normal',
+               disable: bool = False,
+               **kwargs):
+    super().__init__(layer=layer, **kwargs)
+    self.latent_units = latent_units
+    self.event_ndim = self.layer.input_spec.min_ndim - 1
+    self._disable = bool(disable)
+    if encoder is not None:
+      encoder._old_call = encoder.call
+      encoder.call = MethodType(_call, encoder)
+    self.encoder = encoder
+    # === 1. Layers
+    spec = inspect.getfullargspec(layer.call)
+    self._args = spec.args + spec.kwonlyargs
+    # === 2. distribution
+    assert forward_mode in ('sample', 'mean')
+    self.forward_mode = forward_mode
+    assert distribution in ('mvndiag', 'normal'), \
+      f"Only support 'mvndiag' or 'normal' posterior, given '{distribution}'"
+    # assert top_down in ('sample', 'mean', 'deterministic')
+    self.distribution = distribution
+    if merge_normal:
+      assert distribution == 'normal', \
+        'merge_normal mode only support Normal distribution'
+      self._merge_normal = MergeNormal()
+    else:
+      self._merge_normal = None
+    # === 2. others
+    self._dist_prior = None
+    self._dist_posterior = None
+    self._proj_posterior = None
+    self._proj_prior = None
+    self._proj_out = None
+    # store the last distributions
+    self._posterior = None
+    self._prior = None
+
+  @property
+  def is_stochastic(self) -> bool:
+    """Return True if the layer is stochastically initialized"""
+    return self._dist_prior is not None
+
+  @property
+  def posterior(self) -> Optional[Distribution]:
+    return self._posterior
+
+  @property
+  def prior(self) -> Optional[Distribution]:
+    return self._prior
+
+  def kl_divergence(self,
+                    analytic: bool = False,
+                    reverse: bool = False,
+                    free_bits: float = 0.5,
+                    raise_not_init: bool = True) -> tf.Tensor:
+    if self._disable:
+      return tf.zeros((), dtype=self.dtype)
+    if raise_not_init:
+      if self._posterior is None:
+        raise ValueError('No posterior for the hierarchical latent variable.')
+      if self._prior is None:
+        raise ValueError("This HierarchicalLatents haven't been called.")
+    elif self._posterior is None or self._prior is None:
+      return tf.zeros((), dtype=self.dtype)
+    qz = self.posterior
+    pz = self.prior
+    return kl_divergence(q=qz, p=pz, analytic=analytic, reverse=reverse,
+                         free_bits=free_bits)
+
+  def build(self, input_shape=None):
+    super().build(input_shape)
+    if self._disable:
+      return
+    # === 0. prepare
+    output_shape = self.layer.compute_output_shape(input_shape)
+    if self.distribution == 'mvndiag':
+      distribution = MultivariateNormalDiag
+    elif self.distribution == 'normal':
+      distribution = Normal
+    # latent_units equal input feature dimension
+    if self.latent_units is None:
+      self.latent_units = output_shape[-1]
+
+    def create_dist(params):
+      loc, scale = tf.split(params, 2, axis=-1)
+      scale = tf.nn.softplus(scale) + tf.cast(tf.exp(-7.), self.dtype)
+      d = distribution(loc, scale, name=self.name)
+      if isinstance(d, Normal):
+        d = Independent(d, reinterpreted_batch_ndims=self.event_ndim)
+      return d
+
+    # === 1. create projection layer
+    if self.encoder is not None:
+      # posterior projection
+      self._proj_posterior = _copy_layer(self.layer, units=self.latent_units,
+                                         n_params=2)
+      shape = output_shape[:-1] + (
+        self.encoder.output_shape[-1] + output_shape[-1],)
+      self._proj_posterior.build(shape)
+    # prior projection
+    self._proj_prior = _copy_layer(self.layer, units=self.latent_units,
+                                   n_params=2)
+    self._proj_prior.build(output_shape)
+    shape = self._proj_prior.compute_output_shape(output_shape)
+    # output projection
+    self._proj_out = _copy_layer(self.layer, units=None, n_params=1)
+    self._proj_out.build(
+      output_shape[:-1] + (self.latent_units + output_shape[-1],))
+
+    # === 2. create distribution
+    self._dist_posterior = DistributionLambda(make_distribution_fn=create_dist,
+                                              name=f'{self.name}_q')
+    self._dist_prior = DistributionLambda(make_distribution_fn=create_dist,
+                                          name=f'{self.name}_p')
+    self._dist_posterior.build(shape)
+    self._dist_prior.build(shape)
+
+  def compute_output_shape(self, input_shape) -> Sequence[Union[None, int]]:
+    return self.layer.compute_output_shape(input_shape)
+
+  def call(self, inputs, training=None, mask=None, sampling=None, **kwargs):
+    # === 1. call the layer
+    if 'training' in self._args:
+      kwargs['training'] = training
+    if 'mask' in self._args:
+      kwargs['mask'] = mask
+    hidden_d = self.layer.call(inputs, **kwargs)
+    if self._disable:
+      return hidden_d
+    # === 2. project and create the distribution
+    prior = self._dist_prior(self._proj_prior(hidden_d, **kwargs))
+    self._prior = prior
+    # === 3. inference
+    dist = prior
+    if not sampling and \
+        self.encoder is not None and \
+        hasattr(self.encoder, '_last_outputs'):
+      hidden_e = self.encoder._last_outputs
+      posterior = self._dist_posterior(
+        self._proj_posterior(tf.concat([hidden_e, hidden_d], axis=-1),
+                             **kwargs))
+      if self._merge_normal is not None:
+        posterior = self._merge_normal([posterior, prior])
+      self._posterior = posterior
+      dist = posterior
+    # === 4. outputs
+    if self.forward_mode == 'mean':
+      z = dist.mean()
+    else:  # sample
+      z = tf.convert_to_tensor(dist)
+    outputs = tf.concat([z, hidden_d], axis=-1)
+    outputs = self._proj_out(outputs)
+    outputs = self.layer.activation(outputs)
+    return outputs
 
 
 # ===========================================================================
@@ -38,7 +269,7 @@ class StackedVAE(AnnealingVAE):
 
   Parameters
   ----------
-  ladder_hiddens : List[int], optional
+  ladder_units : List[int], optional
       number of hidden units for layers in the ladder, each element corresponding
       to a ladder latents, by default [256]
   ladder_latents : List[int], optional
@@ -75,13 +306,13 @@ class StackedVAE(AnnealingVAE):
 
   def __init__(
       self,
-      ladder_hiddens: List[int] = [256],
-      ladder_latents: List[int] = [64],
+      ladder_units: Sequence[int] = (256,),
+      ladder_latents: Sequence[int] = (64,),
       ladder_layers: int = 2,
       batchnorm: bool = True,
-      batchnorm_kw: Dict[str, Any] = {'momentum': 0.9},
+      batchnorm_kw: Optional[Dict[str, Any]] = None,
       dropout: float = 0.0,
-      activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.leaky_relu,
+      activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
       latents: Union[Layer, RVconf] = RVconf(32,
                                              'mvndiag',
                                              projection=True,
@@ -95,7 +326,11 @@ class StackedVAE(AnnealingVAE):
       **kwargs,
   ):
     super().__init__(latents=latents, name=name, **kwargs)
-    assert len(ladder_hiddens) == len(ladder_latents)
+    self.encoder.track_outputs = True
+    self.decoder.track_outputs = True
+    if batchnorm_kw is None:
+      batchnorm_kw = {'momentum': 0.9}
+    assert len(ladder_units) == len(ladder_latents)
     self.all_standard_prior = bool(all_standard_prior)
     self.stochastic_inference = bool(stochastic_inference)
     self.only_mean_up = bool(only_mean_up)
@@ -106,7 +341,7 @@ class StackedVAE(AnnealingVAE):
               batchnorm_kw=batchnorm_kw,
               dropout=dropout,
               name=f'LadderEncoder{i}').create_network()
-      for i, units in enumerate(ladder_hiddens)
+      for i, units in enumerate(ladder_units)
     ]
     self.ladder_decoder = [
       NetConf([units] * ladder_layers,
@@ -115,7 +350,7 @@ class StackedVAE(AnnealingVAE):
               batchnorm_kw=batchnorm_kw,
               dropout=dropout,
               name=f'LadderDecoder{i}').create_network()
-      for i, units in enumerate(ladder_hiddens[::-1])
+      for i, units in enumerate(ladder_units[::-1])
     ]
     self.ladder_qz = [
       _parse_layers(RVconf(units, 'normal', projection=True, name=f'qZ{i}'))
@@ -130,11 +365,13 @@ class StackedVAE(AnnealingVAE):
       ]
 
   @classmethod
-  def is_hierarchical(self) -> bool:
+  def is_hierarchical(cls) -> bool:
     return True
 
-  def encode(self, inputs, training=None, mask=None, only_encoding=False):
+  def encode(self, inputs, training=None, mask=None, only_encoding=False,
+             **kwargs):
     h = self.encoder(inputs, training=training, mask=mask)
+    last_outputs = h._last_outputs
     latents = []
     for e, z in zip(self.ladder_encoder, self.ladder_qz):
       # stochastic bottom-up inference
@@ -142,12 +379,10 @@ class StackedVAE(AnnealingVAE):
       latents.append(qz)
       if self.stochastic_inference:
         h = tf.convert_to_tensor(qz)
-        h = e(h, training=training, mask=mask)
-      else:
+      elif self.only_mean_up:
         # deterministic bottom-up inference
-        if self.only_mean_up:
-          h = qz.mean()
-        h = e(h, training=training, mask=mask)
+        h = qz.mean()
+      h = e(h, training=training, mask=mask)
     if only_encoding:
       return h
     qz = self.latents(h,
@@ -157,7 +392,8 @@ class StackedVAE(AnnealingVAE):
     latents.append(qz)
     return tuple(latents[::-1])
 
-  def decode(self, latents, training=None, mask=None, only_decoding=False):
+  def decode(self, latents, training=None, mask=None, only_decoding=False,
+             **kwargs):
     h = tf.convert_to_tensor(latents[0])
     outputs = []
     for d, z in zip(self.ladder_decoder, self.ladder_pz[::-1]):
@@ -213,30 +449,6 @@ class StackedVAE(AnnealingVAE):
 # ===========================================================================
 # Ladder VAE
 # ===========================================================================
-class LadderMergeDistribution(DistributionLambda):
-  """ Merge two Gaussian based on weighed variance
-
-  https://github.com/casperkaae/LVAE/blob/066858a3fb53bb1c529a6f12ae5afb0955722845/run_models.py#L106
-  """
-
-  def __init__(self, name='LadderMergeDistribution'):
-    super().__init__(make_distribution_fn=LadderMergeDistribution.new,
-                     name=name)
-
-  @staticmethod
-  def new(dists):
-    q_e, q_d = dists
-    mu_e = q_e.mean()
-    mu_d = q_d.mean()
-    prec_e = 1 / q_e.variance()
-    prec_d = 1 / q_d.variance()
-    mu = (mu_e * prec_e + mu_d * prec_d) / (prec_e + prec_d)
-    scale = tf.math.sqrt(1 / (prec_e + prec_d))
-    dist = Independent(Normal(loc=mu, scale=scale), reinterpreted_batch_ndims=1)
-    dist.KL_divergence = q_d.KL_divergence
-    return dist
-
-
 class LadderVAE(StackedVAE):
   """ The ladder variational autoencoder
 
@@ -268,7 +480,7 @@ class LadderVAE(StackedVAE):
                name: str = 'LadderVAE',
                **kwargs):
     super().__init__(stochastic_inference=False, name=name, **kwargs)
-    self.ladder_merge = LadderMergeDistribution()
+    self.ladder_merge = MergeNormal()
     self.merge_gaussians = bool(merge_gaussians)
 
   def decode(self, latents, training=None, mask=None, only_decoding=False):

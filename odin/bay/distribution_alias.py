@@ -3,12 +3,15 @@ from __future__ import absolute_import, division, print_function
 import inspect
 
 import numpy as np
+from typing import Type, Tuple
 from odin.bay import distributions as obd
 from odin.bay import layers as obl
 from odin.utils.python_utils import multikeysdict, partialclass
 from six import string_types
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.layers import distribution_layer as tfl
+from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.layers import DistributionLambda
 
 # TODO: better specifying complex distribution
 # mapping from alias to
@@ -112,7 +115,9 @@ _dist_mapping = multikeysdict({
 })
 
 
-def parse_distribution(alias: str):
+def parse_distribution(alias: str
+                       ) -> Tuple[Type[DistributionLambda],
+                                  Type[Distribution]]:
   r""" Parse a string alias to appropriate class of `DistributionLambda`
   and `Distribution`.
 
