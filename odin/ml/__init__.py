@@ -246,7 +246,7 @@ class DimReduce(IntFlag):
 
   def __call__(self,
                *X,
-               n_components: int = 2,
+               n_components: Optional[int] = 2,
                max_samples: Optional[int] = None,
                return_model: bool = False,
                random_state: int = 1,

@@ -398,6 +398,7 @@ def dsprites_networks(
     **kwargs,
 ) -> Dict[str, Layer]:
   from odin.bay.random_variable import RVconf
+  from odin.bay.vi.autoencoder import HierarchicalLatents
   if zdim is None:
     zdim = 10
   distribution = str(kwargs.get('distribution', 'bernoulli'))
@@ -426,8 +427,16 @@ def dsprites_networks(
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((4, 4, proj_dim // 16)),
-    deconv(64, 4, strides=2, name='decoder1'),
-    deconv(64, 4, strides=2, name='decoder2'),
+    HierarchicalLatents(deconv(64, 4, strides=2, name='decoder1'),
+                        encoder=encoder.layers[3],
+                        latent_units=16,
+                        disable=True,
+                        name='latents1'),
+    HierarchicalLatents(deconv(64, 4, strides=2, name='decoder2'),
+                        encoder=encoder.layers[2],
+                        latent_units=2,
+                        disable=True,
+                        name='latents2'),
     deconv(32, 4, strides=2, name='decoder3'),
     deconv(32, 4, strides=2, name='decoder4'),
     # NOTE: this last projection layer with linear activation is crucial
