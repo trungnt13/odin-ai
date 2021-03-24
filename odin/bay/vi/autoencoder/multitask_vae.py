@@ -53,7 +53,7 @@ class MultitaskVAE(AnnealingVAE, SemiSupervisedVAE):
       encoder_y: Optional[Union[LayerCreator, Literal['tie', 'copy']]] = None,
       decoder_y: Optional[Union[LayerCreator, Literal['tie', 'copy']]] = None,
       alpha: float = 10.,
-      n_semi_iw: int = 10,
+      n_semi_iw: int = (),
       skip_decoder: bool = False,
       name: str = 'MultitaskVAE',
       **kwargs,
@@ -62,7 +62,7 @@ class MultitaskVAE(AnnealingVAE, SemiSupervisedVAE):
     self.labels = _parse_layers(labels)
     self.labels: DistributionDense
     self.alpha = tf.convert_to_tensor(alpha, dtype=self.dtype, name='alpha')
-    self.n_semi_iw = int(n_semi_iw)
+    self.n_semi_iw = n_semi_iw
     self.skip_decoder = bool(skip_decoder)
     ## prepare encoder for Y
     if encoder_y is not None:
@@ -185,8 +185,10 @@ class MultitaskVAE(AnnealingVAE, SemiSupervisedVAE):
       def supervised_llk():
         py = self.predict_labels(latents=Q, training=training, mask=mask,
                                  n_mcmc=self.n_semi_iw)
-        llk_y = py.log_prob(
-          tf.tile(tf.expand_dims(y_sup, 0), (self.n_semi_iw, 1, 1)))
+        labels = y_sup
+        if isinstance(self.n_semi_iw, int):
+          labels = tf.tile(tf.expand_dims(labels, 0), (self.n_semi_iw, 1, 1))
+        llk_y = py.log_prob(labels)
         # this is important, if loss=0 when using one-hot log_prob,
         # the gradient is NaN
         llk_y = tf.reduce_mean(self.alpha * llk_y)
@@ -244,14 +246,16 @@ class MultiheadVAE(MultitaskVAE):
 
   def __init__(
       self,
-      decoder_y: LayerCreator = NetConf((256, 256),
-                                        flatten_inputs=True,
-                                        name='decoder_y'),
+      decoder_y: Optional[LayerCreator] = None,
       name: str = 'MultiheadVAE',
       **kwargs,
   ):
     kwargs.pop('skip_decoder', None)
     kwargs.pop('encoder_y', None)
+    if decoder_y is None:
+      decoder_y = NetConf((512, 512), batchnorm=True, activation=tf.nn.elu,
+                          kernel_initializer='he_normal', flatten_inputs=True,
+                          name='decoder_y')
     super().__init__(encoder_y=None,
                      decoder_y=decoder_y,
                      skip_decoder=True,
