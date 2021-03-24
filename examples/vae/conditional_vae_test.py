@@ -40,7 +40,7 @@ vae = ConditionalM2VAE(encoder=encoder,
                        alpha=0.1 * 10)
 vae.fit(train, compile_graph=True, epochs=-1, max_iter=8000, sample_shape=())
 
-x = vae.sample_data(16)
+x = vae.sample_observation(16)
 y = vae.sample_labels(16)
 m = tf.cast(
     tf.transpose(tf.random.categorical(tf.math.log([[0.5, 0.5]]), y.shape[0])),

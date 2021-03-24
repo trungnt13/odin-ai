@@ -5,6 +5,7 @@ import tensorflow as tf
 from six import string_types
 from tensorflow.python import keras
 from typing_extensions import Literal
+from tensorflow_probability.python.distributions import Distribution
 
 from odin.bay.layers import DistributionDense
 from odin.bay.random_variable import RVconf
@@ -102,10 +103,9 @@ class MultitaskVAE(AnnealingVAE, SemiSupervisedVAE):
     if latents is None:
       latents = self.encode(inputs, training=training, mask=mask, **kwargs)
     # === 0. preprocessing latents
-    if mean:
-      latents = [z.mean() for z in as_tuple(latents)]
-    else:
-      latents = [z.sample(n_mcmc) for z in as_tuple(latents)]
+    latents = [(z.mean() if mean else z.sample(n_mcmc))
+               if isinstance(z, Distribution) else z
+               for z in as_tuple(latents)]
     if len(latents) > 1:
       latents = tf.concat(latents, axis=-1)
     else:

@@ -354,17 +354,17 @@ class ImageDataset(IterableDataset):
       return X_uns, X_sup, y_sup
 
     # shuffle must be called after cache
-    if shuffle is not None:
+    if shuffle is not None and shuffle > 0:
       ds = ds.shuffle(buffer_size=int(shuffle),
                       seed=seed,
                       reshuffle_each_iteration=True)
     # for mixing unsupervised and supervised data
     if task == 'semi' and fixed_oversample:
-      if shuffle is not None:
+      if shuffle is not None and shuffle > 0:
         ds_supervised = ds_supervised.shuffle(buffer_size=int(shuffle),
                                               seed=seed,
                                               reshuffle_each_iteration=True)
-      if batch_size is not None:
+      if batch_size is not None and batch_size > 0:
         n_sup = int(np.ceil(batch_size * oversample_ratio))
         batch_size = batch_size - n_sup
         ds_supervised = ds_supervised.batch(n_sup,
@@ -380,7 +380,7 @@ class ImageDataset(IterableDataset):
 
       ds = ds.map(merge_semi)
     # process as normal
-    elif batch_size is not None:
+    elif batch_size is not None and batch_size > 0:
       ds = ds.batch(batch_size, drop_remainder=drop_remainder)
     # map cache and prefetch
     ds = ds.map(_process, num_parallel_calls=parallel)

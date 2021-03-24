@@ -6,8 +6,10 @@ from dataclasses import dataclass, field
 from functools import partial
 from itertools import zip_longest
 from typing import (Any, Callable, Dict, Iterator, List, Optional, Tuple, Type,
-                    Union)
+                    Union, Sequence)
+from typing_extensions import Literal
 
+import numpy as np
 import tensorflow as tf
 from six import string_types
 from tensorflow import Tensor
@@ -23,9 +25,9 @@ from odin.backend.keras_helpers import layer2text
 from odin.bay.layers.dense_distribution import DistributionDense
 from odin.bay.random_variable import RVconf
 from odin.bay.vi._base import VariationalModel
-from odin.bay.vi.utils import prepare_ssl_inputs
 from odin.networks import Identity, NetConf, TrainStep, SequentialNetwork
 from odin.utils import as_tuple
+from odin.bay.vi.utils import traverse_dims
 
 __all__ = [
   'LayerCreator',
@@ -254,52 +256,67 @@ class VariationalAutoencoder(VariationalModel):
     return 1
 
   @property
-  def input_shape(self) -> List[int]:
+  def input_shape(self) -> Sequence[Union[None, int]]:
     return self.encoder.input_shape
 
   @property
-  def latent_shape(self) -> List[int]:
+  def latent_shape(self) -> Sequence[Union[None, int]]:
     return self.decoder.input_shape
 
-  def sample_prior(self,
-                   sample_shape: Union[int, List[int]] = (),
-                   seed: int = 1) -> Tensor:
-    r""" Sampling from prior distribution """
+  def sample_prior(self, n: int = 1, seed: int = 1) -> Tensor:
+    """Sampling from prior distribution"""
     return bk.atleast_2d(
-      self.latents.sample(sample_shape=sample_shape, seed=seed))
+      self.latents.sample(sample_shape=n, seed=seed))
 
-  def sample_data(self,
-                  sample_shape: Union[int, List[int]] = (),
-                  seed: int = 1) -> Tensor:
-    r""" Sample from p(X) given that the prior of X is known, this could be
-    wrong since `RVmeta` often has a default prior. """
-    return bk.atleast_2d(
-      self.observation.sample(sample_shape=sample_shape, seed=seed))
+  def sample_observation_prior(self, n: int = 1, seed: int = 1) -> Tensor:
+    """Sample from observation prior, i.e. p(X), given that the prior of X
+    is known.
 
-  def generate(self,
-               sample_shape: List[int] = (),
-               training: Optional[bool] = None,
-               seed: int = 1,
-               **kwargs) -> Distribution:
-    r"""Randomly generate outputs by sampling from prior distribution then
-    decode it.
-
-    Parameters
-    ----------
-    sample_shape : List[int], optional
-        the sample shape, by default ()
-    seed : int, optional
-        seed for the Tensorflow random state, by default 1
-    training : Optional[bool], optional
-        invoke call method in which training mode, by default None
-
-    Returns
-    -------
-    Union[Distribution, List[Distribution]]
-        the output distribution(s)
+    Notes
+    -----
+    This could be wrong since `RVmeta` often has a default prior.
     """
-    z = self.sample_prior(sample_shape, seed)
-    return self.decode(z, training=training, **kwargs)
+    return bk.atleast_2d(
+      self.observation.sample(sample_shape=n, seed=seed))
+
+  def sample_observation(self, n: int = 1, seed: int = 1,
+                         training: bool = False) -> Distribution:
+    """Sample observation using latents prios"""
+    z = self.sample_prior(n, seed=seed)
+    return self.decode(z, training=training)
+
+  def sample_traverse(self,
+                      inputs: Union[TensorType, List[TensorType]],
+                      n_top_latents: int = 5,
+                      min_val: int = -2.0,
+                      max_val: int = 2.0,
+                      n_traverse_points: int = 11,
+                      mode: Literal[
+                        'linear', 'quantile', 'gaussian'] = 'linear',
+                      training: bool = False,
+                      mask: Optional[TensorType] = None) -> Distribution:
+    latents = self.encode(inputs, training=training, mask=mask)
+    stddev = np.sum(latents.stddev(), axis=0)
+    top_latents = np.argsort(stddev)[::-1][:int(n_top_latents)]
+    latents = traverse_dims(latents, feature_indices=top_latents,
+                            min_val=min_val, max_val=max_val,
+                            n_traverse_points=n_traverse_points,
+                            mode=mode)
+    return self.decode(latents, training=training, mask=mask)
+
+  def get_latents(self,
+                  inputs: Optional[Union[TensorType, List[TensorType]]] = None,
+                  training: Optional[bool] = None,
+                  mask: Optional[TensorType] = None,
+                  **kwargs) -> Distribution:
+    """Get the posterior latents distribution `q(z|x)`"""
+    if inputs is None:
+      if self.last_outputs is None:
+        raise RuntimeError(f'Cannot get_latents of {self.name} '
+                           'both inputs and last_outputs are None.')
+      P, Q = self.last_outputs
+      return Q
+    return self.encode(inputs, training=training, mask=mask, **kwargs)
 
   def encode(self,
              inputs: Union[TensorType, List[TensorType]],
@@ -650,5 +667,4 @@ class SemiSupervisedVAE(VariationalAutoencoder):
 # ===========================================================================
 # Others
 # ===========================================================================
-
 VAE = VariationalAutoencoder

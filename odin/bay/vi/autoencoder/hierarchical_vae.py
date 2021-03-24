@@ -1,4 +1,5 @@
 import inspect
+from contextlib import contextmanager
 from types import MethodType
 from typing import Any, Callable, Dict, List, Tuple
 from typing import Union, Optional, Sequence
@@ -14,6 +15,7 @@ from tensorflow_probability.python.layers.distribution_layer import (
   DistributionLambda)
 from typing_extensions import Literal
 
+from odin.backend import TensorType
 from odin.bay.helpers import kl_divergence
 from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE, BetaVAE
@@ -149,42 +151,7 @@ class HierarchicalLatents(Wrapper):
     # store the last distributions
     self._posterior = None
     self._prior = None
-
-  def enable(self):
-    self._disable = False
-    return self
-
-  @property
-  def is_stochastic(self) -> bool:
-    """Return True if the layer is stochastically initialized"""
-    return self._dist_prior is not None
-
-  @property
-  def posterior(self) -> Optional[Distribution]:
-    return self._posterior
-
-  @property
-  def prior(self) -> Optional[Distribution]:
-    return self._prior
-
-  def kl_divergence(self,
-                    analytic: bool = False,
-                    reverse: bool = False,
-                    free_bits: float = 0.5,
-                    raise_not_init: bool = True) -> tf.Tensor:
-    if self._disable:
-      return tf.zeros((), dtype=self.dtype)
-    if raise_not_init:
-      if self._posterior is None:
-        raise ValueError('No posterior for the hierarchical latent variable.')
-      if self._prior is None:
-        raise ValueError("This HierarchicalLatents haven't been called.")
-    elif self._posterior is None or self._prior is None:
-      return tf.zeros((), dtype=self.dtype)
-    qz = self.posterior
-    pz = self.prior
-    return kl_divergence(q=qz, p=pz, analytic=analytic, reverse=reverse,
-                         free_bits=free_bits)
+    self._is_sampling = False
 
   def build(self, input_shape=None):
     super().build(input_shape)
@@ -248,16 +215,78 @@ class HierarchicalLatents(Wrapper):
 
     # === 2. create distribution
     self._dist_posterior = DistributionLambda(make_distribution_fn=create_dist,
-                                              name=f'{self.name}_q')
+                                              name=f'{self.name}_posterior')
     self._dist_prior = DistributionLambda(make_distribution_fn=create_dist,
-                                          name=f'{self.name}_p')
+                                          name=f'{self.name}_prior')
     self._dist_posterior.build(shape)
     self._dist_prior.build(shape)
+
+  def sampling(self):
+    """Sampling mode, forward prior samples"""
+    self._is_sampling = True
+    return self
+
+  def inference(self):
+    """Inference mode, forward posterior samples (require encoder states)"""
+    self._is_sampling = False
+    return self
+
+  def enable(self):
+    """Enable stochastic inference and generation for this variable"""
+    self._disable = False
+    return self
+
+  @property
+  def is_sampling(self) -> bool:
+    return self._is_sampling
+
+  @property
+  def is_stochastic(self) -> bool:
+    """Return True if the layer is stochastically initialized"""
+    return self._dist_prior is not None
+
+  @property
+  def posterior(self) -> Optional[Distribution]:
+    return self._posterior
+
+  @property
+  def prior(self) -> Optional[Distribution]:
+    return self._prior
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    return ("<HVars "
+            f"'{self.name}' enable:{self.is_stochastic} "
+            f"sampl:{self.is_sampling} "
+            f"units:{self._total_units} mode:{self.forward_mode} "
+            f"dist:{self.distribution} down:{self.downsample} "
+            f"merge:{True if self._merge_normal else False}>")
+
+  def kl_divergence(self,
+                    analytic: bool = False,
+                    reverse: bool = False,
+                    free_bits: float = 0.5,
+                    raise_not_init: bool = True) -> tf.Tensor:
+    if self._disable:
+      return tf.zeros((), dtype=self.dtype)
+    if raise_not_init:
+      if self._posterior is None:
+        raise ValueError('No posterior for the hierarchical latent variable.')
+      if self._prior is None:
+        raise ValueError("This HierarchicalLatents haven't been called.")
+    elif self._posterior is None or self._prior is None:
+      return tf.zeros((), dtype=self.dtype)
+    qz = self.posterior
+    pz = self.prior
+    return kl_divergence(q=qz, p=pz, analytic=analytic, reverse=reverse,
+                         free_bits=free_bits)
 
   def compute_output_shape(self, input_shape) -> Sequence[Union[None, int]]:
     return self.layer.compute_output_shape(input_shape)
 
-  def call(self, inputs, training=None, mask=None, sampling=None, **kwargs):
+  def call(self, inputs, training=None, mask=None, **kwargs):
     # === 1. call the layer
     if 'training' in self._args:
       kwargs['training'] = training
@@ -271,10 +300,19 @@ class HierarchicalLatents(Wrapper):
     self._prior = prior
     # === 3. inference
     dist = prior
-    if not sampling and \
-        self.encoder is not None and \
-        hasattr(self.encoder, '_last_outputs'):
+    if (not self.is_sampling and
+        self.encoder is not None and
+        hasattr(self.encoder, '_last_outputs') and
+        self.encoder._last_outputs is not None):
       hidden_e = self.encoder._last_outputs
+      # just stop inference if there is no Encoder state
+      if (type(hidden_e) is not type(hidden_d) or
+          hidden_e.shape[0] != hidden_d.shape[0]):
+        raise RuntimeError(
+          'Doing inference but encoder state mismatch decoder state: '
+          f'encoder: {type(hidden_e).__name__}-{hidden_e.shape} and '
+          f'decoder: {type(hidden_d).__name__}-{hidden_d.shape}, '
+          'switch to sampling mode if possible.')
       # (Kingma 2016) use add, we concat here
       h = tf.concat([hidden_e, hidden_d], axis=-1)
       posterior = self._dist_posterior(self._proj_posterior(h, **kwargs))
@@ -283,6 +321,8 @@ class HierarchicalLatents(Wrapper):
         posterior = self._merge_normal([posterior, prior])
       self._posterior = posterior
       dist = posterior
+      # erase the previous state of encoder
+      self.encoder._last_outputs = None
     # === 4. sampling
     if self.forward_mode == 'mean':
       z = dist.mean()
@@ -295,16 +335,6 @@ class HierarchicalLatents(Wrapper):
     outputs = self.layer.activation(outputs)
     return outputs
 
-  def __repr__(self):
-    return self.__str__()
-
-  def __str__(self):
-    return ("<HVars "
-            f"'{self.name}' enable:{self.is_stochastic} "
-            f"units:{self._total_units} mode:{self.forward_mode} "
-            f"dist:{self.distribution} down:{self.downsample} "
-            f"merge:{True if self._merge_normal else False}>")
-
 
 # ===========================================================================
 # Hierarchical VAE
@@ -314,12 +344,62 @@ class HierarchicalVAE(AnnealingVAE):
   def __init__(self, free_bits=0.25, name='HierarchicalVAE', **kwargs):
     super().__init__(free_bits=free_bits, name=name, **kwargs)
     found_hierarchical_vars = False
+    self._hierarchical_vars = []
+    self._hierarchical_vars: List[HierarchicalLatents]
     for layer in self.decoder.layers:
       if isinstance(layer, HierarchicalLatents):
         found_hierarchical_vars = True
         layer.enable()
+        self._hierarchical_vars.append(layer)
     if not found_hierarchical_vars:
       raise ValueError('No HierarchicalLatents wrapper found in the decoder.')
+
+  @contextmanager
+  def sampling_mode(self):
+    """Temporary switch all the hierarchical latents into sampling mode"""
+    [layer.sampling() for layer in self.hierarchical_latents]
+    yield self
+    [layer.inference() for layer in self.hierarchical_latents]
+
+  @property
+  def hierarchical_latents(self) -> Sequence[HierarchicalLatents]:
+    return tuple(self._hierarchical_vars)
+
+  def sample_prior(self, n: int = 1, seed: int = 1) -> Sequence[tf.Tensor]:
+    """Sampling from prior distribution"""
+    z0 = super().sample_prior(n, seed)
+    with self.sampling_mode():
+      self.decode(z0, training=False)
+    Z = [z0]
+    for layer in self.hierarchical_latents:
+      Z.append(layer.prior.sample())
+    return tuple(Z)
+
+  def sample_observation(self, n: int = 1, seed: int = 1,
+                         training: bool = False) -> Distribution:
+    z0 = super().sample_prior(n, seed)
+    with self.sampling_mode():
+      obs = self.decode(z0, training=training)
+    return obs
+
+  def sample_traverse(self,
+                      inputs,
+                      **kwargs) -> Distribution:
+    with self.sampling_mode():
+      obs = super().sample_traverse(inputs, **kwargs)
+    return obs
+
+  def get_latents(self, inputs=None, training=None, mask=None, **kwargs
+                  ) -> Sequence[Distribution]:
+    z0 = super().get_latents(inputs=inputs, training=training, mask=mask,
+                             **kwargs)
+    # new encode called
+    if inputs is not None:
+      self.decode(z0, training=training, mask=mask)
+    Z = [z0]
+    for layer in self.hierarchical_latents:
+      Z.append(layer.posterior)
+    return tuple(Z)
 
   @classmethod
   def is_hierarchical(cls) -> bool:
