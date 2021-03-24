@@ -2,7 +2,7 @@ import os
 import pickle
 from collections import defaultdict
 from functools import partial
-from typing import Optional, List, Dict
+from typing import Optional, List, Dict, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
@@ -15,7 +15,8 @@ from odin.utils import as_tuple
 from odin.utils.cache_utils import get_cache_path
 
 
-def _extract_labeled_examples(ds, normalize_method=None):
+def _extract_labeled_examples(ds, normalize_method=None
+                              ) -> Tuple[tf.Tensor, tf.Tensor]:
   x_labeled, y_labeled = [], []
   for m, (x, y) in tqdm(ds.batch(1024), desc='Extracting labeled examples'):
     x_labeled.append(tf.boolean_mask(x, m, 0))
@@ -28,6 +29,12 @@ def _extract_labeled_examples(ds, normalize_method=None):
 
 
 class ImageDataset(IterableDataset):
+
+  def __init__(self):
+    self.train = None
+    self.valid = None
+    self.test = None
+    self._label_type = None
 
   @property
   def binarized(self) -> bool:
@@ -52,6 +59,7 @@ class ImageDataset(IterableDataset):
         self._label_type = 'binary'
       else:
         self._label_type = 'factor'
+    self._label_type: LabelType
     return self._label_type
 
   def sample_images(self,
@@ -66,6 +74,7 @@ class ImageDataset(IterableDataset):
     train = self.create_dataset(batch_size=n_samples,
                                 partition=str(partition),
                                 label_percent=0.5)
+    train: tf.data.Dataset
     # prepare the data
     images = []
     labels = []
@@ -175,8 +184,9 @@ class ImageDataset(IterableDataset):
       cache: Optional[str] = '',
       prefetch: Optional[int] = tf.data.AUTOTUNE,
       parallel: Optional[int] = tf.data.AUTOTUNE,
-      label_percent: float = 0.0,
-      label_weight: float = 0.0,
+      label_percent: Union[bool, int, float] = 0.0,
+      oversample_ratio: Union[bool, float] = 0.0,
+      fixed_oversample: bool = False,
       normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
       seed: int = 1,
   ) -> tf.data.Dataset:
@@ -198,19 +208,24 @@ class ImageDataset(IterableDataset):
         [description], by default tf.data.AUTOTUNE
     parallel : Optional[int], optional
         [description], by default tf.data.AUTOTUNE
-    label_percent : Union[bool, float], optional
-        If True, return both image and label,
-        otherwise, only image is returned.
-        If a scalar is provided, it indicate the percent of labelled data
-        in the mask.
-        , by default False
-    label_weight : float, optional
-        a float number within the range `[0, 1]`. If `label_weight=0`, use the
-        default label-unlabel ratio. If `label_weight=1`, repeat all the label
-        data every minibatch. Otherwise, the number is the percent of labeled
-        data for each minibatch, by default 0.0.
-    normalize : Literal[, optional
-        [description], by default 'probs'
+    label_percent : Union[bool, int, float], optional
+        If `1.0` or `True`, return both image and label, i.e. supervised task.
+        If `0.0`or `False`, only image is returned, i.e. unsupervised task.
+        If a scalar in `(0, 1)`, it indicate the percent of labelled data,
+        i.e. semi-supervised task.
+        If an integer `> 1`, exact number of labelled samples, by default `0.0`
+    oversample_ratio : Union[bool, float], optional
+        a float number within the range `[0, 1]`, indicate the ratio between
+        unlabel and label data in minibatch.
+        If `0` or `False`, use the default label-unlabel ratio.
+        If `1` or `True`, repeat all the label data every minibatch.
+        Otherwise, the number is the percent of labeled data for each minibatch,
+        by default 0.0.
+    fixed_oversample : bool
+        if `True`, the amount of labeled sample remain the same in each
+        minibatch after oversampling, by default `True`
+    normalize : Literal['probs', 'tanh', 'raster']
+        image normalizing method, by default 'probs'
     seed : int, optional
         [description], by default 1
 
@@ -235,13 +250,19 @@ class ImageDataset(IterableDataset):
     else:
       has_labels = True
     label_percent = float(label_percent)
-    assert 0. <= label_weight <= 1., \
-      f'label_weight must be in [0, 1] given: {label_weight}'
+    assert 0. <= oversample_ratio <= 1., \
+      f'oversample_ratio must be in [0, 1] given: {oversample_ratio}'
+    # which task
+    task = 'unsupervised'
+    if label_percent == 1.0:
+      task = 'supervised'
+    elif 0. < label_percent < 1. or label_percent > 1.:
+      task = 'semi'
     ######## prepare the labeled data
     rand = np.random.RandomState(seed=seed)
     length = tf.data.experimental.cardinality(ds).numpy()
-    x_labeled, y_labeled, mask_labeled, ds_labeled = [], [], None, None
-    if 0. < label_percent < 1. or label_percent > 1.:
+    x_labeled, y_labeled, mask_labeled, ds_supervised = [], [], None, None
+    if task == 'semi':
       n_labeled = int(label_percent * length \
                         if 0. < label_percent < 1. else int(label_percent))
       n_unlabeled = length - n_labeled
@@ -253,50 +274,61 @@ class ImageDataset(IterableDataset):
           rand.choice(v, size=n_per_classes, replace=False)
           for k, v in y_map.items()
         ])
-        labeled = np.full((length,), False, dtype=np.bool)
-        labeled[labeled_ids] = True
+        is_labeled = np.full((length,), False, dtype=np.bool)
+        is_labeled[labeled_ids] = True
       # just pseudo-random sampling
       else:
-        labeled = np.array([True] * n_labeled + [False] * (length - n_labeled))
-        rand.shuffle(labeled)
+        is_labeled = np.array(
+          [True] * n_labeled + [False] * (length - n_labeled))
+        rand.shuffle(is_labeled)
+      # add labeling flag to the dataset
       ds = tf.data.Dataset.zip(
-        (tf.data.Dataset.from_tensor_slices(labeled), ds))
+        (tf.data.Dataset.from_tensor_slices(is_labeled), ds))
       # repeat the label data in every minibatch
-      if label_weight == 1.0:
+      if oversample_ratio == 1.0:
         x_labeled, y_labeled = _extract_labeled_examples(
           ds, partial(self.normalize, normalize=normalize))
         if y_labeled.shape.ndims == 1:
           y_labeled = tf.one_hot(y_labeled, len(self.labels))
         mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
         ds = ds.filter(lambda i, x: tf.logical_not(i))
-      # mixing the label into minibatches
-      elif label_weight > 0.0:
+      # mixing the label into minibatch
+      elif oversample_ratio > 0.0:
         # for some reason sample_from_datasets significantly slowed down
         # if we sample from a single dataset that splitted into two by
         # filtering, and one of which is repeated
         # (e.g. 7000 samples/s dropped down to 1000 samples/s)
         x_labeled, y_labeled = _extract_labeled_examples(ds, None)
         mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
-        ds_labeled = tf.data.Dataset.from_tensor_slices(
+        ds_supervised = tf.data.Dataset.from_tensor_slices(
           (mask_labeled, (x_labeled, y_labeled)))
         n_repeat = int(
-          np.ceil(label_weight * n_unlabeled / (1 - label_weight) /
+          np.ceil(oversample_ratio * n_unlabeled / (1 - oversample_ratio) /
                   n_labeled))
-        ds_labeled = ds_labeled.shuffle(
+        ds_supervised = ds_supervised.shuffle(
           min(n_labeled, 1000),
           seed=seed,
           reshuffle_each_iteration=True,
         ).repeat(n_repeat)
-        ds_unlabeled = ds.filter(lambda i, x: tf.logical_not(i))
-        ds = tf.data.experimental.sample_from_datasets(
-          [ds_unlabeled, ds_labeled],
-          weights=[1. - label_weight, label_weight],
-          seed=seed)
+        ds_unsupervised = ds.filter(lambda i, x: tf.logical_not(i))
+        # only sampling if not fixed amount of labels
+        if not fixed_oversample:
+          ds = tf.data.experimental.sample_from_datasets(
+            [ds_unsupervised, ds_supervised],
+            weights=[1. - oversample_ratio, oversample_ratio],
+            seed=seed)
+        else:
+          ds = ds_unsupervised
+      # default ratio
+      else:
+        fixed_oversample = False
     ######## other cases
-    elif label_percent == 0:
+    elif task == 'unsupervised':
       ds = ds.map(lambda *x: (False, x))
-    elif label_percent == 1:
+    elif task == 'supervised':
       ds = ds.map(lambda *x: (True, x))
+    else:
+      raise ValueError(f'Unknown task type "{task}".')
 
     def _process(mask, data):
       images = tf.cast(data[0], tf.float32)
@@ -308,13 +340,13 @@ class ImageDataset(IterableDataset):
         if len(labels.shape) == 1:
           labels = tf.one_hot(labels, len(self.labels))
       # unsupervised task
-      if label_percent == 0:
+      if task == 'unsupervised':
         return images
       # supervised task
-      elif label_percent == 1:
+      elif task == 'supervised':
         return images, labels
       # semi-supervised task
-      if label_weight == 1.0:
+      if oversample_ratio == 1.0:
         return images, x_labeled, y_labeled
       X_sup = tf.boolean_mask(images, mask, 0)
       y_sup = tf.boolean_mask(labels, mask, 0)
@@ -322,12 +354,35 @@ class ImageDataset(IterableDataset):
       return X_uns, X_sup, y_sup
 
     # shuffle must be called after cache
-    if shuffle is not None and shuffle > 0:
+    if shuffle is not None:
       ds = ds.shuffle(buffer_size=int(shuffle),
                       seed=seed,
                       reshuffle_each_iteration=True)
-    if batch_size is not None:
+    # for mixing unsupervised and supervised data
+    if task == 'semi' and fixed_oversample:
+      if shuffle is not None:
+        ds_supervised = ds_supervised.shuffle(buffer_size=int(shuffle),
+                                              seed=seed,
+                                              reshuffle_each_iteration=True)
+      if batch_size is not None:
+        n_sup = int(np.ceil(batch_size * oversample_ratio))
+        batch_size = batch_size - n_sup
+        ds_supervised = ds_supervised.batch(n_sup,
+                                            drop_remainder=drop_remainder)
+        ds = ds.batch(batch_size, drop_remainder=drop_remainder)
+      ds = tf.data.Dataset.zip((ds, ds_supervised))
+
+      def merge_semi(uns, sup):
+        m_uns, (x_uns, y_uns) = uns
+        m_sup, (x_sup, y_sup) = sup
+        return tf.concat([m_uns, m_sup], 0), (tf.concat([x_uns, x_sup], 0),
+                                              tf.concat([y_uns, y_sup], 0))
+
+      ds = ds.map(merge_semi)
+    # process as normal
+    elif batch_size is not None:
       ds = ds.batch(batch_size, drop_remainder=drop_remainder)
+    # map cache and prefetch
     ds = ds.map(_process, num_parallel_calls=parallel)
     if cache is not None:
       ds = ds.cache(filename=str(cache))

@@ -225,6 +225,10 @@ class Networks(keras.Model, MD5object):
       self._trainer = None
       self._early_stopping = EarlyStopping()
 
+  def get_config(self) -> Dict[str, Any]:
+    args = dict(self._init_args)
+    return args
+
   def build(self, input_shape: Sequence[Union[None, int]]) -> 'Networks':
     """Build the networks for given input or list of inputs
 
@@ -886,7 +890,10 @@ class SequentialNetwork(keras.Sequential):
     return self.__str__()
 
   def __str__(self):
-    return layer2text(self, input_shape=self.input_shape)
+    input_shape = None
+    if hasattr(self, 'input_shape'):
+      input_shape = self.input_shape
+    return layer2text(self, input_shape=input_shape)
 
 
 # ===========================================================================

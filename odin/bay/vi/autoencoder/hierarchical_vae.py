@@ -24,6 +24,7 @@ from odin.utils import as_tuple
 __all__ = [
   'MergeNormal',
   'HierarchicalLatents',
+  'HierarchicalVAE',
   'LadderVAE',
   'UnetVAE'
 ]
@@ -148,6 +149,10 @@ class HierarchicalLatents(Wrapper):
     # store the last distributions
     self._posterior = None
     self._prior = None
+
+  def enable(self):
+    self._disable = False
+    return self
 
   @property
   def is_stochastic(self) -> bool:
@@ -295,15 +300,43 @@ class HierarchicalLatents(Wrapper):
 
   def __str__(self):
     return ("<HVars "
-            f"name={self.name} enable:{self.is_stochastic} "
+            f"'{self.name}' enable:{self.is_stochastic} "
             f"units:{self._total_units} mode:{self.forward_mode} "
-            f"dist:{self.distribution} ds:{self.downsample} "
+            f"dist:{self.distribution} down:{self.downsample} "
             f"merge:{True if self._merge_normal else False}>")
 
 
 # ===========================================================================
 # Hierarchical VAE
 # ===========================================================================
+class HierarchicalVAE(AnnealingVAE):
+
+  def __init__(self, free_bits=0.25, name='HierarchicalVAE', **kwargs):
+    super().__init__(free_bits=free_bits, name=name, **kwargs)
+    found_hierarchical_vars = False
+    for layer in self.decoder.layers:
+      if isinstance(layer, HierarchicalLatents):
+        found_hierarchical_vars = True
+        layer.enable()
+    if not found_hierarchical_vars:
+      raise ValueError('No HierarchicalLatents wrapper found in the decoder.')
+
+  @classmethod
+  def is_hierarchical(cls) -> bool:
+    return True
+
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
+    llk, kl = super().elbo_components(
+      inputs, training=training, mask=mask, **kwargs)
+    for idx, layer in enumerate(self.decoder.layers):
+      if not isinstance(layer, HierarchicalLatents):
+        continue
+      kl[f'kl_{layer.name}'] = self.beta * layer.kl_divergence(
+        analytic=self.analytic, reverse=self.reverse,
+        free_bits=self.free_bits)
+    return llk, kl
+
+
 class StackedVAE(AnnealingVAE):
   """ A hierachical VAE with multiple stochastic layers stacked on top of the previous one
   (autoregressive):

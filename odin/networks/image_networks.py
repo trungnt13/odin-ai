@@ -199,6 +199,7 @@ def mnist_networks(
 ) -> Dict[str, Layer]:
   """Network for MNIST dataset image size (28, 28, 1)"""
   from odin.bay.random_variable import RVconf
+  from odin.bay.vi.autoencoder import HierarchicalLatents
   n_channels = int(kwargs.get('n_channels', 1))
   proj_dim = 196
   input_shape = (28, 28, n_channels)
@@ -221,7 +222,12 @@ def mnist_networks(
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((7, 7, proj_dim // 49)),
     deconv(64, 5, strides=2, name='decoder2'),
-    conv(64, 5, strides=1, name='decoder3'),
+    HierarchicalLatents(conv(64, 5, strides=1, name='decoder3'),
+                        encoder=encoder.layers[3],
+                        latent_units=16,
+                        downsample=True,
+                        disable=True,
+                        name='latents1'),
     deconv(32, 5, strides=2, name='decoder4'),
     conv(32, 5, strides=1, name='decoder5'),
     conv(n_channels, 1, strides=1, activation='linear', name='decoder6'),
@@ -292,6 +298,7 @@ def cifar_networks(
 ) -> Dict[str, Layer]:
   """Network for CIFAR dataset image size (32, 32, 3)"""
   from odin.bay.random_variable import RVconf
+  from odin.bay.vi.autoencoder.hierarchical_vae import HierarchicalLatents
   if zdim is None:
     zdim = 256
   n_channels = kwargs.get('n_channels', 3)
@@ -315,9 +322,17 @@ def cifar_networks(
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((8, 8, proj_dim // 64)),
     deconv(64, 4, strides=2, name='decoder1'),
-    conv(64, 4, strides=1, name='decoder2'),
+    HierarchicalLatents(conv(64, 4, strides=1, name='decoder2'),
+                        encoder=encoder.layers[3],
+                        latent_units=8,
+                        name='latents1',
+                        disable=True),
     deconv(32, 4, strides=2, name='decoder3'),
-    conv(32, 4, strides=1, name='decoder4'),
+    HierarchicalLatents(conv(32, 4, strides=1, name='decoder4'),
+                        encoder=encoder.layers[1],
+                        latent_units=1,
+                        name='latents2',
+                        disable=True),
     conv(n_channels * 2,
          1,
          strides=1,

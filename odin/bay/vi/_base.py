@@ -34,7 +34,7 @@ class VariationalModel(Networks):
     self.allow_negative_kl = bool(allow_negative_kl)
 
   @classmethod
-  def is_hierarchical(self) -> bool:
+  def is_hierarchical(cls) -> bool:
     """Hierarchical models have multiple latents"""
     return False
 
@@ -69,6 +69,8 @@ class VariationalModel(Networks):
     sample_shape : Optional[Union[int, List[int]]], optional
         number of MCMC samples for MCMC estimation of KL-divergence,
         by default None
+    free_bits : float, optional
+        free bits, recommended in range [0.125, 0.25, 0.5]
 
     Returns
     -------
