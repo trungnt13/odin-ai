@@ -21,6 +21,7 @@ import types
 from collections import Iterable, Iterator, Mapping, OrderedDict, deque
 from itertools import chain, islice, tee
 from multiprocessing import Lock, cpu_count, current_process
+from typing import Optional, Tuple, Sequence, Generator
 
 import numpy
 
@@ -105,12 +106,12 @@ def dummy_formatter(x):
     return s
   if isinstance(x, (tuple, list)):
     return "(list)length=%d;type=%s" % \
-        (len(x), _type_name(x[0]) if len(x) > 0 else '*empty*')
+           (len(x), _type_name(x[0]) if len(x) > 0 else '*empty*')
   if isinstance(x, np.ndarray):
     return "(ndarray)shape=%s;dtype=%s" % (str(x.shape), str(x.dtype))
   if isinstance(x, Mapping):
     return "(map)length=%d;dtype=%s" % (len(x), ';'.join(
-        [_type_name(i) for i in next(iter(x.items()))]))
+      [_type_name(i) for i in next(iter(x.items()))]))
   # dataset type
   if 'odin.fuel.dataset.Dataset' in str(type(x)):
     return ("(ds)path:%s" % x.path)
@@ -187,8 +188,14 @@ def iter_chunk(it, n):
     obj = list(islice(it, n))
 
 
-def batching(batch_size, n=None, start=0, end=None, seed=None):
-  """
+def minibatch(batch_size: int,
+              n: Optional[int] = None,
+              start: int = 0,
+              end: Optional[int] = None,
+              seed: Optional[int] = None
+              ) -> Generator[Tuple[int, int], None, None]:
+  """Generate iteration of minibatches
+
   Parameters
   ----------
   batch_size: int
@@ -224,7 +231,7 @@ def batching(batch_size, n=None, start=0, end=None, seed=None):
   batches = list(range(start, end + batch_size, batch_size))
   rand = np.random.RandomState(seed)
   rand.shuffle(batches)
-  return (((i, min(i + batch_size, end))) for i in batches if i < end)
+  return ((i, min(i + batch_size, end)) for i in batches if i < end)
 
 
 def read_lines(file_path):
@@ -348,7 +355,7 @@ def auto_logging(log_dir=None, prefix='', num_max=None):
   if not os.path.isdir(log_dir):
     raise ValueError("'%s' is not a directory" % str(log_dir))
   prefix = get_script_name() if prefix is None or len(prefix) == 0 else str(
-      prefix)
+    prefix)
   date_time = get_formatted_datetime(only_number=False)
   path = os.path.join(log_dir, prefix + '[%s]' % date_time + '.txt')
   # ====== check maximum number of log ====== #
@@ -357,9 +364,9 @@ def auto_logging(log_dir=None, prefix='', num_max=None):
     num_max = int(num_max)
     past_logs = [i for i in os.listdir(log_dir) if prefix in i]
     past_logs = sorted(
-        past_logs,
-        key=lambda x: os.stat(os.path.join(log_dir, x))[ST_CTIME],
-        reverse=True)
+      past_logs,
+      key=lambda x: os.stat(os.path.join(log_dir, x))[ST_CTIME],
+      reverse=True)
     # remove previous logs
     for i, name in enumerate(past_logs):
       if i >= num_max - 1:
@@ -381,12 +388,12 @@ def wprint(text):
 # Universal ID
 # ===========================================================================
 _uuid_chars = list(
-    chain(
-        map(chr, range(65, 91)),  # ABCD
-        map(chr, range(97, 123)),  # abcd
-        map(chr, range(48, 57))))  # 0123
+  chain(
+    map(chr, range(65, 91)),  # ABCD
+    map(chr, range(97, 123)),  # abcd
+    map(chr, range(48, 57))))  # 0123
 _uuid_random_state = numpy.random.RandomState(
-    int(str(int(time.time() * 100))[3:]))
+  int(str(int(time.time() * 100))[3:]))
 
 
 def uuid(length: int = 8) -> str:
@@ -395,7 +402,7 @@ def uuid(length: int = 8) -> str:
   # uniqid = '%8x%4x' % (int(m), (m - int(m)) * 1000000)
   # uniqid = str(uuid.uuid4())[:8]
   uniquid = ''.join(
-      _uuid_random_state.choice(_uuid_chars, size=length, replace=True))
+    _uuid_random_state.choice(_uuid_chars, size=length, replace=True))
   return uniquid
 
 
@@ -462,8 +469,8 @@ class UniqueHasher(object):
       if self.nb_labels is not None and \
           len(self._memory) >= self.nb_labels:
         raise Exception(
-            'All %d labels have been assigned, outbound value:"%s"' %
-            (self.nb_labels, value))
+          'All %d labels have been assigned, outbound value:"%s"' %
+          (self.nb_labels, value))
       else:
         while key in self._memory:
           key += 1
@@ -511,24 +518,24 @@ class FuncDesc(object):
       self._func = func._func
     # extract information from a function or method
     elif inspect.isfunction(func) or inspect.ismethod(func) or \
-    isinstance(func, decorators.functionable):
+        isinstance(func, decorators.functionable):
       if isinstance(func, decorators.functionable):
         sign = inspect.signature(func.function)
       else:
         sign = inspect.signature(func)
       self._args = [
-          n for n, p in sign.parameters.items()
-          if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
-                            inspect.Parameter.VAR_KEYWORD)
+        n for n, p in sign.parameters.items()
+        if p.kind not in (inspect.Parameter.VAR_POSITIONAL,
+                          inspect.Parameter.VAR_KEYWORD)
       ]
       self._is_include_args = any(i.kind == inspect.Parameter.VAR_POSITIONAL
                                   for i in sign.parameters.values())
       self._is_include_kwargs = any(i.kind == inspect.Parameter.VAR_KEYWORD
                                     for i in sign.parameters.values())
       self._defaults = {
-          n: p.default
-          for n, p in sign.parameters.items()
-          if p.default != inspect.Parameter.empty
+        n: p.default
+        for n, p in sign.parameters.items()
+        if p.default != inspect.Parameter.empty
       }
       self._func = func
     else:
@@ -542,7 +549,7 @@ class FuncDesc(object):
     if not is_lambda(self._func):
       module = inspect.getmodule(self._func)
       func_module_key = [
-          i for i, j in list(sys.modules.items()) if j == module
+        i for i, j in list(sys.modules.items()) if j == module
       ][0]
       func_module_name = module.__name__
       func_module_path = inspect.getfile(module)
@@ -563,15 +570,15 @@ class FuncDesc(object):
      self._defaults) = states
     # iterate through all loaded modules to find module contain given function
     if func_module_key is not None and \
-    func_module_name is not None and \
-    func_module_path is not None:
+        func_module_name is not None and \
+        func_module_path is not None:
 
       found = None
       for name, module in list(sys.modules.items()):
         try:
           if inspect.getfile(module) == func_module_path or \
-          (module.__name__.split('.')[-1] == func_module_name and
-           self.__name__ in dir(module)):
+              (module.__name__.split('.')[-1] == func_module_name and
+               self.__name__ in dir(module)):
             found = (name, module)
         except Exception as e:
           pass
@@ -605,7 +612,7 @@ class FuncDesc(object):
     New in version 3.3.
     """
     assert hasattr(self._func, '__qualname__'), \
-    "The attribute `__qualname__` only be introduced from python 3.3"
+      "The attribute `__qualname__` only be introduced from python 3.3"
     return self._func.__qualname__
 
   @property
@@ -655,7 +662,7 @@ class FuncDesc(object):
   def __str__(self):
     s = "<%s>args:%s defaults:%s varargs:%s keywords:%s" % \
         (ctext(self._func.__name__, 'cyan'), self._args, self._defaults,
-            self._is_include_args, self._is_include_kwargs)
+         self._is_include_args, self._is_include_kwargs)
     return s
 
 
@@ -759,9 +766,9 @@ class ArgController(object):
     """
     if self.parser is None:
       self.parser = argparse.ArgumentParser(
-          description=
-          'Automatic argument parser (yes,true > True; no,false > False)',
-          add_help=True)
+        description=
+        'Automatic argument parser (yes,true > True; no,false > False)',
+        add_help=True)
     # ====== NO default value ====== #
     if default is None:
       if self._is_positional(name):
@@ -885,7 +892,7 @@ def axis_normalize(axis, ndim, return_tuple=False):
   if ndim == 0:
     return ()
   if axis is None or \
-  (isinstance(axis, (tuple, list)) and len(axis) == 1 and axis[0] is None):
+      (isinstance(axis, (tuple, list)) and len(axis) == 1 and axis[0] is None):
     return list(range(ndim))
   if not hasattr(axis, '__len__'):
     axis = int(axis) % ndim
@@ -936,7 +943,7 @@ def package_installed(name, version=None):
   import pip
   for i in pip.get_installed_distributions():
     if name.lower() == i.key.lower() and \
-    (version is None or version == i.version):
+        (version is None or version == i.version):
       return True
   return False
 
@@ -1024,8 +1031,8 @@ def get_module_from_path(identifier,
   pattern = re.compile(r"^%s.*%s\.pyc?" % (prefix, suffix))  # py or pyc
   file_name = os.listdir(path)
   file_name = [
-      f for f in file_name
-      if pattern.match(f) and sum([i in f for i in exclude]) == 0
+    f for f in file_name
+    if pattern.match(f) and sum([i in f for i in exclude]) == 0
   ]
   # ====== remove duplicated pyc files ====== #
   file_name = sorted(file_name,
@@ -1043,10 +1050,10 @@ def get_module_from_path(identifier,
     try:
       if '.pyc' in fname:
         modules.append(
-            imp.load_compiled(fname.split('.')[0], os.path.join(path, fname)))
+          imp.load_compiled(fname.split('.')[0], os.path.join(path, fname)))
       else:
         modules.append(
-            imp.load_source(fname.split('.')[0], os.path.join(path, fname)))
+          imp.load_source(fname.split('.')[0], os.path.join(path, fname)))
     except Exception as e:
       modules_error[fname] = str(e)
       eprint("Cannot loading modules from file: '%s' - %s" %
@@ -1101,7 +1108,7 @@ def dict_union(*dicts, **kwargs):
     duplicate_keys = set(result.keys()) & set(d.keys())
     if duplicate_keys:
       raise ValueError("The following keys have duplicate entries: {}".format(
-          ", ".join(str(key) for key in duplicate_keys)))
+        ", ".join(str(key) for key in duplicate_keys)))
     result.update(d)
   return result
 
@@ -1414,7 +1421,7 @@ def play_audio(data, fs, volumn=1, speed=1):
     os.system('afplay -v %f -q 1 -r %f %s &' % (volumn, speed, path))
     raw_input('<enter> to stop audio.')
     os.system(
-        "kill -9 `ps aux | grep -v 'grep' | grep afplay | awk '{print $2}'`")
+      "kill -9 `ps aux | grep -v 'grep' | grep afplay | awk '{print $2}'`")
 
 
 # ===========================================================================
@@ -1449,13 +1456,13 @@ def get_process_status(pid=None,
   if io_counters:
     return process.io_counters()
   if memory_usage:
-    return process.memory_info().rss / float(2**20)
+    return process.memory_info().rss / float(2 ** 20)
   if memory_shared:
-    return process.memory_info().shared / float(2**20)
+    return process.memory_info().shared / float(2 ** 20)
   if memory_virtual:
-    return process.memory_info().vms / float(2**20)
+    return process.memory_info().vms / float(2 ** 20)
   if memory_maps:
-    return {i[0]: i[1] / float(2**20) for i in process.memory_maps()}
+    return {i[0]: i[1] / float(2 ** 20) for i in process.memory_maps()}
   if cpu_percent:
     # first time call always return 0
     process.cpu_percent(None)
@@ -1488,20 +1495,20 @@ def get_system_status(memory_total=False,
   import psutil
   # ====== general system query ====== #
   if memory_total:
-    return psutil.virtual_memory().total / float(2**20)
+    return psutil.virtual_memory().total / float(2 ** 20)
   if memory_total_actual:
-    return psutil.virtual_memory().available / float(2**20)
+    return psutil.virtual_memory().available / float(2 ** 20)
   if memory_total_usage:
-    return psutil.virtual_memory().used / float(2**20)
+    return psutil.virtual_memory().used / float(2 ** 20)
   if memory_total_free:
-    return psutil.virtual_memory().free / float(2**20)
+    return psutil.virtual_memory().free / float(2 ** 20)
   if swap_memory:
     tmp = psutil.swap_memory()
-    tmp.total /= float(2**20)
-    tmp.used /= float(2**20)
-    tmp.free /= float(2**20)
-    tmp.sin /= float(2**20)
-    tmp.sout /= float(2**20)
+    tmp.total /= float(2 ** 20)
+    tmp.used /= float(2 ** 20)
+    tmp.free /= float(2 ** 20)
+    tmp.sin /= float(2 ** 20)
+    tmp.sout /= float(2 ** 20)
     return tmp
   if all_pids:
     return psutil.pids()

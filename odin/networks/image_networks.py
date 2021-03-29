@@ -7,7 +7,7 @@ import tensorflow as tf
 from six import string_types
 from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.python import keras
-from tensorflow.python.keras.layers import Layer
+from tensorflow.python.keras.layers import Layer, Activation, Flatten
 from tensorflow_probability.python.distributions.pixel_cnn import \
   _PixelCNNNetwork
 from tensorflow_probability.python.layers import DistributionLambda
@@ -19,7 +19,6 @@ from odin.bay.distributions import (Blockwise, Categorical, ContinuousBernoulli,
                                     MixtureQuantizedLogistic, QuantizedLogistic,
                                     VonMises, Bernoulli, Independent)
 from odin.networks.base_networks import SequentialNetwork
-from odin.networks import residuals as rd
 
 __all__ = [
   'PixelCNNDecoder',
@@ -31,7 +30,6 @@ __all__ = [
   'cifar10_networks',
   'cifar20_networks',
   'cifar100_networks',
-  'celebasmall_networks',
   'celeba_networks',
   'get_networks',
   'get_optimizer_info',
@@ -71,6 +69,36 @@ def _quantized_logistic() -> DistributionLambda:
     convert_to_tensor_fn=Distribution.sample,
     name='image'
   )
+
+
+def _parse_distribution(input_shape: Tuple[int, int, int],
+                        distribution: str
+                        ) -> Tuple[int, DistributionLambda, Layer]:
+  from odin.bay.random_variable import RVconf
+  n_channels = input_shape[-1]
+  if distribution == 'qlogistic':
+    n_params = 2
+    observation = _quantized_logistic()
+    last_layer = Activation('linear')
+  elif distribution == 'mixqlogistic':
+    n_params = MixtureQuantizedLogistic.params_size(
+      n_components=10,
+      n_channels=n_channels) // n_channels
+    observation = _mixture_quantized_logistic()
+    last_layer = Activation('linear')
+  elif distribution == 'bernoulli':
+    n_params = 1
+    observation = RVconf(input_shape, "bernoulli", projection=False,
+                         name="image").create_posterior()
+    last_layer = Flatten()
+  elif distribution == 'gaussian':
+    n_params = 2
+    observation = RVconf(input_shape, "normal", projection=False,
+                         name="image").create_posterior()
+    last_layer = Flatten()
+  else:
+    raise ValueError(f'No support for distribution {distribution}')
+  return n_params, observation, last_layer
 
 
 class CenterAt0(keras.layers.Layer):
@@ -144,7 +172,7 @@ def _prepare_cnn(activation=tf.nn.elu):
 
 class SkipSequential(keras.Model):
 
-  def __init__(self, layers: List[Layer] = [], name: str = 'SkipGenerator'):
+  def __init__(self, layers: Sequence[Layer] = (), name: str = 'SkipGenerator'):
     super().__init__(name=name)
     self.all_layers = list(layers)
     self.proj_layers = list()
@@ -206,8 +234,11 @@ def mnist_networks(
   if zdim is None:
     zdim = 32
   conv, deconv = _prepare_cnn(activation=activation)
+  n_params, observation, last_layer = _parse_distribution(
+    input_shape, kwargs.get('distribution', 'bernoulli'))
   encoder = SequentialNetwork(
     [
+      keras.layers.InputLayer(input_shape),
       CenterAt0(enable=centerize_image),
       conv(32, 5, strides=1, name='encoder0'),
       conv(32, 5, strides=2, name='encoder1'),
@@ -230,8 +261,9 @@ def mnist_networks(
                         name='latents1'),
     deconv(32, 5, strides=2, name='decoder4'),
     conv(32, 5, strides=1, name='decoder5'),
-    conv(n_channels, 1, strides=1, activation='linear', name='decoder6'),
-    keras.layers.Flatten()
+    conv(n_channels * n_params, 1, strides=1, activation='linear',
+         name='decoder6'),
+    last_layer
   ]
   if skip_generator:
     decoder = SkipSequential(layers=layers, name='skipdecoder')
@@ -239,8 +271,6 @@ def mnist_networks(
     decoder = SequentialNetwork(layers=layers, name='decoder')
   latents = RVconf((zdim,), qz, projection=True,
                    name="latents").create_posterior()
-  observation = RVconf(input_shape, "bernoulli", projection=False,
-                       name="image").create_posterior()
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,
@@ -302,9 +332,13 @@ def cifar_networks(
   if zdim is None:
     zdim = 256
   n_channels = kwargs.get('n_channels', 3)
+  input_shape = (32, 32, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
   n_classes = kwargs.get('n_classes', 10)
   proj_dim = 8 * 8 * 8
+  ## output distribution
+  n_params, observation, last_layer = _parse_distribution(
+    input_shape, kwargs.get('distribution', 'qlogistic'))
   ## encoder
   encoder = SequentialNetwork(
     [
@@ -333,11 +367,12 @@ def cifar_networks(
                         latent_units=1,
                         name='latents2',
                         disable=True),
-    conv(n_channels * 2,
+    conv(n_channels * n_params,
          1,
          strides=1,
          activation='linear',
          name='decoder5'),
+    last_layer
   ]
   if skip_generator:
     decoder = SkipSequential(layers=layers, name='skipdecoder')
@@ -347,7 +382,6 @@ def cifar_networks(
   latents = RVconf((zdim,), qz, projection=True,
                    name="latents").create_posterior()
   # create the observation of MixtureQuantizedLogistic
-  observation = _quantized_logistic()
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,
@@ -401,9 +435,6 @@ def dsprites_networks(
   from odin.bay.vi.autoencoder import HierarchicalLatents
   if zdim is None:
     zdim = 10
-  distribution = str(kwargs.get('distribution', 'bernoulli'))
-  assert distribution in ('bernoulli', 'gaussian'), \
-    f'Only support Bernoulli or Gaussian output, given: {distribution}'
   n_channels = int(kwargs.get('n_channels', 1))
   input_shape = (64, 64, n_channels)
   conv, deconv = _prepare_cnn(activation=activation)
@@ -412,6 +443,8 @@ def dsprites_networks(
     proj_dim = 128 if n_channels == 1 else 256
   else:
     proj_dim = int(proj_dim)
+  n_params, observation, last_layer = _parse_distribution(
+    input_shape, kwargs.get('distribution', 'bernoulli'))
   encoder = SequentialNetwork(
     [
       CenterAt0(enable=centerize_image),
@@ -429,24 +462,24 @@ def dsprites_networks(
     keras.layers.Reshape((4, 4, proj_dim // 16)),
     HierarchicalLatents(deconv(64, 4, strides=2, name='decoder1'),
                         encoder=encoder.layers[3],
-                        latent_units=16,
+                        latent_units=8,
                         disable=True,
                         name='latents1'),
-    HierarchicalLatents(deconv(64, 4, strides=2, name='decoder2'),
-                        encoder=encoder.layers[2],
-                        latent_units=2,
+    deconv(64, 4, strides=2, name='decoder2'),
+    HierarchicalLatents(deconv(32, 4, strides=2, name='decoder3'),
+                        encoder=encoder.layers[1],
+                        downsample=True,
                         disable=True,
                         name='latents2'),
-    deconv(32, 4, strides=2, name='decoder3'),
     deconv(32, 4, strides=2, name='decoder4'),
     # NOTE: this last projection layer with linear activation is crucial
     # otherwise the distribution parameterized by this layer won't converge
-    conv(n_channels * (1 if distribution == 'bernoulli' else 2),
+    conv(n_channels * n_params,
          1,
          strides=1,
          activation='linear',
          name='decoder6'),
-    keras.layers.Flatten()
+    last_layer
   ]
   if skip_generator:
     decoder = SkipSequential(layers=layers, name='skipdecoder')
@@ -454,10 +487,6 @@ def dsprites_networks(
     decoder = SequentialNetwork(layers=layers, name='decoder')
   latents = RVconf((zdim,), qz, projection=True,
                    name="latents").create_posterior()
-  observation = RVconf(input_shape,
-                       distribution,
-                       projection=False,
-                       name="image").create_posterior()
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,
@@ -497,17 +526,27 @@ def shapes3d_networks(qz: str = 'mvndiag',
                       is_semi_supervised: bool = False,
                       centerize_image: bool = True,
                       skip_generator: bool = False,
+                      small: bool = False,
                       **kwargs) -> Dict[str, Layer]:
   if zdim is None:
     zdim = 6
-  networks = dsprites_networks(qz=qz,
-                               zdim=zdim,
-                               activation=activation,
-                               is_semi_supervised=False,
-                               centerize_image=centerize_image,
-                               skip_generator=skip_generator,
-                               distribution='bernoulli',
-                               n_channels=3)
+  if small:
+    networks = cifar_networks(qz=qz,
+                              zdim=zdim,
+                              activation=activation,
+                              is_semi_supervised=False,
+                              centerize_image=centerize_image,
+                              skip_generator=skip_generator,
+                              distribution='bernoulli')
+  else:
+    networks = dsprites_networks(qz=qz,
+                                 zdim=zdim,
+                                 activation=activation,
+                                 is_semi_supervised=False,
+                                 centerize_image=centerize_image,
+                                 skip_generator=skip_generator,
+                                 distribution='bernoulli',
+                                 n_channels=3)
   if is_semi_supervised:
     from odin.bay.layers import DistributionDense
     networks['labels'] = DistributionDense(event_shape=(6,),
@@ -517,6 +556,9 @@ def shapes3d_networks(qz: str = 'mvndiag',
   return networks
 
 
+shapes3dsmall_networks = partial(shapes3d_networks, small=True)
+
+
 # ===========================================================================
 # CelebA
 # ===========================================================================
@@ -524,33 +566,6 @@ def _celeba_distribution(x: tf.Tensor) -> Blockwise:
   dtype = x.dtype
   py = ContinuousBernoulli(logits=x)
   return Independent(py, 1, name='attributes')
-
-
-def celebasmall_networks(qz: str = 'mvndiag',
-                         zdim: Optional[int] = None,
-                         activation: Union[Callable, str] = tf.nn.elu,
-                         is_semi_supervised: bool = False,
-                         centerize_image: bool = True,
-                         skip_generator: bool = False,
-                         n_labels: int = 18,
-                         **kwargs):
-  if zdim is None:
-    zdim = 45
-  networks = mnist_networks(qz=qz,
-                            zdim=zdim,
-                            activation=activation,
-                            is_semi_supervised=False,
-                            centerize_image=centerize_image,
-                            skip_generator=skip_generator,
-                            n_channels=3,
-                            proj_dim=128)
-  if is_semi_supervised:
-    from odin.bay.layers import DistributionDense
-    networks['labels'] = DistributionDense(event_shape=n_labels,
-                                           posterior=_celeba_distribution,
-                                           units=n_labels,
-                                           name='attributes')
-  return networks
 
 
 def celeba_networks(qz: str = 'mvndiag',
@@ -827,8 +842,11 @@ def get_optimizer_info(
 
   Returns
   -------
-  Tuple[int, LearningRateSchedule]
-      number of iterations, learning rate
+  Dict[str, Any]
+      'max_iter' : int,
+          number of iterations,
+      'learning_rate' : `tf.optimizers.schedules.ExponentialDecay`
+          learning rate
 
   """
   dataset_name = str(dataset_name).strip().lower()
@@ -837,10 +855,10 @@ def get_optimizer_info(
   init_lr = 1e-3
   ### image networks
   if dataset_name == 'mnist':
-    n_epochs = 600
+    n_epochs = 800
     n_samples = 55000
   elif dataset_name == 'fashionmnist':
-    n_epochs = 800
+    n_epochs = 1000
     n_samples = 55000
   elif dataset_name == 'omniglot':
     n_epochs = 1000
@@ -857,9 +875,9 @@ def get_optimizer_info(
     n_samples = 663552
   # sahpes datasets
   elif 'shapes3d' in dataset_name:
-    n_epochs = 500
+    n_epochs = 250 if 'small' in dataset_name else 400
     n_samples = 432000
-    init_lr = 1e-4
+    init_lr = 2e-4
   elif 'celeba' in dataset_name:
     n_epochs = 2000 if 'small' in dataset_name else 3000
     n_samples = 162770

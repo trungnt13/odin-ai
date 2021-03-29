@@ -21,7 +21,7 @@ import numpy as np
 
 from odin import fuel as F, backend as K, visual as V
 from odin.utils import (cache_disk, ctext, unique_labels,
-                        Progbar, batching, get_exppath,
+                        Progbar, minibatch, get_exppath,
                         get_formatted_datetime)
 from odin.stats import train_valid_test_split, sampling_iter
 
@@ -247,7 +247,7 @@ def make_dnn_prediction(functions, X, batch_size=256, title=''):
     return results[0], y_true
   # ====== for numpy array ====== #
   else:
-    for start, end in batching(batch_size=batch_size, n=n_samples):
+    for start, end in minibatch(batch_size=batch_size, n=n_samples):
       y = X[start:end]
       for res, fn in zip(results, functions):
         res.append(fn(y))

@@ -50,7 +50,7 @@ class ImageDataset(IterableDataset):
 
   @property
   def label_type(self) -> LabelType:
-    if not hasattr(self, '_label_type'):
+    if not hasattr(self, '_label_type') or self._label_type is None:
       y = tf.concat([i for _, i in self.train.take(10)], axis=0).numpy()
       if np.all(np.sum(y, axis=-1) == 1.) or \
           (y.ndim == 1 and 'int' in str(y.dtype)):
@@ -73,24 +73,16 @@ class ImageDataset(IterableDataset):
     assert n * n == n_samples, "Sqrt of n_samples is not an integer"
     train = self.create_dataset(batch_size=n_samples,
                                 partition=str(partition),
-                                label_percent=0.5)
+                                label_percent=1.0)
     train: tf.data.Dataset
     # prepare the data
     images = []
     labels = []
-    mask = []
     for data in train.take(10):
-      if isinstance(data, dict):
-        X, y = data['inputs']
-        mask.append(data['mask'])
-      elif isinstance(data, (tuple, list)):
-        if len(data) >= 2:
-          X, y = data[:2]
-        else:
-          X = data[0]
-          y = None
+      if len(data) >= 2:
+        X, y = data[:2]
       else:
-        X = data
+        X = data[0]
         y = None
       images.append(X)
       if y is not None:
@@ -99,7 +91,6 @@ class ImageDataset(IterableDataset):
     idx = rand.choice(10)
     images = images[idx].numpy()
     labels = labels[idx].numpy() if len(labels) > 0 else None
-    mask = mask[idx].numpy().ravel() if len(mask) > 0 else None
     # check labels type
     labels_type = 'multinomial'
     if np.all(np.unique(labels) == [0., 1.]):
@@ -126,8 +117,7 @@ class ImageDataset(IterableDataset):
             lab = '\n'.join(
               ["%s=%s" % (l, str(j)) for l, j in zip(self.labels, labels[i])])
             lab += '\n'
-          m = True if mask is None else mask[i]
-          plt.title("%s[Mask:%s]" % (lab, m), fontsize=6)
+          plt.title(f"{lab}", fontsize=6)
       plt.tight_layout()
       fig.savefig(save_path, dpi=int(dpi))
       plt.close(fig)
@@ -389,3 +379,8 @@ class ImageDataset(IterableDataset):
     if prefetch is not None:
       ds = ds.prefetch(buffer_size=prefetch)
     return ds
+
+  def __str__(self):
+    name = self.__class__.__name__
+    return f"<{name} {self.shape} X:{self.data_type} " \
+           f"y:{self.label_type} {self.labels}>"

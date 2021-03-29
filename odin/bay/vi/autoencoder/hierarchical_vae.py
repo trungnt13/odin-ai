@@ -53,6 +53,16 @@ def _copy_layer(layer: Layer,
   cfg['use_bias'] = True
   ## convolution
   if issubclass(cls, Conv):
+    # switch to use convolution
+    if 'Transpose' in str(cls):
+      if issubclass(cls, keras.layers.Conv1DTranspose):
+        cls = keras.layers.Conv1D
+      elif issubclass(cls, keras.layers.Conv2DTranspose):
+        cls = keras.layers.Conv2D
+      elif issubclass(cls, keras.layers.Conv3DTranspose):
+        cls = keras.layers.Conv3D
+      cfg.pop('output_padding')
+    # no strides
     cfg['strides'] = 1
     # 1x1 projection
     if proj_1x1:
@@ -62,7 +72,8 @@ def _copy_layer(layer: Layer,
     elif downsample_shape is not None:
       cfg['padding'] = 'VALID'
       cfg['kernel_size'] = downsample_shape[1:-1]
-  return cls(**cfg)
+  layer = cls(**cfg)
+  return layer
 
 
 def _call(self, inputs, **kwargs):
@@ -112,10 +123,12 @@ class HierarchicalLatents(Wrapper):
                merge_normal: bool = False,
                distribution: Literal['mvndiag', 'normal'] = 'normal',
                forward_mode: Literal['sample', 'mean'] = 'sample',
+               beta: float = 1.,
                disable: bool = False,
                **kwargs):
     super().__init__(layer=layer, **kwargs)
     self.latent_units = latent_units
+    self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
     self._total_units = None
     self.event_ndim = self.layer.input_spec.min_ndim - 1
     self.downsample = bool(downsample)
@@ -200,7 +213,11 @@ class HierarchicalLatents(Wrapper):
     # pre-output latents projection
     if self.downsample:
       self._pre_proj = keras.layers.Conv2DTranspose(
-        filters=self.latent_units, kernel_size=output_shape[1:-1])
+        filters=self.latent_units,
+        kernel_size=output_shape[1:-1],
+        padding='valid',
+        activation='linear',
+        use_bias=True)
       self._pre_proj.build(shape[:-1] + (self.latent_units,))
     else:
       self._pre_proj = lambda x: x  # identity layer
@@ -267,7 +284,7 @@ class HierarchicalLatents(Wrapper):
   def kl_divergence(self,
                     analytic: bool = False,
                     reverse: bool = False,
-                    free_bits: float = 0.5,
+                    free_bits: float = 0.25,
                     raise_not_init: bool = True) -> tf.Tensor:
     if self._disable:
       return tf.zeros((), dtype=self.dtype)
@@ -280,8 +297,10 @@ class HierarchicalLatents(Wrapper):
       return tf.zeros((), dtype=self.dtype)
     qz = self.posterior
     pz = self.prior
-    return kl_divergence(q=qz, p=pz, analytic=analytic, reverse=reverse,
-                         free_bits=free_bits)
+    return self.beta * kl_divergence(q=qz, p=pz,
+                                     analytic=analytic,
+                                     reverse=reverse,
+                                     free_bits=free_bits)
 
   def compute_output_shape(self, input_shape) -> Sequence[Union[None, int]]:
     return self.layer.compute_output_shape(input_shape)
@@ -306,13 +325,10 @@ class HierarchicalLatents(Wrapper):
         self.encoder._last_outputs is not None):
       hidden_e = self.encoder._last_outputs
       # just stop inference if there is no Encoder state
-      if (type(hidden_e) is not type(hidden_d) or
-          hidden_e.shape[0] != hidden_d.shape[0]):
-        raise RuntimeError(
-          'Doing inference but encoder state mismatch decoder state: '
-          f'encoder: {type(hidden_e).__name__}-{hidden_e.shape} and '
-          f'decoder: {type(hidden_d).__name__}-{hidden_d.shape}, '
-          'switch to sampling mode if possible.')
+      tf.debugging.assert_equal(tf.shape(hidden_e), tf.shape(hidden_d),
+                                f'Shape of inference {hidden_e.shape} and '
+                                f'generative {hidden_d.shape} mismatch. '
+                                f'Change to sampling mode if possible')
       # (Kingma 2016) use add, we concat here
       h = tf.concat([hidden_e, hidden_d], axis=-1)
       posterior = self._dist_posterior(self._proj_posterior(h, **kwargs))
@@ -389,17 +405,29 @@ class HierarchicalVAE(AnnealingVAE):
       obs = super().sample_traverse(inputs, **kwargs)
     return obs
 
-  def get_latents(self, inputs=None, training=None, mask=None, **kwargs
-                  ) -> Sequence[Distribution]:
+  def get_latents(self,
+                  inputs=None,
+                  training=None,
+                  mask=None,
+                  return_prior=False,
+                  **kwargs) -> Sequence[Distribution]:
     z0 = super().get_latents(inputs=inputs, training=training, mask=mask,
+                             return_prior=return_prior,
                              **kwargs)
+    posterior, prior = list(as_tuple(z0)), []
+    if return_prior:
+      posterior = list(as_tuple(z0[0]))
+      prior = list(as_tuple(z0[1]))
+      z0 = z0[0]
     # new encode called
     if inputs is not None:
       self.decode(z0, training=training, mask=mask)
-    Z = [z0]
     for layer in self.hierarchical_latents:
-      Z.append(layer.posterior)
-    return tuple(Z)
+      posterior.append(layer.posterior)
+      prior.append(layer.prior)
+    if return_prior:
+      return tuple(posterior), tuple(prior)
+    return tuple(posterior)
 
   @classmethod
   def is_hierarchical(cls) -> bool:
@@ -616,13 +644,24 @@ class StackedVAE(AnnealingVAE):
 # ===========================================================================
 # Ladder VAE
 # ===========================================================================
+class VLadderVAE():
+  """
+  References
+  ----------
+  Zhao, S., Song, J., Ermon, S., 2017. Learning Hierarchical Features from
+      Generative Models. arXiv:1702.08396 [cs, stat].
+  """
+  def __init__(self, **kwargs):
+    super(VLadderVAE, self).__init__(**kwargs)
+
+
 class LadderVAE(StackedVAE):
   """ The ladder variational autoencoder
 
   Similar to hierarchical VAE with 2 improvements:
 
   - Deterministic bottom-up inference
-  - Merge q(Z|X) Gaussians based-on weighed variance
+  - Merge q(Z|X) two Gaussian based-on weighed variance
 
 
   Parameters

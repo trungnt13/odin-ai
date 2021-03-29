@@ -88,7 +88,7 @@ outputs = RVconf(event_shape=input_shape,
                  posterior='gaus',
                  projection=False,
                  name="Spectrogram")
-latents = bay.layers.MultivariateNormalDiagLatent(ZDIM, name="Latents")
+latents = bay.layers.MVNDiagLatents(ZDIM, name="Latents")
 encoder = keras.Sequential(
     [
         keras.Input(shape=input_shape),

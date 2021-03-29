@@ -20,7 +20,7 @@ from six import string_types
 from odin import backend as K
 from bigarray import MmapArray
 from odin.ml.base import BaseEstimator, DensityMixin, TransformerMixin
-from odin.utils import (MPI, Progbar, array_size, as_tuple, batching, cpu_count,
+from odin.utils import (MPI, Progbar, array_size, as_tuple, minibatch, cpu_count,
                         ctext, defaultdictkey, eprint, is_number, segment_list,
                         uuid, wprint)
 
@@ -147,7 +147,7 @@ def _create_batch(X, sad, start, end, batch_size,
     random.seed(seed + curr_nmix + curr_niter)
   else: # deterministic
     random.seed(seed)
-  all_batches = list(batching(n=end - start, batch_size=batch_size))
+  all_batches = list(minibatch(n=end - start, batch_size=batch_size))
   random.shuffle(all_batches)
   # iterate over batches
   for batch_id, (batch_start, batch_end) in enumerate(all_batches):
@@ -206,7 +206,7 @@ def _create_batch_indices(X, sad, indices, batch_size,
         n_original_buffer += n_original_sample
       # split into smaller mini-batch
       else:
-        for batch_start, batch_end in batching(n=n_original_sample, batch_size=batch_size):
+        for batch_start, batch_end in minibatch(n=n_original_sample, batch_size=batch_size):
           batch_start = batch_start + file_start
           batch_end = batch_end + file_start
           X_sad = (X[batch_start: batch_end]
@@ -848,7 +848,7 @@ class GMM(DensityMixin, BaseEstimator, TransformerMixin):
                                       first=f_dat is not None,
                                       second=False, llk=False,
                                       on_gpu=on_gpu)
-               for start, end in batching(n=x.shape[0], batch_size=batch_size)]
+               for start, end in minibatch(n=x.shape[0], batch_size=batch_size)]
       Z = sum(r[0] for r in res)
       if len(res[0]) == 2:
         F = sum(r[1] for r in res)
@@ -1745,7 +1745,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
     else:
       def _map_expectation(start, end, on_gpu):
         batch_size = self.batch_size_gpu if on_gpu else self.batch_size_cpu
-        for s, e in batching(n=end - start, batch_size=batch_size):
+        for s, e in minibatch(n=end - start, batch_size=batch_size):
           s += start
           e += start
           nfiles = e - s
@@ -1997,7 +1997,7 @@ class Tmatrix(DensityMixin, BaseEstimator, TransformerMixin):
                      dtype=dtype)
     # ====== run on GPU ====== #
     if (device == 'gpu' or device == 'mix') and get_ngpu() > 0:
-      for s, e in batching(batch_size=self.batch_size_gpu, n=n_samples):
+      for s, e in minibatch(batch_size=self.batch_size_gpu, n=n_samples):
         z_minibatch = Z[s:e]
         f_minibatch = F[s:e]
         Ex = K.eval(self._gpu_t_outputs,

@@ -147,7 +147,8 @@ class FactorVAE(AnnealingVAE):
   """
 
   def __init__(self,
-               discriminator_units: Sequence[int] = (1000, 1000, 1000, 1000, 1000),
+               discriminator_units: Sequence[int] = (
+               1000, 1000, 1000, 1000, 1000),
                activation: Union[str, Callable[[], Any]] = tf.nn.relu,
                batchnorm: bool = False,
                tc_coef: float = 7.0,
@@ -267,7 +268,7 @@ class FactorVAE(AnnealingVAE):
                   mask=mask1,
                   call_kw=call_kw1,
                   parameters=self.vae_params,
-                  name=f'{name}elbo')
+                  name=f'elbo{name}')
     # second step optimize the discriminator for discriminate permuted code
     # skip training Discriminator of pretraining
     if not self.is_pretraining:
@@ -277,15 +278,15 @@ class FactorVAE(AnnealingVAE):
                                     mask=mask2,
                                     call_kw=call_kw2,
                                     parameters=self.disc_params,
-                                    name=f'{name}disc')
+                                    name=f'disc{name}')
 
   def fit(self,
           train,
           *,
           valid=None,
           optimizer=(
-            tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
-            tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
+              tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
+              tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
           ),
           **kwargs):
     """ Override the original fit method of keras to provide simplified
@@ -375,8 +376,7 @@ class Factor2VAE(FactorVAE):
   invariant factors."""
 
   def __init__(self,
-               latents: RVconf = RVconf(5,
-                                        'mvndiag',
+               latents: RVconf = RVconf(5, 'mvndiag',
                                         projection=True,
                                         name='Latents'),
                factors: RVconf = RVconf(5,

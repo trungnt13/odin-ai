@@ -17,7 +17,7 @@ from odin import training
 from odin.ml import evaluate, fast_pca, PLDA, Scorer
 from odin.utils import (Progbar, unique_labels, as_tuple_of_shape, stdio,
                         ctext, args_parse, get_formatted_datetime,
-                        batching)
+                        minibatch)
 
 from utils import (prepare_data, make_dnn_prediction, visualize_latent_space,
                    get_exp_path)

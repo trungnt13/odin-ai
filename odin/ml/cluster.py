@@ -203,11 +203,11 @@ def fast_kmeans(
       kwargs['init'] = 'k-means++'
   ## fitting
   if not cuml:
-    from odin.utils import batching
+    from odin.utils import minibatch
     kmean = MiniBatchKMeans(**kwargs)
-    for s, e in batching(int(max_samples_per_batch),
-                         n=X.shape[0],
-                         seed=random_state):
+    for s, e in minibatch(int(max_samples_per_batch),
+                          n=X.shape[0],
+                          seed=random_state):
       kmean.partial_fit(X[s:e])
   else:
     kmean = KMeans(verbose=False, **kwargs)

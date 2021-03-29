@@ -67,8 +67,11 @@ def _merge_tensor(data):
 # ===========================================================================
 class IterableDataset:
 
-  @property
-  def data_type(self) -> DataType:
+  def __init__(self, *args, **kwargs):
+    pass
+
+  @classmethod
+  def data_type(cls) -> DataType:
     raise NotImplementedError
 
   @property

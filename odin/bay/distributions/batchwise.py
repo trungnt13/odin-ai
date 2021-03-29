@@ -8,7 +8,7 @@ from odin.backend.types_helpers import Axis
 from odin.utils import as_tuple
 
 __all__ = [
-    'Batchwise',
+  'Batchwise',
 ]
 
 
@@ -43,23 +43,23 @@ class Batchwise(Distribution):
     event_ref = shape_info[0][1]
     for batch, event in shape_info:
       tf.assert_equal(
-          batch.ndims, batch_ref.ndims,
-          f"Rank of batch shapes mismatch {batch.ndims} != {batch_ref.ndims} ")
+        batch.ndims, batch_ref.ndims,
+        f"Rank of batch shapes mismatch {batch.ndims} != {batch_ref.ndims} ")
       tf.assert_equal(event, event_ref,
                       f"Event shapes mismatch {event} != {event_ref} ")
     self._distributions = distributions
     self._batch_ndims = batch_ref.ndims
     self._axis = int(axis) % self._batch_ndims
     super(Batchwise, self).__init__(
-        dtype=self._distributions[0].dtype,
-        reparameterization_type=self._distributions[0].reparameterization_type,
-        validate_args=validate_args,
-        allow_nan_stats=self._distributions[0].allow_nan_stats,
-        parameters=parameters,
-        name=name)
+      dtype=self._distributions[0].dtype,
+      reparameterization_type=self._distributions[0].reparameterization_type,
+      validate_args=validate_args,
+      allow_nan_stats=self._distributions[0].allow_nan_stats,
+      parameters=parameters,
+      name=name)
 
   @property
-  def distributions(self) -> List[Distribution]:
+  def distributions(self) -> Sequence[Distribution]:
     return self._distributions
 
   @property
@@ -102,12 +102,16 @@ class Batchwise(Distribution):
     llk = []
     start = 0
     axis = self.axis
+    n_event_dims = self.event_shape.rank
+    n_batch_dims = self.batch_shape.rank
+    n_mcmc_dims = len(x.shape) - n_event_dims - n_batch_dims
     for di in self.distributions:
       n = di.batch_shape[axis]
-      xi = tf.gather(x, tf.range(start, start + n), axis=self.axis)
+      xi = tf.gather(x, tf.range(start, start + n),
+                     axis=n_mcmc_dims + axis)
       llk.append(di._log_prob(xi, **kwargs))
       start += n
-    return tf.concat(llk, axis=axis)
+    return tf.concat(llk, axis=n_mcmc_dims + axis)
 
   def _log_cdf(self, x, **kwargs):
     lcd = []
@@ -147,11 +151,11 @@ class Batchwise(Distribution):
 
   def _quantile(self, value, **kwargs):
     raise NotImplementedError('quantile is not implemented: {}'.format(
-        type(self).__name__))
+      type(self).__name__))
 
   def _covariance(self, **kwargs):
     raise NotImplementedError('covariance is not implemented: {}'.format(
-        type(self).__name__))
+      type(self).__name__))
 
   def __str__(self):
     s = super().__str__()

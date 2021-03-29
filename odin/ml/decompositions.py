@@ -18,7 +18,7 @@ from sklearn.utils.extmath import (_incremental_mean_and_var, randomized_svd,
 from sklearn.utils.validation import check_is_fitted
 
 from odin.ml.base import BaseEstimator, TransformerMixin
-from odin.utils import Progbar, batching, ctext, flatten_list
+from odin.utils import Progbar, minibatch, ctext, flatten_list
 from odin.utils.mpi import MPI
 
 __all__ = [
@@ -113,9 +113,9 @@ def fast_pca(
                    print_report=False,
                    print_summary=False,
                    name="Fitting PCA")
-    for start, end in batching(batch_size=batch_size,
-                               n=x_train.shape[0],
-                               seed=1234):
+    for start, end in minibatch(batch_size=batch_size,
+                                n=x_train.shape[0],
+                                seed=1234):
       pca.partial_fit(x_train[start:end], check_input=False)
       prog.add(end - start)
   elif algo == 'ppca':
@@ -1069,7 +1069,7 @@ class MiniBatchPCA(IncrementalPCA):
       batch_size = self.batch_size
     # ====== start transforming ====== #
     X_transformed = []
-    for start, end in batching(n=n, batch_size=batch_size):
+    for start, end in minibatch(n=n, batch_size=batch_size):
       x = super(MiniBatchPCA, self).transform(X=X[start:end])
       if n_components is not None:
         x = x[:, :n_components]

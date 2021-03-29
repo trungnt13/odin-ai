@@ -2,7 +2,7 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import tensorflow as tf
-from odin.networks import Networks
+from odin.networks import Networks, TrainStep
 from odin.backend import TensorType
 from odin.utils import as_tuple
 from scipy import sparse
@@ -10,7 +10,7 @@ from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow_probability.python.distributions import Distribution
 from tqdm import tqdm
 
-__all__ = ['VariationalModel']
+__all__ = ['VariationalModel', 'TrainStep']
 
 
 class VariationalModel(Networks):
@@ -183,10 +183,10 @@ class VariationalModel(Networks):
     for name, x in kl.items():  # kl-divergence
       if not self.allow_negative_kl:
         tf.debugging.assert_greater(
-            x,
-            -1e-3,
-            message=(f"Negative KL-divergence values for '{name}', "
-                     "probably because of numerical instability."))
+          x,
+          -1e-3,
+          message=(f"Negative KL-divergence values for '{name}', "
+                   "probably because of numerical instability."))
       kl_sum += x
     elbo = llk_sum - kl_sum
     return elbo
@@ -283,12 +283,12 @@ class VariationalModel(Networks):
     perplexity_tensor = tf.exp(log_perplexity_tensor)
     return perplexity_tensor
 
-  def train_steps(self, inputs, training, *args, **kwargs):
+  def train_steps(self, inputs, training=True, name='', *args, **kwargs):
 
     def loss():
       llk, kl = self.elbo_components(inputs, training, *args, **kwargs)
       elbo = self.elbo(llk, kl)
-      metrics = dict(**llk, **kl)
+      metrics = {k: tf.reduce_mean(v) for k, v in dict(**llk, **kl).items()}
       return -tf.reduce_mean(elbo), metrics
 
     yield loss

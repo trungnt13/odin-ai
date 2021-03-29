@@ -1,3 +1,4 @@
+import tensorflow as tf
 from numbers import Number
 from typing import Callable, List, Union, Sequence
 
@@ -9,6 +10,7 @@ from tensorflow.python.keras.layers import Layer
 from typing_extensions import Literal
 
 from odin.backend.interpolation import Interpolation
+from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
 
 __all__ = [
   'Coefficient',
@@ -22,7 +24,9 @@ __all__ = [
   'Axes',
   'Axis',
   'DataType',
-  'LabelType'
+  'LabelType',
+  'Scalar',
+  'Optimizer'
 ]
 
 Coefficient = Union[Number, Interpolation]
@@ -32,6 +36,7 @@ CorrelationMethod = Literal[
 
 NoneType = type(None)
 TensorType = Union[spmatrix, ndarray, Tensor]
+Scalar = Union[Tensor, ndarray, Number]
 LayerType = Union[Layer, Model, Sequential, Callable[..., Layer],
                   Callable[[Tensor], Tensor]]
 
@@ -44,3 +49,5 @@ Axis = int
 
 DataType = Literal['image', 'audio', 'text', 'gene']
 LabelType = Literal['binary', 'categorical', 'factor']
+
+Optimizer = OptimizerV2

@@ -43,15 +43,15 @@ from typeguard import typechecked
 from typing_extensions import Literal
 
 __all__ = [
-    'correlation_matrix',
-    'discrete_mutual_info',
-    'discrete_entropy',
-    'mutual_info_estimate',
-    'mutual_info_gap',
-    'relative_strength',
-    # unsupervised scores
-    'unsupervised_clustering_scores',
-    'Correlation',
+  'correlation_matrix',
+  'discrete_mutual_info',
+  'discrete_entropy',
+  'mutual_info_estimate',
+  'mutual_info_gap',
+  'relative_strength',
+  # unsupervised scores
+  'unsupervised_clustering_scores',
+  'Correlation',
 ]
 
 _cached_correlation_matrix = defaultdict(partial(fifodict, maxlen=10))
@@ -110,8 +110,8 @@ def correlation_matrix(
   ### average mode
   if method == 'average':
     corr_mat = sum(
-        correlation_matrix(x1=x1, x2=x2, method=corr, seed=seed)
-        for corr in ['spearman', 'pearson', 'lasso']) / 3
+      correlation_matrix(x1=x1, x2=x2, method=corr, seed=seed)
+      for corr in ['spearman', 'pearson', 'lasso']) / 3
   ### specific mode
   else:
     # lasso
@@ -198,13 +198,13 @@ def _clustering_scores(y, X=None, z=None, algo='kmeans', random_state=1):
     y_pred = z
   with catch_warnings_ignore(FutureWarning):
     return dict(
-        ASW=silhouette_score(X if X is not None else np.expand_dims(z, axis=-1),
-                             y),
-        ARI=adjusted_rand_score(y, y_pred),
-        NMI=normalized_mutual_info_score(y, y_pred),
-        UCA=_unsupervised_clustering_accuracy(y, y_pred)[0],
-        HOS=homogeneity_score(y, y_pred),
-        COS=_cluster_completeness_score(y, y_pred),
+      ASW=silhouette_score(X if X is not None else np.expand_dims(z, axis=-1),
+                           y),
+      ARI=adjusted_rand_score(y, y_pred),
+      NMI=normalized_mutual_info_score(y, y_pred),
+      UCA=_unsupervised_clustering_accuracy(y, y_pred)[0],
+      HOS=homogeneity_score(y, y_pred),
+      COS=_cluster_completeness_score(y, y_pred),
     )
 
 
@@ -362,7 +362,7 @@ def discrete_entropy(labels):
 def mutual_info_estimate(
     representations: np.ndarray,
     factors: np.ndarray,
-    continuous_representations: bool = True,
+    continuous_latents: bool = True,
     continuous_factors: bool = False,
     n_neighbors: int = 3,
     n_cpu: int = 1,
@@ -394,8 +394,8 @@ def mutual_info_estimate(
     return _cached_mi_matrix[cache_key]
   from sklearn.feature_selection import (mutual_info_classif,
                                          mutual_info_regression)
-  mutual_info = mutual_info_regression if continuous_factors else \
-    mutual_info_classif
+  mutual_info = (mutual_info_regression if continuous_factors else
+                 mutual_info_classif)
   num_latents = representations.shape[1]
   num_factors = factors.shape[1]
   # iterate over each factor
@@ -405,7 +405,7 @@ def mutual_info_estimate(
   def func(idx):
     mi = mutual_info(representations,
                      factors[:, idx],
-                     discrete_features=not continuous_representations,
+                     discrete_features=not continuous_latents,
                      n_neighbors=n_neighbors,
                      random_state=seed)
     return idx, mi
@@ -461,10 +461,10 @@ def relative_strength(mat):
   """
   with warnings.catch_warnings():
     warnings.filterwarnings('ignore', category=RuntimeWarning)
-    score_x = np.mean(np.nan_to_num(\
+    score_x = np.mean(np.nan_to_num( \
       np.power(np.max(mat, axis=0), 2) / np.sum(mat, axis=0),
       copy=False, nan=0.0))
-    score_y = np.mean(np.nan_to_num(\
+    score_y = np.mean(np.nan_to_num( \
       np.power(np.max(mat, axis=1), 2) / np.sum(mat, axis=1),
       copy=False, nan=0.0))
   return (score_x + score_y) / 2
@@ -516,14 +516,15 @@ class Correlation(IntFlag):
                seed: int = 1,
                verbose: bool = False,
                **kwargs) -> Union[np.ndarray, List[np.ndarray]]:
+
     if hasattr(x1, 'numpy'):
       x1 = x1.numpy()
     if hasattr(x2, 'numpy'):
       x2 = x2.numpy()
     if len(self) != 1:
       return [
-          method(x1, x2, seed=seed, verbose=verbose, **kwargs)
-          for method in self
+        method(x1, x2, seed=seed, verbose=verbose, **kwargs)
+        for method in self
       ]
     if self == Correlation.Pearson:
       fn = partial(correlation_matrix, method='pearson')

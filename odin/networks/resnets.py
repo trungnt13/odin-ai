@@ -12,7 +12,7 @@ from tensorflow.keras.layers import DepthwiseConv2D as _DepthwiseConv2D
 from tensorflow.keras.layers import (Dropout, Flatten, GlobalAvgPool2D,
                                      GlobalMaxPool2D, Lambda, Layer, MaxPool2D,
                                      Reshape, UpSampling2D,
-                                     ZeroPadding2D)
+                                     ZeroPadding2D, InputLayer)
 from tensorflow.python.keras.applications.imagenet_utils import correct_pad
 from typing_extensions import Literal
 
@@ -66,18 +66,23 @@ class Resampling2D(Layer):
       self.downsampling = True
     self.size = size
     self.mode = mode
+    self.pool = None
+    self.reshape = None
+
+  def get_config(self) -> Dict[str, Any]:
+    return dict(size=self.size, mode=self.mode)
 
   def build(self, input_shape):
     ## downsampling
     if self.downsampling:
       if self.mode == 'max':
         self.pool = MaxPool2D(self.size, padding='same')
-      elif self.mode == 'max':
+      elif self.mode == 'avg':
         self.pool = AvgPool2D(self.size, padding='same')
       elif self.mode == 'global':
         self.pool = GlobalAvgPool2D()
       else:
-        raise NotImplementedError
+        raise NotImplementedError(f'No downsampling mode={self.mode}')
     ## upsampling
     else:
       if self.mode == 'pad':
@@ -184,9 +189,9 @@ class SkipAndForget(Layer):
 class ResidualSequential(keras.Sequential):
 
   def __init__(self,
+               layers: Optional[List[Layer]] = None,
                skip_mode: Literal['add', 'concat', 'none'] = 'add',
                skip_ratio: float = 1.0,
-               layers: Optional[List[Layer]] = None,
                name: Optional[str] = None):
     super().__init__(layers=layers, name=name)
     self.track_outputs = False
@@ -200,15 +205,8 @@ class ResidualSequential(keras.Sequential):
       self.merger = None
 
   def summary(self, line_length=None, positions=None, print_fn=None):
-    text = []
-    super().summary(line_length=line_length,
-                    positions=positions,
-                    print_fn=lambda s: text.append(s))
-    text.insert(1, f'Merger: {self.merger}')
-    if print_fn is None:
-      print_fn = print
-    for line in text:
-      print_fn(line)
+    from odin.backend.keras_helpers import layer2text
+    return layer2text(self)
 
   def __repr__(self):
     text = f'Name: {self.name}\n'
@@ -227,6 +225,7 @@ class ResidualSequential(keras.Sequential):
 
   def call(self, inputs, training=None, mask=None):
     skip_inputs = inputs
+    # === 1. normal Sequential network
     outputs = inputs  # handle the corner case where self.layers is empty
     last_outputs = []
     for layer in self.layers:
@@ -248,7 +247,7 @@ class ResidualSequential(keras.Sequential):
       # `outputs` will be the inputs to the next layer.
       inputs = outputs
       mask = getattr(outputs, '_keras_mask', None)
-
+    # === 2. skip connection
     if self.merger is not None:
       outputs = self.merger([self.skip_ratio * skip_inputs, outputs])
     if self.track_outputs:
@@ -395,7 +394,7 @@ def downsampling2D(
     inputs: Optional[tf.Tensor] = None,
     size: Tuple[int, int] = (2, 2),
     mode: Literal['max', 'avg', 'global'] = 'avg',
-    name: str = 'pooling2D',
+    name: Optional[str] = None,
 ) -> Union[tf.Tensor, Resampling2D]:
   """Pooling"""
   layer = Resampling2D(size, mode, name=name)
@@ -408,7 +407,7 @@ def upsampling2D(
     inputs: Optional[tf.Tensor] = None,
     size: Tuple[int, int] = (2, 2),
     mode: Literal['pad', 'nearest', 'bilinear'] = 'nearest',
-    name: str = 'upsampling2D',
+    name: Optional[str] = None,
 ) -> Union[tf.Tensor, Resampling2D]:
   """ Upsampling"""
   layer = Resampling2D(size, mode, name=name)
@@ -417,12 +416,12 @@ def upsampling2D(
   return layer(inputs)
 
 
-def project_1_1(
+def project_1x1(
     inputs: Optional[tf.Tensor] = None,
     filters: int = 32,
     activation: Optional[Callable[[tf.Tensor], tf.Tensor]] = None,
     use_bias: bool = True,
-    name: str = 'project_11',
+    name: str = 'project_1x1',
 ) -> Union[tf.Tensor, Layer]:
   """ Projecting using (1, 1) convolution """
   layer = Conv2D(filters=int(filters),
@@ -461,7 +460,7 @@ def strides2D(
 def dropout2D(
     inputs: Optional[tf.Tensor] = None,
     rate: float = 0.0,
-    name: str = 'dropout2D',
+    name: Optional[str] = None,
 ) -> Union[tf.Tensor, Layer]:
   if rate > 0:
     layer = Dropout(rate, noise_shape=(None, 1, 1, 1), name=name)

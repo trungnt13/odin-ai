@@ -9,11 +9,11 @@ import os
 import pickle
 import sys
 import types
+from dataclasses import field
 from functools import partial
 from numbers import Number
 from typing import (Any, Callable, Dict, Iterator, List, Optional, Text, Tuple,
                     Union, Sequence)
-from collections import defaultdict
 
 import numpy as np
 import tensorflow as tf
@@ -24,15 +24,13 @@ from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.python import keras
 from tensorflow.python.data import Dataset
 from tensorflow.python.keras.layers import Layer
-from tensorflow.python.keras.optimizer_v2.optimizer_v2 import \
-  OptimizerV2 as Optimizer
 from tensorflow.python.ops.summary_ops_v2 import SummaryWriter
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.training.tracking import base as trackable
 from typing_extensions import Literal
 
 from odin.backend.keras_helpers import layer2text
-from odin.backend.types_helpers import TensorType
+from odin.backend.types_helpers import TensorType, Scalar, Optimizer
 from odin.networks.util_layers import (Conv1DTranspose, Identity)
 from odin.training import Callback, EarlyStopping, Trainer
 from odin.utils import MD5object, as_tuple, classproperty
@@ -109,7 +107,7 @@ def _to_optimizer(optimizer, learning_rate):
       opt = opt(learning_rate=float(learning_rate))
     # no support
     else:
-      raise ValueError("No support for optimizer: %s" % str(opt))
+      raise ValueError(f"No support for optimizer: {opt}")
     all_optimizers.append(opt)
   return all_optimizers
 
@@ -148,18 +146,22 @@ class TrainStep:
       list of trainable parameters
 
   """
-  inputs: Union[TensorType, Sequence[TensorType]]
-  training: Optional[bool] = dataclasses.field(default=None)
-  mask: Optional[TensorType] = dataclasses.field(default=None)
-  parameters: List[tf.Variable] = dataclasses.field(default_factory=list)
-  optimizer: Optional[Optimizer] = dataclasses.field(default=None)
-  name: str = dataclasses.field(default_factory=str)
+  inputs: Union[None, TensorType, Sequence[TensorType]] = field(default=None)
+  training: Optional[bool] = field(default=None)
+  mask: Optional[TensorType] = field(default=None)
+  parameters: List[tf.Variable] = field(default_factory=list)
+  optimizer: Optional[Optimizer] = field(default=None)
+  name: str = field(default_factory=str)
+  func: Optional[Callable[[], Tuple[Scalar, Dict[str, Any]]]] = field(
+    default=None)
 
   def set_name(self, name: str) -> 'TrainStep':
     self.name = name
     return self
 
   def call(self) -> Tuple[Tensor, Dict[str, Any]]:
+    if self.func is not None:
+      return self.func()
     return tf.constant(0., dtype=tf.float32), {}
 
   def __call__(self) -> Tuple[Tensor, Dict[str, Any]]:
@@ -375,7 +377,7 @@ class Networks(keras.Model, MD5object):
                   name: str = '',
                   *args,
                   **kwargs
-                  ) -> Iterator[Callable[[], Tuple[Tensor, Dict[str, Any]]]]:
+                  ) -> Iterator[Callable[[], Tuple[Scalar, Dict[str, Any]]]]:
     yield TrainStep(inputs=inputs,
                     training=training,
                     parameters=self.trainable_variables,
@@ -387,7 +389,7 @@ class Networks(keras.Model, MD5object):
       self,
       inputs: Union[TensorType, Sequence[TensorType]],
       training: bool = True,
-      optimizer: Optional[Union[Sequence[Optimizer], Optimizer]] = None,
+      optimizer: Union[None, Sequence[Optimizer], Optimizer] = None,
       clipnorm: Optional[float] = None,
       clipvalue: Optional[float] = None,
       global_clipnorm: Optional[float] = None,
@@ -464,18 +466,21 @@ class Networks(keras.Model, MD5object):
     all_updates = []  # [(opt, grad_params), ...]
     for step_idx, step in enumerate(
         self.train_steps(inputs=inputs, training=training, *args, **kwargs)):
-      step: TrainStep
-      step_name = step.name
-      assert isinstance(step, TrainStep) or callable(step), \
-        ("method train_steps must return an Iterator of TrainStep or callable, "
-         f"but return type: {type(step)}")
-      opt = step.optimizer
-      if opt is None:
-        opt = optimizer[step_idx % n_optimizer]
-      if isinstance(step, TrainStep):
+      step: Union[TrainStep, Callable]
+      opt = None
+      if inspect.isfunction(step):
+        step_name = step.__name__
+        parameters = self.trainable_variables
+      elif isinstance(step, TrainStep):
+        step_name = step.name
+        opt = step.optimizer
         parameters = step.parameters
       else:
-        parameters = self.trainable_variables
+        raise RuntimeError(
+          "method train_steps must return an Iterator of "
+          f"TrainStep or callable, but return type: {type(step)}")
+      if opt is None:
+        opt = optimizer[step_idx % n_optimizer]
       ## for training
       if training:
         with tf.GradientTape(watch_accessed_variables=False) as tape:
@@ -579,7 +584,7 @@ class Networks(keras.Model, MD5object):
       ## update metrics and loss
       for k, v in metrics.items():
         if len(step_name) > 0:
-          k = f'{k}_{step_name}'
+          k = f'{step_name}/{k}'
         all_metrics[k] = v
       total_loss += loss
     ## aggregate the updates
@@ -1198,7 +1203,7 @@ class NetConf(dict):
   kernel_constraint: Union[str, Sequence[str]] = None
   bias_constraint: Union[str, Sequence[str]] = None
   batchnorm: Union[bool, Sequence[bool]] = False
-  batchnorm_kw: Dict[str, Any] = dataclasses.field(default_factory=dict)
+  batchnorm_kw: Dict[str, Any] = field(default_factory=dict)
   input_dropout: float = 0.
   dropout: Union[float, Sequence[float]] = 0.
   linear_decoder: bool = False
@@ -1218,19 +1223,19 @@ class NetConf(dict):
       "Given network '%s', only support: %s" % (self.network, network_types)
 
   def keys(self):
-    for i in dataclasses.fields(self):
+    for i in fields(self):
       yield i.name
 
   def values(self):
-    for i in dataclasses.fields(self):
+    for i in fields(self):
       yield i.default
 
   def __iter__(self):
-    for i in dataclasses.fields(self):
+    for i in fields(self):
       yield i.name, i.default
 
   def __len__(self):
-    return len(dataclasses.fields(self))
+    return len(fields(self))
 
   def __getitem__(self, key):
     return getattr(self, key)

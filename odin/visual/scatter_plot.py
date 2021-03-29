@@ -2,6 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 from collections import OrderedDict
 from numbers import Number
+from typing import Optional
 
 import numpy as np
 from six import string_types
@@ -76,15 +77,15 @@ def _validate_color_marker_size_legend(max_n_points,
     default_marker = marker
     marker = None
   legend = [
-      [None] * max_n_points,  # color
-      [None] * max_n_points,  # marker
-      [None] * max_n_points,  # size
+    [None] * max_n_points,  # color
+    [None] * max_n_points,  # marker
+    [None] * max_n_points,  # size
   ]
   #
   create_label_map = lambda labs, default_val, fn_gen: \
-      ({labs[0]: default_val}
-       if len(labs) == 1 else
-       {i: j for i, j in zip(labs, fn_gen(len(labs), seed=random_seed))})
+    ({labs[0]: default_val}
+     if len(labs) == 1 else
+     {i: j for i, j in zip(labs, fn_gen(len(labs), seed=random_seed))})
   # ====== check arguments ====== #
   if color is None:
     color = [0] * max_n_points
@@ -106,13 +107,13 @@ def _validate_color_marker_size_legend(max_n_points,
   # ====== validate the length ====== #
   for name, arr in [("color", color), ("marker", marker), ("size", size)]:
     assert len(arr) == max_n_points, \
-    "Given %d samples for `%s`, but require %d samples" % \
+      "Given %d samples for `%s`, but require %d samples" % \
       (len(arr), name, max_n_points)
   # ====== labels set ====== #
   color_labels = np.unique(color)
   color_map = create_label_map(
-      color_labels, default_color,
-      generate_random_colormaps if is_colormap else generate_palette_colors)
+    color_labels, default_color,
+    generate_random_colormaps if is_colormap else generate_palette_colors)
   # generate_random_colors
   marker_labels = np.unique(marker)
   if text_marker:
@@ -173,8 +174,8 @@ def _downsample_scatter_points(x, y, z, max_n_points, *args):
     if z is not None:
       z = np.array(z)[ids]
     args = [
-        np.array(a)[ids] if isinstance(a, (tuple, list, np.ndarray)) else a
-        for a in args
+      np.array(a)[ids] if isinstance(a, (tuple, list, np.ndarray)) else a
+      for a in args
     ]
   return [len(x), x, y, z] + args
 
@@ -207,21 +208,21 @@ def _plot_scatter_points(*, x, y, z, val, color, marker, size, size_range,
     is_colormap = True
     if is_colormap:
       assert isinstance(color, (string_types, LinearSegmentedColormap)), \
-      "`colormap` can be string or instance of matplotlib Colormap, " + \
+        "`colormap` can be string or instance of matplotlib Colormap, " + \
         "but given: %s" % type(color)
   if not is_colormap and isinstance(color, string_types) and color == 'bwr':
     color = 'b'
   ### perform downsample and select the styles
   max_n_points, x, y, z, color, marker, size = _downsample_scatter_points(
-      x, y, z, max_n_points, color, marker, size)
+    x, y, z, max_n_points, color, marker, size)
   color, marker, size, legend = _validate_color_marker_size_legend(
-      max_n_points,
-      color,
-      marker,
-      size,
-      text_marker=text_marker,
-      is_colormap=is_colormap,
-      size_range=size_range)
+    max_n_points,
+    color,
+    marker,
+    size,
+    text_marker=text_marker,
+    is_colormap=is_colormap,
+    size_range=size_range)
   ### centroid style
   centroid_style = dict(horizontalalignment='center',
                         verticalalignment='center',
@@ -294,11 +295,11 @@ def _plot_scatter_points(*, x, y, z, val, color, marker, size, size_range,
       mappable = plt.cm.ScalarMappable(norm=color_normalizer, cmap=cm)
       mappable.set_clim(vmin, vmax)
       cba = plt.colorbar(
-          mappable,
-          ax=ax,
-          shrink=0.99,
-          pad=0.01,
-          orientation='horizontal' if cbar_horizontal else 'vertical')
+        mappable,
+        ax=ax,
+        shrink=0.99,
+        pad=0.01,
+        orientation='horizontal' if cbar_horizontal else 'vertical')
       if isinstance(cbar_nticks, Number):
         cbar_range = np.linspace(vmin, vmax, num=int(cbar_nticks))
         cbar_nticks = [f'{i:.2g}' for i in cbar_range]
@@ -332,19 +333,24 @@ def _plot_scatter_points(*, x, y, z, val, color, marker, size, size_range,
           markerscale = 25
       # sort the legends
       legend_name, artist = zip(
-          *sorted(zip(legend_name, artist), key=lambda t: t[0]))
-      legend = ax.legend(artist,
-                         legend_name,
+        *sorted(zip(legend_name, artist), key=lambda t: t[0]))
+      legend_kw = {}
+      if legend_loc is not None:
+        legend_kw['loc'] = legend_loc
+      if legend_ncol is not None:
+        legend_kw['ncol'] = legend_ncol
+      legend = ax.legend(artist, legend_name,
+                         labelspacing=0.,
+                         handletextpad=0.1,
                          markerscale=markerscale,
                          scatterpoints=1,
-                         scatteryoffsets=[0.375, 0.5, 0.3125],
-                         loc=legend_loc,
-                         bbox_to_anchor=(0.5, -0.01),
-                         ncol=int(legend_ncol),
                          columnspacing=float(legend_colspace),
-                         labelspacing=0.,
                          fontsize=fontsize,
-                         handletextpad=0.1)
+                         **legend_kw)
+      # scatteryoffsets=[0.375, 0.5, 0.3125],
+      # bbox_to_anchor=(0.5, -0.01),
+      # labelspacing=0.,
+      # handletextpad=0.1)
     ## tick configuration
     if ticks_off:
       ax.set_xticklabels([])
@@ -366,9 +372,9 @@ def _plot_scatter_points(*, x, y, z, val, color, marker, size, size_range,
 # ===========================================================================
 # Main functions
 # ===========================================================================
-def plot_scatter(x,
-                 y=None,
-                 z=None,
+def plot_scatter(x: np.ndarray,
+                 y: Optional[np.ndarray] = None,
+                 z: Optional[np.ndarray] = None,
                  val=None,
                  ax=None,
                  color='bwr',
@@ -390,8 +396,8 @@ def plot_scatter(x,
                  cbar_fontsize=10,
                  cbar_title=None,
                  legend_enable=True,
-                 legend_loc='upper center',
-                 legend_ncol=3,
+                 legend_loc: Optional[str] = None,
+                 legend_ncol: Optional[int] = None,
                  legend_colspace=0.4,
                  centroids=False,
                  max_n_points=None,
@@ -451,15 +457,15 @@ def plot_scatter(x,
   """
   from matplotlib import pyplot as plt
   for ax, artist, x, y, z, \
-    (color, marker, size) in _plot_scatter_points(**locals()):
+      (color, marker, size) in _plot_scatter_points(**locals()):
     kwargs = dict(
-        c=color,
-        marker=marker,
-        s=size,
-        linewidths=linewidths,
-        linestyle=linestyle,
-        edgecolors=edgecolors,
-        alpha=alpha,
+      c=color,
+      marker=marker,
+      s=size,
+      linewidths=linewidths,
+      linestyle=linestyle,
+      edgecolors=edgecolors,
+      alpha=alpha,
     )
     if z is not None:  # 3D plot
       art = ax.scatter(x, y, z, **kwargs)
@@ -527,7 +533,8 @@ def plot_scatter_text(x,
   ylim = (np.inf, -np.inf)
   zlim = (np.inf, -np.inf)
   for ax, artist, x, y, z, \
-    (color, marker, size) in _plot_scatter_points(text_marker=True, **locals()):
+      (color, marker, size) in _plot_scatter_points(text_marker=True,
+                                                    **locals()):
     if len(color) != len(x):
       color = [color] * len(x)
     # axes limits
@@ -669,10 +676,10 @@ def plot_scatter_layers(x_y_val,
     # colorbar
     if colorbar:
       cba = plt.colorbar(
-          _,
-          shrink=0.5,
-          pad=0.01,
-          orientation='horizontal' if colorbar_horizontal else 'vertical')
+        _,
+        shrink=0.5,
+        pad=0.01,
+        orientation='horizontal' if colorbar_horizontal else 'vertical')
       if len(name) > 0:
         cba.set_label(name, fontsize=fontsize)
   # ====== plot the legend ====== #

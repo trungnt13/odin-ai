@@ -153,10 +153,10 @@ class Shapes3D(_ShapeDataset):
 
 
 class Shapes3DSmall(Shapes3D):
-  """Shapes3D dataset with downsampled image (28, 28, 3) """
+  """Shapes3D dataset with downsampled image (32, 32, 3) """
 
   def __init__(self, continuous: bool = True, seed: int = 1):
-    super().__init__(image_size=28, continuous=continuous, seed=seed)
+    super().__init__(image_size=32, continuous=continuous, seed=seed)
 
 
 # ===========================================================================

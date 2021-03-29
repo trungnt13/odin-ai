@@ -26,7 +26,7 @@ from sklearn.pipeline import Pipeline
 from bigarray import MmapArray
 from odin.fuel import Dataset, MmapDict
 from odin.preprocessing.base import Extractor, ExtractorSignal
-from odin.utils import (Progbar, add_notification, as_tuple, batching, ctext,
+from odin.utils import (Progbar, add_notification, as_tuple, minibatch, ctext,
                         defaultdictkey, flatten_list, get_all_files,
                         get_formatted_datetime, get_stdio_path, get_tempdir,
                         is_string, stdio, wprint)

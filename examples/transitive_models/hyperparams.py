@@ -25,7 +25,7 @@ from odin.backend.interpolation import Interpolation, linear
 from odin.bay.vi import (VAE, Beta10VAE, ConditionalM2VAE, FactorVAE, MIVAE,
                          MultiheadVAE, RemafoVAE, SemafoVAE, SkiptaskVAE)
 from odin.ml import DimReduce
-from odin.utils import MPI, as_tuple, batching, get_all_files, ArgController
+from odin.utils import MPI, as_tuple, minibatch, get_all_files, ArgController
 
 N_CPU = 2
 OVERRIDE = False

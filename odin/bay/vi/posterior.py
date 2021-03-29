@@ -779,7 +779,7 @@ class Posterior(vs.Visualizer):
         mutual_info_estimate(
             representations=self.dist_to_tensor(self.latents).numpy(),
             factors=self.factors,
-            continuous_representations=True,
+            continuous_latents=True,
             continuous_factors=False,
             n_neighbors=i,
             n_cpu=n_cpu,

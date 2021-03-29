@@ -33,21 +33,24 @@ class InfoVAE(BetaVAE):
   Increase `np` (number of prior samples) in `divergence_kw` to reduce the
   variance of MMD estimation.
 
-  Arguments:
-    alpha : float
-      Equal to `1 - beta`. Higher value of alpha places lower weight
-      on the KL-divergence
-    lamda : float
-      This is the value of lambda in the paper.
-      Higher value of lambda place more weight on the Info-divergence (i.e. MMD)
-    divergence : a Callable.
-      Divergences families, for now only support 'mmd'
-      i.e. maximum-mean discrepancy.
+  Parameters
+  ----------
+  alpha : float
+    Equal to `1 - beta`. Higher value of alpha places lower weight
+    on the KL-divergence
+  lamda : float
+    This is the value of lambda in the paper.
+    Higher value of lambda place more weight on the Info-divergence
+    (i.e. MMD)
+  divergence : a Callable.
+    Divergences families, for now only support 'mmd'
+    i.e. maximum-mean discrepancy.
 
-  Reference:
-    Zhao, S., Song, J., Ermon, S., et al. "infoVAE: Balancing Learning and
+  References
+  ----------
+  Zhao, S., Song, J., Ermon, S., et al. "infoVAE: Balancing Learning and
       Inference in Variational Autoencoders".
-    Shengjia Zhao. "A Tutorial on Information Maximizing Variational
+  Shengjia Zhao. "A Tutorial on Information Maximizing Variational
       Autoencoders (infoVAE)".
       https://ermongroup.github.io/blog/a-tutorial-on-mmd-variational-autoencoders
   """
@@ -64,6 +67,7 @@ class InfoVAE(BetaVAE):
       name='InfoVAE',
       **kwargs,
   ):
+    kwargs.pop('beta')
     super().__init__(beta=1 - alpha, name=name, **kwargs)
     self.lamda = tf.convert_to_tensor(lamda, dtype=self.dtype, name='lambda')
     # select right divergence
@@ -79,15 +83,14 @@ class InfoVAE(BetaVAE):
   def alpha(self, alpha):
     self.beta = 1 - alpha
 
-  def elbo_components(self, inputs, training=None, mask=None):
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     llk, kl = super().elbo_components(inputs, mask=mask, training=training)
     px_z, qz_x = self.last_outputs
     # repeat for each latent
-    for z, qz in zip(as_tuple(self.latents), as_tuple(qz_x)):
+    for layer, qz in zip(as_tuple(self.latents), as_tuple(qz_x)):
       # div(qZ||pZ)
-      info_div = (self.lamda - self.beta) * self.divergence(
-          qz, qz.KL_divergence.prior)
-      kl[f'div_{z.name}'] = info_div
+      info_div = self.divergence(qz, qz.KL_divergence.prior)
+      kl[f'div_{layer.name}'] = (self.lamda - self.beta) * info_div
     return llk, kl
 
 
@@ -198,9 +201,9 @@ class MIVAE(BetaVAE):
     ## factorizing the mutual codes if required
     kl_c = qc_x.KL_divergence(free_bits=self.free_bits)
     kl[f'kl_{self.mutual_codes.name}'] = tf.cond(
-        self.beta_codes > 1e-8,  # for numerical stability
-        true_fn=lambda: self.beta_codes * kl_c,
-        false_fn=lambda: tf.stop_gradient(kl_c),
+      self.beta_codes > 1e-8,  # for numerical stability
+      true_fn=lambda: self.beta_codes * kl_c,
+      false_fn=lambda: tf.stop_gradient(kl_c),
     )
     ## This approach is not working!
     # z_prime = tf.stop_gradient(tf.convert_to_tensor(qz_x))
@@ -222,18 +225,17 @@ class MIVAE(BetaVAE):
     qz_xprime, qc_xprime = self.encode(x, training=training)
     ## mutual information (we want to maximize this, hence, add it to the llk)
     llk['mi_codes'] = self.mi_coef * tf.cond(
-        self.step > self.steps_without_mi,
-        true_fn=lambda: qc_xprime.log_prob(c_prime),
-        false_fn=lambda: 0.)
+      self.step > self.steps_without_mi,
+      true_fn=lambda: qc_xprime.log_prob(c_prime),
+      false_fn=lambda: 0.)
     ## this value is just for monitoring
     mi_z = tf.stop_gradient(tf.reduce_mean(qz_xprime.log_prob(z_prime)))
     llk['mi_latents'] = tf.cond(
-        tf.logical_or(tf.math.is_nan(mi_z), tf.math.is_inf(mi_z)),
-        true_fn=lambda: 0.,
-        false_fn=lambda: mi_z,
+      tf.logical_or(tf.math.is_nan(mi_z), tf.math.is_inf(mi_z)),
+      true_fn=lambda: 0.,
+      false_fn=lambda: mi_z,
     )
     return llk, kl
-
 
 # class InfoNCEVAE(betaVAE):
 #   r""" Mutual information bound based on Noise-Contrastive Estimation
