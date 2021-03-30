@@ -207,8 +207,7 @@ class Networks(keras.Model, MD5object):
                aggregate_gradients: bool = False,
                *args,
                **kwargs):
-    super().__init__(name=kwargs.pop('name',
-                                     type(self).__name__),
+    super().__init__(name=kwargs.pop('name', type(self).__name__),
                      *args,
                      **kwargs)
     self.step = tf.Variable(step, dtype=tf.int64, trainable=False, name="Step")
@@ -231,7 +230,7 @@ class Networks(keras.Model, MD5object):
     args = dict(self._init_args)
     return args
 
-  def build(self, input_shape: Sequence[Union[None, int]]) -> 'Networks':
+  def build(self, input_shape: Sequence[Union[None, int]] = None) -> 'Networks':
     """Build the networks for given input or list of inputs
 
     Parameters
@@ -317,6 +316,16 @@ class Networks(keras.Model, MD5object):
     args = [i for i in set(args) if i not in kw and i != 'self']
     return kw
 
+  def save(self,
+           filepath,
+           overwrite=True,
+           include_optimizer=True,
+           save_format=None,
+           signatures=None,
+           options=None,
+           save_traces=True):
+    raise NotImplementedError()
+  
   def load_weights(self,
                    filepath: Optional[str] = None,
                    raise_notfound: bool = False,

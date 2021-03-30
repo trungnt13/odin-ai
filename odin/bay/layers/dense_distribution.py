@@ -244,7 +244,7 @@ class DistributionDense(Layer):
     spec = inspect.getfullargspec(self.posterior_layer)
     self._posterior_call_kw = set(spec.args + spec.kwonlyargs)
 
-  def build(self, input_shape) -> 'DistributionDense':
+  def build(self, input_shape=None) -> 'DistributionDense':
     self._dense.build(input_shape)
     return self
 

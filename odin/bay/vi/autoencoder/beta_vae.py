@@ -25,9 +25,8 @@ class BetaVAE(VAE):
 
   def __init__(self,
                beta: Union[float, Interpolation] = 1.0,
-               name='BetaVAE',
                **kwargs):
-    super().__init__(name=name, **kwargs)
+    super().__init__(**kwargs)
     self._beta = beta
 
   @property
@@ -46,9 +45,9 @@ class BetaVAE(VAE):
 
 class Beta10VAE(BetaVAE):
 
-  def __init__(self, name='Beta10VAE', **kwargs):
+  def __init__(self, **kwargs):
     kwargs.pop('beta', None)
-    super().__init__(beta=10.0, name=name, **kwargs)
+    super().__init__(beta=10.0, **kwargs)
 
 
 class AnnealingVAE(BetaVAE):
@@ -73,10 +72,9 @@ class AnnealingVAE(BetaVAE):
                                                  vmax=1.0,
                                                  length=2000,
                                                  delay_in=0),
-      name: str = 'AnnealingVAE',
       **kwargs,
   ):
-    super().__init__(beta=beta, name=name, **kwargs)
+    super().__init__(beta=beta, **kwargs)
 
 
 class BetaTCVAE(BetaVAE):

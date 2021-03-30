@@ -9,11 +9,11 @@ from tensorflow_probability.python.distributions import Distribution, Normal
 from typing_extensions import Literal
 
 __all__ = [
-    'disentangled_inferred_prior_loss',
-    'total_correlation',
-    'pairwise_distances',
-    'gaussian_kernel',
-    'maximum_mean_discrepancy',
+  'disentangled_inferred_prior_loss',
+  'total_correlation',
+  'pairwise_distances',
+  'gaussian_kernel',
+  'maximum_mean_discrepancy',
 ]
 
 
@@ -28,8 +28,8 @@ def get_divergence(name: str) -> Callable[[Distribution, Distribution], Tensor]:
   name = str(name).strip().lower()
   if name not in div:
     raise ValueError(
-        "Cannot find divergence with name: '%s', all available are: %s" %
-        (name, ', '.join(div.keys())))
+      "Cannot find divergence with name: '%s', all available are: %s" %
+      (name, ', '.join(div.keys())))
   return div[name]
 
 
@@ -67,16 +67,16 @@ def disentangled_inferred_prior_loss(qZ_X: Distribution,
   if len(shape) > 2:
     # [sample_shape * batch_size, zdim]
     z_mean = tf.reshape(
-        z_mean, (tf.cast(tf.reduce_prod(shape[:-1]), tf.int32),) + shape[-1:])
+      z_mean, (tf.cast(tf.reduce_prod(shape[:-1]), tf.int32),) + shape[-1:])
   expectation_z_mean_z_mean_t = tf.reduce_mean(tf.expand_dims(z_mean, 2) *
                                                tf.expand_dims(z_mean, 1),
                                                axis=0)
   expectation_z_mean = tf.reduce_mean(z_mean, axis=0)
   # cov_zmean [zdim, zdim]
   cov_zmean = tf.subtract(
-      expectation_z_mean_z_mean_t,
-      tf.expand_dims(expectation_z_mean, 1) *
-      tf.expand_dims(expectation_z_mean, 0))
+    expectation_z_mean_z_mean_t,
+    tf.expand_dims(expectation_z_mean, 1) *
+    tf.expand_dims(expectation_z_mean, 0))
   # Eq(5)
   if only_mean:
     z_cov = cov_zmean
@@ -84,7 +84,7 @@ def disentangled_inferred_prior_loss(qZ_X: Distribution,
     z_var = qZ_X.variance()
     if len(shape) > 2:
       z_var = tf.reshape(
-          z_var, (tf.cast(tf.reduce_prod(shape[:-1]), tf.int32),) + shape[-1:])
+        z_var, (tf.cast(tf.reduce_prod(shape[:-1]), tf.int32),) + shape[-1:])
     # mean_zcov [zdim, zdim]
     mean_zcov = tf.reduce_mean(tf.linalg.diag(z_var), axis=0)
     z_cov = cov_zmean + mean_zcov
@@ -95,7 +95,7 @@ def disentangled_inferred_prior_loss(qZ_X: Distribution,
   z_cov_diag = tf.linalg.diag_part(z_cov)
   z_cov_offdiag = z_cov - tf.linalg.diag(z_cov_diag)
   return lambda_offdiag * tf.reduce_sum(z_cov_offdiag ** 2) + \
-    lambda_diag * tf.reduce_sum((z_cov_diag - 1.) ** 2)
+         lambda_diag * tf.reduce_sum((z_cov_diag - 1.) ** 2)
 
 
 def total_correlation(z_samples: Tensor, qZ_X: Distribution) -> Tensor:
@@ -111,22 +111,27 @@ def total_correlation(z_samples: Tensor, qZ_X: Distribution) -> Tensor:
   If `alpha = gamma = 1`, Eq(4) can be written as `ELBO + (1 - beta) * TC`.
   (i.e. `(1. - beta) * total_correlation(z_sampled, qZ_X)`)
 
-  Arguments:
-    z: [batch_size, num_latents]-tensor with sampled representation.
-    z_mean: [batch_size, num_latents]-tensor with mean of the encoder.
-    z_logvar: [batch_size, num_latents]-tensor with log variance of the encoder.
+  Parameters
+  ----------
+  z_samples : Tensor
+      shape `[batch_size, num_latents]` - tensor with sampled representation.
+  qZ_X : Distribution
+      the posterior distribution, shape `[batch_size, num_latents]`
 
-  Note:
-    This involve calculating pair-wise distance, memory complexity up to
-    `O(n*n*d)`.
+  Note
+  ----
+  This involve calculating pair-wise distance, memory complexity up to
+      `O(n*n*d)`.
 
-  Returns:
-    Total correlation estimated on a batch.
+  Returns
+  -------
+  Total correlation estimated on a batch.
 
-  Reference:
-    Chen, R.T.Q., Li, X., Grosse, R., Duvenaud, D., 2019. Isolating Sources of
+  References
+  ----------
+  Chen, R.T.Q., Li, X., Grosse, R., Duvenaud, D., 2019. Isolating Sources of
       Disentanglement in Variational Autoencoders. arXiv:1802.04942 [cs, stat].
-    Github code https://github.com/google-research/disentanglement_lib
+  Github code https://github.com/google-research/disentanglement_lib
   """
   gaus = Normal(loc=tf.expand_dims(qZ_X.mean(), 0),
                 scale=tf.expand_dims(qZ_X.stddev(), 0))
@@ -245,10 +250,10 @@ def maximum_mean_discrepancy(
 
   """
   assert isinstance(
-      qZ, Distribution
+    qZ, Distribution
   ), 'qZ must be instance of tensorflow_probability.Distribution'
   assert isinstance(
-      pZ, Distribution
+    pZ, Distribution
   ), 'pZ must be instance of tensorflow_probability.Distribution'
   # prepare the samples
   if q_sample_shape is None:  # reuse sampled examples

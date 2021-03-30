@@ -227,7 +227,7 @@ def mnist_networks(
 ) -> Dict[str, Layer]:
   """Network for MNIST dataset image size (28, 28, 1)"""
   from odin.bay.random_variable import RVconf
-  from odin.bay.vi.autoencoder import HierarchicalLatents
+  from odin.bay.vi.autoencoder import BidirectionalLatents
   n_channels = int(kwargs.get('n_channels', 1))
   proj_dim = 196
   input_shape = (28, 28, n_channels)
@@ -253,12 +253,11 @@ def mnist_networks(
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((7, 7, proj_dim // 49)),
     deconv(64, 5, strides=2, name='decoder2'),
-    HierarchicalLatents(conv(64, 5, strides=1, name='decoder3'),
-                        encoder=encoder.layers[3],
-                        latent_units=16,
-                        downsample=True,
-                        disable=True,
-                        name='latents1'),
+    BidirectionalLatents(conv(64, 5, strides=1, name='decoder3'),
+                         encoder=encoder.layers[3],
+                         filters=64, kernel_size=14, padding='valid',
+                         disable=True,
+                         name='latents1'),
     deconv(32, 5, strides=2, name='decoder4'),
     conv(32, 5, strides=1, name='decoder5'),
     conv(n_channels * n_params, 1, strides=1, activation='linear',
@@ -328,7 +327,7 @@ def cifar_networks(
 ) -> Dict[str, Layer]:
   """Network for CIFAR dataset image size (32, 32, 3)"""
   from odin.bay.random_variable import RVconf
-  from odin.bay.vi.autoencoder.hierarchical_vae import HierarchicalLatents
+  from odin.bay.vi.autoencoder.hierarchical_vae import BidirectionalLatents
   if zdim is None:
     zdim = 256
   n_channels = kwargs.get('n_channels', 3)
@@ -356,17 +355,17 @@ def cifar_networks(
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((8, 8, proj_dim // 64)),
     deconv(64, 4, strides=2, name='decoder1'),
-    HierarchicalLatents(conv(64, 4, strides=1, name='decoder2'),
-                        encoder=encoder.layers[3],
-                        latent_units=8,
-                        name='latents1',
-                        disable=True),
+    BidirectionalLatents(conv(64, 4, strides=1, name='decoder2'),
+                         encoder=encoder.layers[3],
+                         filters=64, kernel_size=8, strides=4,
+                         disable=True,
+                         name='latents1'),
     deconv(32, 4, strides=2, name='decoder3'),
-    HierarchicalLatents(conv(32, 4, strides=1, name='decoder4'),
-                        encoder=encoder.layers[1],
-                        latent_units=1,
-                        name='latents2',
-                        disable=True),
+    BidirectionalLatents(conv(32, 4, strides=1, name='decoder4'),
+                         encoder=encoder.layers[1],
+                         filters=32, kernel_size=8, strides=4,
+                         disable=True,
+                         name='latents2'),
     conv(n_channels * n_params,
          1,
          strides=1,
@@ -432,7 +431,7 @@ def dsprites_networks(
     **kwargs,
 ) -> Dict[str, Layer]:
   from odin.bay.random_variable import RVconf
-  from odin.bay.vi.autoencoder import HierarchicalLatents
+  from odin.bay.vi.autoencoder import BidirectionalLatents
   if zdim is None:
     zdim = 10
   n_channels = int(kwargs.get('n_channels', 1))
@@ -460,17 +459,17 @@ def dsprites_networks(
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((4, 4, proj_dim // 16)),
-    HierarchicalLatents(deconv(64, 4, strides=2, name='decoder1'),
-                        encoder=encoder.layers[3],
-                        latent_units=8,
-                        disable=True,
-                        name='latents1'),
+    BidirectionalLatents(deconv(64, 4, strides=2, name='decoder1'),
+                         encoder=encoder.layers[3],
+                         latent_units=8,
+                         disable=True,
+                         name='latents1'),
     deconv(64, 4, strides=2, name='decoder2'),
-    HierarchicalLatents(deconv(32, 4, strides=2, name='decoder3'),
-                        encoder=encoder.layers[1],
-                        downsample=True,
-                        disable=True,
-                        name='latents2'),
+    BidirectionalLatents(deconv(32, 4, strides=2, name='decoder3'),
+                         encoder=encoder.layers[1],
+                         downsample=True,
+                         disable=True,
+                         name='latents2'),
     deconv(32, 4, strides=2, name='decoder4'),
     # NOTE: this last projection layer with linear activation is crucial
     # otherwise the distribution parameterized by this layer won't converge

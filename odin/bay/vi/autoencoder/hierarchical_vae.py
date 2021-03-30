@@ -7,15 +7,14 @@ from typing import Union, Optional, Sequence
 import numpy as np
 import tensorflow as tf
 from tensorflow import keras
-from tensorflow.python.keras.layers import Layer, Wrapper, Dense
-from tensorflow.python.keras.layers.convolutional import Conv
+from tensorflow.python.keras.layers import Layer, Wrapper, Dense, Conv2D, \
+  Conv1D, Conv3D, Conv1DTranspose, Conv2DTranspose, Conv3DTranspose
 from tensorflow_probability.python.distributions import Distribution, Normal, \
   MultivariateNormalDiag, Independent
 from tensorflow_probability.python.layers.distribution_layer import (
   DistributionLambda)
 from typing_extensions import Literal
 
-from odin.backend import TensorType
 from odin.bay.helpers import kl_divergence
 from odin.bay.random_variable import RVconf
 from odin.bay.vi.autoencoder.beta_vae import AnnealingVAE, BetaVAE
@@ -25,55 +24,20 @@ from odin.utils import as_tuple
 
 __all__ = [
   'MergeNormal',
-  'HierarchicalLatents',
+  'BidirectionalLatents',
   'HierarchicalVAE',
   'LadderVAE',
   'UnetVAE'
 ]
 
-
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _copy_layer(layer: Layer,
-                *,
-                units: Optional[int] = None,
-                n_params: int = 2,
-                downsample_shape: Optional[Sequence[int]] = None,
-                proj_1x1: bool = False) -> Layer:
-  cfg = layer.get_config()
-  cls = layer.__class__
-  key = 'filters' if 'filters' in cfg else 'units'
-  if units is None:
-    cfg[key] *= n_params
-  else:
-    cfg[key] = units * n_params
-  cfg['name'] += '_clone'
-  cfg['activation'] = 'linear'
-  cfg['use_bias'] = True
-  ## convolution
-  if issubclass(cls, Conv):
-    # switch to use convolution
-    if 'Transpose' in str(cls):
-      if issubclass(cls, keras.layers.Conv1DTranspose):
-        cls = keras.layers.Conv1D
-      elif issubclass(cls, keras.layers.Conv2DTranspose):
-        cls = keras.layers.Conv2D
-      elif issubclass(cls, keras.layers.Conv3DTranspose):
-        cls = keras.layers.Conv3D
-      cfg.pop('output_padding')
-    # no strides
-    cfg['strides'] = 1
-    # 1x1 projection
-    if proj_1x1:
-      cfg['padding'] = 'SAME'
-      cfg['kernel_size'] = 1
-    # downsample
-    elif downsample_shape is not None:
-      cfg['padding'] = 'VALID'
-      cfg['kernel_size'] = downsample_shape[1:-1]
-  layer = cls(**cfg)
-  return layer
+_NDIMS_CONV = {
+  3: (Conv1D, Conv1DTranspose),
+  4: (Conv2D, Conv2DTranspose),
+  5: (Conv3D, Conv3DTranspose)
+}
 
 
 def _call(self, inputs, **kwargs):
@@ -111,38 +75,43 @@ class MergeNormal(DistributionLambda):
 # ===========================================================================
 # Wrapper for hierarchical latent variable
 # ===========================================================================
-class HierarchicalLatents(Wrapper):
-  """
-  """
+class BidirectionalLatents(Wrapper):
+  """Bidirectional inference for hierarchical latent variables"""
 
   def __init__(self,
-               layer: Union[Dense, Conv],
+               layer: Layer,
                encoder: Optional[Layer] = None,
-               latent_units: Optional[int] = None,
-               downsample: bool = False,
+               filters: int = 32,
+               kernel_size: Union[int, Sequence[int]] = 3,
+               strides: Union[int, Sequence[int]] = 1,
+               padding: Literal['valid', 'same'] = 'same',
+               deterministic_features: bool = True,
+               residual_coef: float = 1.0,
                merge_normal: bool = False,
                distribution: Literal['mvndiag', 'normal'] = 'normal',
-               forward_mode: Literal['sample', 'mean'] = 'sample',
                beta: float = 1.,
                disable: bool = False,
                **kwargs):
-    super().__init__(layer=layer, **kwargs)
-    self.latent_units = latent_units
-    self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
-    self._total_units = None
-    self.event_ndim = self.layer.input_spec.min_ndim - 1
-    self.downsample = bool(downsample)
+    super().__init__(layer=layer, name=kwargs.pop('name', None))
+    self.input_ndim = self.layer.input_spec.min_ndim
+    spec = inspect.getfullargspec(layer.call)
+    self._args = spec.args + spec.kwonlyargs
     self._disable = bool(disable)
     if encoder is not None:
       encoder._old_call = encoder.call
       encoder.call = MethodType(_call, encoder)
     self.encoder = encoder
-    # === 1. Layers
-    spec = inspect.getfullargspec(layer.call)
-    self._args = spec.args + spec.kwonlyargs
+    self.residual_coef = residual_coef
+    self.deterministic_features = deterministic_features
+    # === 1. for creating layer
+    layer, layer_t = _NDIMS_CONV[self.input_ndim]
+    spec = inspect.getfullargspec(layer.__init__)
+    args = set(spec.args + spec.kwonlyargs)
+    filters *= 2  # parameters for loc and scale
+    self._network_kw = {k: v for k, v in locals().items()
+                        if k in args and k not in ['self', 'kwargs']}
+    self._network_kw.update(kwargs)
     # === 2. distribution
-    assert forward_mode in ('sample', 'mean')
-    self.forward_mode = forward_mode
     assert distribution in ('mvndiag', 'normal'), \
       f"Only support 'mvndiag' or 'normal' posterior, given '{distribution}'"
     # assert top_down in ('sample', 'mean', 'deterministic')
@@ -153,90 +122,20 @@ class HierarchicalLatents(Wrapper):
       self._merge_normal = MergeNormal()
     else:
       self._merge_normal = None
+    self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
     # === 2. others
+    self._latents_shape = None
+    self._conv_prior = None
+    self._conv_posterior = None
+    self._conv_deter = None
+    self._conv_out = None
     self._dist_prior = None
     self._dist_posterior = None
-    self._proj_posterior = None
-    self._proj_prior = None
-    # for final output
-    self._pre_proj = None
-    self._proj_out = None
+    self.concat = keras.layers.Concatenate(axis=-1)
     # store the last distributions
     self._posterior = None
     self._prior = None
     self._is_sampling = False
-
-  def build(self, input_shape=None):
-    super().build(input_shape)
-    if self._disable:
-      return
-    # === 0. prepare
-    output_shape = self.layer.compute_output_shape(input_shape)
-    if self.distribution == 'mvndiag':
-      distribution = MultivariateNormalDiag
-    elif self.distribution == 'normal':
-      distribution = Normal
-    # latent_units equal input feature dimension
-    if self.latent_units is None:
-      self.latent_units = output_shape[-1]
-
-    def create_dist(params):
-      loc, scale = tf.split(params, 2, axis=-1)
-      scale = tf.nn.softplus(scale) + tf.cast(tf.exp(-7.), self.dtype)
-      d = distribution(loc, scale, name=self.name)
-      if isinstance(d, Normal):
-        d = Independent(d, reinterpreted_batch_ndims=self.event_ndim)
-      return d
-
-    # === 1. create projection layer
-    if self.encoder is not None:
-      # posterior projection
-      self._proj_posterior = _copy_layer(
-        self.layer,
-        units=self.latent_units,
-        n_params=2,
-        downsample_shape=output_shape if self.downsample else None,
-        proj_1x1=False)
-      shape = output_shape[:-1] + (
-        self.encoder.output_shape[-1] + output_shape[-1],)
-      self._proj_posterior.build(shape)
-    # prior projection
-    self._proj_prior = _copy_layer(
-      self.layer,
-      units=self.latent_units,
-      n_params=2,
-      downsample_shape=output_shape if self.downsample else None,
-      proj_1x1=False)
-    self._proj_prior.build(output_shape)
-    shape = self._proj_prior.compute_output_shape(output_shape)
-    self._total_units = int(np.prod(shape[1:]) // 2)
-    # pre-output latents projection
-    if self.downsample:
-      self._pre_proj = keras.layers.Conv2DTranspose(
-        filters=self.latent_units,
-        kernel_size=output_shape[1:-1],
-        padding='valid',
-        activation='linear',
-        use_bias=True)
-      self._pre_proj.build(shape[:-1] + (self.latent_units,))
-    else:
-      self._pre_proj = lambda x: x  # identity layer
-    # final output affine (1x1 projection is faster)
-    self._proj_out = _copy_layer(self.layer,
-                                 units=None,
-                                 n_params=1,
-                                 downsample_shape=None,
-                                 proj_1x1=True)
-    self._proj_out.build(
-      output_shape[:-1] + (self.latent_units + output_shape[-1],))
-
-    # === 2. create distribution
-    self._dist_posterior = DistributionLambda(make_distribution_fn=create_dist,
-                                              name=f'{self.name}_posterior')
-    self._dist_prior = DistributionLambda(make_distribution_fn=create_dist,
-                                          name=f'{self.name}_prior')
-    self._dist_posterior.build(shape)
-    self._dist_prior.build(shape)
 
   def sampling(self):
     """Sampling mode, forward prior samples"""
@@ -248,19 +147,27 @@ class HierarchicalLatents(Wrapper):
     self._is_sampling = False
     return self
 
+  @property
+  def is_sampling(self) -> bool:
+    return self._is_sampling
+
   def enable(self):
     """Enable stochastic inference and generation for this variable"""
     self._disable = False
     return self
 
   @property
-  def is_sampling(self) -> bool:
-    return self._is_sampling
-
-  @property
   def is_stochastic(self) -> bool:
     """Return True if the layer is stochastically initialized"""
     return self._dist_prior is not None
+
+  @property
+  def units(self) -> int:
+    return int(np.prod(self._latents_shape))
+
+  @property
+  def latents_shape(self) -> Sequence[int]:
+    return self._latents_shape
 
   @property
   def posterior(self) -> Optional[Distribution]:
@@ -274,12 +181,12 @@ class HierarchicalLatents(Wrapper):
     return self.__str__()
 
   def __str__(self):
-    return ("<HVars "
-            f"'{self.name}' enable:{self.is_stochastic} "
-            f"sampl:{self.is_sampling} "
-            f"units:{self._total_units} mode:{self.forward_mode} "
-            f"dist:{self.distribution} down:{self.downsample} "
-            f"merge:{True if self._merge_normal else False}>")
+    return (
+      f"<{self.__class__.__name__} "
+      f"'{self.name}' enable:{not self._disable} dist:{self.distribution} "
+      f"sampl:{self.is_sampling} shape:{self.latents_shape} "
+      f"merge:{True if self._merge_normal else False} "
+      f"deter:{self.deterministic_features} res:{self.residual_coef:g}>")
 
   def kl_divergence(self,
                     analytic: bool = False,
@@ -292,7 +199,7 @@ class HierarchicalLatents(Wrapper):
       if self._posterior is None:
         raise ValueError('No posterior for the hierarchical latent variable.')
       if self._prior is None:
-        raise ValueError("This HierarchicalLatents haven't been called.")
+        raise ValueError("This BidirectionalLatents haven't been called.")
     elif self._posterior is None or self._prior is None:
       return tf.zeros((), dtype=self.dtype)
     qz = self.posterior
@@ -305,6 +212,82 @@ class HierarchicalLatents(Wrapper):
   def compute_output_shape(self, input_shape) -> Sequence[Union[None, int]]:
     return self.layer.compute_output_shape(input_shape)
 
+  def build(self, input_shape=None):
+    super().build(input_shape)
+    if self._disable:
+      return
+    decoder_shape = self.layer.compute_output_shape(input_shape)
+    layer, layer_t = _NDIMS_CONV[self.input_ndim]
+    # === 1. create projection layer
+    if self.encoder is not None:
+      assert self.encoder.built
+      encoder_shape = self.encoder.output_shape
+      self._conv_posterior = layer(**self._network_kw, name='ConvPosterior')
+      # posterior projection
+      self._conv_posterior.build(
+        self.concat.compute_output_shape([decoder_shape, encoder_shape]))
+    # prior projection
+    self._conv_prior = layer(**self._network_kw, name='ConvPrior')
+    self._conv_prior.build(decoder_shape)
+    # deterministic projection
+    kw = dict(self._network_kw)
+    kw['filters'] /= 2
+    if self.deterministic_features:
+      self._conv_deter = layer(**self._network_kw, name='ConvDeterministic')
+      self._conv_deter.build(decoder_shape)
+    # === 2. create distribution
+    # compute the parameter shape for the distribution
+    params_shape = self._conv_prior.compute_output_shape(decoder_shape)
+    if self.distribution == 'mvndiag':
+      distribution = MultivariateNormalDiag
+    elif self.distribution == 'normal':
+      distribution = Normal
+
+    def create_dist(params):
+      loc, scale = tf.split(params, 2, axis=-1)
+      scale = tf.nn.softplus(scale) + tf.cast(tf.exp(-7.), self.dtype)
+      d = distribution(loc, scale, name=self.name)
+      if isinstance(d, Normal):
+        d = Independent(d, reinterpreted_batch_ndims=len(params_shape) - 1)
+      return d
+
+    self._dist_posterior = DistributionLambda(make_distribution_fn=create_dist,
+                                              name=f'{self.name}_posterior')
+    self._dist_posterior.build(params_shape)
+    self._dist_prior = DistributionLambda(make_distribution_fn=create_dist,
+                                          name=f'{self.name}_prior')
+    self._dist_prior.build(params_shape)
+    # dynamically infer the shape
+    latents_shape = tf.convert_to_tensor(self._dist_posterior(
+      keras.layers.Input(params_shape[1:]))).shape
+    self._latents_shape = latents_shape[1:]
+    if self.deterministic_features:
+      deter_shape = self._conv_deter.compute_output_shape(decoder_shape)
+      latents_shape = self.concat.compute_output_shape(
+        [deter_shape, latents_shape])
+
+    # === 3. final output affine
+    if self.residual_coef > 0:
+      in_image = decoder_shape[1:-1]
+      out_image = latents_shape[1:-1]
+      # shape match only use 1x1 projection
+      if in_image == out_image:
+        self._conv_out = layer(filters=decoder_shape[-1], kernel_size=1,
+                               name='ConvOutput')
+      elif all(i >= o for i, o in zip(in_image, out_image)):
+        padding = self._conv_prior.padding
+        strides = self._conv_prior.strides
+        kernel = [k + (1 if padding == 'valid' and k % s != 0 else 0)
+                  for k, s in zip(self._conv_prior.kernel_size, strides)]
+        self._conv_out = layer_t(filters=decoder_shape[-1],
+                                 kernel_size=kernel,
+                                 strides=strides,
+                                 padding=padding,
+                                 name='ConvOutput')
+      else:
+        raise RuntimeError('Cannot infer output projection for input shape: '
+                           f'{latents_shape} and output shape: {decoder_shape}')
+
   def call(self, inputs, training=None, mask=None, **kwargs):
     # === 1. call the layer
     if 'training' in self._args:
@@ -315,7 +298,7 @@ class HierarchicalLatents(Wrapper):
     if self._disable:
       return hidden_d
     # === 2. project and create the distribution
-    prior = self._dist_prior(self._proj_prior(hidden_d, **kwargs))
+    prior = self._dist_prior(self._conv_prior(hidden_d, **kwargs))
     self._prior = prior
     # === 3. inference
     dist = prior
@@ -330,8 +313,8 @@ class HierarchicalLatents(Wrapper):
                                 f'generative {hidden_d.shape} mismatch. '
                                 f'Change to sampling mode if possible')
       # (Kingma 2016) use add, we concat here
-      h = tf.concat([hidden_e, hidden_d], axis=-1)
-      posterior = self._dist_posterior(self._proj_posterior(h, **kwargs))
+      h = self.concat([hidden_e, hidden_d])
+      posterior = self._dist_posterior(self._conv_posterior(h, **kwargs))
       # (Maaloe 2016) merging two Normal distribution
       if self._merge_normal is not None:
         posterior = self._merge_normal([posterior, prior])
@@ -339,16 +322,15 @@ class HierarchicalLatents(Wrapper):
       dist = posterior
       # erase the previous state of encoder
       self.encoder._last_outputs = None
-    # === 4. sampling
-    if self.forward_mode == 'mean':
-      z = dist.mean()
-    else:  # sample
-      z = tf.convert_to_tensor(dist)
-    # === 5. output projection
-    z = self._pre_proj(z, **kwargs)
-    outputs = tf.concat([z, hidden_d], axis=-1)
-    outputs = self._proj_out(outputs)
-    outputs = self.layer.activation(outputs)
+    # === 4. output
+    outputs = tf.convert_to_tensor(dist)
+    if self.deterministic_features:
+      hidden_deter = self._conv_deter(hidden_d, **kwargs)
+      outputs = self.concat([outputs, hidden_deter])
+    if self.residual_coef > 0.:
+      outputs = self._conv_out(outputs, **kwargs)
+      outputs = self.layer.activation(outputs)
+      outputs = outputs + self.residual_coef * hidden_d
     return outputs
 
 
@@ -357,18 +339,18 @@ class HierarchicalLatents(Wrapper):
 # ===========================================================================
 class HierarchicalVAE(AnnealingVAE):
 
-  def __init__(self, free_bits=0.25, name='HierarchicalVAE', **kwargs):
-    super().__init__(free_bits=free_bits, name=name, **kwargs)
+  def __init__(self, free_bits=0.25, **kwargs):
+    super().__init__(free_bits=free_bits, **kwargs)
     found_hierarchical_vars = False
     self._hierarchical_vars = []
-    self._hierarchical_vars: List[HierarchicalLatents]
+    self._hierarchical_vars: List[BidirectionalLatents]
     for layer in self.decoder.layers:
-      if isinstance(layer, HierarchicalLatents):
+      if isinstance(layer, BidirectionalLatents):
         found_hierarchical_vars = True
         layer.enable()
         self._hierarchical_vars.append(layer)
     if not found_hierarchical_vars:
-      raise ValueError('No HierarchicalLatents wrapper found in the decoder.')
+      raise ValueError('No BidirectionalLatents wrapper found in the decoder.')
 
   @contextmanager
   def sampling_mode(self):
@@ -378,7 +360,7 @@ class HierarchicalVAE(AnnealingVAE):
     [layer.inference() for layer in self.hierarchical_latents]
 
   @property
-  def hierarchical_latents(self) -> Sequence[HierarchicalLatents]:
+  def hierarchical_latents(self) -> Sequence[BidirectionalLatents]:
     return tuple(self._hierarchical_vars)
 
   def sample_prior(self, n: int = 1, seed: int = 1) -> Sequence[tf.Tensor]:
@@ -437,7 +419,7 @@ class HierarchicalVAE(AnnealingVAE):
     llk, kl = super().elbo_components(
       inputs, training=training, mask=mask, **kwargs)
     for idx, layer in enumerate(self.decoder.layers):
-      if not isinstance(layer, HierarchicalLatents):
+      if not isinstance(layer, BidirectionalLatents):
         continue
       kl[f'kl_{layer.name}'] = self.beta * layer.kl_divergence(
         analytic=self.analytic, reverse=self.reverse,
@@ -651,6 +633,7 @@ class VLadderVAE():
   Zhao, S., Song, J., Ermon, S., 2017. Learning Hierarchical Features from
       Generative Models. arXiv:1702.08396 [cs, stat].
   """
+
   def __init__(self, **kwargs):
     super(VLadderVAE, self).__init__(**kwargs)
 
