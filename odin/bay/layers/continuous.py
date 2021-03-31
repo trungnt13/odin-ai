@@ -473,10 +473,12 @@ class MultivariateNormalLayer(DistributionLambda):
                                         validate_args=validate_args,
                                         name=name)
     elif covariance == 'diag':
+      # NOTE: never forget to use activation softplus for the scale,
+      # or you will suffer
       if scale_activation is None:
-        scale = tf.nn.softplus(scale)
+        scale_activation = tf.nn.softplus
       return tfd.MultivariateNormalDiag(loc=loc,
-                                        scale_diag=scale,
+                                        scale_diag=scale_activation(scale),
                                         validate_args=validate_args,
                                         name=name)
     elif covariance == 'full':

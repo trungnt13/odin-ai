@@ -16,6 +16,8 @@ __all__ = [
 ]
 
 
+# NOTE: DO NOT USE softplus1
+
 class MVNDiagLatents(DistributionDense):
   """Multivariate normal diagonal latent distribution"""
 
@@ -26,12 +28,15 @@ class MVNDiagLatents(DistributionDense):
                projection: bool = True,
                name: str = "Latents",
                **kwargs):
+    # prior = MultivariateNormalDiag(loc=tf.fill((units,), prior_loc),
+    #                                scale_identity_multiplier=prior_scale)
     super().__init__(
       event_shape=(int(units),),
       posterior=MultivariateNormalLayer,
-      posterior_kwargs=dict(covariance='diag', scale_activation='softplus1'),
-      prior=MultivariateNormalDiag(loc=tf.fill((units,), prior_loc),
-                                   scale_identity_multiplier=prior_scale),
+      posterior_kwargs=dict(covariance='diag', scale_activation=tf.nn.softplus),
+      prior=Independent(Normal(loc=tf.fill((units,), prior_loc),
+                               scale=tf.fill((units,), prior_scale)),
+                        reinterpreted_batch_ndims=1),
       projection=projection,
       name=name,
       **kwargs,
@@ -51,7 +56,7 @@ class NormalLatents(DistributionDense):
     super().__init__(
       event_shape=(int(units),),
       posterior=NormalLayer,
-      posterior_kwargs=dict(scale_activation='softplus1'),
+      posterior_kwargs=dict(scale_activation='softplus'),
       prior=Independent(Normal(loc=tf.fill((units,), prior_loc),
                                scale=tf.fill((units,), prior_scale)),
                         reinterpreted_batch_ndims=1),

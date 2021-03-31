@@ -20,12 +20,11 @@ import tensorflow as tf
 from tensorflow.keras import Sequential
 from odin.bay.layers import MVNDiagLatents, NormalLatents
 from odin.bay.random_variable import RVconf
+from odin.utils import as_tuple, minibatch
 
 # ===========================================================================
 # Constants
 # ===========================================================================
-from odin.utils import as_tuple, minibatch
-
 ROOT_PATH = os.path.expanduser('~/exp/hierarchical')
 if not os.path.exists(ROOT_PATH):
   os.makedirs(ROOT_PATH)
@@ -35,44 +34,36 @@ BATCH_SIZE = 32
 ZDIM = 256
 CONV_KW = dict(padding='same', activation=tf.nn.elu,
                kernel_initializer='he_normal')
+Tonv2D = Conv2DTranspose
 
 
 # ===========================================================================
 # Layers
+# DO NOT use softplus1
 # ===========================================================================
 def encoder() -> List[Layer]:
   return [
     InputLayer(IMAGE_SHAPE),
     CenterAt0(),
-    Conv2D(32, 3, 1, name='e1', **CONV_KW),  # (32, 32, 32)
-    AveragePooling2D(),  # (16, 16, 32)
-    Conv2D(48, 3, 1, name='e2', **CONV_KW),  # (16, 16, 48)
-    AveragePooling2D(),  # (8, 8, 48)
-    Conv2D(64, 3, 1, name='e3', **CONV_KW),  # (8, 8, 64)
-    AveragePooling2D(),  # (4, 4, 96)
-    Conv2D(96, 3, 1, name='e4', **CONV_KW),  # (4, 4, 96)
-    AveragePooling2D(),  # (2, 2, 96)
-    Conv2D(128, 3, 1, name='e5', **CONV_KW),  # (2, 2, 128)
+    Conv2D(32, 4, 1, name='e1', **CONV_KW),  # (32, 32, 32)
+    Conv2D(32, 4, 2, name='e2', **CONV_KW),  # (16, 16, 32)
+    Conv2D(64, 4, 1, name='e3', **CONV_KW),  # (16, 16, 64)
+    Conv2D(64, 4, 2, name='e4', **CONV_KW),  # (8, 8, 64)
     Flatten(),
-    Dense(256)
+    Dense(512)
   ]
 
 
 def decoder(zdim, n_params=1) -> List[Layer]:
   return [
     InputLayer([zdim]),
-    Dense(256),
-    Reshape([2, 2, 64]),
-    Conv2D(128, 1, 1, name='d5', **CONV_KW),  # (2, 2, 128)
-    UpSampling2D(),  # (4, 4, 128)
-    Conv2D(96, 3, 1, name='d4', **CONV_KW),  # (4, 4, 96)
-    UpSampling2D(),  # (8, 8, 96)
-    Conv2D(64, 3, 1, name='d3', **CONV_KW),  # (8, 8, 64)
-    UpSampling2D(),  # (16, 16, 64)
-    Conv2D(48, 3, 1, name='d2', **CONV_KW),  # (16, 16, 48)
-    UpSampling2D(),  # (32, 32, 48)
-    Conv2D(32, 3, 1, name='d1', **CONV_KW),  # (32, 32, 32)
-    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1, name='d0'),  # (32, 32, 3)
+    Dense(512),
+    Reshape([8, 8, 8]),
+    Tonv2D(64, 4, 2, name='d4', **CONV_KW),  # (16, 16, 64)
+    Conv2D(64, 4, 1, name='d3', **CONV_KW),  # (16, 16, 64)
+    Tonv2D(32, 4, 2, name='d2', **CONV_KW),  # (32, 32, 32)
+    Conv2D(32, 4, 1, name='d1', **CONV_KW),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1),  # (32, 32, 3)
   ]
 
 
@@ -129,16 +120,16 @@ def model_bvae(zdim, dist):
   n_params, obs = observation(dist)
   e_layers = encoder()
   d_layers = decoder(zdim, n_params)
-  # latents 1
-  i1, d = find('d4', d_layers)
-  i2, e = find('e4', e_layers)
-  d = BidirectionalLatents(d, encoder=e, filters=64, name='latents1')
-  d_layers[i1] = d
-  # latents 2
-  i1, d = find('d3', d_layers)
-  i2, e = find('e3', e_layers)
-  d = BidirectionalLatents(d, encoder=e, filters=32, name='latents2')
-  d_layers[i1] = d
+
+  def bi_latents(idx, units, name):
+    # latents 1
+    i1, d = find(f'd{idx}', d_layers)
+    i2, e = find(f'e{idx}', e_layers)
+    d = BidirectionalLatents(d, encoder=e, filters=units, name=name)
+    d_layers[i1] = d
+
+  bi_latents(3, 64, 'latents1')
+  bi_latents(1, 32, 'latents2')
   return HierarchicalVAE(
     encoder=Sequential(e_layers, 'Encoder'),
     decoder=Sequential(d_layers, 'Decoder'),
