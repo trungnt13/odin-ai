@@ -4,17 +4,14 @@ import numpy as np
 import tensorflow as tf
 from odin.backend.interpolation import Interpolation, linear
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.autoencoder.hierarchical_vae import StackedVAE, LadderVAE
 from odin.utils import as_tuple
 from tensorflow import keras
 from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
                                                          Distribution, Normal)
 
 __all__ = [
-    'Vamprior',
-    'vampriorVAE',
-    'hierarchicalVPVAE',
-    'ladderVPVAE',
+  'Vamprior',
+  'vampriorVAE'
 ]
 
 
@@ -71,11 +68,11 @@ class Vamprior(Distribution):
                      name=name)
     self.n_components = n_components
     self.means = keras.layers.Dense(
-        units=int(np.prod(input_shape)),
-        use_bias=False,
-        kernel_initializer=tf.initializers.RandomNormal(
-            mean=pseudoinputs_mean, stddev=pseudoinputs_std),
-        activation=hard_probs)
+      units=int(np.prod(input_shape)),
+      use_bias=False,
+      kernel_initializer=tf.initializers.RandomNormal(
+        mean=pseudoinputs_mean, stddev=pseudoinputs_std),
+      activation=hard_probs)
     self.means.build((None, n_components))
     if pseudoinputs is not None:
       self.means.kernel.assign(pseudoinputs)
@@ -129,7 +126,7 @@ class vampriorVAE(BetaVAE):
     self.pseudoinputs_mean = pseudoinputs_mean
     self.pseudoinputs_std = pseudoinputs_std
 
-  def build(self, input_shape):
+  def build(self, input_shape=None):
     ret = super().build(input_shape)
     self.vamprior = Vamprior(input_shape=input_shape[1:],
                              fn_encoding=self.encode,
@@ -137,90 +134,5 @@ class vampriorVAE(BetaVAE):
                              pseudoinputs_mean=self.pseudoinputs_mean,
                              pseudoinputs_std=self.pseudoinputs_std,
                              dtype=self.dtype)
-    self.latents.prior = self.vamprior
-    return ret
-
-
-# ===========================================================================
-# Hierarchical models
-# ===========================================================================
-class hierarchicalVPVAE(StackedVAE):
-  """ Stacked-hierarchical VAE with Vamprior applied to the latent variable in the
-  middle of the networks
-
-  Note
-  ----
-  This implementation is different from the `HVAE_2level` from (Tomczak et al. 2018).
-  The hierachical structure follows (Sonderby et al. 2016) with the Vamprior for $z_0$
-
-  References
-  ----------
-  Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
-      Ladder variational autoencoders, Advances in Neural Information Processing
-      Systems. Curran Associates, Inc., pp. 3738–3746.
-  Tomczak, J.M., Welling, M., 2018. VAE with a VampPrior. arXiv:1705.07120 [cs, stat].
-  """
-
-  def __init__(self,
-               n_components: int = 500,
-               pseudoinputs_mean: float = -0.05,
-               pseudoinputs_std: float = 0.01,
-               name: str = 'HierarchicalVampriorVAE',
-               **kwargs):
-    super().__init__(name=name, **kwargs)
-    self.n_components = n_components
-    self.pseudoinputs_mean = pseudoinputs_mean
-    self.pseudoinputs_std = pseudoinputs_std
-
-  def build(self, input_shape):
-    ret = super().build(input_shape)
-    self.vamprior = Vamprior(
-        input_shape=input_shape[1:],
-        fn_encoding=lambda *args, **kwargs: self.encode(*args, **kwargs)[0],
-        n_components=self.n_components,
-        pseudoinputs_mean=self.pseudoinputs_mean,
-        pseudoinputs_std=self.pseudoinputs_std,
-        dtype=self.dtype)
-    self.latents.prior = self.vamprior
-    return ret
-
-
-class ladderVPVAE(LadderVAE):
-  """ Ladder VAE with Vamprior applied to the latent variable in the
-  middle of the networks
-
-  Note
-  ----
-  This implementation is different from the `HVAE_2level` from (Tomczak et al. 2018).
-  The hierachical structure follows (Sonderby et al. 2016) with the Vamprior for $z_0$
-
-  References
-  ----------
-  Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
-      Ladder variational autoencoders, Advances in Neural Information Processing
-      Systems. Curran Associates, Inc., pp. 3738–3746.
-  Tomczak, J.M., Welling, M., 2018. VAE with a VampPrior. arXiv:1705.07120 [cs, stat].
-  """
-
-  def __init__(self,
-               n_components: int = 500,
-               pseudoinputs_mean: float = -0.05,
-               pseudoinputs_std: float = 0.01,
-               name: str = 'LadderVampriorVAE',
-               **kwargs):
-    super().__init__(name=name, **kwargs)
-    self.n_components = n_components
-    self.pseudoinputs_mean = pseudoinputs_mean
-    self.pseudoinputs_std = pseudoinputs_std
-
-  def build(self, input_shape):
-    ret = super().build(input_shape)
-    self.vamprior = Vamprior(
-        input_shape=input_shape[1:],
-        fn_encoding=lambda *args, **kwargs: self.encode(*args, **kwargs)[0],
-        n_components=self.n_components,
-        pseudoinputs_mean=self.pseudoinputs_mean,
-        pseudoinputs_std=self.pseudoinputs_std,
-        dtype=self.dtype)
     self.latents.prior = self.vamprior
     return ret

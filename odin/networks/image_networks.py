@@ -21,6 +21,7 @@ from odin.bay.distributions import (Blockwise, Categorical, ContinuousBernoulli,
 from odin.networks.base_networks import SequentialNetwork
 
 __all__ = [
+  'CenterAt0',
   'PixelCNNDecoder',
   'mnist_networks',
   'dsprites_networks',
@@ -227,7 +228,7 @@ def mnist_networks(
 ) -> Dict[str, Layer]:
   """Network for MNIST dataset image size (28, 28, 1)"""
   from odin.bay.random_variable import RVconf
-  from odin.bay.vi.autoencoder import BidirectionalLatents
+  from odin.bay.vi.autoencoder import BidirectionalLatents, ParallelLatents
   n_channels = int(kwargs.get('n_channels', 1))
   proj_dim = 196
   input_shape = (28, 28, n_channels)
@@ -253,11 +254,11 @@ def mnist_networks(
     keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
     keras.layers.Reshape((7, 7, proj_dim // 49)),
     deconv(64, 5, strides=2, name='decoder2'),
-    BidirectionalLatents(conv(64, 5, strides=1, name='decoder3'),
-                         encoder=encoder.layers[3],
-                         filters=64, kernel_size=14, padding='valid',
-                         disable=True,
-                         name='latents1'),
+    ParallelLatents(conv(64, 5, strides=1, name='decoder3'),
+                    encoder=encoder.layers[3],
+                    filters=16, kernel_size=14, padding='valid',
+                    disable=True,
+                    name='latents1'),
     deconv(32, 5, strides=2, name='decoder4'),
     conv(32, 5, strides=1, name='decoder5'),
     conv(n_channels * n_params, 1, strides=1, activation='linear',
@@ -868,6 +869,7 @@ def get_optimizer_info(
   elif 'cifar' in dataset_name:
     n_epochs = 2500
     n_samples = 48000
+    init_lr = 5e-4
   # dsrpites datasets
   elif 'dsprites' in dataset_name:
     n_epochs = 400

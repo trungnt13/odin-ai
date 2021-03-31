@@ -1,5 +1,6 @@
 import inspect
 from contextlib import contextmanager
+from functools import partial
 from types import MethodType
 from typing import Any, Callable, Dict, List, Tuple
 from typing import Union, Optional, Sequence
@@ -25,8 +26,8 @@ from odin.utils import as_tuple
 __all__ = [
   'MergeNormal',
   'BidirectionalLatents',
+  'ParallelLatents',
   'HierarchicalVAE',
-  'LadderVAE',
   'UnetVAE'
 ]
 
@@ -38,6 +39,50 @@ _NDIMS_CONV = {
   4: (Conv2D, Conv2DTranspose),
   5: (Conv3D, Conv3DTranspose)
 }
+
+
+def _create_dist(params, event_ndims, dtype):
+  loc, scale = tf.split(params, 2, axis=-1)
+  scale = tf.nn.softplus(scale) + tf.cast(tf.exp(-7.), dtype)
+  d = Normal(loc, scale)
+  d = Independent(d, reinterpreted_batch_ndims=event_ndims)
+  return d
+
+
+def _upsample_by_conv(
+    layer: Union[Conv1D, Conv2D, Conv3D],
+    layer_t: Union[Conv1DTranspose, Conv2DTranspose, Conv3DTranspose],
+    input_shape: Sequence[int],
+    output_shape: Sequence[int],
+    kernel_size: Tuple[int, int],
+    padding: Literal['same', 'valid'],
+    strides: Tuple[int, int]):
+  in_image = input_shape[1:-1]
+  out_image = output_shape[1:-1]
+  out_filters = output_shape[-1]
+  # shape match only use 1x1 projection
+  if in_image == out_image:
+    conv = layer(filters=out_filters, kernel_size=1, name='ConvOutput')
+  # upsampling
+  elif all(o >= i for i, o in zip(in_image, out_image)):
+    kernel = [k + (1 if padding == 'valid' and k % s != 0 else 0)
+              for k, s in zip(kernel_size, strides)]
+    conv = layer_t(filters=out_filters,
+                   kernel_size=kernel,
+                   strides=strides,
+                   padding=padding,
+                   name='ConvOutput')
+  # cannot do downsampling
+  else:
+    raise RuntimeError('Cannot infer output projection for input shape: '
+                       f'{input_shape} and output shape: {output_shape}')
+  conv.build(input_shape)
+  shape = conv.compute_output_shape(input_shape)
+  tf.assert_equal(
+    shape[1:], output_shape[1:],
+    'Failed to infer proper convolutional operator for upsampling from '
+    f'{input_shape} to {output_shape}, the resulted shape is {shape}')
+  return conv
 
 
 def _call(self, inputs, **kwargs):
@@ -88,7 +133,6 @@ class BidirectionalLatents(Wrapper):
                deterministic_features: bool = True,
                residual_coef: float = 1.0,
                merge_normal: bool = False,
-               distribution: Literal['mvndiag', 'normal'] = 'normal',
                beta: float = 1.,
                disable: bool = False,
                **kwargs):
@@ -112,13 +156,8 @@ class BidirectionalLatents(Wrapper):
                         if k in args and k not in ['self', 'kwargs']}
     self._network_kw.update(kwargs)
     # === 2. distribution
-    assert distribution in ('mvndiag', 'normal'), \
-      f"Only support 'mvndiag' or 'normal' posterior, given '{distribution}'"
     # assert top_down in ('sample', 'mean', 'deterministic')
-    self.distribution = distribution
     if merge_normal:
-      assert distribution == 'normal', \
-        'merge_normal mode only support Normal distribution'
       self._merge_normal = MergeNormal()
     else:
       self._merge_normal = None
@@ -148,8 +187,11 @@ class BidirectionalLatents(Wrapper):
     return self
 
   @property
-  def is_sampling(self) -> bool:
-    return self._is_sampling
+  def is_inference(self) -> bool:
+    return (not self._is_sampling and
+            self.encoder is not None and
+            hasattr(self.encoder, '_last_outputs') and
+            self.encoder._last_outputs is not None)
 
   def enable(self):
     """Enable stochastic inference and generation for this variable"""
@@ -183,8 +225,8 @@ class BidirectionalLatents(Wrapper):
   def __str__(self):
     return (
       f"<{self.__class__.__name__} "
-      f"'{self.name}' enable:{not self._disable} dist:{self.distribution} "
-      f"sampl:{self.is_sampling} shape:{self.latents_shape} "
+      f"'{self.name}' enable:{not self._disable} "
+      f"sampl:{self._is_sampling} shape:{self.latents_shape} "
       f"merge:{True if self._merge_normal else False} "
       f"deter:{self.deterministic_features} res:{self.residual_coef:g}>")
 
@@ -204,10 +246,9 @@ class BidirectionalLatents(Wrapper):
       return tf.zeros((), dtype=self.dtype)
     qz = self.posterior
     pz = self.prior
-    return self.beta * kl_divergence(q=qz, p=pz,
-                                     analytic=analytic,
-                                     reverse=reverse,
-                                     free_bits=free_bits)
+    kld = kl_divergence(q=qz, p=pz, analytic=analytic, reverse=reverse,
+                        free_bits=free_bits)
+    return self.beta * kld
 
   def compute_output_shape(self, input_shape) -> Sequence[Union[None, int]]:
     return self.layer.compute_output_shape(input_shape)
@@ -238,24 +279,18 @@ class BidirectionalLatents(Wrapper):
     # === 2. create distribution
     # compute the parameter shape for the distribution
     params_shape = self._conv_prior.compute_output_shape(decoder_shape)
-    if self.distribution == 'mvndiag':
-      distribution = MultivariateNormalDiag
-    elif self.distribution == 'normal':
-      distribution = Normal
 
-    def create_dist(params):
-      loc, scale = tf.split(params, 2, axis=-1)
-      scale = tf.nn.softplus(scale) + tf.cast(tf.exp(-7.), self.dtype)
-      d = distribution(loc, scale, name=self.name)
-      if isinstance(d, Normal):
-        d = Independent(d, reinterpreted_batch_ndims=len(params_shape) - 1)
-      return d
-
-    self._dist_posterior = DistributionLambda(make_distribution_fn=create_dist,
-                                              name=f'{self.name}_posterior')
+    self._dist_posterior = DistributionLambda(
+      make_distribution_fn=partial(_create_dist,
+                                   event_ndims=len(params_shape) - 1,
+                                   dtype=self.dtype),
+      name=f'{self.name}_posterior')
     self._dist_posterior.build(params_shape)
-    self._dist_prior = DistributionLambda(make_distribution_fn=create_dist,
-                                          name=f'{self.name}_prior')
+    self._dist_prior = DistributionLambda(
+      make_distribution_fn=partial(_create_dist,
+                                   event_ndims=len(params_shape) - 1,
+                                   dtype=self.dtype),
+      name=f'{self.name}_prior')
     self._dist_prior.build(params_shape)
     # dynamically infer the shape
     latents_shape = tf.convert_to_tensor(self._dist_posterior(
@@ -268,25 +303,13 @@ class BidirectionalLatents(Wrapper):
 
     # === 3. final output affine
     if self.residual_coef > 0:
-      in_image = decoder_shape[1:-1]
-      out_image = latents_shape[1:-1]
-      # shape match only use 1x1 projection
-      if in_image == out_image:
-        self._conv_out = layer(filters=decoder_shape[-1], kernel_size=1,
-                               name='ConvOutput')
-      elif all(i >= o for i, o in zip(in_image, out_image)):
-        padding = self._conv_prior.padding
-        strides = self._conv_prior.strides
-        kernel = [k + (1 if padding == 'valid' and k % s != 0 else 0)
-                  for k, s in zip(self._conv_prior.kernel_size, strides)]
-        self._conv_out = layer_t(filters=decoder_shape[-1],
-                                 kernel_size=kernel,
-                                 strides=strides,
-                                 padding=padding,
-                                 name='ConvOutput')
-      else:
-        raise RuntimeError('Cannot infer output projection for input shape: '
-                           f'{latents_shape} and output shape: {decoder_shape}')
+      self._conv_out = _upsample_by_conv(
+        layer, layer_t,
+        input_shape=latents_shape,
+        output_shape=decoder_shape,
+        kernel_size=self._conv_prior.kernel_size,
+        padding=self._conv_prior.padding,
+        strides=self._conv_prior.strides)
 
   def call(self, inputs, training=None, mask=None, **kwargs):
     # === 1. call the layer
@@ -302,10 +325,7 @@ class BidirectionalLatents(Wrapper):
     self._prior = prior
     # === 3. inference
     dist = prior
-    if (not self.is_sampling and
-        self.encoder is not None and
-        hasattr(self.encoder, '_last_outputs') and
-        self.encoder._last_outputs is not None):
+    if self.is_inference:
       hidden_e = self.encoder._last_outputs
       # just stop inference if there is no Encoder state
       tf.debugging.assert_equal(tf.shape(hidden_e), tf.shape(hidden_d),
@@ -320,8 +340,6 @@ class BidirectionalLatents(Wrapper):
         posterior = self._merge_normal([posterior, prior])
       self._posterior = posterior
       dist = posterior
-      # erase the previous state of encoder
-      self.encoder._last_outputs = None
     # === 4. output
     outputs = tf.convert_to_tensor(dist)
     if self.deterministic_features:
@@ -334,10 +352,146 @@ class BidirectionalLatents(Wrapper):
     return outputs
 
 
+class ParallelLatents(BidirectionalLatents):
+  """Because information will take the shortest path to flow, it
+  is recommended to set the number of units to be smaller or equal than
+  `z0`
+
+  References
+  ----------
+  Zhao, S., Song, J., Ermon, S., 2017. Learning Hierarchical Features from
+      Generative Models. arXiv:1702.08396 [cs, stat].
+  """
+
+  def build(self, input_shape=None):
+    super(BidirectionalLatents, self).build(input_shape)
+    if self._disable:
+      return
+    decoder_shape = self.layer.compute_output_shape(input_shape)
+    layer, layer_t = _NDIMS_CONV[self.input_ndim]
+    # === 1. create projection layer
+    assert self.encoder is not None, \
+      'ParallelLatents require encoder to be specified'
+    assert self.encoder.built
+    encoder_shape = self.encoder.output_shape
+    # posterior projection
+    self._conv_posterior = layer(**self._network_kw, name='ConvPosterior')
+    self._conv_posterior.build(encoder_shape)
+    # === 2. distribution
+    params_shape = self._conv_posterior.compute_output_shape(decoder_shape)
+    self._dist_posterior = DistributionLambda(
+      make_distribution_fn=partial(_create_dist,
+                                   event_ndims=len(params_shape) - 1,
+                                   dtype=self.dtype),
+      name=f'{self.name}_posterior')
+    self._dist_posterior.build(params_shape)
+    # dynamically infer the shape
+    latents_shape = tf.convert_to_tensor(self._dist_posterior(
+      keras.layers.Input(params_shape[1:]))).shape
+    self._latents_shape = latents_shape[1:]
+    # create the prior
+    self._prior = Independent(
+      Normal(loc=tf.zeros(self.latents_shape, dtype=self.dtype),
+             scale=tf.ones(self.latents_shape, dtype=self.dtype)),
+      reinterpreted_batch_ndims=len(self.latents_shape),
+      name=f'{self.name}_prior')
+    # === 3. final output affine
+    self._conv_out = _upsample_by_conv(
+      layer, layer_t,
+      input_shape=latents_shape,
+      output_shape=decoder_shape,
+      kernel_size=self._conv_posterior.kernel_size,
+      padding=self._conv_posterior.padding,
+      strides=self._conv_posterior.strides)
+    # self._conv_deter = layer(filters=decoder_shape[-1], kernel_size=1,
+    #                          activation=self.layer.activation)
+
+  def call(self, inputs, training=None, mask=None, **kwargs):
+    # === 1. call the layer
+    if 'training' in self._args:
+      kwargs['training'] = training
+    if 'mask' in self._args:
+      kwargs['mask'] = mask
+    hidden_d = self.layer.call(inputs, **kwargs)
+    if self._disable:
+      return hidden_d
+    # === 2. inference
+    if self.is_inference:
+      hidden_e = self.encoder._last_outputs
+      # just stop inference if there is no Encoder state
+      tf.debugging.assert_equal(tf.shape(hidden_e), tf.shape(hidden_d),
+                                f'Shape of inference {hidden_e.shape} and '
+                                f'generative {hidden_d.shape} mismatch. '
+                                f'Change to sampling mode if possible')
+      posterior = self._dist_posterior(self._conv_posterior(hidden_e, **kwargs))
+      self._posterior = posterior
+      outputs = tf.convert_to_tensor(posterior)
+    else:
+      outputs = self.prior.sample(tf.shape(hidden_d)[0])
+    # === 3. projection and combine
+    outputs = self._conv_out(outputs, **kwargs)
+    outputs = self.layer.activation(outputs)
+    # outputs = self.concat([outputs, hidden_d])
+    # outputs = self._conv_deter(outputs)
+    return outputs + self.residual_coef * hidden_d
+
+
 # ===========================================================================
 # Hierarchical VAE
 # ===========================================================================
 class HierarchicalVAE(AnnealingVAE):
+  """ A hierachical VAE with multiple stochastic layers stacked on top of the previous one
+  (autoregressive):
+
+    $q(z|x) = q(z_1|x) \mul_{i=2}^L q(z_i|z_{i-1})$
+
+  Inference: `X -> E(->z1) -> E1(->z2) -> E2 -> z`
+
+  Generation: `z -> D2 -> z2 -> D1 -> z1 -> D -> X~`
+
+  The return from `encode` method: (q_z, q_z2,  q_z1)
+
+  The return from `decode` method: (X~, p_z2, p_z1)
+
+  Hierachical takes longer to train and often more unstable, reduce the learning rate
+  is often desired.
+
+  Parameters
+  ----------
+  ladder_units : List[int], optional
+      number of hidden units for layers in the ladder, each element corresponding
+      to a ladder latents, by default [256]
+  ladder_latents : List[int], optional
+      number of latents units for each latent variable in the ladder,
+      by default [64]
+  ladder_layers : int, optional
+      number of layers for each hidden layer in the ladder, by default 2
+  batchnorm : bool, optional
+      use batch normalization in the ladder hidden layers, by default True
+  dropout : float, optional
+      dropout rate for the ladder hidden layers, by default 0.0
+  activation : Callable[[tf.Tensor], tf.Tensor], optional
+      activation function for the ladder hidden layers, by default tf.nn.leaky_relu
+  beta : Union[float, Interpolation], optional
+      a fixed beta or interpolated beta based on iteration step. It is recommended
+      to keep the beta value > 0 at the beginning of training, especially when using
+      powerful architecture for encoder and decoder. Otherwise, the suboptimal
+      latents could drive the network to very unstable loss region which result NaNs
+      during early training,
+      by default `linear(vmin=1e-4, vmax=1., length=2000)`
+  tie_latents : bool, optional
+      tie the parameters that encoding means and standard deviation for both
+      $q(z_i|z_{i-1})$ and $p(z_i|z_{i-1})$, by default False
+  all_standard_prior : bool, optional
+      use standard normal as prior for all latent variables, by default False
+
+  References
+  ----------
+  Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
+    Ladder variational autoencoders, Advances in Neural Information Processing Systems.
+    Curran Associates, Inc., pp. 3738–3746.
+  Tomczak, J.M., Welling, M., 2018. VAE with a VampPrior. arXiv:1705.07120 [cs, stat].
+  """
 
   def __init__(self, free_bits=0.25, **kwargs):
     super().__init__(free_bits=free_bits, **kwargs)
@@ -424,290 +578,6 @@ class HierarchicalVAE(AnnealingVAE):
       kl[f'kl_{layer.name}'] = self.beta * layer.kl_divergence(
         analytic=self.analytic, reverse=self.reverse,
         free_bits=self.free_bits)
-    return llk, kl
-
-
-class StackedVAE(AnnealingVAE):
-  """ A hierachical VAE with multiple stochastic layers stacked on top of the previous one
-  (autoregressive):
-
-    $q(z|x) = q(z_1|x) \mul_{i=2}^L q(z_i|z_{i-1})$
-
-  Inference: `X -> E(->z1) -> E1(->z2) -> E2 -> z`
-
-  Generation: `z -> D2 -> z2 -> D1 -> z1 -> D -> X~`
-
-  The return from `encode` method: (q_z, q_z2,  q_z1)
-
-  The return from `decode` method: (X~, p_z2, p_z1)
-
-  Hierachical takes longer to train and often more unstable, reduce the learning rate
-  is often desired.
-
-  Parameters
-  ----------
-  ladder_units : List[int], optional
-      number of hidden units for layers in the ladder, each element corresponding
-      to a ladder latents, by default [256]
-  ladder_latents : List[int], optional
-      number of latents units for each latent variable in the ladder,
-      by default [64]
-  ladder_layers : int, optional
-      number of layers for each hidden layer in the ladder, by default 2
-  batchnorm : bool, optional
-      use batch normalization in the ladder hidden layers, by default True
-  dropout : float, optional
-      dropout rate for the ladder hidden layers, by default 0.0
-  activation : Callable[[tf.Tensor], tf.Tensor], optional
-      activation function for the ladder hidden layers, by default tf.nn.leaky_relu
-  beta : Union[float, Interpolation], optional
-      a fixed beta or interpolated beta based on iteration step. It is recommended
-      to keep the beta value > 0 at the beginning of training, especially when using
-      powerful architecture for encoder and decoder. Otherwise, the suboptimal
-      latents could drive the network to very unstable loss region which result NaNs
-      during early training,
-      by default `linear(vmin=1e-4, vmax=1., length=2000)`
-  tie_latents : bool, optional
-      tie the parameters that encoding means and standard deviation for both
-      $q(z_i|z_{i-1})$ and $p(z_i|z_{i-1})$, by default False
-  all_standard_prior : bool, optional
-      use standard normal as prior for all latent variables, by default False
-
-  References
-  ----------
-  Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
-    Ladder variational autoencoders, Advances in Neural Information Processing Systems.
-    Curran Associates, Inc., pp. 3738–3746.
-  Tomczak, J.M., Welling, M., 2018. VAE with a VampPrior. arXiv:1705.07120 [cs, stat].
-  """
-
-  def __init__(
-      self,
-      ladder_units: Sequence[int] = (256,),
-      ladder_latents: Sequence[int] = (64,),
-      ladder_layers: int = 2,
-      batchnorm: bool = True,
-      batchnorm_kw: Optional[Dict[str, Any]] = None,
-      dropout: float = 0.0,
-      activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
-      latents: Union[Layer, RVconf] = RVconf(32,
-                                             'mvndiag',
-                                             projection=True,
-                                             name="latents"),
-      tie_latents: bool = False,
-      all_standard_prior: bool = False,
-      stochastic_inference: bool = True,
-      only_mean_up: bool = False,
-      preserve_latents_order: bool = False,
-      name: str = 'StackedVAE',
-      **kwargs,
-  ):
-    super().__init__(latents=latents, name=name, **kwargs)
-    self.encoder.track_outputs = True
-    self.decoder.track_outputs = True
-    if batchnorm_kw is None:
-      batchnorm_kw = {'momentum': 0.9}
-    assert len(ladder_units) == len(ladder_latents)
-    self.all_standard_prior = bool(all_standard_prior)
-    self.stochastic_inference = bool(stochastic_inference)
-    self.only_mean_up = bool(only_mean_up)
-    self.ladder_encoder = [
-      NetConf([units] * ladder_layers,
-              activation=activation,
-              batchnorm=batchnorm,
-              batchnorm_kw=batchnorm_kw,
-              dropout=dropout,
-              name=f'LadderEncoder{i}').create_network()
-      for i, units in enumerate(ladder_units)
-    ]
-    self.ladder_decoder = [
-      NetConf([units] * ladder_layers,
-              activation=activation,
-              batchnorm=batchnorm,
-              batchnorm_kw=batchnorm_kw,
-              dropout=dropout,
-              name=f'LadderDecoder{i}').create_network()
-      for i, units in enumerate(ladder_units[::-1])
-    ]
-    self.ladder_qz = [
-      _parse_layers(RVconf(units, 'normal', projection=True, name=f'qZ{i}'))
-      for i, units in enumerate(as_tuple(ladder_latents))
-    ]
-    if tie_latents:
-      self.ladder_pz = self.ladder_qz
-    else:
-      self.ladder_pz = [
-        _parse_layers(RVconf(units, 'normal', projection=True, name=f'pZ{i}'))
-        for i, units in enumerate(as_tuple(ladder_latents))
-      ]
-
-  @classmethod
-  def is_hierarchical(cls) -> bool:
-    return True
-
-  def encode(self, inputs, training=None, mask=None, only_encoding=False,
-             **kwargs):
-    h = self.encoder(inputs, training=training, mask=mask)
-    last_outputs = h._last_outputs
-    latents = []
-    for e, z in zip(self.ladder_encoder, self.ladder_qz):
-      # stochastic bottom-up inference
-      qz = z(h, training=training, mask=mask)
-      latents.append(qz)
-      if self.stochastic_inference:
-        h = tf.convert_to_tensor(qz)
-      elif self.only_mean_up:
-        # deterministic bottom-up inference
-        h = qz.mean()
-      h = e(h, training=training, mask=mask)
-    if only_encoding:
-      return h
-    qz = self.latents(h,
-                      training=training,
-                      mask=mask,
-                      sample_shape=self.sample_shape)
-    latents.append(qz)
-    return tuple(latents[::-1])
-
-  def decode(self, latents, training=None, mask=None, only_decoding=False,
-             **kwargs):
-    h = tf.convert_to_tensor(latents[0])
-    outputs = []
-    for d, z in zip(self.ladder_decoder, self.ladder_pz[::-1]):
-      h = d(h, training=training, mask=mask)
-      pz = z(h, training=training, mask=mask)
-      outputs.append(pz)
-      h = tf.convert_to_tensor(h)
-    h = self.decoder(h, training=training, mask=mask)
-    if only_decoding:
-      return h
-    h = self.observation(h, training=training, mask=mask)
-    outputs.append(h)
-    return tuple([outputs[-1]] + outputs[:-1])
-
-  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
-    llk, kl = super().elbo_components(inputs=inputs,
-                                      mask=mask,
-                                      training=training)
-    P, Q = self.last_outputs
-    ### KL
-    Qz, Pz = Q[1:], P[1:]
-    for q, p, z in zip(Qz, Pz, self.ladder_qz):
-      if self.all_standard_prior:
-        for name, dist in [('q', i) for i in as_tuple(q)
-                           ] + [('p', i) for i in as_tuple(p)]:
-          kl[f'kl{name}_{z.name}'] = self.beta * dist.KL_divergence(
-            analytic=self.analytic, reverse=self.reverse)
-      else:
-        kl[f'kl_{z.name}'] = self.beta * kl_divergence(
-          q, p, analytic=self.analytic, reverse=self.reverse)
-    return llk, kl
-
-  def __str__(self):
-    text = super().__str__()
-
-    text += f"\n LadderEncoder:\n  "
-    for i, layers in enumerate(self.ladder_encoder):
-      text += "\n  ".join(str(layers).split('\n'))
-      text += "\n  "
-
-    text = text[:-3] + f"\n LadderDecoder:\n  "
-    for i, layers in enumerate(self.ladder_decoder):
-      text += "\n  ".join(str(layers).split('\n'))
-      text += "\n  "
-
-    text = text[:-3] + f"\n LadderLatents:\n  "
-    for i, layers in enumerate(self.ladder_qz):
-      text += "\n  ".join(str(layers).split('\n'))
-      text += "\n  "
-    return text[:-3]
-
-
-# ===========================================================================
-# Ladder VAE
-# ===========================================================================
-class VLadderVAE():
-  """
-  References
-  ----------
-  Zhao, S., Song, J., Ermon, S., 2017. Learning Hierarchical Features from
-      Generative Models. arXiv:1702.08396 [cs, stat].
-  """
-
-  def __init__(self, **kwargs):
-    super(VLadderVAE, self).__init__(**kwargs)
-
-
-class LadderVAE(StackedVAE):
-  """ The ladder variational autoencoder
-
-  Similar to hierarchical VAE with 2 improvements:
-
-  - Deterministic bottom-up inference
-  - Merge q(Z|X) two Gaussian based-on weighed variance
-
-
-  Parameters
-  ----------
-  ladder_encoder : List[Union[Layer, NetConf]], optional
-      the mapping layers between latents in the encoding part
-  ladder_decoder : List[Union[Layer, NetConf]], optional
-      the mapping layers between latents in the decoding part
-  ladder_units : List[Union[Layer, RVmeta]], optional
-      number of hidden units for stochastic latents
-
-  References
-  ----------
-  Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
-    Ladder variational autoencoders, Advances in Neural Information Processing Systems.
-    Curran Associates, Inc., pp. 3738–3746.
-  https://github.com/casperkaae/LVAE
-  """
-
-  def __init__(self,
-               merge_gaussians: bool = True,
-               name: str = 'LadderVAE',
-               **kwargs):
-    super().__init__(stochastic_inference=False, name=name, **kwargs)
-    self.ladder_merge = MergeNormal()
-    self.merge_gaussians = bool(merge_gaussians)
-
-  def decode(self, latents, training=None, mask=None, only_decoding=False):
-    h = tf.convert_to_tensor(latents[0])
-    outputs = []
-    for d, z, qz_e in zip(self.ladder_decoder, self.ladder_pz[::-1],
-                          latents[1:]):
-      h = d(h, training=training, mask=mask)
-      pz = z(h, training=training, mask=mask)
-      if self.merge_gaussians:
-        qz = self.ladder_merge([pz, qz_e])
-      else:
-        qz = qz_e
-      # ladder_share_params=True
-      outputs.append((qz, pz))
-      h = tf.convert_to_tensor(qz)
-    # final decoder
-    h = self.decoder(h, training=training, mask=mask)
-    if only_decoding:
-      return h
-    h = self.observation(h, training=training, mask=mask)
-    outputs.append(h)
-    return tuple([outputs[-1]] + outputs[:-1])
-
-  def elbo_components(self, inputs, training=None, mask=None):
-    llk, kl = super(StackedVAE, self).elbo_components(inputs=inputs,
-                                                      mask=mask,
-                                                      training=training)
-    P, Q = self.last_outputs
-    for (qz, pz), lz in zip(P[1:], self.ladder_qz[::-1]):
-      if self.all_standard_prior:
-        kl[f'kl_{lz.name}'] = self.beta * qz.KL_divergence(
-          analytic=self.analytic, reverse=self.reverse)
-      else:
-        # z = tf.convert_to_tensor(qz) # sampling
-        # kl[f'kl_{lz.name}'] = self.beta * (qz.log_prob(z) - pz.log_prob(z))
-        kl[f'kl_{lz.name}'] = self.beta * kl_divergence(
-          qz, pz, analytic=self.analytic, reverse=self.reverse)
     return llk, kl
 
 

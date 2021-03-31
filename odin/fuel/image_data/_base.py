@@ -382,5 +382,5 @@ class ImageDataset(IterableDataset):
 
   def __str__(self):
     name = self.__class__.__name__
-    return f"<{name} {self.shape} X:{self.data_type} " \
-           f"y:{self.label_type} {self.labels}>"
+    return (f"<{name} {self.shape} X:{self.data_type} " 
+            f"y:{self.label_type} {self.labels}>")
