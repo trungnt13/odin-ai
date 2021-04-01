@@ -130,6 +130,7 @@ class BidirectionalLatents(Wrapper):
                kernel_size: Union[int, Sequence[int]] = 3,
                strides: Union[int, Sequence[int]] = 1,
                padding: Literal['valid', 'same'] = 'same',
+               activation: Union[None, 'str', Callable[[Any], Any]] = None,
                deterministic_features: bool = True,
                residual_coef: float = 1.0,
                merge_normal: bool = False,
@@ -139,7 +140,7 @@ class BidirectionalLatents(Wrapper):
     super().__init__(layer=layer, name=kwargs.pop('name', None))
     self.input_ndim = self.layer.input_spec.min_ndim
     spec = inspect.getfullargspec(layer.call)
-    self._args = spec.args + spec.kwonlyargs
+    self._args = set(spec.args + spec.kwonlyargs)
     self._disable = bool(disable)
     if encoder is not None:
       encoder._old_call = encoder.call
@@ -147,6 +148,9 @@ class BidirectionalLatents(Wrapper):
     self.encoder = encoder
     self.residual_coef = residual_coef
     self.deterministic_features = deterministic_features
+    if activation is None and hasattr(self.layer, 'activation'):
+      activation = self.layer.activation
+    self.activation = keras.activations.get(activation)
     # === 1. for creating layer
     layer, layer_t = _NDIMS_CONV[self.input_ndim]
     spec = inspect.getfullargspec(layer.__init__)
@@ -223,10 +227,13 @@ class BidirectionalLatents(Wrapper):
     return self.__str__()
 
   def __str__(self):
+    units = None
+    if self.latents_shape is not None:
+      units = int(np.prod(self.latents_shape))
     return (
       f"<{self.__class__.__name__} "
       f"'{self.name}' enable:{not self._disable} "
-      f"sampl:{self._is_sampling} shape:{self.latents_shape} "
+      f"sampl:{self._is_sampling} shape:{self.latents_shape}={units} "
       f"merge:{True if self._merge_normal else False} "
       f"deter:{self.deterministic_features} res:{self.residual_coef:g}>")
 
@@ -262,7 +269,7 @@ class BidirectionalLatents(Wrapper):
     # === 1. create projection layer
     if self.encoder is not None:
       assert self.encoder.built
-      encoder_shape = self.encoder.output_shape
+      encoder_shape = decoder_shape
       self._conv_posterior = layer(**self._network_kw, name='ConvPosterior')
       # posterior projection
       self._conv_posterior.build(
@@ -321,7 +328,7 @@ class BidirectionalLatents(Wrapper):
     if self._disable:
       return hidden_d
     # === 2. project and create the distribution
-    prior = self._dist_prior(self._conv_prior(hidden_d, **kwargs))
+    prior = self._dist_prior(self._conv_prior(hidden_d))
     self._prior = prior
     # === 3. inference
     dist = prior
@@ -334,7 +341,7 @@ class BidirectionalLatents(Wrapper):
                                 f'Change to sampling mode if possible')
       # (Kingma 2016) use add, we concat here
       h = self.concat([hidden_e, hidden_d])
-      posterior = self._dist_posterior(self._conv_posterior(h, **kwargs))
+      posterior = self._dist_posterior(self._conv_posterior(h))
       # (Maaloe 2016) merging two Normal distribution
       if self._merge_normal is not None:
         posterior = self._merge_normal([posterior, prior])
@@ -343,11 +350,11 @@ class BidirectionalLatents(Wrapper):
     # === 4. output
     outputs = tf.convert_to_tensor(dist)
     if self.deterministic_features:
-      hidden_deter = self._conv_deter(hidden_d, **kwargs)
+      hidden_deter = self._conv_deter(hidden_d)
       outputs = self.concat([outputs, hidden_deter])
     if self.residual_coef > 0.:
-      outputs = self._conv_out(outputs, **kwargs)
-      outputs = self.layer.activation(outputs)
+      outputs = self._conv_out(outputs)
+      outputs = self.activation(outputs)
       outputs = outputs + self.residual_coef * hidden_d
     return outputs
 
@@ -373,7 +380,7 @@ class ParallelLatents(BidirectionalLatents):
     assert self.encoder is not None, \
       'ParallelLatents require encoder to be specified'
     assert self.encoder.built
-    encoder_shape = self.encoder.output_shape
+    encoder_shape = decoder_shape
     # posterior projection
     self._conv_posterior = layer(**self._network_kw, name='ConvPosterior')
     self._conv_posterior.build(encoder_shape)
@@ -423,14 +430,14 @@ class ParallelLatents(BidirectionalLatents):
                                 f'Shape of inference {hidden_e.shape} and '
                                 f'generative {hidden_d.shape} mismatch. '
                                 f'Change to sampling mode if possible')
-      posterior = self._dist_posterior(self._conv_posterior(hidden_e, **kwargs))
+      posterior = self._dist_posterior(self._conv_posterior(hidden_e))
       self._posterior = posterior
       outputs = tf.convert_to_tensor(posterior)
     else:
       outputs = self.prior.sample(tf.shape(hidden_d)[0])
     # === 3. projection and combine
-    outputs = self._conv_out(outputs, **kwargs)
-    outputs = self.layer.activation(outputs)
+    outputs = self._conv_out(outputs)
+    outputs = self.activation(outputs)
     # outputs = self.concat([outputs, hidden_d])
     # outputs = self._conv_deter(outputs)
     return outputs + self.residual_coef * hidden_d

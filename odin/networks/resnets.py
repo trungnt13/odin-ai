@@ -1,3 +1,4 @@
+import inspect
 from functools import partial
 from typing import Any, Callable, Dict, Optional, Tuple, List, Union
 
@@ -14,6 +15,7 @@ from tensorflow.keras.layers import (Dropout, Flatten, GlobalAvgPool2D,
                                      Reshape, UpSampling2D,
                                      ZeroPadding2D, InputLayer)
 from tensorflow.python.keras.applications.imagenet_utils import correct_pad
+from tensorflow.python.keras.layers import Wrapper
 from typing_extensions import Literal
 
 Conv2D = partial(_Conv2D, padding='same')
@@ -31,6 +33,38 @@ def last_layer(inputs: tf.Tensor) -> Layer:
 # ===========================================================================
 # Helpers
 # ===========================================================================
+class Skip(Wrapper):
+  """Skip connection"""
+
+  def __init__(self, layer, coef=1.0, name=None, **kwargs):
+    if name is None:
+      name = layer.name
+    super().__init__(layer, name=name, **kwargs)
+    self.input_spec = self.layer.input_spec
+    spec = inspect.getfullargspec(layer.call)
+    args = set(spec.args + spec.kwonlyargs)
+    self._call_args = args
+    self.coef = float(coef)
+
+  def get_config(self):
+    cfg = super().get_config()
+    cfg['coef'] = self.coef
+    return cfg
+
+  def call(self, inputs, **kwargs):
+    kwargs = {k: v for k, v in kwargs.items() if k in self._call_args}
+    outputs = self.layer.call(inputs, **kwargs)
+    if self.coef != 0.:
+      outputs = outputs + self.coef * inputs
+    return outputs
+
+  def __repr__(self):
+    return self.__str__()
+
+  def __str__(self):
+    return f'<Skip "{self.name}" coef:{self.coef}>'
+
+
 class RemoveMCMCdim(Layer):
 
   def call(self, x: tf.Tensor, **kwargs):

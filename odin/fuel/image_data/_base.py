@@ -13,6 +13,7 @@ from odin.backend.types_helpers import DataType, LabelType
 from odin.fuel.dataset_base import IterableDataset, get_partition
 from odin.utils import as_tuple
 from odin.utils.cache_utils import get_cache_path
+from tensorflow.python.data import Dataset
 
 
 def _extract_labeled_examples(ds, normalize_method=None
@@ -179,7 +180,7 @@ class ImageDataset(IterableDataset):
       fixed_oversample: bool = False,
       normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
       seed: int = 1,
-  ) -> tf.data.Dataset:
+  ) -> Dataset:
     """Create `tensorflow.data.Dataset` for the loaded dataset
 
     Parameters

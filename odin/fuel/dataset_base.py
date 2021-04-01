@@ -5,6 +5,7 @@ import tensorflow as tf
 from typing_extensions import Literal
 
 from odin.backend.types_helpers import DataType, LabelType
+from tensorflow.python.data import Dataset
 
 
 # ===========================================================================
@@ -126,7 +127,7 @@ class IterableDataset:
                      cache: str = '',
                      parallel: Optional[int] = None,
                      label_percent: bool = False,
-                     seed: int = 1) -> tf.data.Dataset:
+                     seed: int = 1) -> Dataset:
     """ Create tensorflow Dataset """
     raise NotImplementedError()
 

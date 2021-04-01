@@ -1,3 +1,5 @@
+from functools import partial
+
 import numpy as np
 import glob
 import os
@@ -21,9 +23,10 @@ from tensorflow.keras import Sequential
 from odin.bay.layers import MVNDiagLatents, NormalLatents
 from odin.bay.random_variable import RVconf
 from odin.utils import as_tuple, minibatch
+from odin.networks import resnets as rn
 
 # ===========================================================================
-# Constants
+# Constants and helpers
 # ===========================================================================
 ROOT_PATH = os.path.expanduser('~/exp/hierarchical')
 if not os.path.exists(ROOT_PATH):
@@ -32,23 +35,49 @@ if not os.path.exists(ROOT_PATH):
 IMAGE_SHAPE = [32, 32, 3]
 BATCH_SIZE = 32
 ZDIM = 256
-CONV_KW = dict(padding='same', activation=tf.nn.elu,
-               kernel_initializer='he_normal')
-Tonv2D = Conv2DTranspose
+
+
+def find(name: str, layers: List[Layer]) -> Tuple[int, Layer]:
+  for idx, l in enumerate(layers):
+    if l.name == name:
+      return idx, l
+  raise ValueError(f'Cannot find layer with name {name}')
 
 
 # ===========================================================================
 # Layers
-# DO NOT use softplus1
+# * Upsampling and pooling is not recommended
+# * Residual make training more stable but promoting posterior collapse
 # ===========================================================================
+RES_KW = dict(filters_in=64, filters_out=64, expand_ratio=2.,
+              batchnorm=False, activation=tf.nn.elu)
+Skip = partial(rn.Skip, coef=1.0)
+Tonv = partial(Conv2DTranspose,
+               # filters=64,
+               # kernel_size=3,
+               # strides=1,
+               padding='same',
+               activation=tf.nn.elu,
+               kernel_initializer='he_normal')
+Conv = partial(Conv2D,
+               # filters=64,
+               # kernel_size=3,
+               # strides=1,
+               padding='same',
+               activation=tf.nn.elu,
+               kernel_initializer='he_normal')
+
+
 def encoder() -> List[Layer]:
   return [
     InputLayer(IMAGE_SHAPE),
     CenterAt0(),
-    Conv2D(32, 4, 1, name='e1', **CONV_KW),  # (32, 32, 32)
-    Conv2D(32, 4, 2, name='e2', **CONV_KW),  # (16, 16, 32)
-    Conv2D(64, 4, 1, name='e3', **CONV_KW),  # (16, 16, 64)
-    Conv2D(64, 4, 2, name='e4', **CONV_KW),  # (8, 8, 64)
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    AveragePooling2D(),  # (16, 16)
+    Conv(32, 3, 1, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    AveragePooling2D(),  # (8, 8)
+    Conv(64, 3, 1, name='e3'),  # (8, 8, 64)
     Flatten(),
     Dense(512)
   ]
@@ -59,23 +88,108 @@ def decoder(zdim, n_params=1) -> List[Layer]:
     InputLayer([zdim]),
     Dense(512),
     Reshape([8, 8, 8]),
-    Tonv2D(64, 4, 2, name='d4', **CONV_KW),  # (16, 16, 64)
-    Conv2D(64, 4, 1, name='d3', **CONV_KW),  # (16, 16, 64)
-    Tonv2D(32, 4, 2, name='d2', **CONV_KW),  # (32, 32, 32)
-    Conv2D(32, 4, 1, name='d1', **CONV_KW),  # (32, 32, 32)
-    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1),  # (32, 32, 3)
+    Conv(64, 3, 1, name='d3'),  # (8, 8, 64)
+    UpSampling2D(),  # (16, 16)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Conv(32, 3, 1, name='d1'),  # (16, 16, 32)
+    UpSampling2D(),  # (32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1),
   ]
 
 
-def find(name: str, layers: List[Layer]) -> Tuple[int, Layer]:
-  for idx, l in enumerate(layers):
-    if l.name == name:
-      return idx, l
-  raise ValueError(f'Cannot find layer with name {name}')
+# def encoder() -> List[Layer]:
+#   return [
+#     InputLayer(IMAGE_SHAPE),
+#     CenterAt0(),
+#     Conv(32, 3, 1, name='e1'),  # (32, 32)
+#     Conv(64, 4, 2, name='e2'),  # (16, 16)
+#     Conv(64, 3, 1, name='e3'),  # (16, 16)
+#     Conv(64, 4, 2, name='e4'),  # (8, 8)
+#     Conv(64, 3, 1, name='e5'),  # (8, 8)
+#     Conv(64, 4, 2, name='e6'),  # (4, 4)
+#     Conv(64, 3, 1, name='e7'),  # (4, 4)
+#     Flatten(),
+#     Dense(512)
+#   ]
+#
+#
+# def decoder(zdim, n_params=1) -> List[Layer]:
+#   return [
+#     InputLayer([zdim]),
+#     Dense(512),
+#     Reshape([4, 4, 32]),
+#     Conv(64, 3, 1, name='d7'),  # (4, 4)
+#     Conv(64, 3, 1, name='d6'),  # (4, 4)
+#     UpSampling2D(),
+#     Conv(64, 3, 1, name='d5'),  # (8, 8)
+#     Conv(64, 3, 1, name='d4'),  # (8, 8)
+#     UpSampling2D(),  # (16, 16)
+#     Conv(64, 3, 1, name='d3'),  # (16, 16)
+#     Conv(64, 3, 1, name='d2'),  # (16, 16)
+#     UpSampling2D(),  # (32, 32)
+#     Conv(32, 3, 1, name='d1'),  # (32, 32)
+#     Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1),  # (32, 32, 3)
+#   ]
+#
+
+# Tonv(64, 4, 2, name='d7'),  # (4, 4)
+# Conv(64, 3, 1, name='d6'),  # (4, 4)
+# Tonv(64, 4, 2, name='d5'),  # (8, 8)
+# Conv(64, 3, 1, name='d4'),  # (8, 8)
+# Tonv(64, 4, 2, name='d3'),  # (16, 16)
+# Conv(64, 3, 1, name='d2'),  # (16, 16)
+# Tonv(32, 4, 2, name='d1'),  # (32, 32)
+
+
+# def encoder() -> List[Layer]:
+#   return [
+#     InputLayer(IMAGE_SHAPE),
+#     CenterAt0(),
+#     Conv(name='e0'),  # (32, 32, 64)
+#     AveragePooling2D(),  # (16, 16)
+#     Skip(Conv(name='e1')),
+#     AveragePooling2D(),  # (8, 8)
+#     Skip(Conv(name='e2')),
+#     AveragePooling2D(),  # (4, 4)
+#     Skip(Conv(name='e3')),
+#     AveragePooling2D(),  # (2, 2)
+#     Skip(Conv(name='e4')),
+#     Flatten(),
+#     Dense(256)
+#   ]
+#
+#
+# def decoder(zdim, n_params) -> List[Layer]:
+#   return [
+#     InputLayer([zdim]),
+#     Dense(256),
+#     Reshape([2, 2, 64]),  # (2, 2, 64)
+#     Skip(Conv(name='d4')),
+#     UpSampling2D(),  # (4, 4)
+#     Skip(Conv(name='d3')),
+#     UpSampling2D(),  # (8, 8)
+#     Skip(Conv(name='d2')),
+#     UpSampling2D(),  # (16, 16)
+#     Skip(Conv(name='d1')),
+#     UpSampling2D(),  # (32, 32)
+#     Skip(Conv(name='d0')),
+#     Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1),  # (32, 32, 3)
+#   ]
+#
 
 
 def latents(zdim):
   return MVNDiagLatents(zdim)
+
+
+def bi_latents(idx, filters, kernel, strides, e_layers, d_layers, name):
+  i1, d = find(f'd{idx}', d_layers)
+  i2, e = find(f'e{idx}', e_layers)
+  d = BidirectionalLatents(d, encoder=e, filters=filters,
+                           kernel_size=kernel, strides=strides,
+                           name=name)
+  d_layers[i1] = d
 
 
 def observation(distribution: str):
@@ -116,20 +230,139 @@ def model_vae(zdim, dist):
     observation=obs)
 
 
-def model_bvae(zdim, dist):
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,64x8x4,------,32x8x4
+def model_bvae1(zdim, dist):
   n_params, obs = observation(dist)
-  e_layers = encoder()
-  d_layers = decoder(zdim, n_params)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512)
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512),
+    Reshape([8, 8, 8]),
+    Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d1'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
+  ]
+  bi_latents(2, 64, 8, 4, e_layers, d_layers, 'latents1')
+  bi_latents(0, 32, 8, 4, e_layers, d_layers, 'latents2')
+  return HierarchicalVAE(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
 
-  def bi_latents(idx, units, name):
-    # latents 1
-    i1, d = find(f'd{idx}', d_layers)
-    i2, e = find(f'e{idx}', e_layers)
-    d = BidirectionalLatents(d, encoder=e, filters=units, name=name)
-    d_layers[i1] = d
 
-  bi_latents(3, 64, 'latents1')
-  bi_latents(1, 32, 'latents2')
+# 32x3x1,d,32x3x1,64x3x1,d,64x3x1
+# 64x3x1,u,64x3x1,32x3x1,u,32x3x1
+# --------,64x8x4,--------,32x8x4
+def model_bvae2(zdim, dist):
+  n_params, obs = observation(dist)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    AveragePooling2D(),  # (16, 16)
+    Conv(32, 3, 1, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    AveragePooling2D(),  # (8, 8)
+    Conv(64, 3, 1, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512)
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512),
+    Reshape([8, 8, 8]),
+    Conv(64, 3, 1, name='d3'),  # (8, 8, 64)
+    UpSampling2D(),  # (16, 16)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Conv(32, 3, 1, name='d1'),  # (16, 16, 32)
+    UpSampling2D(),  # (32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1),
+  ]
+  bi_latents(2, 64, 8, 4, e_layers, d_layers, 'latents1')
+  bi_latents(0, 32, 8, 4, e_layers, d_layers, 'latents2')
+  return HierarchicalVAE(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
+
+
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,4x3x1,------,2x3x1
+def model_bvae3(zdim, dist):
+  n_params, obs = observation(dist)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512)
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512),
+    Reshape([8, 8, 8]),
+    Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d1'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
+  ]
+  bi_latents(2, 4, 3, 1, e_layers, d_layers, 'latents1')
+  bi_latents(0, 2, 3, 1, e_layers, d_layers, 'latents2')
+  return HierarchicalVAE(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
+
+
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,16x4x2,------,8x4x2
+def model_bvae4(zdim, dist):
+  n_params, obs = observation(dist)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512)
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512),
+    Reshape([8, 8, 8]),
+    Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d1'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
+  ]
+  bi_latents(2, 16, 4, 2, e_layers, d_layers, 'latents1')
+  bi_latents(0, 8, 4, 2, e_layers, d_layers, 'latents2')
   return HierarchicalVAE(
     encoder=Sequential(e_layers, 'Encoder'),
     decoder=Sequential(d_layers, 'Decoder'),
@@ -159,7 +392,7 @@ def get_vae(args) -> Tuple[VariationalAutoencoder, ImageDataset]:
 
 
 def get_dir(args) -> str:
-  path = f'{ROOT_PATH}/{args.vae}_{args.ds}_z{args.zdim}'
+  path = f'{ROOT_PATH}/{args.vae}_{args.ds}_z{args.zdim}_i{args.it}'
   if not os.path.exists(path):
     os.makedirs(path)
   return path
@@ -171,7 +404,8 @@ def train(args):
   save_dir = get_dir(args)
   model_path = f'{save_dir}/model'
   # check override
-  files = glob.glob(model_path + '*')
+  files = (glob.glob(model_path + '*') +
+           glob.glob(f'{save_dir}/events.out.tfevents*'))
   if len(files) > 0:
     if args.override:
       for f in files:
@@ -197,11 +431,14 @@ def train(args):
       model.save_weights(model_path)
       model.trainer.print(f'best llk: {llk:.2f}')
 
+  kw = get_optimizer_info(args.ds, batch_size=BATCH_SIZE * 2)
+  kw['max_iter'] = args.it
   model.fit(train,
             callback=callback,
-            valid_interval=120,
+            valid_interval=120.,
+            global_clipnorm=100.,
             logdir=save_dir,
-            **get_optimizer_info(args.ds, batch_size=BATCH_SIZE * 2))
+            **kw)
 
 
 def evaluate(args):
@@ -242,6 +479,7 @@ if __name__ == '__main__':
   parser.add_argument('vae', type=str)
   parser.add_argument('ds', type=str)
   parser.add_argument('zdim', type=int)
+  parser.add_argument('-it', type=int, default=100000)
   parser.add_argument('--eval', action='store_true')
   parser.add_argument('--override', action='store_true')
   args = parser.parse_args()
