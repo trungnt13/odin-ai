@@ -379,6 +379,7 @@ class ImageDataset(IterableDataset):
       ds = ds.cache(filename=str(cache))
     if prefetch is not None:
       ds = ds.prefetch(buffer_size=prefetch)
+    ds: Dataset
     return ds
 
   def __str__(self):

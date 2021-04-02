@@ -156,8 +156,13 @@ class SqueezeExcitation(Layer):
                se_ratio: float = 0.25,
                pool_mode: Literal['max', 'avg'] = 'avg',
                activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.swish,
-               name: str = 'squeeze_excitation'):
-    super().__init__(name=name)
+               conv_kw: Optional[Dict[str, Any]] = None,
+               name: str = 'squeeze_excitation',
+               **kwargs):
+    super().__init__(name=name, **kwargs)
+    if conv_kw is None:
+      conv_kw = {}
+    self.conv_k = conv_kw
     self.se_ratio = se_ratio
     self.pool_mode = pool_mode
     self.activation = activation
@@ -179,11 +184,13 @@ class SqueezeExcitation(Layer):
     self.conv1 = Conv2D(self.filters,
                         1,
                         activation=self.activation,
-                        name=f'{self.name}_conv')
+                        name=f'{self.name}_conv',
+                        **self.conv_kw)
     self.conv2 = Conv2D(self.filters_in,
                         1,
                         activation='sigmoid',
-                        name=f'{self.name}_proj')
+                        name=f'{self.name}_proj',
+                        **self.conv_kw)
     return super().build(input_shape)
 
   def call(self, inputs, training=None, **kwargs):
@@ -625,6 +632,7 @@ def residual_bottleneck(
     skip_mode: Literal['add', 'concat'] = 'add',
     skip_ratio: float = 1.0,
     name: str = 'residual_bottleneck',
+    **conv_kw,
 ) -> Union[tf.Tensor, ResidualSequential]:
   if batchnorm_kw is None:
     batchnorm_kw = {}
@@ -656,7 +664,8 @@ def residual_bottleneck(
            use_bias=use_bias,
            strides=strides,
            padding=pad_mode,
-           name=f'{name}_conv1'))
+           name=f'{name}_conv1',
+           **conv_kw))
   if order == 'wba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
@@ -669,7 +678,8 @@ def residual_bottleneck(
   layers.append(
     Conv2D(filters=int(filters),
            kernel_size=kernel_size,
-           name=f'{name}_conv2'))
+           name=f'{name}_conv2',
+           **conv_kw))
   if order == 'wba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn2'))
@@ -684,7 +694,8 @@ def residual_bottleneck(
     Conv2D(filters=filters_out * (2 if sigmoid_gating else 1),
            kernel_size=(1, 1),
            use_bias=use_bias,
-           name=f'{name}_proj1'))
+           name=f'{name}_proj1',
+           **conv_kw))
   if batchnorm:
     layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn3'))
   if sigmoid_gating:
@@ -720,6 +731,7 @@ def residual_inverted(
     skip_mode: Literal['add', 'concat'] = 'add',
     skip_ratio: float = 1.0,
     name: str = 'residual_inverted',
+    **conv_kw,
 ) -> Union[tf.Tensor, ResidualSequential]:
   if batchnorm_kw is None:
     batchnorm_kw = {}
@@ -752,7 +764,8 @@ def residual_inverted(
            padding=pad_mode,
            strides=strides,
            use_bias=use_bias,
-           name=f'{name}_conv1'))
+           name=f'{name}_conv1',
+           **conv_kw))
   if order == 'wba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn1'))
@@ -763,7 +776,8 @@ def residual_inverted(
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn2'))
     layers.append(Activation(activation, name=f'{name}_act2'))
   layers.append(DepthwiseConv2D(kernel_size=kernel_size,
-                                name=f'{name}_dwconv1'))
+                                name=f'{name}_dwconv1',
+                                **conv_kw))
   if order == 'wba':
     if batchnorm:
       layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn2'))
@@ -778,7 +792,8 @@ def residual_inverted(
     Conv2D(filters=filters_out * (2 if sigmoid_gating else 1),
            kernel_size=(1, 1),
            use_bias=use_bias,
-           name=f'{name}_proj1'))
+           name=f'{name}_proj1',
+           **conv_kw))
   if batchnorm:
     layers.append(BatchNormalization(**batchnorm_kw, name=f'{name}_bn3'))
   if sigmoid_gating:
