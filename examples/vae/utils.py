@@ -165,10 +165,10 @@ class Callback:
       dists = [q[i] for q in Q]
       dists: Sequence[Distribution]
       # mean and stddev
-      mean = tf.reduce_mean(tf.concat([d.mean() for d in dists], axis=0),
-                            0).numpy()
-      stddev = tf.reduce_mean(tf.concat([d.stddev() for d in dists], axis=0),
-                              0).numpy()
+      mean = tf.reduce_mean(tf.concat([d.mean() for d in dists], axis=0), 0)
+      stddev = tf.reduce_mean(tf.concat([d.stddev() for d in dists], axis=0), 0)
+      mean = tf.reshape(mean, -1).numpy()
+      stddev = tf.reshape(stddev, -1).numpy()
       # the figure
       plt.figure(figsize=(8, 5), dpi=60)
       lines = []
