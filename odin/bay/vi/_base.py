@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Tuple, Union
+from typing import Dict, List, Optional, Tuple, Union, Sequence
 
 import numpy as np
 import tensorflow as tf
@@ -21,7 +21,7 @@ class VariationalModel(Networks):
       analytic: bool = False,
       reverse: bool = True,
       free_bits: Optional[float] = None,
-      sample_shape: Union[int, List[int]] = (),
+      sample_shape: Union[int, Sequence[int]] = (),
       allow_negative_kl: bool = True,
       **kwargs,
   ):
@@ -39,7 +39,7 @@ class VariationalModel(Networks):
     return False
 
   @property
-  def sample_shape(self) -> List[int]:
+  def sample_shape(self) -> Sequence[int]:
     return as_tuple(self._sample_shape, t=int)
 
   @property
@@ -50,7 +50,7 @@ class VariationalModel(Networks):
       self,
       analytic: Optional[bool] = None,
       reverse: Optional[bool] = None,
-      sample_shape: Optional[Union[int, List[int]]] = None,
+      sample_shape: Optional[Union[int, Sequence[int]]] = None,
       free_bits: Optional[float] = None,
   ) -> 'VariationalModel':
     """Set the configuration for ELBO
@@ -121,7 +121,7 @@ class VariationalModel(Networks):
 
   def elbo_components(
       self,
-      inputs: Union[TensorType, List[TensorType]],
+      inputs: Union[TensorType, Sequence[TensorType]],
       training: Optional[bool] = None,
       *args,
       **kwargs) -> Tuple[Dict[str, tf.Tensor], Dict[str, tf.Tensor]]:
@@ -293,11 +293,32 @@ class VariationalModel(Networks):
 
     yield loss
 
+  def get_latents(
+      self,
+      inputs: Optional[Union[TensorType, Sequence[TensorType]]] = None,
+      training: Optional[bool] = None,
+      mask: Optional[TensorType] = None,
+      return_prior: bool = False,
+      **kwargs) -> Union[Distribution, Sequence[Distribution]]:
+    """Get the posterior (and prior) latents distribution `q(z|x)` and `p(z)`"""
+    if inputs is None:
+      if self.last_outputs is None:
+        raise RuntimeError(f'Cannot get_latents of {self.name} '
+                           'both inputs and last_outputs are None.')
+      P, Q = self.last_outputs
+    else:
+      Q = self.encode(inputs, training=training, mask=mask, **kwargs)
+    if return_prior:
+      if isinstance(Q, (tuple, list)):
+        return Q, tuple([q.KL_divergence.prior for q in Q])
+      return Q, Q.KL_divergence.prior
+    return Q
+
   def encode(self,
-             inputs: Union[TensorType, List[TensorType]],
+             inputs: Union[TensorType, Sequence[TensorType]],
              training: Optional[bool] = None,
              *args,
-             **kwargs) -> Union[Distribution, List[Distribution]]:
+             **kwargs) -> Union[Distribution, Sequence[Distribution]]:
     """Project data points into latents space
 
     Parameters
@@ -314,12 +335,13 @@ class VariationalModel(Networks):
     """
     raise NotImplementedError
 
-  def decode(self,
-             latents: Union[TensorType, Distribution, List[TensorType],
-                            List[Distribution]],
-             training: Optional[bool] = None,
-             *args,
-             **kwargs) -> Union[Distribution, List[Distribution]]:
+  def decode(
+      self,
+      latents: Union[TensorType, Distribution, Sequence[TensorType],
+                     Sequence[Distribution]],
+      training: Optional[bool] = None,
+      *args,
+      **kwargs) -> Union[Distribution, Sequence[Distribution]]:
     """Project the latents vector back into the input space
 
     Parameters

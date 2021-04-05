@@ -5,7 +5,8 @@ import pickle
 import tempfile
 from collections import defaultdict
 from functools import partial
-from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union, TextIO
+from typing import Any, Callable, Dict, List, Optional, Text, Tuple, Union, \
+  TextIO, Sequence
 import datetime
 
 import numpy as np
@@ -27,7 +28,7 @@ __all__ = ['Trainer', 'get_current_trainer']
 # ===========================================================================
 # Helpers
 # ===========================================================================
-Callback = Callable[[], Optional[dict]]
+Callback = Callable[[], Optional[Dict[str, Any]]]
 
 _BEST_WEIGHTS = {}
 _BEST_OPTIMIZER = {}
@@ -45,7 +46,7 @@ def _ema(x, w):
 
 def _is_text(x):
   return isinstance(x, string_types) or \
-      (isinstance(x, np.ndarray) and isinstance(x[0], string_types))
+         (isinstance(x, np.ndarray) and isinstance(x[0], string_types))
 
 
 def _save_summary(loss, metrics, prefix="", flush=False):
@@ -72,7 +73,7 @@ def _save_summary(loss, metrics, prefix="", flush=False):
 
 def _print_summary(print_fn: Callable,
                    log_tag: str,
-                   loss: float,
+                   loss: Union[Tensor, float],
                    metrics: dict,
                    n_iter: int,
                    is_valid: bool = False):
@@ -87,10 +88,11 @@ def _print_summary(print_fn: Callable,
 
 def _process_callback_returns(print_fn: Callable,
                               log_tag: str,
+                              callback_name: str,
                               n_iter: int,
                               metrics: Optional[dict] = None):
   if metrics is not None and isinstance(metrics, dict) and len(metrics) > 0:
-    print_fn(f"{log_tag} [Callback#{int(n_iter)}]:")
+    print_fn(f"{log_tag} [{callback_name}#{int(n_iter)}]:")
     for k, v in metrics.items():
       if isinstance(v, (tuple, list)):
         v = tf.convert_to_tensor(v)
@@ -108,6 +110,21 @@ def _process_callback_returns(print_fn: Callable,
       else:
         tf.summary.histogram(k, v)
       print_fn(f" {k}:{v}")
+
+
+def _create_callback(callbacks):
+  if not isinstance(callbacks, (tuple, list)):
+    callbacks = [callbacks]
+
+  def _callback():
+    results = {}
+    for fn in callbacks:
+      r = fn()
+      if isinstance(r, dict):
+        results.update(r)
+    return None if len(results) == 0 else results
+
+  return _callback
 
 
 def read_tensorboard(logdir: str) -> Dict[Text, Tuple[float, int, float]]:
@@ -203,18 +220,18 @@ class Trainer(object):
     elif os.path.isfile(dir_path):
       raise ValueError("dir_path must be path to a folder")
     models = [
-        i for i in tf.nest.flatten(models)
-        if isinstance(i, (tf.Variable, keras.layers.Layer))
+      i for i in tf.nest.flatten(models)
+      if isinstance(i, (tf.Variable, keras.layers.Layer))
     ]
     footprint = dir_path + \
-      ''.join(sorted([str(id(i)) for i in optimizers])) + \
-      ''.join(sorted([str(id(i)) for i in models]))
+                ''.join(sorted([str(id(i)) for i in optimizers])) + \
+                ''.join(sorted([str(id(i)) for i in models]))
     if footprint in _CHECKPOINT_MANAGER:
       manager, cp = _CHECKPOINT_MANAGER[footprint]
     else:
       models = {"model%d" % idx: m for idx, m in enumerate(models)}
       models.update(
-          {"optimizer%d" % idx: m for idx, m in enumerate(optimizers)})
+        {"optimizer%d" % idx: m for idx, m in enumerate(optimizers)})
       cp = tf.train.Checkpoint(**models)
       manager = tf.train.CheckpointManager(cp,
                                            directory=dir_path,
@@ -223,7 +240,7 @@ class Trainer(object):
     manager.save()
     with open(os.path.join(dir_path, 'optimizers.pkl'), 'wb') as f:
       pickle.dump(
-          [(opt.__class__.__name__, opt.get_config()) for opt in optimizers], f)
+        [(opt.__class__.__name__, opt.get_config()) for opt in optimizers], f)
     with open(os.path.join(dir_path, 'max_to_keep'), 'wb') as f:
       pickle.dump(max_to_keep, f)
     if trainer is not None:
@@ -257,8 +274,8 @@ class Trainer(object):
     # given models
     elif models is not None:
       models = [
-          i for i in tf.nest.flatten(models)
-          if isinstance(i, (tf.Variable, keras.layers.Layer))
+        i for i in tf.nest.flatten(models)
+        if isinstance(i, (tf.Variable, keras.layers.Layer))
       ]
       models_ids = ''.join(sorted([str(id(i)) for i in models]))
       with open(os.path.join(dir_path, 'max_to_keep'), 'rb') as f:
@@ -273,12 +290,12 @@ class Trainer(object):
           with open(os.path.join(dir_path, 'optimizers.pkl'), 'rb') as f:
             optimizers = pickle.load(f)
           optimizers = [
-              tf.optimizers.get(name).from_config(config)
-              for name, config in optimizers
+            tf.optimizers.get(name).from_config(config)
+            for name, config in optimizers
           ]
           kwargs = {"model%d" % idx: m for idx, m in enumerate(models)}
           kwargs.update(
-              {"optimizer%d" % idx: m for idx, m in enumerate(optimizers)})
+            {"optimizer%d" % idx: m for idx, m in enumerate(optimizers)})
           cp = tf.train.Checkpoint(**kwargs)
           manager = tf.train.CheckpointManager(cp,
                                                directory=dir_path,
@@ -289,14 +306,14 @@ class Trainer(object):
         optimizers_ids = ''.join(sorted([str(id(i)) for i in optimizers]))
         footprint = [name for name in _CHECKPOINT_MANAGER \
                      if dir_path in name and \
-                       optimizers_ids in name and \
-                         models_ids in name]
+                     optimizers_ids in name and \
+                     models_ids in name]
         if len(footprint) > 0:
           manager, cp = _CHECKPOINT_MANAGER[footprint[0]]
         else:
           kwargs = {"model%d" % idx: m for idx, m in enumerate(models)}
           kwargs.update(
-              {"optimizer%d" % idx: m for idx, m in enumerate(optimizers)})
+            {"optimizer%d" % idx: m for idx, m in enumerate(optimizers)})
           cp = tf.train.Checkpoint(**kwargs)
           manager = tf.train.CheckpointManager(cp,
                                                directory=dir_path,
@@ -315,7 +332,7 @@ class Trainer(object):
     # return
     models = [getattr(cp, k) for k in sorted(dir(cp)) if 'model' in k[:5]]
     optimizers = [
-        getattr(cp, k) for k in sorted(dir(cp)) if 'optimizer' in k[:9]
+      getattr(cp, k) for k in sorted(dir(cp)) if 'optimizer' in k[:9]
     ]
     return models, optimizers, trainer
 
@@ -487,29 +504,39 @@ class Trainer(object):
           logging_interval: float = 5,
           log_tag: str = '',
           max_iter: int = -1,
-          callback: Union[Callback, List[Callback]] = lambda: None):
+          on_batch_end: Union[Callback, Sequence[Callback]] = lambda: None,
+          on_valid_end: Union[Callback, Sequence[Callback]] = lambda: None):
     """ A simplified fitting API
 
     Parameters
     ----------
-    train_ds : tf.data.Dataset. Training dataset.
-    optimize : Callable. Optimization function, return loss and a list of
-      metrics. The input arguments must be:
-        - ('inputs', 'training');
-      and the function must returns:
-        - ('loss': `tf.Tensor`, 'metrics': `dict(str, tf.Tensor)`)
-    valid_ds : tf.data.Dataset. Validation dataset
-    valid_freq : an Integer. The frequency of validation task, based on
-      the current number of iteration.
-    valid_interval : a Scalar. The number of second until next validation.
-    autograph : Boolean. Enable static graph for the `optimize` function.
+    train_ds : tf.data.Dataset.
+        Training dataset.
+    optimize : Callable.
+        Optimization function, return loss and a list of metrics.
+        The input arguments must be:
+          - ('inputs', 'training');
+        and the function must returns:
+          - ('loss': `tf.Tensor`, 'metrics': `dict(str, tf.Tensor)`)
+    valid_ds : tf.data.Dataset.
+        Validation dataset
+    valid_freq : an Integer.
+        The frequency of validation task, based on the current number
+        of iteration.
+    valid_interval : a Scalar.
+        The number of second until next validation.
+    autograph : Boolean.
+        Enable static graph for the `optimize` function.
     logging_interval : Scalar. Interval for print out log information
-      (in second).
-    max_iter : An Interger or `None`. Maximum number of iteration for
-      training. If `max_iter <= 0`, iterate the training data until the end.
-    callback : Callable take no input arguments.
-      The callback will be called after every fixed number of iteration
-      according to `valid_freq`, or fixed duration defined by `valid_interval`
+        (in second).
+    max_iter : An Integer or `None`. Maximum number of iteration for
+        training. If `max_iter <= 0`, iterate the training data until the end.
+    on_batch_end : Callable take no input arguments.
+        The callback will be called after every fixed number of iteration
+        according to `valid_freq`, or fixed duration defined by `valid_interval`
+    on_valid_end : Callable take no input arguments.
+        The callback will be called after every fixed number of iteration
+        according to `valid_freq`, or fixed duration defined by `valid_interval`
 
     Example
     -------
@@ -534,6 +561,9 @@ class Trainer(object):
       log_tag += " "
     if hasattr(train_ds, '__len__') and max_iter <= 0:
       max_iter = len(train_ds)
+    ### check the callbacks
+    on_valid_end = _create_callback(on_valid_end)
+    on_batch_end = _create_callback(on_batch_end)
     ### Prepare the data
     assert isinstance(train_ds, (tf.data.Dataset, OwnedIterator)), \
       'train_ds must be instance of tf.data.Datasets'
@@ -546,7 +576,8 @@ class Trainer(object):
       valid_freq = 1
     ### create autograph version of optimize
     assert callable(optimize), \
-      'optimize function must be callable with input arguments (inputs, training)'
+      'optimize function must be callable with input arguments ' \
+      '(inputs, training)'
     if compile_graph and not isinstance(optimize, Function):
       optimize = tf.function(optimize,
                              autograph=bool(autograph),
@@ -560,27 +591,16 @@ class Trainer(object):
         loss, metrics = optimize(inputs, training=training)
       if not isinstance(metrics, dict):
         raise RuntimeError(
-            f"Metrics must be instance of dictionary, but return: {metrics}")
+          f"Metrics must be instance of dictionary, but return: {metrics}")
       return loss, metrics
-
-    ### callback function
-    def _callback():
-      results = {}
-      if not isinstance(callback, (tuple, list)):
-        callback = [callback]
-      for fn in callback:
-        r = fn()
-        if isinstance(r, dict):
-          results.update(r)
-      return None if len(results) == 0 else results
 
     ### validating function
     def valid():
       epoch_loss = []
       epoch_metrics = defaultdict(list)
       valid_progress = tqdm(
-          enumerate(valid_ds.repeat(1)),
-          desc=f"Validating {valid_freq}(it) or {valid_interval:.1f}(s)")
+        enumerate(valid_ds.repeat(1)),
+        desc=f"Validating {valid_freq}(it) or {valid_interval:.1f}(s)")
       for it, inputs in valid_progress:
         _loss, _metrics = fn_step(inputs, training=False)
         # store for calculating average
@@ -589,7 +609,7 @@ class Trainer(object):
           epoch_metrics[k].append(v)
       epoch_loss = tf.reduce_mean(epoch_loss, axis=0)
       epoch_metrics = {
-          k: tf.reduce_mean(v, axis=0) for k, v in epoch_metrics.items()
+        k: tf.reduce_mean(v, axis=0) for k, v in epoch_metrics.items()
       }
       return epoch_loss, epoch_metrics
 
@@ -598,7 +618,7 @@ class Trainer(object):
       global _CURRENT_TRAINER
       _CURRENT_TRAINER = self
       self._is_training.assign(True)
-      progress = tqdm(train_ds, desc=f"Traning {max_iter}(its)")
+      progress = tqdm(train_ds, desc=f"Training {max_iter}(its)")
       self._current_train_progress = progress
       start_time = progress.start_t
       last_print_time = 0
@@ -609,7 +629,7 @@ class Trainer(object):
         self._n_iter += 1
         tf.summary.experimental.set_step(self.n_iter)
         # ====== check maximum iteration ====== #
-        if max_iter > 0 and cur_iter >= max_iter:
+        if 0 < max_iter <= cur_iter:
           break
         # the tensorboard will change after each iteration
         self._cached_tensorboard = None
@@ -617,7 +637,12 @@ class Trainer(object):
         loss, metrics = fn_step(inputs, training=True)
         self._last_train_loss = loss
         self._last_train_metrics = dict(metrics)
-        # metric could be hiden by add '_' to the beginning
+        _process_callback_returns(self.print,
+                                  log_tag=log_tag,
+                                  callback_name='BatchEnd',
+                                  n_iter=self.n_iter,
+                                  metrics=on_batch_end())
+        # metric could be hidden by add '_' to the beginning
         metrics = {k: v for k, v in metrics.items() if '_' != k[0]}
         # do not record the loss and metrics at every iteration, the
         # performance will drop about 40%
@@ -637,7 +662,7 @@ class Trainer(object):
         # ====== validation ====== #
         interval = progress._time() - last_valid_time
         if cur_iter == 0 or \
-          (self.n_iter % valid_freq == 0 and interval >= valid_interval):
+            (self.n_iter % valid_freq == 0 and interval >= valid_interval):
           if valid_ds is not None:
             # finish the validation
             val_loss, val_metrics = valid()
@@ -651,8 +676,11 @@ class Trainer(object):
                            self.n_iter,
                            is_valid=True)
           # callback always called
-          _process_callback_returns(self.print, log_tag, self.n_iter,
-                                    callback())
+          _process_callback_returns(self.print,
+                                    log_tag=log_tag,
+                                    callback_name='ValidEnd',
+                                    n_iter=self.n_iter,
+                                    metrics=on_valid_end())
           last_valid_time = progress._time()
         # ====== terminate training ====== #
         if not self.is_training:
@@ -663,7 +691,11 @@ class Trainer(object):
           break
       # Final callback to signal train ended
       self._is_training.assign(False)
-      _process_callback_returns(self.print, log_tag, self.n_iter, callback())
+      _process_callback_returns(self.print,
+                                log_tag=log_tag,
+                                callback_name='ValidEnd',
+                                n_iter=self.n_iter,
+                                metrics=on_valid_end())
       # end the progress
       progress.clear()
       progress.close()
@@ -675,7 +707,7 @@ class Trainer(object):
         tf.summary.trace_on(graph=True, profiler=False)
       else:
         tf.summary.trace_off()
-      train() # training
+      train()  # training
       if self.trace_on:
         tf.summary.trace_export(name=func_name,
                                 step=0,

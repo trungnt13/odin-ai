@@ -1,4 +1,5 @@
 import inspect
+from functools import partial
 from typing import Sequence, Union, Optional
 
 import tensorflow as tf
@@ -110,6 +111,8 @@ def layer2text(layer: Layer,
   ## Distribution layer
   elif isinstance(layer, DistributionLambda):
     fn = layer._make_distribution_fn
+    if isinstance(fn, partial):
+      fn = fn.func
     kw = dict(inspect.getclosurevars(fn).nonlocals)
     kw.pop('self', None)
     cls_name = type(layer).__name__

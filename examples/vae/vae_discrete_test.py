@@ -161,7 +161,7 @@ vae.fit(train,
         max_iter=int(args.niter),
         optimizer='adam',
         learning_rate=0.001,
-        callback=callback,
+        on_valid_end=callback,
         compile_graph=True,
         checkpoint=MODEL_PATH,
         skip_fitted=True)

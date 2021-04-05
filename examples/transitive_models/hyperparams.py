@@ -344,7 +344,7 @@ def run_task(args, evaluation=False):
   vae.fit(
       train,
       logdir=logdir,
-      callback=callback,
+      on_valid_end=callback,
       valid_interval=60,
       logging_interval=2,
       nan_gradients_policy='stop',

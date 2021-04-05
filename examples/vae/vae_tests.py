@@ -154,7 +154,7 @@ def main(cfg: dict):
             valid_interval=30,
             logging_interval=2,
             skip_fitted=True,
-            callback=callback,
+            on_valid_end=callback,
             logdir=output_dir,
             compile_graph=True,
             track_gradients=True,

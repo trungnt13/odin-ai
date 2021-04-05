@@ -119,15 +119,15 @@ def time_ticks(locs, *args, **kwargs):  # pylint: disable=star-args
 
   # Format the labels by time
   formats = {
-      'ms':
-          lambda t: '{:d}ms'.format(int(1e3 * t)),
-      's':
-          '{:0.2f}s'.format,
-      'm':
-          lambda t: '{:d}:{:02d}'.format(int(t / 6e1), int(np.mod(t, 6e1))),
-      'h':
-          lambda t: '{:d}:{:02d}:{:02d}'.format(int(
-              t / 3.6e3), int(np.mod(t / 6e1, 6e1)), int(np.mod(t, 6e1)))
+    'ms':
+      lambda t: '{:d}ms'.format(int(1e3 * t)),
+    's':
+      '{:0.2f}s'.format,
+    'm':
+      lambda t: '{:d}:{:02d}'.format(int(t / 6e1), int(np.mod(t, 6e1))),
+    'h':
+      lambda t: '{:d}:{:02d}:{:02d}'.format(int(
+        t / 3.6e3), int(np.mod(t / 6e1, 6e1)), int(np.mod(t, 6e1)))
   }
 
   if time_fmt is None:
@@ -473,10 +473,10 @@ def plot_gaussian_mixture(x,
   ax.set_ylabel("Histogram Count", fontsize=fontsize)
   ax.set_xlim((np.min(x), np.max(x)))
   ax.set_xticks(
-      np.linspace(start=np.min(x), stop=np.max(x), num=5, dtype='float32'))
+    np.linspace(start=np.min(x), stop=np.max(x), num=5, dtype='float32'))
   ax.set_yticks(
-      np.linspace(start=np.min(count), stop=np.max(count), num=5,
-                  dtype='int32'))
+    np.linspace(start=np.min(count), stop=np.max(count), num=5,
+                dtype='int32'))
   # ====== GMM PDF ====== #
   x_ = np.linspace(np.min(bins), np.max(bins), n_points)
   y_ = np.exp(gmm.score_samples(x_[:, np.newaxis]))
@@ -564,7 +564,7 @@ def plot_ellipses(mean, sigma, color, alpha=0.75, ax=None):
   assert sigma.shape == (2, 2), "sigma must be matrix of shape (2, 2)"
   if ax is None:
     ax = plt.gca()
-  covariances = sigma**2
+  covariances = sigma ** 2
   # ====== create the ellipses ====== #
   v, w = np.linalg.eigh(covariances)
   u = w[0] / np.linalg.norm(w[0])
@@ -609,58 +609,58 @@ def plot_multiple_features(features,
   delta or delta delta features should have suffix: '_d1' and '_d2'
   """
   known_order = [
-      # For audio processing
-      'raw',
-      'stft_energy',
-      'stft_energy_d1',
-      'stft_energy_d2',
-      'frames_energy',
-      'frames_energy_d1',
-      'frames_energy_d2',
-      'energy',
-      'energy_d1',
-      'energy_d2',
-      'vad',
-      'sad',
-      'sap',
-      'sap_d1',
-      'sap_d2',
-      'pitch',
-      'pitch_d1',
-      'pitch_d2',
-      'loudness',
-      'loudness_d1',
-      'loudness_d2',
-      'f0',
-      'f0_d1',
-      'f0_d2',
-      'spec',
-      'spec_d1',
-      'spec_d2',
-      'mspec',
-      'mspec_d1',
-      'mspec_d2',
-      'mfcc',
-      'mfcc_d1',
-      'mfcc_d2',
-      'sdc',
-      'qspec',
-      'qspec_d1',
-      'qspec_d2',
-      'qmspec',
-      'qmspec_d1',
-      'qmspec_d2',
-      'qmfcc',
-      'qmfcc_d1',
-      'qmfcc_d2',
-      'bnf',
-      'bnf_d1',
-      'bnf_d2',
-      'ivec',
-      'ivec_d1',
-      'ivec_d2',
-      # For image processing
-      # For video processing
+    # For audio processing
+    'raw',
+    'stft_energy',
+    'stft_energy_d1',
+    'stft_energy_d2',
+    'frames_energy',
+    'frames_energy_d1',
+    'frames_energy_d2',
+    'energy',
+    'energy_d1',
+    'energy_d2',
+    'vad',
+    'sad',
+    'sap',
+    'sap_d1',
+    'sap_d2',
+    'pitch',
+    'pitch_d1',
+    'pitch_d2',
+    'loudness',
+    'loudness_d1',
+    'loudness_d2',
+    'f0',
+    'f0_d1',
+    'f0_d2',
+    'spec',
+    'spec_d1',
+    'spec_d2',
+    'mspec',
+    'mspec_d1',
+    'mspec_d2',
+    'mfcc',
+    'mfcc_d1',
+    'mfcc_d2',
+    'sdc',
+    'qspec',
+    'qspec_d1',
+    'qspec_d2',
+    'qmspec',
+    'qmspec_d1',
+    'qmspec_d2',
+    'qmfcc',
+    'qmfcc_d1',
+    'qmfcc_d2',
+    'bnf',
+    'bnf_d1',
+    'bnf_d2',
+    'ivec',
+    'ivec_d1',
+    'ivec_d2',
+    # For image processing
+    # For video processing
   ]
   if isinstance(features, (tuple, list)):
     features = OrderedDict(features)
@@ -773,7 +773,7 @@ def plot_spectrogram(x,
     if len(vad) != x.shape[1]:
       raise ValueError('Length of VAD must equal to signal length, but '
                        'length[vad]={} != length[signal]={}'.format(
-                           len(vad), x.shape[1]))
+        len(vad), x.shape[1]))
     # normalize vad
     vad = np.cast[np.bool](vad)
 
@@ -914,7 +914,7 @@ def plot_hinton(matrix, max_weight=None, ax=None):
   ax = ax if ax is not None else plt.gca()
 
   if not max_weight:
-    max_weight = 2**np.ceil(np.log(np.abs(matrix).max()) / np.log(2))
+    max_weight = 2 ** np.ceil(np.log(np.abs(matrix).max()) / np.log(2))
 
   ax.patch.set_facecolor('gray')
   ax.set_aspect('equal', 'box')
@@ -986,10 +986,13 @@ def _ppndf(cum_prob):
   # do centerstuff first
   R[centerindexes] = adj_prob[centerindexes] * adj_prob[centerindexes]
   norm_dev[centerindexes] = adj_prob[centerindexes] * \
-      (((A3 * R[centerindexes] + A2) * R[centerindexes] + A1) * R[centerindexes] + A0)
-  norm_dev[centerindexes] = norm_dev[centerindexes] /\
-      ((((B4 * R[centerindexes] + B3) * R[centerindexes] + B2) * R[centerindexes] + B1) * R[centerindexes] + 1.0)
-  #find left and right tails
+                            (((A3 * R[centerindexes] + A2) * R[
+                              centerindexes] + A1) * R[centerindexes] + A0)
+  norm_dev[centerindexes] = norm_dev[centerindexes] / \
+                            ((((B4 * R[centerindexes] + B3) * R[
+                              centerindexes] + B2) * R[centerindexes] + B1) * R[
+                               centerindexes] + 1.0)
+  # find left and right tails
   right = np.argwhere(cum_prob[tailindexes] > 0.5).ravel()
   left = np.argwhere(cum_prob[tailindexes] < 0.5).ravel()
   # do tail stuff
@@ -997,7 +1000,8 @@ def _ppndf(cum_prob):
   R[tailindexes[right]] = 1 - cum_prob[tailindexes[right]]
   R[tailindexes] = np.sqrt((-1.0) * np.log(R[tailindexes]))
   norm_dev[tailindexes] = ((
-      (C3 * R[tailindexes] + C2) * R[tailindexes] + C1) * R[tailindexes] + C0)
+                               (C3 * R[tailindexes] + C2) * R[
+                             tailindexes] + C1) * R[tailindexes] + C0)
   norm_dev[tailindexes] = norm_dev[tailindexes] / (
       (D2 * R[tailindexes] + D1) * R[tailindexes] + 1.0)
   # swap sign on left tail
@@ -1049,8 +1053,8 @@ def plot_detection_curve(x,
     y = (y,)
   if len(x) != len(y):
     raise ValueError(
-        "Given %d series for `x`, but only get %d series for `y`." %
-        (len(x), len(y)))
+      "Given %d series for `x`, but only get %d series for `y`." %
+      (len(x), len(y)))
   if not isinstance(labels, (tuple, list)):
     labels = (labels,)
   labels = as_tuple(labels, N=len(x))
@@ -1075,41 +1079,42 @@ def plot_detection_curve(x,
     # 0.00001, 0.00002,
     # , 0.99995, 0.99998, 0.99999
     xticks = np.array([
-        0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05,
-        0.1, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.98, 0.99, 0.995, 0.998, 0.999,
-        0.9995, 0.9998, 0.9999
+      0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05,
+      0.1, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.98, 0.99, 0.995, 0.998, 0.999,
+      0.9995, 0.9998, 0.9999
     ])
     xticklabels = [
-        str(i)[:-2] if '.0' == str(i)[-2:] else
-        (str(i) if i > 99.99 else str(i)) for i in xticks * 100
+      str(i)[:-2] if '.0' == str(i)[-2:] else
+      (str(i) if i > 99.99 else str(i)) for i in xticks * 100
     ]
     if xlims is None:
       xlims = (max(min(np.min(i) for i in x),
                    xticks[0]), min(max(np.max(i) for i in x), xticks[-1]))
     xlims = (
-        [val for i, val in enumerate(xticks) if val <= xlims[0] or i == 0][-1] +
-        eps, [
-            val for i, val in enumerate(xticks)
-            if val >= xlims[1] or i == len(xticks) - 1
-        ][0] - eps)
+      [val for i, val in enumerate(xticks) if val <= xlims[0] or i == 0][-1] +
+      eps, [
+        val for i, val in enumerate(xticks)
+        if val >= xlims[1] or i == len(xticks) - 1
+      ][0] - eps)
     if ylims is None:
       ylims = (max(min(np.min(i) for i in y),
                    xticks[0]), min(max(np.max(i) for i in y), xticks[-1]))
     ylims = (
-        [val for i, val in enumerate(xticks) if val <= ylims[0] or i == 0][-1] +
-        eps, [
-            val for i, val in enumerate(xticks)
-            if val >= ylims[1] or i == len(xticks) - 1
-        ][0] - eps)
+      [val for i, val in enumerate(xticks) if val <= ylims[0] or i == 0][-1] +
+      eps, [
+        val for i, val in enumerate(xticks)
+        if val >= ylims[1] or i == len(xticks) - 1
+      ][0] - eps)
     # convert to log scale
     xticks = _ppndf(xticks)
     yticks, yticklabels = xticks, xticklabels
     xlims, ylims = _ppndf(xlims), _ppndf(ylims)
     # main line
     # TODO: add EER value later
-    name_fmt = lambda name, dcf, eer: ('EER=%.2f;minDCF=%.2f' % (eer * 100, dcf * 100)) \
-        if name is None else \
-        ('%s (EER=%.2f;minDCF=%.2f)' % (name, eer * 100, dcf * 100))
+    name_fmt = lambda name, dcf, eer: (
+          'EER=%.2f;minDCF=%.2f' % (eer * 100, dcf * 100)) \
+      if name is None else \
+      ('%s (EER=%.2f;minDCF=%.2f)' % (name, eer * 100, dcf * 100))
     labels_new = []
     for count, (Pfa, Pmiss, name) in enumerate(zip(x, y, labels)):
       eer = K.metrics.compute_EER(Pfa=Pfa, Pmiss=Pmiss)
@@ -1123,9 +1128,9 @@ def plot_detection_curve(x,
       Pmiss = _ppndf(Pmiss)
       name = name_fmt(name, eer, dcf)
       lines.append(((Pfa, Pmiss), {
-          'lw': linewidth,
-          'label': name,
-          'linestyle': '-' if count % 2 == 0 else '-.'
+        'lw': linewidth,
+        'label': name,
+        'linestyle': '-' if count % 2 == 0 else '-.'
       }))
       labels_new.append(name)
     labels = labels_new
@@ -1137,23 +1142,23 @@ def plot_detection_curve(x,
     ylims = (0, 1)
     # roc
     name_fmt = lambda name, auc: ('AUC=%.2f' % auc) if name is None else \
-        ('%s (AUC=%.2f)' % (name, auc))
+      ('%s (AUC=%.2f)' % (name, auc))
     labels_new = []
     for count, (i, j, name) in enumerate(zip(x, y, labels)):
       auc = K.metrics.compute_AUC(i, j)
       name = name_fmt(name, auc)
       lines.append([(i, j), {
-          'lw': linewidth,
-          'label': name,
-          'linestyle': '-' if count % 2 == 0 else '-.'
+        'lw': linewidth,
+        'label': name,
+        'linestyle': '-' if count % 2 == 0 else '-.'
       }])
       labels_new.append(name)
     labels = labels_new
     # diagonal
     lines.append([(xlims, ylims), {
-        'lw': 0.8,
-        'linestyle': '-.',
-        'color': 'black'
+      'lw': 0.8,
+      'linestyle': '-.',
+      'color': 'black'
     }])
   # ====== select ROC curve style ====== #
   elif curve == 'prc':
@@ -1265,14 +1270,15 @@ def plot_close():
 
 def plot_to_image(figure: plt.Figure,
                   close_figure: bool = True,
-                  dpi: int = 150):
+                  dpi: int = 150) -> tf.Tensor:
   """Convert the figure to png image for tensorboard"""
   # Save the plot to a PNG in memory.
   buf = io.BytesIO()
   figure.savefig(buf, format='png', dpi=dpi)
   # Closing the figure prevents it from being displayed directly inside
   # the notebook.
-  plt.close(figure)
+  if close_figure:
+    plt.close(figure)
   buf.seek(0)
   # Convert PNG buffer to TF image
   image = tf.image.decode_png(buf.getvalue(), channels=4)

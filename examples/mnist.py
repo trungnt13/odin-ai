@@ -91,5 +91,5 @@ trainer.fit(Trainer.prepare(train,
             valid_freq=2500,
             autograph=True,
             logging_interval=2,
-            callback=callback)
+            on_valid_end=callback)
 print("Total:", time.time() - start_time)

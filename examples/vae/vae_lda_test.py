@@ -196,7 +196,7 @@ def main(cfg):
                        decoder='identity',
                        latents='identity',
                        path=model_path)
-    vae.fit(callback=partial(callback,
+    vae.fit(on_valid_end=partial(callback,
                              vae=vae,
                              test=test,
                              vocabulary=vocabulary),
@@ -217,7 +217,7 @@ def main(cfg):
         analytic=True,
         path=model_path,
         name="VDA")
-    vae.fit(callback=partial(callback1,
+    vae.fit(on_valid_end=partial(callback1,
                              vae=vae,
                              test=test,
                              vocabulary=vocabulary),
@@ -234,7 +234,7 @@ def main(cfg):
                   path=model_path,
                   name="VAE")
     callback1(vae, test, vocabulary)
-    vae.fit(callback=partial(callback1,
+    vae.fit(on_valid_end=partial(callback1,
                              vae=vae,
                              test=test,
                              vocabulary=vocabulary),
@@ -250,7 +250,7 @@ def main(cfg):
                     latents=latent_dist,
                     outputs=output_dist,
                     path=model_path)
-    vae.fit(callback=partial(callback1,
+    vae.fit(on_valid_end=partial(callback1,
                              vae=vae,
                              test=test,
                              vocabulary=vocabulary),
@@ -282,7 +282,7 @@ def main(cfg):
                                   name="Latents"),
                    input_shape=(n_words,),
                    path=model_path + '_vae0')
-    vae0.fit(callback=lambda: None
+    vae0.fit(on_valid_end=lambda: None
              if get_current_trainer().is_training else vae0.save_weights(),
              **dict(fit_kw,
                     logdir=output_dir + "_vae0",
@@ -295,7 +295,7 @@ def main(cfg):
                       latents=vae0.latent_layers,
                       warmup=cfg.warmup - vae0_iter,
                       path=model_path)
-    vae.fit(callback=partial(callback,
+    vae.fit(on_valid_end=partial(callback,
                              vae=vae,
                              test=test,
                              vocabulary=vocabulary),

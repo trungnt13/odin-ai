@@ -304,26 +304,6 @@ class VariationalAutoencoder(VariationalModel):
                             mode=mode)
     return self.decode(latents, training=training, mask=mask)
 
-  def get_latents(self,
-                  inputs: Optional[Union[TensorType, List[TensorType]]] = None,
-                  training: Optional[bool] = None,
-                  mask: Optional[TensorType] = None,
-                  return_prior: bool = False,
-                  **kwargs) -> Union[Distribution, Sequence[Distribution]]:
-    """Get the posterior latents distribution `q(z|x)`"""
-    if inputs is None:
-      if self.last_outputs is None:
-        raise RuntimeError(f'Cannot get_latents of {self.name} '
-                           'both inputs and last_outputs are None.')
-      P, Q = self.last_outputs
-    else:
-      Q = self.encode(inputs, training=training, mask=mask, **kwargs)
-    if return_prior:
-      if isinstance(Q, (tuple, list)):
-        return Q, tuple([q.KL_divergence.prior for q in Q])
-      return Q, Q.KL_divergence.prior
-    return Q
-
   def encode(self,
              inputs: Union[TensorType, List[TensorType]],
              training: Optional[bool] = None,

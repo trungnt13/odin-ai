@@ -12,7 +12,7 @@ from tensorflow_probability.python.layers import DistributionLambda
 from tqdm import tqdm
 
 from odin.bay import VariationalAutoencoder, HierarchicalVAE, \
-  BidirectionalLatents
+  BiConvLatents
 from odin.bay.distributions import QuantizedLogistic
 from odin.bay.layers import MVNDiagLatents
 from odin.fuel import ImageDataset, get_dataset
@@ -65,9 +65,9 @@ def latents(zdim):
 def bi_latents(idx, filters, kernel, strides, e_layers, d_layers, name):
   i1, d = find(f'd{idx}', d_layers)
   i2, e = find(f'e{idx}', e_layers)
-  d = BidirectionalLatents(d, encoder=e, filters=filters,
-                           kernel_size=kernel, strides=strides,
-                           name=name)
+  d = BiConvLatents(d, encoder=e, filters=filters,
+                    kernel_size=kernel, strides=strides,
+                    name=name)
   d_layers[i1] = d
 
 
@@ -104,7 +104,6 @@ def observation(distribution: str):
 
 # 32x3x1,32x4x2,64x3x1,64x4x2
 # 64x4x2,64x3x1,32x4x2,32x3x1
-# ------,64x8x4,------,32x8x4
 def model_vae1(zdim, dist):
   n_params, obs = observation(dist)
   e_layers = [
@@ -115,11 +114,11 @@ def model_vae1(zdim, dist):
     Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
     Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
     Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
@@ -134,10 +133,17 @@ def model_vae1(zdim, dist):
     observation=obs)
 
 
+# same as vae1, with free_bits=0.5
+def model_vae1a(zdim, dist):
+  vae = model_vae1(zdim, dist)
+  vae: VariationalAutoencoder
+  vae.free_bits = 0.5
+  return vae
+
+
 # Use Pooling and Upsampling
 # 32x3x1,d,32x3x1,64x3x1,d,64x3x1
 # 64x3x1,u,64x3x1,32x3x1,u,32x3x1
-# --------,64x8x4,--------,32x8x4
 def model_vae2(zdim, dist):
   n_params, obs = observation(dist)
   e_layers = [
@@ -150,11 +156,11 @@ def model_vae2(zdim, dist):
     AveragePooling2D(),  # (8, 8)
     Conv(64, 3, 1, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Conv(64, 3, 1, name='d3'),  # (8, 8, 64)
     UpSampling2D(),  # (16, 16)
@@ -163,6 +169,41 @@ def model_vae2(zdim, dist):
     UpSampling2D(),  # (32, 32)
     Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
     Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1),
+  ]
+  return VariationalAutoencoder(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
+
+
+# 32x3x1,32x4x2,64x3x1,64x4x2,128x3x1,128x4x2
+# 128x4x2,128x3x1,64x4x2,64x3x1,32x4x2,32x3x1
+def model_vae3(zdim, dist):
+  n_params, obs = observation(dist)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e1'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e2'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e3'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e4'),  # (8, 8, 64)
+    Conv(128, 3, 1, name='e5'),  # (8, 8, 128)
+    Conv(128, 4, 2, name='e6'),  # (4, 4, 128)
+    Flatten(),
+    Dense(512, name='encoder_proj'),
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512, name='decoder_proj'),
+    Reshape([4, 4, 32]),
+    Tonv(128, 4, 2, name='d6'),  # (8, 8, 128)
+    Conv(128, 3, 1, name='d5'),  # (8, 8, 128)
+    Tonv(64, 4, 2, name='d4'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d3'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d2'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d1'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
   ]
   return VariationalAutoencoder(
     encoder=Sequential(e_layers, 'Encoder'),
@@ -186,11 +227,11 @@ def model_bvae1(zdim, dist):
     Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
     Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
     Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
@@ -223,11 +264,11 @@ def model_bvae1a(zdim, dist):
     AveragePooling2D(),  # (8, 8)
     Conv(64, 3, 1, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
     Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
@@ -258,11 +299,11 @@ def model_bvae1b(zdim, dist):
     Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
     Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Conv(64, 3, 1, name='d3'),  # (8, 8, 64)
     UpSampling2D(),  # (16, 16)
@@ -295,11 +336,11 @@ def model_bvae1bi(zdim, dist):
     Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
     Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Conv(64, 3, 1, name='d3'),  # (8, 8, 64)
     UpSampling2D(),  # (16, 16)
@@ -307,6 +348,44 @@ def model_bvae1bi(zdim, dist):
     Conv(32, 3, 1, name='d1'),  # (16, 16, 32)
     UpSampling2D(),  # (32, 32)
     Conv(32, 4, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1),
+  ]
+  bi_latents(2, 64, 8, 4, e_layers, d_layers, 'latents1')
+  bi_latents(0, 32, 8, 4, e_layers, d_layers, 'latents2')
+  return HierarchicalVAE(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
+
+
+# Same as 1b, use extra layer so the latent not adjacent to upsampling
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x3x1,u,64x4x1,64x3x1,u,32x4x1,32x3x1
+# ---------------,64x8x4,--------,32x8x4
+def model_bvae1bii(zdim, dist):
+  n_params, obs = observation(dist)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512, name='encoder_proj')
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512, name='decoder_proj'),
+    Reshape([8, 8, 8]),
+    Conv(64, 3, 1, name='d3'),  # (8, 8, 64)
+    UpSampling2D(),  # (16, 16)
+    Conv(64, 4, 1),
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    UpSampling2D(),  # (32, 32)
+    Conv(32, 4, 1),
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
     Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1),
   ]
   bi_latents(2, 64, 8, 4, e_layers, d_layers, 'latents1')
@@ -333,11 +412,11 @@ def model_bvae1c(zdim, dist):
     AveragePooling2D(),  # (8, 8)
     Skip(Conv(64, 3, 1, name='e3')),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
     Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
@@ -370,11 +449,11 @@ def model_bvae1ci(zdim, dist):
     AveragePooling2D(),  # (8, 8)
     Conv(64, 3, 1, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
     Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
@@ -407,11 +486,11 @@ def model_bvae2(zdim, dist):
     AveragePooling2D(),  # (8, 8)
     Conv(64, 3, 1, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Conv(64, 3, 1, name='d3'),  # (8, 8, 64)
     UpSampling2D(),  # (16, 16)
@@ -444,11 +523,11 @@ def model_bvae3(zdim, dist):
     Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
     Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
     Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
@@ -479,11 +558,11 @@ def model_bvae4(zdim, dist):
     Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
     Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
     Flatten(),
-    Dense(512)
+    Dense(512, name='encoder_proj')
   ]
   d_layers = [
     InputLayer([zdim]),
-    Dense(512),
+    Dense(512, name='decoder_proj'),
     Reshape([8, 8, 8]),
     Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
     Conv(64, 3, 1, name='d2'),  # (16, 16, 64)

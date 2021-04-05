@@ -228,7 +228,8 @@ def mnist_networks(
 ) -> Dict[str, Layer]:
   """Network for MNIST dataset image size (28, 28, 1)"""
   from odin.bay.random_variable import RVconf
-  from odin.bay.vi.autoencoder import BidirectionalLatents, ParallelLatents
+  from odin.bay.vi.autoencoder import BiConvLatents, ParallelLatents, \
+    BiDenseLatents
   n_channels = int(kwargs.get('n_channels', 1))
   proj_dim = 196
   input_shape = (28, 28, n_channels)
@@ -246,19 +247,20 @@ def mnist_networks(
       conv(64, 5, strides=1, name='encoder2'),
       conv(64, 5, strides=2, name='encoder3'),
       keras.layers.Flatten(),
-      keras.layers.Dense(proj_dim, activation='linear', name='encoder4')
+      keras.layers.Dense(proj_dim, activation='linear', name='encoder_proj')
     ],
-    name='encoder',
+    name='Encoder',
   )
   layers = [
-    keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
+    keras.layers.Dense(proj_dim, activation='linear', name='decoder_proj'),
     keras.layers.Reshape((7, 7, proj_dim // 49)),
     deconv(64, 5, strides=2, name='decoder2'),
-    ParallelLatents(conv(64, 5, strides=1, name='decoder3'),
-                    encoder=encoder.layers[3],
-                    filters=16, kernel_size=14, padding='valid',
-                    disable=True,
-                    name='latents1'),
+    BiDenseLatents(conv(64, 5, strides=1, name='decoder3'),
+                   encoder=encoder.layers[3],
+                   units=64,
+                   # filters=16, kernel_size=14, padding='valid',
+                   disable=True,
+                   name='latents1'),
     deconv(32, 5, strides=2, name='decoder4'),
     conv(32, 5, strides=1, name='decoder5'),
     conv(n_channels * n_params, 1, strides=1, activation='linear',
@@ -266,9 +268,9 @@ def mnist_networks(
     last_layer
   ]
   if skip_generator:
-    decoder = SkipSequential(layers=layers, name='skipdecoder')
+    decoder = SkipSequential(layers=layers, name='SkipDecoder')
   else:
-    decoder = SequentialNetwork(layers=layers, name='decoder')
+    decoder = SequentialNetwork(layers=layers, name='Decoder')
   latents = RVconf((zdim,), qz, projection=True,
                    name="latents").create_posterior()
   networks = dict(encoder=encoder,
@@ -328,7 +330,7 @@ def cifar_networks(
 ) -> Dict[str, Layer]:
   """Network for CIFAR dataset image size (32, 32, 3)"""
   from odin.bay.random_variable import RVconf
-  from odin.bay.vi.autoencoder.hierarchical_vae import BidirectionalLatents
+  from odin.bay.vi.autoencoder.hierarchical_vae import BiConvLatents
   if zdim is None:
     zdim = 256
   n_channels = kwargs.get('n_channels', 3)
@@ -348,25 +350,25 @@ def cifar_networks(
       conv(64, 4, strides=1, name='encoder2'),
       conv(64, 4, strides=2, name='encoder3'),
       keras.layers.Flatten(),
-      keras.layers.Dense(proj_dim, activation='linear', name='encoder5')
+      keras.layers.Dense(proj_dim, activation='linear', name='encoder_proj')
     ],
-    name='encoder',
+    name='Encoder',
   )
   layers = [
-    keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
+    keras.layers.Dense(proj_dim, activation='linear', name='decoder_proj'),
     keras.layers.Reshape((8, 8, proj_dim // 64)),
     deconv(64, 4, strides=2, name='decoder1'),
-    BidirectionalLatents(conv(64, 4, strides=1, name='decoder2'),
-                         encoder=encoder.layers[3],
-                         filters=64, kernel_size=8, strides=4,
-                         disable=True,
-                         name='latents1'),
+    BiConvLatents(conv(64, 4, strides=1, name='decoder2'),
+                  encoder=encoder.layers[3],
+                  filters=64, kernel_size=8, strides=4,
+                  disable=True,
+                  name='latents1'),
     deconv(32, 4, strides=2, name='decoder3'),
-    BidirectionalLatents(conv(32, 4, strides=1, name='decoder4'),
-                         encoder=encoder.layers[1],
-                         filters=32, kernel_size=8, strides=4,
-                         disable=True,
-                         name='latents2'),
+    BiConvLatents(conv(32, 4, strides=1, name='decoder4'),
+                  encoder=encoder.layers[1],
+                  filters=32, kernel_size=8, strides=4,
+                  disable=True,
+                  name='latents2'),
     conv(n_channels * n_params,
          1,
          strides=1,
@@ -375,9 +377,9 @@ def cifar_networks(
     last_layer
   ]
   if skip_generator:
-    decoder = SkipSequential(layers=layers, name='skipdecoder')
+    decoder = SkipSequential(layers=layers, name='SkipDecoder')
   else:
-    decoder = SequentialNetwork(layers=layers, name='decoder')
+    decoder = SequentialNetwork(layers=layers, name='Decoder')
   ## others
   latents = RVconf((zdim,), qz, projection=True,
                    name="latents").create_posterior()
@@ -432,7 +434,7 @@ def dsprites_networks(
     **kwargs,
 ) -> Dict[str, Layer]:
   from odin.bay.random_variable import RVconf
-  from odin.bay.vi.autoencoder import BidirectionalLatents
+  from odin.bay.vi.autoencoder import BiConvLatents
   if zdim is None:
     zdim = 10
   n_channels = int(kwargs.get('n_channels', 1))
@@ -453,24 +455,24 @@ def dsprites_networks(
       conv(64, 4, strides=2, name='encoder2'),
       conv(64, 4, strides=2, name='encoder3'),
       keras.layers.Flatten(),
-      keras.layers.Dense(proj_dim, activation='linear', name='encoder4')
+      keras.layers.Dense(proj_dim, activation='linear', name='encoder_proj')
     ],
-    name='encoder',
+    name='Encoder',
   )
   layers = [
-    keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
+    keras.layers.Dense(proj_dim, activation='linear', name='decoder_proj'),
     keras.layers.Reshape((4, 4, proj_dim // 16)),
-    BidirectionalLatents(deconv(64, 4, strides=2, name='decoder1'),
-                         encoder=encoder.layers[3],
-                         latent_units=8,
-                         disable=True,
-                         name='latents1'),
+    BiConvLatents(deconv(64, 4, strides=2, name='decoder1'),
+                  encoder=encoder.layers[3],
+                  latent_units=8,
+                  disable=True,
+                  name='latents1'),
     deconv(64, 4, strides=2, name='decoder2'),
-    BidirectionalLatents(deconv(32, 4, strides=2, name='decoder3'),
-                         encoder=encoder.layers[1],
-                         downsample=True,
-                         disable=True,
-                         name='latents2'),
+    BiConvLatents(deconv(32, 4, strides=2, name='decoder3'),
+                  encoder=encoder.layers[1],
+                  downsample=True,
+                  disable=True,
+                  name='latents2'),
     deconv(32, 4, strides=2, name='decoder4'),
     # NOTE: this last projection layer with linear activation is crucial
     # otherwise the distribution parameterized by this layer won't converge
@@ -482,9 +484,9 @@ def dsprites_networks(
     last_layer
   ]
   if skip_generator:
-    decoder = SkipSequential(layers=layers, name='skipdecoder')
+    decoder = SkipSequential(layers=layers, name='SkipDecoder')
   else:
-    decoder = SequentialNetwork(layers=layers, name='decoder')
+    decoder = SequentialNetwork(layers=layers, name='Decoder')
   latents = RVconf((zdim,), qz, projection=True,
                    name="latents").create_posterior()
   networks = dict(encoder=encoder,
@@ -592,12 +594,12 @@ def celeba_networks(qz: str = 'mvndiag',
       conv(64, 4, strides=2, name='encoder2'),
       conv(64, 4, strides=1, name='encoder3'),
       keras.layers.Flatten(),
-      keras.layers.Dense(proj_dim, activation='linear', name='encoder5')
+      keras.layers.Dense(proj_dim, activation='linear', name='encoder_proj')
     ],
-    name='encoder',
+    name='Encoder',
   )
   layers = [
-    keras.layers.Dense(proj_dim, activation='linear', name='decoder0'),
+    keras.layers.Dense(proj_dim, activation='linear', name='decoder_proj'),
     keras.layers.Reshape((8, 8, proj_dim // 64)),
     deconv(64, 4, strides=1, name='decoder1'),
     deconv(64, 4, strides=2, name='decoder2'),
@@ -611,9 +613,9 @@ def celeba_networks(qz: str = 'mvndiag',
          name='decoder5'),
   ]
   if skip_generator:
-    decoder = SkipSequential(layers=layers, name='skipdecoder')
+    decoder = SkipSequential(layers=layers, name='SkipDecoder')
   else:
-    decoder = SequentialNetwork(layers=layers, name='decoder')
+    decoder = SequentialNetwork(layers=layers, name='Decoder')
   latents = RVconf((zdim,), qz, projection=True,
                    name="latents").create_posterior()
   observation = _quantized_logistic()

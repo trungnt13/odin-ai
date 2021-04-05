@@ -156,7 +156,7 @@ vae.fit(train=train,
         max_iter=10000,
         valid_freq=500,
         checkpoint=MODEL_PATH,
-        callback=callback,
+        on_valid_end=callback,
         skip_fitted=True)
 vae.plot_learning_curves(os.path.join(SAVE_PATH, 'learning_curves.pdf'),
                          summary_steps=[100, 10])

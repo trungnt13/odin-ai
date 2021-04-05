@@ -240,7 +240,7 @@ def main(cfg: dict):
               max_iter=max_iter,
               compile_graph=True,
               log_tag=f'{cfg.vae}_{cfg.beta}',
-              callback=callback,
+              on_valid_end=callback,
               valid_freq=1000)
 
 

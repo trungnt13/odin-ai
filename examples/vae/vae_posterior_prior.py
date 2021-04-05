@@ -175,7 +175,7 @@ def main(cfg: dict):
             valid_freq=1000,
             compile_graph=True,
             skip_fitted=True,
-            callback=partial(callback, vae=vae, x=x_test, y=y_test),
+            on_valid_end=partial(callback, vae=vae, x=x_test, y=y_test),
             logdir=path,
             track_gradients=True).save_weights()
 

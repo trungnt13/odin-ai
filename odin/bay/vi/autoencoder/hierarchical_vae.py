@@ -9,7 +9,7 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.python.keras.layers import Layer, Wrapper, Dense, Conv2D, \
-  Conv1D, Conv3D, Conv1DTranspose, Conv2DTranspose, Conv3DTranspose
+  Conv1D, Conv3D, Conv1DTranspose, Conv2DTranspose, Conv3DTranspose, Reshape
 from tensorflow_probability.python.distributions import Distribution, Normal, \
   MultivariateNormalDiag, Independent
 from tensorflow_probability.python.layers.distribution_layer import (
@@ -25,8 +25,9 @@ from odin.utils import as_tuple
 
 __all__ = [
   'MergeNormal',
-  'BidirectionalLatents',
+  'BiConvLatents',
   'ParallelLatents',
+  'BiDenseLatents',
   'HierarchicalVAE',
   'UnetVAE'
 ]
@@ -120,65 +121,29 @@ class MergeNormal(DistributionLambda):
 # ===========================================================================
 # Wrapper for hierarchical latent variable
 # ===========================================================================
-class BidirectionalLatents(Wrapper):
-  """Bidirectional inference for hierarchical latent variables"""
+class HierarchicalLatents(Wrapper):
 
   def __init__(self,
                layer: Layer,
-               encoder: Optional[Layer] = None,
-               filters: int = 32,
-               kernel_size: Union[int, Sequence[int]] = 3,
-               strides: Union[int, Sequence[int]] = 1,
-               padding: Literal['valid', 'same'] = 'same',
-               activation: Union[None, 'str', Callable[[Any], Any]] = None,
-               deterministic_features: bool = True,
-               residual_coef: float = 1.0,
-               merge_normal: bool = False,
                beta: float = 1.,
                disable: bool = False,
                **kwargs):
-    super().__init__(layer=layer, name=kwargs.pop('name', None))
-    self.input_ndim = self.layer.input_spec.min_ndim
-    spec = inspect.getfullargspec(layer.call)
-    self._args = set(spec.args + spec.kwonlyargs)
-    self._disable = bool(disable)
-    if encoder is not None:
-      encoder._old_call = encoder.call
-      encoder.call = MethodType(_call, encoder)
-    self.encoder = encoder
-    self.residual_coef = residual_coef
-    self.deterministic_features = deterministic_features
-    if activation is None and hasattr(self.layer, 'activation'):
-      activation = self.layer.activation
-    self.activation = keras.activations.get(activation)
-    # === 1. for creating layer
-    layer, layer_t = _NDIMS_CONV[self.input_ndim]
-    spec = inspect.getfullargspec(layer.__init__)
-    args = set(spec.args + spec.kwonlyargs)
-    filters *= 2  # parameters for loc and scale
-    self._network_kw = {k: v for k, v in locals().items()
-                        if k in args and k not in ['self', 'kwargs']}
-    self._network_kw.update(kwargs)
-    # === 2. distribution
-    # assert top_down in ('sample', 'mean', 'deterministic')
-    if merge_normal:
-      self._merge_normal = MergeNormal()
-    else:
-      self._merge_normal = None
-    self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
-    # === 2. others
-    self._latents_shape = None
-    self._conv_prior = None
-    self._conv_posterior = None
-    self._conv_deter = None
-    self._conv_out = None
-    self._dist_prior = None
-    self._dist_posterior = None
-    self.concat = keras.layers.Concatenate(axis=-1)
+    super().__init__(layer=layer, **kwargs)
     # store the last distributions
     self._posterior = None
     self._prior = None
     self._is_sampling = False
+    self._disable = bool(disable)
+    self.beta = tf.convert_to_tensor(beta, dtype=self.dtype, name='beta')
+    self._latents_shape = None
+    # prepare the layer
+    self.input_ndim = self.layer.input_spec.min_ndim
+    spec = inspect.getfullargspec(layer.call)
+    self._layer_args = set(spec.args + spec.kwonlyargs)
+
+  @property
+  def layers(self) -> Sequence[Layer]:
+    return [v for k, v in self.__dict__.items() if isinstance(v, Layer)]
 
   def sampling(self):
     """Sampling mode, forward prior samples"""
@@ -192,20 +157,12 @@ class BidirectionalLatents(Wrapper):
 
   @property
   def is_inference(self) -> bool:
-    return (not self._is_sampling and
-            self.encoder is not None and
-            hasattr(self.encoder, '_last_outputs') and
-            self.encoder._last_outputs is not None)
+    return not self._is_sampling
 
   def enable(self):
     """Enable stochastic inference and generation for this variable"""
     self._disable = False
     return self
-
-  @property
-  def is_stochastic(self) -> bool:
-    """Return True if the layer is stochastically initialized"""
-    return self._dist_prior is not None
 
   @property
   def units(self) -> int:
@@ -234,8 +191,7 @@ class BidirectionalLatents(Wrapper):
       f"<{self.__class__.__name__} "
       f"'{self.name}' enable:{not self._disable} "
       f"sampl:{self._is_sampling} shape:{self.latents_shape}={units} "
-      f"merge:{True if self._merge_normal else False} "
-      f"deter:{self.deterministic_features} res:{self.residual_coef:g}>")
+      f"beta:{self.beta}>")
 
   def kl_divergence(self,
                     analytic: bool = False,
@@ -248,7 +204,7 @@ class BidirectionalLatents(Wrapper):
       if self._posterior is None:
         raise ValueError('No posterior for the hierarchical latent variable.')
       if self._prior is None:
-        raise ValueError("This BidirectionalLatents haven't been called.")
+        raise ValueError("This HierarchicalLatents haven't been called.")
     elif self._posterior is None or self._prior is None:
       return tf.zeros((), dtype=self.dtype)
     qz = self.posterior
@@ -260,6 +216,72 @@ class BidirectionalLatents(Wrapper):
   def compute_output_shape(self, input_shape) -> Sequence[Union[None, int]]:
     return self.layer.compute_output_shape(input_shape)
 
+  def call(self, inputs, training=None, mask=None, **kwargs):
+    if 'training' in self._layer_args:
+      kwargs['training'] = training
+    if 'mask' in self._layer_args:
+      kwargs['mask'] = mask
+    hidden_d = self.layer.call(inputs, **kwargs)
+    return hidden_d
+
+
+class BiConvLatents(HierarchicalLatents):
+  """Bidirectional inference using Convolutional Network for
+  hierarchical latent variables"""
+
+  def __init__(
+      self,
+      layer: Layer,
+      encoder: Optional[Layer] = None,
+      filters: int = 32,
+      kernel_size: Union[int, Sequence[int]] = 4,
+      strides: Union[int, Sequence[int]] = 2,
+      padding: Literal['valid', 'same'] = 'same',
+      conv_kw: Optional[Dict[str, Any]] = None,
+      output_activation: Union[None, 'str', Callable[[Any], Any]] = None,
+      deterministic_features: bool = True,
+      residual_coef: float = 1.0,
+      merge_normal: bool = False,
+      **kwargs):
+    super().__init__(layer=layer, **kwargs)
+    if encoder is not None:
+      encoder._old_call = encoder.call
+      encoder.call = MethodType(_call, encoder)
+    self.encoder = encoder
+    self.residual_coef = residual_coef
+    self.deterministic_features = deterministic_features
+    if output_activation is None and hasattr(self.layer, 'activation'):
+      output_activation = self.layer.activation
+    self.output_activation = keras.activations.get(output_activation)
+    # === 1. for creating layer
+    self._network_kw = dict(
+      filters=2 * filters,  # parameters for loc and scale
+      kernel_size=kernel_size,
+      strides=strides,
+      padding=padding)
+    if conv_kw is not None:
+      self._network_kw.update(conv_kw)
+    # === 2. distribution
+    if merge_normal:
+      self._merge_normal = MergeNormal()
+    else:
+      self._merge_normal = None
+    # === 2. others
+    self._conv_prior = None
+    self._conv_posterior = None
+    self._conv_deter = None
+    self._conv_out = None
+    self._dist_prior = None
+    self._dist_posterior = None
+    self.concat = keras.layers.Concatenate(axis=-1)
+
+  @property
+  def is_inference(self) -> bool:
+    return (not self._is_sampling and
+            self.encoder is not None and
+            hasattr(self.encoder, '_last_outputs') and
+            self.encoder._last_outputs is not None)
+
   def build(self, input_shape=None):
     super().build(input_shape)
     if self._disable:
@@ -268,12 +290,11 @@ class BidirectionalLatents(Wrapper):
     layer, layer_t = _NDIMS_CONV[self.input_ndim]
     # === 1. create projection layer
     if self.encoder is not None:
-      assert self.encoder.built
-      encoder_shape = decoder_shape
       self._conv_posterior = layer(**self._network_kw, name='ConvPosterior')
-      # posterior projection
+      # posterior projection (assume encoder output shape is the same as
+      # decoder output shape)
       self._conv_posterior.build(
-        self.concat.compute_output_shape([decoder_shape, encoder_shape]))
+        self.concat.compute_output_shape([decoder_shape, decoder_shape]))
     # prior projection
     self._conv_prior = layer(**self._network_kw, name='ConvPrior')
     self._conv_prior.build(decoder_shape)
@@ -281,7 +302,7 @@ class BidirectionalLatents(Wrapper):
     kw = dict(self._network_kw)
     kw['filters'] /= 2
     if self.deterministic_features:
-      self._conv_deter = layer(**self._network_kw, name='ConvDeterministic')
+      self._conv_deter = layer(**kw, name='ConvDeterministic')
       self._conv_deter.build(decoder_shape)
     # === 2. create distribution
     # compute the parameter shape for the distribution
@@ -320,11 +341,7 @@ class BidirectionalLatents(Wrapper):
 
   def call(self, inputs, training=None, mask=None, **kwargs):
     # === 1. call the layer
-    if 'training' in self._args:
-      kwargs['training'] = training
-    if 'mask' in self._args:
-      kwargs['mask'] = mask
-    hidden_d = self.layer.call(inputs, **kwargs)
+    hidden_d = super().call(inputs, training=training, mask=mask, **kwargs)
     if self._disable:
       return hidden_d
     # === 2. project and create the distribution
@@ -354,12 +371,12 @@ class BidirectionalLatents(Wrapper):
       outputs = self.concat([outputs, hidden_deter])
     if self.residual_coef > 0.:
       outputs = self._conv_out(outputs)
-      outputs = self.activation(outputs)
+      outputs = self.output_activation(outputs)
       outputs = outputs + self.residual_coef * hidden_d
     return outputs
 
 
-class ParallelLatents(BidirectionalLatents):
+class ParallelLatents(BiConvLatents):
   """Because information will take the shortest path to flow, it
   is recommended to set the number of units to be smaller or equal than
   `z0`
@@ -371,7 +388,7 @@ class ParallelLatents(BidirectionalLatents):
   """
 
   def build(self, input_shape=None):
-    super(BidirectionalLatents, self).build(input_shape)
+    super(BiConvLatents, self).build(input_shape)
     if self._disable:
       return
     decoder_shape = self.layer.compute_output_shape(input_shape)
@@ -437,10 +454,158 @@ class ParallelLatents(BidirectionalLatents):
       outputs = self.prior.sample(tf.shape(hidden_d)[0])
     # === 3. projection and combine
     outputs = self._conv_out(outputs)
-    outputs = self.activation(outputs)
+    outputs = self.output_activation(outputs)
     # outputs = self.concat([outputs, hidden_d])
     # outputs = self._conv_deter(outputs)
     return outputs + self.residual_coef * hidden_d
+
+
+class BiDenseLatents(HierarchicalLatents):
+  """Bidirectional inference for hierarchical latent variables"""
+
+  def __init__(
+      self,
+      layer: Layer,
+      encoder: Optional[Layer] = None,
+      units: int = 32,
+      dense_kw: Optional[Dict[str, Any]] = None,
+      output_activation: Union[None, 'str', Callable[[Any], Any]] = None,
+      deterministic_features: bool = True,
+      residual_coef: float = 1.0,
+      merge_normal: bool = False,
+      **kwargs):
+    super().__init__(layer=layer, name=kwargs.pop('name', None))
+    if encoder is not None:
+      encoder._old_call = encoder.call
+      encoder.call = MethodType(_call, encoder)
+    self.encoder = encoder
+    self.residual_coef = residual_coef
+    self.deterministic_features = deterministic_features
+    if output_activation is None and hasattr(self.layer, 'activation'):
+      output_activation = self.layer.activation
+    self.output_activation = keras.activations.get(output_activation)
+    # === 1. for creating layer
+    self._network_kw = dict(units=2 * units)
+    if dense_kw is not None:
+      self._network_kw.update(dense_kw)
+    # === 2. distribution
+    # assert top_down in ('sample', 'mean', 'deterministic')
+    if merge_normal:
+      self._merge_normal = MergeNormal()
+    else:
+      self._merge_normal = None
+    # === 2. others
+    self._latents_shape = None
+    self._dense_prior = None
+    self._dense_posterior = None
+    self._dense_deter = None
+    self._dense_out = None
+    self._dist_prior = None
+    self._dist_posterior = None
+    # === 3. util layers
+    self.concat = keras.layers.Concatenate(axis=-1)
+    self.flatten = keras.layers.Flatten()
+
+  @property
+  def is_inference(self) -> bool:
+    return (not self._is_sampling and
+            self.encoder is not None and
+            hasattr(self.encoder, '_last_outputs') and
+            self.encoder._last_outputs is not None)
+
+  def build(self, input_shape=None):
+    super().build(input_shape)
+    if self._disable:
+      return
+    org_decoder_shape = self.layer.compute_output_shape(input_shape)
+    decoder_shape = self.flatten.compute_output_shape(org_decoder_shape)
+    # === 1. create projection layer
+    if self.encoder is not None:
+      self._dense_posterior = Dense(**self._network_kw, name='DensePosterior')
+      # posterior projection
+      shape = self.flatten.compute_output_shape(
+        self.concat.compute_output_shape(
+          [org_decoder_shape, org_decoder_shape]))
+      self._dense_posterior.build(shape)
+    # prior projection
+    self._dense_prior = Dense(**self._network_kw, name='DensePrior')
+    self._dense_prior.build(decoder_shape)
+    # deterministic projection
+    kw = dict(self._network_kw)
+    kw['units'] /= 2
+    if self.deterministic_features:
+      self._dense_deter = Dense(**kw, name='DenseDeterministic')
+      self._dense_deter.build(decoder_shape)
+    # === 2. create distribution
+    # compute the parameter shape for the distribution
+    params_shape = self._dense_prior.compute_output_shape(decoder_shape)
+
+    self._dist_posterior = DistributionLambda(
+      make_distribution_fn=partial(_create_dist,
+                                   event_ndims=len(params_shape) - 1,
+                                   dtype=self.dtype),
+      name=f'{self.name}_posterior')
+    self._dist_posterior.build(params_shape)
+    self._dist_prior = DistributionLambda(
+      make_distribution_fn=partial(_create_dist,
+                                   event_ndims=len(params_shape) - 1,
+                                   dtype=self.dtype),
+      name=f'{self.name}_prior')
+    self._dist_prior.build(params_shape)
+    # dynamically infer the shape
+    latents_shape = tf.convert_to_tensor(self._dist_posterior(
+      keras.layers.Input(params_shape[1:]))).shape
+    self._latents_shape = latents_shape[1:]
+    if self.deterministic_features:
+      deter_shape = self._dense_deter.compute_output_shape(decoder_shape)
+      latents_shape = self.concat.compute_output_shape(
+        [deter_shape, latents_shape])
+
+    # === 3. final output affine
+    if self.residual_coef > 0:
+      layers = [Dense(decoder_shape[-1]), Reshape(org_decoder_shape[1:])]
+      if self.input_ndim > 2:
+        conv, _ = _NDIMS_CONV[self.input_ndim]
+        layers.append(conv(org_decoder_shape[-1], 3, 1, padding='same'))
+      self._dense_out = keras.Sequential(layers, name='DenseOutput')
+      self._dense_out.build(latents_shape)
+
+  def call(self, inputs, training=None, mask=None, **kwargs):
+    # === 1. call the layer
+    hidden_d = super().call(inputs, training=training, mask=mask, **kwargs)
+    if self._disable:
+      return hidden_d
+    # === 2. project and create the distribution
+    flat_hd = self.flatten(hidden_d)
+    prior = self._dist_prior(self._dense_prior(flat_hd))
+    self._prior = prior
+    # === 3. inference
+    dist = prior
+    if self.is_inference:
+      hidden_e = self.encoder._last_outputs
+      # just stop inference if there is no Encoder state
+      tf.debugging.assert_equal(tf.shape(hidden_e), tf.shape(hidden_d),
+                                f'Shape of inference {hidden_e.shape} and '
+                                f'generative {hidden_d.shape} mismatch. '
+                                f'Change to sampling mode if possible')
+      # (Kingma 2016) use add, we concat here
+      h = self.concat([hidden_e, hidden_d])
+      posterior = self._dist_posterior(self._dense_posterior(self.flatten(h)))
+      # (Maaloe 2016) merging two Normal distribution
+      if self._merge_normal is not None:
+        posterior = self._merge_normal([posterior, prior])
+      self._posterior = posterior
+      dist = posterior
+    # === 4. output
+    outputs = tf.convert_to_tensor(dist)
+    if self.deterministic_features:
+      hidden_deter = self._dense_deter(flat_hd)
+      outputs = self.concat([outputs, hidden_deter])
+    if self.residual_coef > 0.:
+      outputs = self._dense_out(outputs)
+      outputs = self.output_activation(outputs)
+      outputs = outputs + self.residual_coef * hidden_d
+    return outputs
 
 
 # ===========================================================================
@@ -504,14 +669,14 @@ class HierarchicalVAE(AnnealingVAE):
     super().__init__(free_bits=free_bits, **kwargs)
     found_hierarchical_vars = False
     self._hierarchical_vars = []
-    self._hierarchical_vars: List[BidirectionalLatents]
+    self._hierarchical_vars: List[HierarchicalLatents]
     for layer in self.decoder.layers:
-      if isinstance(layer, BidirectionalLatents):
+      if isinstance(layer, HierarchicalLatents):
         found_hierarchical_vars = True
         layer.enable()
         self._hierarchical_vars.append(layer)
     if not found_hierarchical_vars:
-      raise ValueError('No BidirectionalLatents wrapper found in the decoder.')
+      raise ValueError('No HierarchicalLatents wrapper found in the decoder.')
 
   @contextmanager
   def sampling_mode(self):
@@ -521,7 +686,7 @@ class HierarchicalVAE(AnnealingVAE):
     [layer.inference() for layer in self.hierarchical_latents]
 
   @property
-  def hierarchical_latents(self) -> Sequence[BidirectionalLatents]:
+  def hierarchical_latents(self) -> Sequence[HierarchicalLatents]:
     return tuple(self._hierarchical_vars)
 
   def sample_prior(self, n: int = 1, seed: int = 1) -> Sequence[tf.Tensor]:
@@ -580,7 +745,7 @@ class HierarchicalVAE(AnnealingVAE):
     llk, kl = super().elbo_components(
       inputs, training=training, mask=mask, **kwargs)
     for idx, layer in enumerate(self.decoder.layers):
-      if not isinstance(layer, BidirectionalLatents):
+      if not isinstance(layer, HierarchicalLatents):
         continue
       kl[f'kl_{layer.name}'] = self.beta * layer.kl_divergence(
         analytic=self.analytic, reverse=self.reverse,

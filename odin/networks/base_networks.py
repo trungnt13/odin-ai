@@ -325,7 +325,7 @@ class Networks(keras.Model, MD5object):
            options=None,
            save_traces=True):
     raise NotImplementedError()
-  
+
   def load_weights(self,
                    filepath: Optional[str] = None,
                    raise_notfound: bool = False,
@@ -622,7 +622,8 @@ class Networks(keras.Model, MD5object):
       epochs: int = -1,
       max_iter: int = 1000,
       batch_size: int = 32,
-      callback: Union[Callback, Sequence[Callback]] = lambda: None,
+      on_batch_end: Union[Callback, Sequence[Callback]] = lambda: None,
+      on_valid_end: Union[Callback, Sequence[Callback]] = lambda: None,
       compile_graph: bool = True,
       autograph: bool = False,
       logging_interval: float = 5,
@@ -665,7 +666,9 @@ class Networks(keras.Model, MD5object):
         maximum number of iteration, by default 1000
     batch_size : int, optional
         number of examples for mini-batch, by default 32
-    callback : Union[Callback, List[Callback]], optional
+    on_batch_end : Union[Callback, List[Callback]]
+        callback at the end of each mini-batch (i.e. iteration)
+    on_valid_end : Union[Callback, List[Callback]]
         a function or list of functions called every `valid_freq` steps or
         `valid_interval` seconds, by default lambda:None
     compile_graph : bool, optional
@@ -729,7 +732,6 @@ class Networks(keras.Model, MD5object):
       with trackable.no_automatic_dependency_tracking_scope(self):
         trainer = Trainer(logdir=logdir)
         self._trainer = trainer
-    trainer = self.trainer
     ## if already called repeat, then no need to repeat more
     if hasattr(train, 'repeat'):
       train = train.repeat(int(epochs))
@@ -742,12 +744,10 @@ class Networks(keras.Model, MD5object):
       raise RuntimeError("No optimizer found!")
 
     ## run early stop and callback
-    def _callback():
+    def restore_weights():
       if self.restore_checkpoint.numpy():
         self.restore_checkpoint.assign(False)
         self.load_weights(raise_notfound=True, verbose=True)
-      if callback is not None:
-        callback()
 
     self.trainer.fit(
       train_ds=train,
@@ -768,7 +768,8 @@ class Networks(keras.Model, MD5object):
       logging_interval=logging_interval,
       log_tag=self.name,
       max_iter=max_iter,
-      callback=_callback,
+      on_valid_end=(restore_weights,) + as_tuple(on_valid_end),
+      on_batch_end=on_batch_end
     )
     return self
 
@@ -824,6 +825,10 @@ class Networks(keras.Model, MD5object):
   @property
   def save_path(self) -> Optional[str]:
     return self._save_path
+
+  @save_path.setter
+  def save_path(self, path: Optional[str] = None):
+    self._save_path = path
 
   @property
   def init_args(self) -> Dict[str, Any]:

@@ -581,7 +581,7 @@ def main(vae, ds, args, parser):
     train,
     skip_fitted=True,
     logdir=path,
-    callback=callback,
+    on_valid_end=callback,
     clipnorm=100,
     logging_interval=10,
     valid_interval=180,

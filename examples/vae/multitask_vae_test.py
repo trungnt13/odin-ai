@@ -39,10 +39,16 @@ class VIB(VariationalModel):
     self.latents = latents
     self.labels = labels
 
-  def call(self, inputs, training=None, **kwargs):
+  def encode(self, inputs, training=None):
     h = self.encoder(inputs, training=training)
-    qz = self.latents(h, training=training, sample_shape=self.sample_shape)
-    py = self.labels(qz, training=training)
+    return self.latents(h, training=training, sample_shape=self.sample_shape)
+
+  def decode(self, latents, training=None):
+    return self.labels(tf.convert_to_tensor(latents), training=training)
+
+  def call(self, inputs, training=None, **kwargs):
+    qz = self.encode(inputs, training)
+    py = self.decode(qz, training)
     return py, qz
 
   def train_steps(self, inputs, training=True, name='', *args, **kwargs):
