@@ -9,7 +9,9 @@ import numpy as np
 import tensorflow as tf
 from tensorflow import keras
 from tensorflow.python.keras.layers import Layer, Wrapper, Dense, Conv2D, \
-  Conv1D, Conv3D, Conv1DTranspose, Conv2DTranspose, Conv3DTranspose, Reshape
+  Conv1D, Conv3D, Conv1DTranspose, Conv2DTranspose, Conv3DTranspose, Reshape, \
+  AvgPool1D, AvgPool2D, AvgPool3D, MaxPool1D, MaxPool2D, MaxPool3D, Activation, \
+  UpSampling1D, UpSampling2D, UpSampling3D
 from tensorflow_probability.python.distributions import Distribution, Normal, \
   MultivariateNormalDiag, Independent
 from tensorflow_probability.python.layers.distribution_layer import (
@@ -40,6 +42,10 @@ _NDIMS_CONV = {
   4: (Conv2D, Conv2DTranspose),
   5: (Conv3D, Conv3DTranspose)
 }
+_NDIMS_POOL = {3: dict(avg=AvgPool1D, max=MaxPool1D),
+               4: dict(avg=AvgPool2D, max=MaxPool2D),
+               5: dict(avg=AvgPool3D, max=MaxPool3D)}
+_NDIMS_UNPOOL = {3: UpSampling1D, 4: UpSampling2D, 5: UpSampling3D}
 
 
 def _create_dist(params, event_ndims, dtype):
@@ -227,7 +233,27 @@ class HierarchicalLatents(Wrapper):
 
 class BiConvLatents(HierarchicalLatents):
   """Bidirectional inference using Convolutional Network for
-  hierarchical latent variables"""
+  hierarchical latent variables
+
+  Parameters
+  ----------
+  layer : `keras.layers.Layer`
+      the decoder layer for top-down (generative)
+  encoder : `keras.layers.Layer`, optional
+      the encoder layer for bottom-up (inference)
+  pre_affine : bool
+      if True, applying affine to project convolutional output to latent
+      units, otherwise, use the convolutional image as is.
+  output_activation : {'str', Callable}
+      last activation before residual connection
+  deterministic_features : bool
+      if True, concatenate deterministic features to the samples from posterior
+      (or prior)
+  residual_coef : float
+      if greater than 0, add residual connection
+  merge_normal : bool
+      merge two normal distribution
+  """
 
   def __init__(
       self,
@@ -238,6 +264,7 @@ class BiConvLatents(HierarchicalLatents):
       strides: Union[int, Sequence[int]] = 2,
       padding: Literal['valid', 'same'] = 'same',
       conv_kw: Optional[Dict[str, Any]] = None,
+      pre_affine: bool = False,
       output_activation: Union[None, 'str', Callable[[Any], Any]] = None,
       deterministic_features: bool = True,
       residual_coef: float = 1.0,
@@ -248,6 +275,7 @@ class BiConvLatents(HierarchicalLatents):
       encoder._old_call = encoder.call
       encoder.call = MethodType(_call, encoder)
     self.encoder = encoder
+    self.pre_affine = bool(pre_affine)
     self.residual_coef = residual_coef
     self.deterministic_features = deterministic_features
     if output_activation is None and hasattr(self.layer, 'activation'):
@@ -255,7 +283,8 @@ class BiConvLatents(HierarchicalLatents):
     self.output_activation = keras.activations.get(output_activation)
     # === 1. for creating layer
     self._network_kw = dict(
-      filters=2 * filters,  # parameters for loc and scale
+      # parameters for loc and scale
+      filters=(1 if pre_affine else 2) * filters,
       kernel_size=kernel_size,
       strides=strides,
       padding=padding)
@@ -271,6 +300,8 @@ class BiConvLatents(HierarchicalLatents):
     self._conv_posterior = None
     self._conv_deter = None
     self._conv_out = None
+    self._affine_prior = None
+    self._affine_posterior = None
     self._dist_prior = None
     self._dist_posterior = None
     self.concat = keras.layers.Concatenate(axis=-1)
@@ -299,26 +330,37 @@ class BiConvLatents(HierarchicalLatents):
     self._conv_prior = layer(**self._network_kw, name='ConvPrior')
     self._conv_prior.build(decoder_shape)
     # deterministic projection
-    kw = dict(self._network_kw)
-    kw['filters'] /= 2
     if self.deterministic_features:
+      kw = dict(self._network_kw)
+      if not self.pre_affine:
+        kw['filters'] /= 2
       self._conv_deter = layer(**kw, name='ConvDeterministic')
       self._conv_deter.build(decoder_shape)
     # === 2. create distribution
     # compute the parameter shape for the distribution
     params_shape = self._conv_prior.compute_output_shape(decoder_shape)
+    if self.pre_affine:
+      def create_affine():
+        return [keras.layers.Flatten(),
+                Activation(self.output_activation),
+                Dense(int(np.prod(params_shape[1:])) * 2),
+                Reshape(params_shape[1:-1] + (params_shape[-1] * 2,))]
 
+      self._affine_prior = keras.Sequential(create_affine(),
+                                            name='PriorAffine')
+      self._affine_prior.build(params_shape)
+      self._affine_posterior = keras.Sequential(create_affine(),
+                                                name='PosteriorAffine')
+      self._affine_posterior.build(params_shape)
+      params_shape = self._affine_prior.compute_output_shape(params_shape)
+    make_distribution = partial(_create_dist,
+                                event_ndims=len(params_shape) - 1,
+                                dtype=self.dtype)
     self._dist_posterior = DistributionLambda(
-      make_distribution_fn=partial(_create_dist,
-                                   event_ndims=len(params_shape) - 1,
-                                   dtype=self.dtype),
-      name=f'{self.name}_posterior')
+      make_distribution_fn=make_distribution, name=f'{self.name}_posterior')
     self._dist_posterior.build(params_shape)
     self._dist_prior = DistributionLambda(
-      make_distribution_fn=partial(_create_dist,
-                                   event_ndims=len(params_shape) - 1,
-                                   dtype=self.dtype),
-      name=f'{self.name}_prior')
+      make_distribution_fn=make_distribution, name=f'{self.name}_prior')
     self._dist_prior.build(params_shape)
     # dynamically infer the shape
     latents_shape = tf.convert_to_tensor(self._dist_posterior(
@@ -345,7 +387,10 @@ class BiConvLatents(HierarchicalLatents):
     if self._disable:
       return hidden_d
     # === 2. project and create the distribution
-    prior = self._dist_prior(self._conv_prior(hidden_d))
+    h_prior = self._conv_prior(hidden_d)
+    if self._affine_prior is not None:
+      h_prior = self._affine_prior(h_prior)
+    prior = self._dist_prior(h_prior)
     self._prior = prior
     # === 3. inference
     dist = prior
@@ -357,8 +402,11 @@ class BiConvLatents(HierarchicalLatents):
                                 f'generative {hidden_d.shape} mismatch. '
                                 f'Change to sampling mode if possible')
       # (Kingma 2016) use add, we concat here
-      h = self.concat([hidden_e, hidden_d])
-      posterior = self._dist_posterior(self._conv_posterior(h))
+      h_post = self.concat([hidden_e, hidden_d])
+      h_post = self._conv_posterior(h_post)
+      if self._affine_posterior is not None:
+        h_post = self._affine_posterior(h_post)
+      posterior = self._dist_posterior(h_post)
       # (Maaloe 2016) merging two Normal distribution
       if self._merge_normal is not None:
         posterior = self._merge_normal([posterior, prior])
@@ -461,7 +509,32 @@ class ParallelLatents(BiConvLatents):
 
 
 class BiDenseLatents(HierarchicalLatents):
-  """Bidirectional inference for hierarchical latent variables"""
+  """Bidirectional inference for hierarchical latent variables
+
+  Parameters
+  ----------
+  layer : `keras.layers.Layer`
+      the decoder layer for top-down (generative)
+  encoder : `keras.layers.Layer`, optional
+      the encoder layer for bottom-up (inference)
+  units : int
+      number of latent units
+  dense_kw : `Dict[str, Any]`, optional
+      keyword for initialize `Dense` layer for latents
+  pool_mode : {'avg', 'max'}
+      perform downsampling on images before `Dense` projection
+  pool_size : int
+      pooling size
+  output_activation : {'str', Callable}
+      last activation before residual connection
+  deterministic_features : bool
+      if True, concatenate deterministic features to the samples from posterior
+      (or prior)
+  residual_coef : float
+      if greater than 0, add residual connection
+  merge_normal : bool
+      merge two normal distribution
+  """
 
   def __init__(
       self,
@@ -469,6 +542,8 @@ class BiDenseLatents(HierarchicalLatents):
       encoder: Optional[Layer] = None,
       units: int = 32,
       dense_kw: Optional[Dict[str, Any]] = None,
+      pool_mode: Literal['avg', 'max'] = 'avg',
+      pool_size: Optional[int] = None,
       output_activation: Union[None, 'str', Callable[[Any], Any]] = None,
       deterministic_features: bool = True,
       residual_coef: float = 1.0,
@@ -489,7 +564,6 @@ class BiDenseLatents(HierarchicalLatents):
     if dense_kw is not None:
       self._network_kw.update(dense_kw)
     # === 2. distribution
-    # assert top_down in ('sample', 'mean', 'deterministic')
     if merge_normal:
       self._merge_normal = MergeNormal()
     else:
@@ -505,6 +579,14 @@ class BiDenseLatents(HierarchicalLatents):
     # === 3. util layers
     self.concat = keras.layers.Concatenate(axis=-1)
     self.flatten = keras.layers.Flatten()
+    if pool_size is not None and pool_size > 1 and self.input_ndim > 2:
+      self.pooling = _NDIMS_POOL[self.input_ndim][pool_mode](
+        pool_size, name='Pooling')
+      self.unpooling = _NDIMS_UNPOOL[self.input_ndim](
+        pool_size, name='Unpooling')
+    else:
+      self.pooling = Activation('linear', name='Pooling')
+      self.unpooling = Activation('linear', name='Unpooling')
 
   @property
   def is_inference(self) -> bool:
@@ -518,14 +600,15 @@ class BiDenseLatents(HierarchicalLatents):
     if self._disable:
       return
     org_decoder_shape = self.layer.compute_output_shape(input_shape)
-    decoder_shape = self.flatten.compute_output_shape(org_decoder_shape)
+    # === 0. pooling
+    self.pooling.build(org_decoder_shape)
+    pool_decoder_shape = self.pooling.compute_output_shape(org_decoder_shape)
+    decoder_shape = self.flatten.compute_output_shape(pool_decoder_shape)
     # === 1. create projection layer
     if self.encoder is not None:
       self._dense_posterior = Dense(**self._network_kw, name='DensePosterior')
       # posterior projection
-      shape = self.flatten.compute_output_shape(
-        self.concat.compute_output_shape(
-          [org_decoder_shape, org_decoder_shape]))
+      shape = self.concat.compute_output_shape([decoder_shape, decoder_shape])
       self._dense_posterior.build(shape)
     # prior projection
     self._dense_prior = Dense(**self._network_kw, name='DensePrior')
@@ -563,7 +646,10 @@ class BiDenseLatents(HierarchicalLatents):
 
     # === 3. final output affine
     if self.residual_coef > 0:
-      layers = [Dense(decoder_shape[-1]), Reshape(org_decoder_shape[1:])]
+      units = int(np.prod(pool_decoder_shape[1:]))
+      layers = [Dense(units),
+                Reshape(pool_decoder_shape[1:]),
+                self.unpooling]
       if self.input_ndim > 2:
         conv, _ = _NDIMS_CONV[self.input_ndim]
         layers.append(conv(org_decoder_shape[-1], 3, 1, padding='same'))
@@ -576,7 +662,7 @@ class BiDenseLatents(HierarchicalLatents):
     if self._disable:
       return hidden_d
     # === 2. project and create the distribution
-    flat_hd = self.flatten(hidden_d)
+    flat_hd = self.flatten(self.pooling(hidden_d))
     prior = self._dist_prior(self._dense_prior(flat_hd))
     self._prior = prior
     # === 3. inference
@@ -590,7 +676,8 @@ class BiDenseLatents(HierarchicalLatents):
                                 f'Change to sampling mode if possible')
       # (Kingma 2016) use add, we concat here
       h = self.concat([hidden_e, hidden_d])
-      posterior = self._dist_posterior(self._dense_posterior(self.flatten(h)))
+      posterior = self._dist_posterior(
+        self._dense_posterior(self.flatten(self.pooling(h))))
       # (Maaloe 2016) merging two Normal distribution
       if self._merge_normal is not None:
         posterior = self._merge_normal([posterior, prior])

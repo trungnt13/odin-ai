@@ -104,10 +104,10 @@ def layer2text(layer: Layer,
                           tf.keras.layers.BatchNormalization)):
     layer: keras.layers.BatchNormalization
     text = padding + \
-      '[%-10s] axis=%s center:%s scale:%s momentum:%.2f trainable:%s' % \
-      ('BatchRenorm' if layer.renorm else 'BatchNorm',
-       [i for i in tf.nest.flatten(layer.axis)],
-       layer.center, layer.scale, layer.momentum, layer.trainable)
+           '[%-10s] axis=%s center:%s scale:%s momentum:%.2f trainable:%s' % \
+           ('BatchRenorm' if layer.renorm else 'BatchNorm',
+            [i for i in tf.nest.flatten(layer.axis)],
+            layer.center, layer.scale, layer.momentum, layer.trainable)
   ## Distribution layer
   elif isinstance(layer, DistributionLambda):
     fn = layer._make_distribution_fn
@@ -137,6 +137,18 @@ def layer2text(layer: Layer,
   elif isinstance(layer, keras.layers.Embedding):
     text = f'{name} in_dim:{layer.input_dim} out_dim:{layer.output_dim} ' \
            f'mask0:{layer.mask_zero} seq_len:{layer.input_length}'
+  ## Pooling
+  elif isinstance(layer, (keras.layers.pooling.Pooling1D,
+                          keras.layers.pooling.Pooling2D,
+                          keras.layers.pooling.Pooling3D)):
+    text = f'{name} size:{layer.pool_size} strides:{layer.strides} ' \
+           f'pad:{layer.padding}'
+  ## UpSampling
+  elif isinstance(layer, (keras.layers.UpSampling1D,
+                          keras.layers.UpSampling2D,
+                          keras.layers.UpSampling3D)):
+    interp = layer.interpolation if hasattr(layer, 'interpolation') else None
+    text = f'{name} size:{layer.size} interpolation:{interp}'
   ## All others
   else:
     text = f'{name} {layer}'

@@ -89,11 +89,12 @@ class RestoreMCMCdim(Layer):
 class Resampling2D(Layer):
   """Support upsampling and downsampling"""
 
-  def __init__(self,
-               size: Tuple[int, int] = (2, 2),
-               mode: Literal[
-                 'max', 'avg', 'global', 'pad', 'nearest', 'bilinear'] = 'avg',
-               **kwargs):
+  def __init__(
+      self,
+      size: Tuple[int, int] = (2, 2),
+      mode: Literal['max', 'avg', 'global',
+                    'pad', 'nearest', 'bilinear'] = 'avg',
+      **kwargs):
     super().__init__(**kwargs)
     self.downsampling = False
     if mode in ('max', 'avg', 'global'):
@@ -127,7 +128,7 @@ class Resampling2D(Layer):
         # this doesn't take into account odd number
         self.pool = ZeroPadding2D(padding=[
           (i - 1) * s // 2 for i, s in zip(self.size, input_shape[1:])
-        ], )
+        ])
       else:
         self.pool = UpSampling2D(size=self.size, interpolation=self.mode)
     self.reshape = Reshape((1, 1, input_shape[-1]))
