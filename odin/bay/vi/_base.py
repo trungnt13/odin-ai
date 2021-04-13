@@ -2,6 +2,8 @@ from typing import Dict, List, Optional, Tuple, Union, Sequence
 
 import numpy as np
 import tensorflow as tf
+from typing_extensions import Literal
+
 from odin.networks import Networks, TrainStep
 from odin.backend import TensorType
 from odin.utils import as_tuple
@@ -313,6 +315,34 @@ class VariationalModel(Networks):
         return Q, tuple([q.KL_divergence.prior for q in Q])
       return Q, Q.KL_divergence.prior
     return Q
+
+  def sample_observation(self, n: int = 1, seed: int = 1,
+                         training: bool = False) -> Distribution:
+    raise NotImplementedError
+
+  def sample_prior(self, n: int = 1, seed: int = 1) -> tf.Tensor:
+    """Sampling from prior distribution"""
+    raise NotImplementedError
+
+  def sample_traverse(
+      self,
+      inputs: Union[TensorType, List[TensorType]],
+      n_top_latents: int = 5,
+      min_val: int = -2.0,
+      max_val: int = 2.0,
+      n_traverse_points: int = 11,
+      mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
+      training: bool = False,
+      mask: Optional[TensorType] = None) -> Distribution:
+    from odin.bay.vi import traverse_dims
+    latents = self.encode(inputs, training=training, mask=mask)
+    stddev = np.sum(latents.stddev(), axis=0)
+    top_latents = np.argsort(stddev)[::-1][:int(n_top_latents)]
+    latents = traverse_dims(latents, feature_indices=top_latents,
+                            min_val=min_val, max_val=max_val,
+                            n_traverse_points=n_traverse_points,
+                            mode=mode)
+    return self.decode(latents, training=training, mask=mask)
 
   def encode(self,
              inputs: Union[TensorType, Sequence[TensorType]],

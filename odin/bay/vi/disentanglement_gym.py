@@ -1,3 +1,4 @@
+import contextlib
 import os
 import re
 from collections import defaultdict
@@ -11,6 +12,7 @@ import seaborn as sns
 import tensorflow as tf
 from matplotlib import pyplot as plt
 from odin import visual as vs
+from odin.bay.vi._base import VariationalModel
 from odin.bay.distributions import Batchwise
 from odin.bay.vi.autoencoder import VariationalAutoencoder, SemafoVAE
 from sklearn.mixture import GaussianMixture
@@ -30,9 +32,9 @@ from typeguard import typechecked
 from typing_extensions import Literal
 
 __all__ = [
-    'DisentanglementGym',
-    'Correlation',
-    'DimReduce',
+  'DisentanglementGym',
+  'Correlation',
+  'DimReduce',
 ]
 
 TrainingMode = Literal['train', 'valid', 'test']
@@ -127,7 +129,7 @@ def _process_labels(y: tf.Tensor, dsname: str,
   else:
     raise RuntimeError(f'No support for dataset: {dsname}')
   return np.asarray([names[int(i)] for i in y_categorical]), \
-    tf.cast(y_discrete, tf.int32).numpy()
+         tf.cast(y_discrete, tf.int32).numpy()
 
 
 def _to_image(X, y, grids, dpi, ds, dsname):
@@ -176,12 +178,12 @@ def _predict(data, vae, dsname, labels, verbose):
     data.clear()
     data.close()
   qz = {
-      idx: Batchwise(dist_list, name=f'latent{idx}')
-      for idx, dist_list in qz.items()
+    idx: Batchwise(dist_list, name=f'latent{idx}')
+    for idx, dist_list in qz.items()
   }
   px = {
-      idx: Batchwise(dist_list, name=f'output{idx}')
-      for idx, dist_list in px.items()
+    idx: Batchwise(dist_list, name=f'output{idx}')
+    for idx, dist_list in px.items()
   }
   py = tf.concat(py, 0)
   y_categorical, y_factors = _process_labels(py, dsname=dsname, labels=labels)
@@ -199,8 +201,9 @@ def _plot_correlation(matrix: np.ndarray,
   vmax = np.max(matrix)
   if n_top is not None:
     n_top = int(n_top)
-    matrix = (matrix - np.min(matrix, axis=0, keepdims=True)) /\
-      (np.max(matrix, axis=0, keepdims=True) - np.min(matrix, axis=0, keepdims=True) + 1e-10)
+    matrix = (matrix - np.min(matrix, axis=0, keepdims=True)) / \
+             (np.max(matrix, axis=0, keepdims=True) - np.min(matrix, axis=0,
+                                                             keepdims=True) + 1e-10)
     top_ids = np.argsort(np.max(matrix, axis=1) -
                          stats.skew(matrix, axis=1))[::-1]
     data = pd.DataFrame([(latents[zi], factors[fj], matrix[zi, fj])
@@ -239,7 +242,7 @@ def _plot_latents_pairs(
   # binomial_coefficient(n=n_factors, k=2)
   ## find the best latents for each labels
   f2z = {
-      f_idx: z_idx for f_idx, z_idx in enumerate(np.argmax(correlation, axis=0))
+    f_idx: z_idx for f_idx, z_idx in enumerate(np.argmax(correlation, axis=0))
   }
   ## special cases
   if dsname == 'pbmc':
@@ -299,11 +302,11 @@ class DisentanglementGym:
   ----------
   dataset : {'shapes3d', 'shapes3dsmall', 'dsprites', 'dspritessmall', 'celeba', 'celebasmall', 'mnist'}
       name of the data
-  vae : VariationalAutoencoder
+  model : VariationalAutoencoder
       instance of `VariationalAutoencoder`
-  max_valid_samples : int, optional
+  n_valid_samples : int, optional
       maximum number of samples used for validation, by default 2000
-  max_test_samples : int, optional
+  n_score_samples : int, optional
       maximum number of samples used for testing, by default 20000
   batch_size : int, optional
       batch size, by default 64
@@ -314,96 +317,166 @@ class DisentanglementGym:
   """
 
   @typechecked
-  def __init__(self,
-               dataset: Literal['shapes3d', 'shapes3dsmall', 'dsprites',
-                                'dspritessmall', 'celeba', 'celebasmall',
-                                'fashionmnist', 'mnist', 'cifar10', 'cifar100',
-                                'cortex', 'pbmc'],
-               vae: VariationalAutoencoder,
-               max_valid_samples: int = 2000,
-               max_test_samples: int = 20000,
-               batch_size: int = 64,
-               allow_exception: bool = True,
-               seed: int = 1):
+  def __init__(
+      self,
+      dataset: Literal['shapes3d', 'shapes3dsmall', 'dsprites',
+                       'dspritessmall', 'celeba', 'celebasmall',
+                       'fashionmnist', 'mnist', 'cifar10', 'cifar100',
+                       'cortex', 'pbmc'],
+      model: VariationalModel,
+      n_plot_samples: int = 36,
+      batch_size: int = 64,
+      allow_exception: bool = True,
+      seed: int = 1):
     self.name = dataset
     self.allow_exception = allow_exception
     self.seed = seed
     self.ds = get_dataset(dataset)
     self.dsname = str(dataset).lower().strip()
     self._batch_size = int(batch_size)
-    self._max_valid_samples = int(max_valid_samples)
-    self._max_test_samples = int(max_test_samples)
-    self._n_visual_samples = 25 if self.is_image else 625
+    self._n_plot_samples = int(n_plot_samples)
     ## set seed is importance for comparable results
-    tf.random.set_seed(1)
-    self._train = self.ds.create_dataset(batch_size=batch_size,
-                                         partition='train',
-                                         label_percent=True,
-                                         shuffle=1000)
-    self._valid = self.ds.create_dataset(batch_size=batch_size,
-                                         partition='valid',
-                                         label_percent=True,
-                                         shuffle=1000)
-    self._test = self.ds.create_dataset(batch_size=batch_size,
-                                        partition='test',
-                                        label_percent=True,
-                                        shuffle=1000)
-    self.vae = vae
-    self.z_samples = vae.sample_prior(sample_shape=self._n_visual_samples,
-                                      seed=self.seed)
-    ## prepare the samples
-    n_batches = int(np.ceil(self._n_visual_samples / batch_size))
-    # train
-    batches = list(self._train.take(n_batches))
-    self.x_train = tf.concat([x for x, y in batches],
-                             axis=0)[:self._n_visual_samples]
-    self.y_train = tf.concat([y for x, y in batches],
-                             axis=0)[:self._n_visual_samples]
-    # valid
-    batches = list(self._valid.take(n_batches))
-    self.x_valid = tf.concat([x for x, y in batches],
-                             axis=0)[:self._n_visual_samples]
-    self.y_valid = tf.concat([y for x, y in batches],
-                             axis=0)[:self._n_visual_samples]
-    # test
-    batches = list(self._test.take(n_batches))
-    self.x_test = tf.concat([x for x, y in batches],
-                            axis=0)[:self._n_visual_samples]
-    self.y_test = tf.concat([y for x, y in batches],
-                            axis=0)[:self._n_visual_samples]
-    ## default configuration
-    self._reconstruction = True
-    self._elbo = False
-    self._latents_sampling = True
-    self._latents_traverse = True
-    self._latents_stats = True
-    self._track_gradients = True
-    self._latents_pairs = None
-    self._correlation_methods = None
-    self._dimension_reduction = None
-    ## unsupervised clustering score
-    self._silhouette_score = False
-    self._adjusted_rand_score = False
-    self._normalized_mutual_info = False
-    self._adjusted_mutual_info = False
-    ## quantitative measures
-    self._mig_score = False
-    self._dci_score = False
-    self._sap_score = False
-    self._factor_vae = False
-    self._beta_vae = False
-    self.setup = dict(train={}, valid={}, test={})
-    self._current_mode = 'train'
-    self.data_info = dict(train=(self._train, self.x_train, self.y_train),
-                          valid=(self._valid, self.x_valid, self.y_valid),
-                          test=(self._test, self.x_test, self.y_test))
-    ## others
-    self._traverse_config = dict(
-        min_val=-2,
-        max_val=2,
-        n_traverse_points=15,
-        mode='linear',
+    self._rand = np.random.RandomState(seed=seed)
+    tf.random.set_seed(seed)
+    kw = dict(batch_size=batch_size,
+              label_percent=True,
+              shuffle=1000,
+              seed=seed)
+    self._data = dict(
+      train=self.ds.create_dataset(partition='train', **kw),
+      valid=self.ds.create_dataset(partition='valid', **kw),
+      test=self.ds.create_dataset(partition='test', **kw),
     )
+    self.model = model
+    self._context_setup = False
+    ## prepare the samples
+    # ## default configuration
+    # self._reconstruction = True
+    # self._elbo = False
+    # self._latents_sampling = True
+    # self._latents_traverse = True
+    # self._latents_stats = True
+    # self._track_gradients = True
+    # self._latents_pairs = None
+    # self._correlation_methods = None
+    # self._dimension_reduction = None
+    # ## unsupervised clustering score
+    # self._silhouette_score = False
+    # self._adjusted_rand_score = False
+    # self._normalized_mutual_info = False
+    # self._adjusted_mutual_info = False
+    # ## quantitative measures
+    # self._mig_score = False
+    # self._dci_score = False
+    # self._sap_score = False
+    # self._factor_vae = False
+    # self._beta_vae = False
+    # self.setup = dict(train={}, valid={}, test={})
+    # self._current_mode = 'train'
+    # self.data_info = dict(train=(self._train, self.x_train, self.y_train),
+    #                       valid=(self._valid, self.x_valid, self.y_valid),
+    #                       test=(self._data, self.x_test, self.y_test))
+    # ## others
+    # self._traverse_config = dict(
+    #   min_val=-2,
+    #   max_val=2,
+    #   n_traverse_points=15,
+    #   mode='linear',
+    # )
+
+  @contextlib.contextmanager
+  def run_model(self,
+                partition: Literal['train', 'valid', 'test'] = 'test',
+                n_samples: int = 100) -> 'DisentanglementGym':
+    self._context_setup = True
+    ds = self._data[partition]
+    ds = ds.take(int(np.ceil(n_samples / self._batch_size)))
+    print(len(ds))
+    exit()
+    progress = tqdm(ds, disable=not verbose)
+    llk_x, llk_y = [], []
+    y_true, y_pred = [], []
+    x_org, x_rec = [], []
+    Q_zs = []
+    P_zs = []
+    for x, y in progress:
+      P, Q = vae(x, training=False)
+      P = as_tuple(P)
+      Q, Q_prior = vae.get_latents(return_prior=True)
+      Q = as_tuple(Q)
+      Q_prior = as_tuple(Q_prior)
+      y_true.append(y)
+      px = P[0]
+      # semi-supervised
+      if len(P) > 1:
+        py = P[-1]
+        y_pred.append(to_dist(py))
+        if y.shape[1] == py.event_shape[0]:
+          llk_y.append(py.log_prob(y))
+      Q_zs.append(to_dist(Q))
+      P_zs.append(to_dist(Q_prior))
+      llk_x.append(px.log_prob(x))
+      # for the reconstruction
+      if rand.uniform() < 0.005 or len(x_org) < 2:
+        x_org.append(x)
+        x_rec.append(px.mean())
+    # log-likelihood
+    llk_x = tf.reduce_mean(tf.concat(llk_x, axis=0)).numpy()
+    llk_y = tf.reduce_mean(tf.concat(llk_y, axis=0)).numpy() \
+      if len(llk_y) > 0 else -np.inf
+    # latents
+    n_latents = len(Q_zs[0])
+    all_qz = [Batchwise([z[i] for z in Q_zs]) for i in range(n_latents)]
+    all_pz = [Batchwise([z[i] for z in P_zs])
+              if len(P_zs[0][i].batch_shape) > 0 else
+              P_zs[0][i]
+              for i in range(n_latents)]
+    # reconstruction
+    x_org = tf.concat(x_org, axis=0).numpy()
+    x_rec = tf.concat(x_rec, axis=0).numpy()
+    ids = rand.permutation(x_org.shape[0])
+    x_org = x_org[ids][:n_images]
+    x_rec = x_rec[ids][:n_images]
+    x_rec = prepare_images(x_rec, normalize=True)
+    x_org = prepare_images(x_org, normalize=False)
+    # labels
+    y_true = tf.concat(y_true, axis=0).numpy()
+    if len(y_pred) > 0:
+      y_pred = Batchwise(y_pred, name='LabelsTest')
+    else:
+      y_pred = None
+    return llk_x, llk_y, \
+           x_org, x_rec, \
+           y_true, y_pred, \
+           all_qz, all_pz
+
+  def reconstruction(self):
+    P, Q = vae(x, training=False)
+    P, Q = as_tuple(P), as_tuple(Q)
+    if isinstance(self.model, SemafoVAE):
+      z_mean = tf.reduce_mean(Q[0].mean(), axis=0)
+      z_std = tf.reduce_mean(Q[0].stddev(), axis=0)
+    else:
+      z_mean = tf.reduce_mean(tf.concat([q.mean() for q in Q], axis=-1), axis=0)
+      z_std = tf.reduce_mean(tf.concat([q.stddev() for q in Q], axis=-1),
+                             axis=0)
+    outputs['latents/mean'] = z_mean
+    outputs['latents/stddev'] = z_std
+    ## reconstruction
+    px = P[0]
+    image_reconstructed = _to_image(px.mean().numpy(),
+                                    y=y,
+                                    grids=grids,
+                                    dpi=dpi,
+                                    ds=self.ds,
+                                    dsname=self.dsname)
+    outputs['original'] = _to_image(x,
+                                    y=y,
+                                    grids=grids,
+                                    dpi=dpi,
+                                    ds=self.ds,
+                                    dsname=self.dsname)
+    outputs['reconstruction'] = image_reconstructed
 
   # @typechecked
   def set_config(
@@ -453,10 +526,10 @@ class DisentanglementGym:
       mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
   ) -> 'DisentanglementGym':
     self._traverse_config = dict(
-        min_val=min_val,
-        max_val=max_val,
-        n_traverse_points=n_traverse_points,
-        mode=mode,
+      min_val=min_val,
+      max_val=max_val,
+      n_traverse_points=n_traverse_points,
+      mode=mode,
     )
     return self
 
@@ -467,25 +540,6 @@ class DisentanglementGym:
   @property
   def batch_size(self) -> int:
     return self._batch_size
-
-  @property
-  def mode(self) -> TrainingMode:
-    """The training mode: 'train', 'valid', 'test' """
-    return self._current_mode
-
-  def train(self) -> 'DisentanglementGym':
-    """Enable the training mode"""
-    self._current_mode = 'train'
-    return self
-
-  def valid(self) -> 'DisentanglementGym':
-    self._current_mode = 'valid'
-    return self
-
-  def test(self) -> 'DisentanglementGym':
-    """Enable the evaluation mode"""
-    self._current_mode = 'test'
-    return self
 
   def _is_predict(self) -> bool:
     return (self._dimension_reduction is not None or
@@ -544,26 +598,27 @@ class DisentanglementGym:
       setattr(self, k, v)
     ## prepare
     unique_key = uuid(20)
-    vae = self.vae
-    grids = (int(sqrt(self._n_visual_samples)),
-             int(sqrt(self._n_visual_samples)))
+    vae = self.model
+    grids = (int(sqrt(self._n_plot_samples)),
+             int(sqrt(self._n_plot_samples)))
     outputs = dict()
     ds, x, y = self.data_info[self.mode]
     ## n_samples
     n_score_samples = (10000 if self.mode == 'test' else 5000)
-    n_samples = (self._max_test_samples
+    n_samples = (self._n_score_samples
                  if self.mode == 'test' else self._max_valid_samples)
     n_batches = int(n_samples / self.batch_size)
     is_semi_supervised = type(vae).is_semi_supervised
     ## prepare
     P, Q = vae(x, training=False)
     P, Q = as_tuple(P), as_tuple(Q)
-    if isinstance(self.vae, SemafoVAE):
+    if isinstance(self.model, SemafoVAE):
       z_mean = tf.reduce_mean(Q[0].mean(), axis=0)
       z_std = tf.reduce_mean(Q[0].stddev(), axis=0)
     else:
       z_mean = tf.reduce_mean(tf.concat([q.mean() for q in Q], axis=-1), axis=0)
-      z_std = tf.reduce_mean(tf.concat([q.stddev() for q in Q], axis=-1), axis=0)
+      z_std = tf.reduce_mean(tf.concat([q.stddev() for q in Q], axis=-1),
+                             axis=0)
     outputs['latents/mean'] = z_mean
     outputs['latents/stddev'] = z_std
     ## reconstruction
@@ -593,10 +648,10 @@ class DisentanglementGym:
         for k, v in kl.items():
           elbo_kl[k].append(v)
       elbo_llk = {
-          k: tf.reduce_mean(tf.concat(v, axis=0)) for k, v in elbo_llk.items()
+        k: tf.reduce_mean(tf.concat(v, axis=0)) for k, v in elbo_llk.items()
       }
       elbo_kl = {
-          k: tf.reduce_mean(tf.concat(v, axis=0)) for k, v in elbo_kl.items()
+        k: tf.reduce_mean(tf.concat(v, axis=0)) for k, v in elbo_kl.items()
       }
       outputs.update(elbo_llk)
       outputs.update(elbo_kl)
@@ -612,7 +667,7 @@ class DisentanglementGym:
       outputs['latents_stats'] = image_latents
     ## latents traverse
     if self._latents_traverse:
-      if isinstance(self.vae, SemafoVAE):
+      if isinstance(self.model, SemafoVAE):
         z = Q[0].mean()
       else:
         z = tf.concat([q.mean() for q in Q], axis=-1)
@@ -702,16 +757,16 @@ class DisentanglementGym:
                                     random_state=self.seed).predict(z)
           if self._adjusted_rand_score:
             outputs[f'ari{z_idx}'] = metrics.adjusted_rand_score(
-                labels, labels_pred)
+              labels, labels_pred)
           if self._adjusted_mutual_info:
             outputs[f'ami{z_idx}'] = metrics.adjusted_mutual_info_score(
-                labels, labels_pred)
+              labels, labels_pred)
           if self._normalized_mutual_info:
             outputs[f'nmi{z_idx}'] = metrics.normalized_mutual_info_score(
-                labels, labels_pred)
+              labels, labels_pred)
           if self._silhouette_score:
             outputs[f'asw{z_idx}'] = metrics.silhouette_score(
-                z, labels, random_state=self.seed)
+              z, labels, random_state=self.seed)
       # disentangling scores
       if self._mig_score:
         for z_idx, z in qz.items():
@@ -724,7 +779,7 @@ class DisentanglementGym:
       if self._dci_score:
         for z_idx, z in qz_mean.items():
           outputs[f'dci{z_idx}'] = np.mean(
-              dci_scores(z, factors, cache_key=unique_key, verbose=verbose))
+            dci_scores(z, factors, cache_key=unique_key, verbose=verbose))
       if self._beta_vae:
         for z_idx, z in qz.items():
           outputs[f'betavae{z_idx}'] = beta_vae_score(representations=z,
@@ -734,10 +789,10 @@ class DisentanglementGym:
       if self._factor_vae:
         for z_idx, z in qz.items():
           outputs[f'factorvae{z_idx}'] = factor_vae_score(
-              representations=z,
-              factors=factors,
-              n_samples=n_score_samples,
-              verbose=verbose)
+            representations=z,
+            factors=factors,
+            n_samples=n_score_samples,
+            verbose=verbose)
     ## track the gradients
     if vae.trainer is not None and self._track_gradients:
       all_grads = [(k, v)
@@ -748,11 +803,11 @@ class DisentanglementGym:
       latents_grad = 0
       if len(all_grads) > 0:
         outputs['grad/encoder'] = sum(
-            tf.linalg.norm(v) for k, v in all_grads if 'encoder' in k)
+          tf.linalg.norm(v) for k, v in all_grads if 'encoder' in k)
         outputs['grad/decoder'] = sum(
-            tf.linalg.norm(v) for k, v in all_grads if 'decoder' in k)
+          tf.linalg.norm(v) for k, v in all_grads if 'decoder' in k)
         outputs['grad/latents'] = sum(
-            tf.linalg.norm(v) for k, v in all_grads if 'latents' in k)
+          tf.linalg.norm(v) for k, v in all_grads if 'latents' in k)
     ## save outputs
     if save_path is not None:
       # create the folder

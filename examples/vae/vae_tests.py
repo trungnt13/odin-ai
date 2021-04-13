@@ -28,7 +28,7 @@ sns.set()
 # ===========================================================================
 # Configuration
 # Example:
-# python all_vae_test.py vae=betavae ds=dsprites beta=1,10,20 px=bernoulli py=onehot max_iter=100000 -m -j4
+# python all_vae_test.py model=betavae ds=dsprites beta=1,10,20 px=bernoulli py=onehot max_iter=100000 -m -j4
 # ===========================================================================
 OUTPUT_DIR = '/tmp/vae_tests'
 batch_size = 32
@@ -36,7 +36,7 @@ n_visual_samples = 16
 
 CONFIG = \
 r"""
-vae:
+model:
 ds:
 qz: mvndiag
 beta: 1
@@ -52,7 +52,7 @@ eval: False
 # Helpers
 # ===========================================================================
 def create_gym(dsname: str, vae: VariationalAutoencoder) -> DisentanglementGym:
-  gym = DisentanglementGym(dataset=dsname, vae=vae)
+  gym = DisentanglementGym(dataset=dsname, model=vae)
   cfg = dict(reconstruction=True,
              latents_sampling=True,
              latents_traverse=True,

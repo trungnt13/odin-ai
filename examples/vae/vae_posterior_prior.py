@@ -21,7 +21,7 @@ from tensorflow_probability.python import bijectors as bj
 # ===========================================================================
 CONFIG = \
 """
-vae:
+model:
 """
 output_dir = '/tmp/vae_pp'
 
@@ -132,7 +132,7 @@ def callback(vae: vi.VariationalAutoencoder, x: np.ndarray, y: np.ndarray):
 
 @run_hydra(output_dir=output_dir)
 def main(cfg: dict):
-  assert cfg.vae is not None, 'vae is not provided in the configuration'
+  assert cfg.vae is not None, 'model is not provided in the configuration'
   outdir = get_output_dir()
   # load dataset
   ds = MNIST()

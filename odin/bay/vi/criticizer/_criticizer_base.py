@@ -286,7 +286,7 @@ class CriticizerBase(object):
     # only support single returned latent variable now
     for z in tf.nest.flatten(latents):
       assert isinstance(z, tfd.Distribution), \
-        "The latent code return from `vae.encode` must be instance of " + \
+        "The latent code return from `model.encode` must be instance of " + \
           "tensorflow_probability.Distribution, but returned: %s" % \
             str(z)
     return latents
@@ -299,7 +299,7 @@ class CriticizerBase(object):
                                sample_shape=sample_shape)
     for o in tf.nest.flatten(outputs):
       assert isinstance(o, tfd.Distribution), \
-        "vae decode method must return reconstruction distribution, but " + \
+        "model decode method must return reconstruction distribution, but " + \
           "returned: %s" % str(o)
     return outputs
 

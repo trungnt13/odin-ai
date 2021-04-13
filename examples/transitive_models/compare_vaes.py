@@ -605,7 +605,7 @@ if __name__ == "__main__":
   parser.add_argument('-ratio', type=float, default=0.0)
   parser.add_argument('-zdim', type=int, default=0)
   parser.add_argument('-it', type=int, default=0)
-  ## select the right vae
+  ## select the right model
   args = parser.parse_args()
   for vae in args.vae.split(','):
     for ds in args.ds.split(','):

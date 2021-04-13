@@ -225,7 +225,7 @@ def main(cfg):
                    valid_freq=1000,
                    optimizer=tf.optimizers.Adam(learning_rate=1e-4)))
   ######## VAE
-  elif cfg.model == 'vae':
+  elif cfg.model == 'model':
     vae = BetaVAE(beta=cfg.beta,
                   encoder=NetConf([300, 300], name='Encoder'),
                   decoder=NetConf([300], name='Decoder'),

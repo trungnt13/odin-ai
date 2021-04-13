@@ -42,7 +42,7 @@ SAVE_PATH = "/tmp/vae_basic"
 CONFIG = \
 """
 ds: mnist
-vae:
+model:
 beta: 1
 """
 

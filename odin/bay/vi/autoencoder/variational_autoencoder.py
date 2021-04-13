@@ -285,25 +285,6 @@ class VariationalAutoencoder(VariationalModel):
     z = self.sample_prior(n, seed=seed)
     return self.decode(z, training=training)
 
-  def sample_traverse(self,
-                      inputs: Union[TensorType, List[TensorType]],
-                      n_top_latents: int = 5,
-                      min_val: int = -2.0,
-                      max_val: int = 2.0,
-                      n_traverse_points: int = 11,
-                      mode: Literal[
-                        'linear', 'quantile', 'gaussian'] = 'linear',
-                      training: bool = False,
-                      mask: Optional[TensorType] = None) -> Distribution:
-    latents = self.encode(inputs, training=training, mask=mask)
-    stddev = np.sum(latents.stddev(), axis=0)
-    top_latents = np.argsort(stddev)[::-1][:int(n_top_latents)]
-    latents = traverse_dims(latents, feature_indices=top_latents,
-                            min_val=min_val, max_val=max_val,
-                            n_traverse_points=n_traverse_points,
-                            mode=mode)
-    return self.decode(latents, training=training, mask=mask)
-
   def encode(self,
              inputs: Union[TensorType, List[TensorType]],
              training: Optional[bool] = None,
@@ -582,12 +563,13 @@ class VariationalAutoencoder(VariationalModel):
     ]
     text = (f"{'->'.join([i.__name__ for i in cls[::-1]])} "
             f"(semi:{type(self).is_semi_supervised()})")
-    text += f'\n Tensorboard : {self.tensorboard_logdir}'
+    text += f'\n Tensorboard  : {self.tensorboard_logdir}'
     text += f'\n Analytic     : {self.analytic}'
     text += f'\n Reverse      : {self.reverse}'
+    text += f'\n Free-bits    : {self.free_bits}'
     text += f'\n Sample Shape : {self.sample_shape}'
-    text += f'\n Fitted        : {int(self.step.numpy())}(iters)'
-    text += f'\n MD5 checksum: {self.md5_checksum}'
+    text += f'\n Fitted       : {int(self.step.numpy())}(iters)'
+    text += f'\n MD5 checksum : {self.md5_checksum}'
     ## encoder
     for i, encoder in enumerate(as_tuple(self.encoder)):
       text += f"\n Encoder#{i}:\n  "

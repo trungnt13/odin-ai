@@ -276,7 +276,8 @@ def kl_divergence(
     kl = q.log_prob(z) - p.log_prob(z)
   ### free-bits
   if free_bits is not None:
-    kl = tf.maximum(kl, tf.constant(free_bits, dtype=kl.dtype))
+    units = int(np.prod(q.event_shape))
+    kl = tf.maximum(kl, tf.constant(free_bits * units, dtype=kl.dtype))
   kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
   return kl
 

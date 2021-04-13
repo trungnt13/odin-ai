@@ -192,7 +192,7 @@ class Semafo(Multitask):
 # Main
 # ===========================================================================
 def create_model(args: Namespace) -> VariationalModel:
-  networks = get_networks(args.ds, is_semi_supervised=True)
+  networks = get_networks(args.ds, zdim=args.zdim, is_semi_supervised=True)
   name = args.vae
   for k, v in globals().items():
     if (isinstance(v, type) and
@@ -222,12 +222,12 @@ def main(args: Namespace):
   # === 2. create model
   vae = create_model(args)
   if args.eval:
+    vae.load_weights(get_model_path())
     evaluate(vae, args)
   else:
     train(vae, ds, args,
           label_percent=args.y,
-          oversample_ratio=0.5,
-          debug=False)
+          oversample_ratio=0.5)
 
 
 if __name__ == '__main__':

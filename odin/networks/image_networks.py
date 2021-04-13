@@ -255,12 +255,10 @@ def mnist_networks(
     keras.layers.Dense(proj_dim, activation='linear', name='decoder_proj'),
     keras.layers.Reshape((7, 7, proj_dim // 49)),
     deconv(64, 5, strides=2, name='decoder2'),
-    BiDenseLatents(conv(64, 5, strides=1, name='decoder3'),
-                   encoder=encoder.layers[3],
-                   units=64,
-                   # filters=16, kernel_size=14, padding='valid',
-                   disable=True,
-                   name='latents1'),
+    BiConvLatents(conv(64, 5, strides=1, name='decoder3'),
+                  encoder=encoder.layers[3],
+                  filters=64, kernel_size=14, strides=1, padding='valid',
+                  disable=True, name='latents1'),
     deconv(32, 5, strides=2, name='decoder4'),
     conv(32, 5, strides=1, name='decoder5'),
     conv(n_channels * n_params, 1, strides=1, activation='linear',
@@ -464,15 +462,13 @@ def dsprites_networks(
     keras.layers.Reshape((4, 4, proj_dim // 16)),
     BiConvLatents(deconv(64, 4, strides=2, name='decoder1'),
                   encoder=encoder.layers[3],
-                  latent_units=8,
-                  disable=True,
-                  name='latents1'),
+                  filters=32, kernel_size=8, strides=4,
+                  disable=True, name='latents1'),
     deconv(64, 4, strides=2, name='decoder2'),
     BiConvLatents(deconv(32, 4, strides=2, name='decoder3'),
                   encoder=encoder.layers[1],
-                  downsample=True,
-                  disable=True,
-                  name='latents2'),
+                  filters=16, kernel_size=8, strides=4,
+                  disable=True, name='latents2'),
     deconv(32, 4, strides=2, name='decoder4'),
     # NOTE: this last projection layer with linear activation is crucial
     # otherwise the distribution parameterized by this layer won't converge
@@ -804,6 +800,11 @@ def pbmc_networks(
 # ===========================================================================
 # Utils
 # ===========================================================================
+_DSNAME_MAP = dict(
+  halfmnist='mnist'
+)
+
+
 def get_networks(dataset_name: str,
                  *,
                  qz: str = 'mvndiag',
@@ -815,6 +816,7 @@ def get_networks(dataset_name: str,
   if zdim is not None and zdim <= 0:
     zdim = None
   dataset_name = str(dataset_name).lower().strip()
+  dataset_name = _DSNAME_MAP.get(dataset_name, dataset_name)
   for k, fn in globals().items():
     if isinstance(k, string_types) and (inspect.isfunction(fn) or
                                         isinstance(fn, partial)):
@@ -852,6 +854,7 @@ def get_optimizer_info(
 
   """
   dataset_name = str(dataset_name).strip().lower()
+  dataset_name = _DSNAME_MAP.get(dataset_name, dataset_name)
   decay_rate = 0.996
   decay_steps = 10000
   init_lr = 1e-3

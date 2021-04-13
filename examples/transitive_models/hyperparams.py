@@ -275,7 +275,7 @@ def run_task(args, evaluation=False):
   from odin.networks import get_networks, get_optimizer_info
   from odin.bay.vi import DisentanglementGym, Correlation, DimReduce
   ######## arguments
-  model: SemafoVAE = args['vae']
+  model: SemafoVAE = args['model']
   dsname: str = args['ds']
   py: float = args['py']
   coef: Interpolation = args['coef']

@@ -111,6 +111,7 @@ class DistributionDense(Layer):
   def __init__(
       self,
       event_shape: Union[int, Sequence[int]] = (),
+      units: Optional[int] = None,
       posterior: Union[str, DistributionLambda,
                        Callable[[Tensor], Distribution]] = 'normal',
       posterior_kwargs: Optional[Dict[str, Any]] = None,
@@ -130,7 +131,6 @@ class DistributionDense(Layer):
       dropout: float = 0.0,
       projection: bool = True,
       flatten_inputs: bool = False,
-      units: Optional[int] = None,
       **kwargs,
   ):
     if posterior_kwargs is None:
@@ -158,22 +158,23 @@ class DistributionDense(Layer):
     convert_to_tensor_fn = posterior_kwargs.pop('convert_to_tensor_fn',
                                                 Distribution.sample)
     ## process the posterior
-    self._posterior_layer = None
-    self._callable_posterior = False
-    if isinstance(posterior, DistributionLambda):
+    if isinstance(posterior, DistributionLambda):  # instance
       self._posterior_layer = posterior
       self._posterior_class = type(posterior)
-    elif inspect.isclass(posterior) and issubclass(posterior,
-                                                   DistributionLambda):
+    elif (inspect.isclass(posterior) and
+          issubclass(posterior, DistributionLambda)):  # subclass
+      self._posterior_layer = None
       self._posterior_class = posterior
-    elif isinstance(posterior, string_types):
+    elif isinstance(posterior, string_types):  # alias
       from odin.bay.distribution_alias import parse_distribution
+      self._posterior_layer = None
       self._posterior_class, _ = parse_distribution(posterior)
-    elif callable(posterior):
-      self._callable_posterior = True
+    elif callable(posterior):  # callable
       if isinstance(posterior, LambdaType):
         posterior = tf.autograph.experimental.do_not_convert(posterior)
-      self._posterior_layer = posterior
+      self._posterior_layer = DistributionLambda(
+        make_distribution_fn=posterior,
+        convert_to_tensor_fn=convert_to_tensor_fn)
       self._posterior_class = type(posterior)
     else:
       raise ValueError('posterior could be: string, DistributionLambda, '
@@ -237,10 +238,6 @@ class DistributionDense(Layer):
                           bias_constraint=bias_constraint)
     # store the distribution from last call,
     self._most_recently_built_distribution = None
-    # We'll need to keep track of who's calling who since the functional
-    # API has a different way of injecting `_keras_history` than the
-    # `keras.Sequential` way.
-    self._enter_dunder_call = False
     spec = inspect.getfullargspec(self.posterior_layer)
     self._posterior_call_kw = set(spec.args + spec.kwonlyargs)
 
@@ -312,9 +309,7 @@ class DistributionDense(Layer):
   @property
   def posterior_layer(
       self) -> Union[DistributionLambda, Callable[..., Distribution]]:
-    if self._callable_posterior:
-      ...
-    elif not isinstance(self._posterior_layer, DistributionLambda):
+    if not isinstance(self._posterior_layer, DistributionLambda):
       self._posterior_layer = self._posterior_class(
         self._event_shape,
         convert_to_tensor_fn=self.convert_to_tensor_fn,
@@ -336,12 +331,7 @@ class DistributionDense(Layer):
     return self.prior.sample(sample_shape=sample_shape, seed=seed)
 
   def __call__(self, inputs, *args, **kwargs):
-    if self._callable_posterior:
-      self._enter_dunder_call = True
-      distribution, _ = super().__call__(inputs, *args, **kwargs)
-      self._enter_dunder_call = False
-    else:
-      distribution = super().__call__(inputs, *args, **kwargs)
+    distribution = super().__call__(inputs, *args, **kwargs)
     return distribution
 
   def call(self,
@@ -384,16 +374,6 @@ class DistributionDense(Layer):
     posterior.KL_divergence = KLdivergence(
       posterior, prior=self.prior,
       sample_shape=None)  # None mean reuse sampled data here
-    ## special case callable (act as DistributionLambda)
-    if self._callable_posterior:
-      posterior, value = coercible_tensor(posterior,
-                                          self.convert_to_tensor_fn,
-                                          return_value=True)
-      if self._enter_dunder_call:
-        # Its critical to return both distribution and concretization
-        # so Keras can inject `_keras_history` to both. This is what enables
-        # either to be used as an input to another Keras `Model`.
-        return posterior, value
     return posterior
 
   def kl_divergence(self,

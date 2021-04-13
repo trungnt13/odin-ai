@@ -7,6 +7,7 @@ import tensorflow as tf
 
 import tensorflow_datasets as tfds
 from odin.fuel.image_data._base import ImageDataset
+
 from odin.utils import md5_checksum, one_hot
 
 
@@ -14,12 +15,13 @@ class BinarizedMNIST(ImageDataset):
   """ BinarizedMNIST """
 
   def __init__(self):
+    super(BinarizedMNIST, self).__init__()
     self.train, self.valid, self.test = tfds.load(
-        name='binarized_mnist',
-        split=['train', 'validation', 'test'],
-        read_config=tfds.ReadConfig(shuffle_seed=1,
-                                    shuffle_reshuffle_each_iteration=True),
-        as_supervised=False)
+      name='binarized_mnist',
+      split=['train', 'validation', 'test'],
+      read_config=tfds.ReadConfig(shuffle_seed=1,
+                                  shuffle_reshuffle_each_iteration=True),
+      as_supervised=False)
     process = lambda x: x['image']
     self.train = self.train.map(process)
     self.valid = self.valid.map(process)
@@ -43,12 +45,13 @@ class MNIST(ImageDataset):
   """
 
   def __init__(self):
+    super(MNIST, self).__init__()
     self.train, self.valid, self.test = tfds.load(
-        name='mnist',
-        split=['train[:55000]', 'train[55000:]', 'test'],
-        read_config=tfds.ReadConfig(shuffle_seed=1,
-                                    shuffle_reshuffle_each_iteration=True),
-        as_supervised=True)
+      name='mnist',
+      split=['train[:55000]', 'train[55000:]', 'test'],
+      read_config=tfds.ReadConfig(shuffle_seed=1,
+                                  shuffle_reshuffle_each_iteration=True),
+      as_supervised=True)
 
   @property
   def labels(self):
@@ -63,18 +66,28 @@ class MNIST(ImageDataset):
     return (28, 28, 1)
 
 
+class HalfMNIST(MNIST):
+  """MNIST with only half amount of training examples"""
+
+  def __init__(self):
+    super(HalfMNIST, self).__init__()
+    n = tf.data.experimental.cardinality(self.train)
+    self.train = self.train.take(n // 2)
+
+
 class BinarizedAlphaDigits(BinarizedMNIST):
   """Binary 20x16 digits of '0' through '9' and capital 'A' through 'Z'.
   39 examples of each class. """
 
   def __init__(self):
+    super(BinarizedAlphaDigits, self).__init__()
     self.train, self.valid, self.test = tfds.load(
-        name='binary_alpha_digits',
-        split=['train[:70%]', 'train[70%:80%]', 'train[80%:]'],
-        as_supervised=True,
-        read_config=tfds.ReadConfig(shuffle_seed=1,
-                                    shuffle_reshuffle_each_iteration=True),
-        shuffle_files=True,
+      name='binary_alpha_digits',
+      split=['train[:70%]', 'train[70%:80%]', 'train[80%:]'],
+      as_supervised=True,
+      read_config=tfds.ReadConfig(shuffle_seed=1,
+                                  shuffle_reshuffle_each_iteration=True),
+      shuffle_files=True,
     )
 
   @property
@@ -98,13 +111,13 @@ class FashionMNIST(ImageDataset):
 
   def __init__(self, seed: int = 1):
     self.train, self.valid, self.test = tfds.load(
-        name='fashion_mnist',
-        split=['train[:55000]', 'train[55000:]', 'test'],
-        as_supervised=True,
-        read_config=tfds.ReadConfig(shuffle_seed=seed,
-                                    shuffle_reshuffle_each_iteration=True),
-        shuffle_files=True,
-        with_info=False,
+      name='fashion_mnist',
+      split=['train[:55000]', 'train[55000:]', 'test'],
+      as_supervised=True,
+      read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                  shuffle_reshuffle_each_iteration=True),
+      shuffle_files=True,
+      with_info=False,
     )
 
   @property
@@ -114,8 +127,8 @@ class FashionMNIST(ImageDataset):
   @property
   def labels(self):
     return np.array([
-        'T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal',
-        'Shirt', 'Sneaker', 'Bag', 'Ankle boot'
+      'T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat', 'Sandal',
+      'Shirt', 'Sneaker', 'Bag', 'Ankle boot'
     ])
 
   @property
@@ -130,11 +143,11 @@ class SVHN(ImageDataset):
 
   def __init__(self, inc_extra: bool = False):
     self.train, self.valid, self.test, self.extra = tfds.load(
-        name='svhn_cropped',
-        split=['train[:95%]', 'train[95%:]', 'test', 'extra'],
-        read_config=tfds.ReadConfig(shuffle_seed=1,
-                                    shuffle_reshuffle_each_iteration=True),
-        as_supervised=True,
+      name='svhn_cropped',
+      split=['train[:95%]', 'train[95%:]', 'test', 'extra'],
+      read_config=tfds.ReadConfig(shuffle_seed=1,
+                                  shuffle_reshuffle_each_iteration=True),
+      as_supervised=True,
     )
     self.inc_extra = inc_extra
     if inc_extra:

@@ -10,9 +10,10 @@ from tensorflow_probability.python.distributions import Distribution, Bernoulli,
   Independent
 from tensorflow_probability.python.layers import DistributionLambda
 from tqdm import tqdm
+from typing_extensions import Literal
 
 from odin.bay import VariationalAutoencoder, HierarchicalVAE, \
-  BiConvLatents
+  BiConvLatents, BiDenseLatents, ParallelLatents
 from odin.bay.distributions import QuantizedLogistic
 from odin.bay.layers import MVNDiagLatents
 from odin.fuel import ImageDataset, get_dataset
@@ -62,12 +63,27 @@ def latents(zdim):
   return MVNDiagLatents(zdim)
 
 
-def bi_latents(idx, filters, kernel, strides, e_layers, d_layers, name):
+def bi_latents(idx, filters,
+               kernel=None, strides=None,
+               e_layers=None, d_layers=None, name=None,
+               layer_type: Literal['conv', 'dense', 'parallel'] = 'conv',
+               **kwargs):
   i1, d = find(f'd{idx}', d_layers)
   i2, e = find(f'e{idx}', e_layers)
-  d = BiConvLatents(d, encoder=e, filters=filters,
-                    kernel_size=kernel, strides=strides,
-                    name=name)
+  if layer_type == 'conv':
+    d = BiConvLatents(d, encoder=e, filters=filters,
+                      kernel_size=kernel, strides=strides,
+                      name=name, **kwargs)
+  elif layer_type == 'dense':
+    d = BiDenseLatents(d, encoder=e, units=filters,
+                       pool_mode='avg', pool_size=strides,
+                       name=name, **kwargs)
+  elif layer_type == 'parallel':
+    d = ParallelLatents(d, encoder=e, filters=filters,
+                        kernel_size=kernel, strides=strides,
+                        name=name, **kwargs)
+  else:
+    raise NotImplementedError
   d_layers[i1] = d
 
 
@@ -206,6 +222,38 @@ def model_vae3(zdim, dist):
     Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
   ]
   return VariationalAutoencoder(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
+
+
+# === 0. Very Deep VAE
+def model_vdvae(zdim, dist):
+  n_params, obs = observation(dist)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512, name='encoder_proj')
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512, name='decoder_proj'),
+    Reshape([8, 8, 8]),
+    Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d1'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
+  ]
+  bi_latents(2, 64, 8, 4, e_layers, d_layers, 'latents1')
+  bi_latents(0, 32, 8, 4, e_layers, d_layers, 'latents2')
+  return HierarchicalVAE(
     encoder=Sequential(e_layers, 'Encoder'),
     decoder=Sequential(d_layers, 'Decoder'),
     latents=latents(zdim),
@@ -470,6 +518,27 @@ def model_bvae1ci(zdim, dist):
     observation=obs)
 
 
+# same as bvae1, beta=10 for (z1|z0) and (z2|z1,z0)
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,64x8x4,------,32x8x4
+def model_bvae1d(zdim, dist):
+  model = model_bvae1(zdim, dist)
+  model.hierarchical_latents[0].beta = 10
+  model.hierarchical_latents[1].beta = 10
+  return model
+
+
+# same as bvae1, beta=2 for (z1|z0) and beta=4 for (z2|z1,z0)
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,64x8x4,------,32x8x4
+def model_bvae1di(zdim, dist):
+  model = model_bvae1(zdim, dist)
+  model.hierarchical_latents[0].beta = 2
+  model.hierarchical_latents[1].beta = 4
+  return model
+
 # Use Pooling and Upsampling
 # 32x3x1,d,32x3x1,64x3x1,d,64x3x1
 # 64x3x1,u,64x3x1,32x3x1,u,32x3x1
@@ -579,13 +648,182 @@ def model_bvae4(zdim, dist):
     observation=obs)
 
 
+# === 2. BiDense VAE
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,1024d4,------,2048d4
+def model_bdvae1(zdim, dist):
+  n_params, obs = observation(dist)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512, name='encoder_proj')
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512, name='decoder_proj'),
+    Reshape([8, 8, 8]),
+    Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d1'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
+  ]
+  bi_latents(2, 1024, None, 4, e_layers, d_layers, 'latents1',
+             layer_type='dense')
+  bi_latents(0, 2048, None, 4, e_layers, d_layers, 'latents2',
+             layer_type='dense')
+  return HierarchicalVAE(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
+
+
+# same as bvae1, but with pre_affine
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,64x8x4,------,32x8x4
+def model_bdvae2(zdim, dist):
+  n_params, obs = observation(dist)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512, name='encoder_proj')
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512, name='decoder_proj'),
+    Reshape([8, 8, 8]),
+    Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d1'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
+  ]
+  bi_latents(2, 64, 8, 4, e_layers, d_layers, 'latents1', pre_affine=True)
+  bi_latents(0, 32, 8, 4, e_layers, d_layers, 'latents2', pre_affine=True)
+  return HierarchicalVAE(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
+
+
 # === 2. Parallel Latents VAE
 
-def model_pvae(zdim, dist):
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,64x8x4,------,32x8x4
+def model_pvae1(zdim, dist):
   n_params, obs = observation(dist)
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512, name='encoder_proj')
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512, name='decoder_proj'),
+    Reshape([8, 8, 8]),
+    Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d1'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
+  ]
+  bi_latents(2, 64, 8, 4, e_layers, d_layers, 'latents1', layer_type='parallel')
+  bi_latents(0, 32, 8, 4, e_layers, d_layers, 'latents2', layer_type='parallel')
   return HierarchicalVAE(
-    encoder=Sequential(encoder(), 'Encoder'),
-    decoder=Sequential(decoder(zdim, n_params), 'Decoder'),
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
+
+
+# latents: 1024-512-256
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,32x8x4,------,4x8x4
+def model_pvae2(zdim, dist):
+  n_params, obs = observation(dist)
+  zdim = zdim * 4
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512, name='encoder_proj')
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512, name='decoder_proj'),
+    Reshape([8, 8, 8]),
+    Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d1'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
+  ]
+  bi_latents(2, 32, 8, 4, e_layers, d_layers, 'latents1', layer_type='parallel')
+  bi_latents(0, 4, 8, 4, e_layers, d_layers, 'latents2', layer_type='parallel')
+  return HierarchicalVAE(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
+    latents=latents(zdim),
+    observation=obs)
+
+
+# latents: 512-512-512
+# 32x3x1,32x4x2,64x3x1,64x4x2
+# 64x4x2,64x3x1,32x4x2,32x3x1
+# ------,32x8x4,------,8x8x4
+def model_pvae3(zdim, dist):
+  n_params, obs = observation(dist)
+  zdim = zdim * 2
+  e_layers = [
+    InputLayer(IMAGE_SHAPE),
+    CenterAt0(),
+    Conv(32, 3, 1, name='e0'),  # (32, 32, 32)
+    Conv(32, 4, 2, name='e1'),  # (16, 16, 32)
+    Conv(64, 3, 1, name='e2'),  # (16, 16, 64)
+    Conv(64, 4, 2, name='e3'),  # (8, 8, 64)
+    Flatten(),
+    Dense(512, name='encoder_proj')
+  ]
+  d_layers = [
+    InputLayer([zdim]),
+    Dense(512, name='decoder_proj'),
+    Reshape([8, 8, 8]),
+    Tonv(64, 4, 2, name='d3'),  # (16, 16, 64)
+    Conv(64, 3, 1, name='d2'),  # (16, 16, 64)
+    Tonv(32, 4, 2, name='d1'),  # (32, 32, 32)
+    Conv(32, 3, 1, name='d0'),  # (32, 32, 32)
+    Conv2D(IMAGE_SHAPE[-1] * n_params, 1, 1)
+  ]
+  bi_latents(2, 32, 8, 4, e_layers, d_layers, 'latents1', layer_type='parallel')
+  bi_latents(0, 8, 8, 4, e_layers, d_layers, 'latents2', layer_type='parallel')
+  return HierarchicalVAE(
+    encoder=Sequential(e_layers, 'Encoder'),
+    decoder=Sequential(d_layers, 'Decoder'),
     latents=latents(zdim),
     observation=obs)
 
@@ -595,9 +833,9 @@ def model_pvae(zdim, dist):
 # ===========================================================================
 def create_vae(args) -> Tuple[VariationalAutoencoder, ImageDataset]:
   dist = 'bernoulli' if args.ds == 'shapes3d' else 'qlogistic'
-  key = f'model_{args.vae}'
+  key = f'model_{args.model}'
   if key not in globals():
-    raise ValueError(f'Cannot find model with name: {args.vae}')
+    raise ValueError(f'Cannot find model with name: {args.model}')
   model = globals()[key](args.zdim, dist)
   model: VariationalAutoencoder
   model.build([None] + IMAGE_SHAPE)
@@ -607,10 +845,6 @@ def create_vae(args) -> Tuple[VariationalAutoencoder, ImageDataset]:
 
 
 def evaluate(model, ds, args):
-  model.load_weights(get_model_path(args),
-                     raise_notfound=True,
-                     verbose=True)
-
   test = ds.create_dataset('test', batch_size=32)
   # === 1. marginalized llk
   n_mcmc = 100
@@ -640,6 +874,7 @@ def main(args: Namespace):
   assert args.ds in ('shapes3d', 'cifar10', 'svhn')
   model, ds = create_vae(args)
   if args.eval:
+    model.load_weights(get_model_path())
     evaluate(model, ds, args)
   else:
     train(model, ds, args)

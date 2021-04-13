@@ -126,9 +126,9 @@ class VAETest(unittest.TestCase):
 
   def test_vanila_vae(self):
     train, test = load_mnist()
-    # vae = VariationalAutoencoder(**create_networks(), analytic=True, name='vae')
-    # vae.build(input_shape)
-    # vae.fit(train, **fit_kw)
+    # model = VariationalAutoencoder(**create_networks(), analytic=True, name='model')
+    # model.build(input_shape)
+    # model.fit(train, **fit_kw)
 
   def test_factor_vae(self):
     train, test = load_mnist()
@@ -136,7 +136,7 @@ class VAETest(unittest.TestCase):
     vae.build(input_shape)
     mllk = tf.reduce_mean([vae.marginal_log_prob(x)[0] for x in test])
     print(mllk)
-    # vae.fit(train, **fit_kw)
+    # model.fit(train, **fit_kw)
 
   # def test_all_models(self):
   #   all_vae = autoencoder.get_vae()
@@ -155,21 +155,21 @@ class VAETest(unittest.TestCase):
   #         print(vae_name, sample_shape)
   #         try:
   #           if isinstance(vae_cls, autoencoder.VariationalAutoencoder):
-  #             vae = vae_cls
+  #             model = vae_cls
   #           else:
-  #             vae = vae_cls(latents=latents)
-  #           params = vae.trainable_variables
-  #           if hasattr(vae, 'discriminator'):
+  #             model = vae_cls(latents=latents)
+  #           params = model.trainable_variables
+  #           if hasattr(model, 'discriminator'):
   #             disc_params = set(
-  #                 id(v) for v in vae.discriminator.trainable_variables)
+  #                 id(v) for v in model.discriminator.trainable_variables)
   #             params = [i for i in params if id(i) not in disc_params]
-  #           s = vae.sample_prior()
-  #           px = vae.decode(s)
-  #           x = vae.sample_data(5)
+  #           s = model.sample_prior()
+  #           px = model.decode(s)
+  #           x = model.sample_data(5)
   #           with tf.GradientTape(watch_accessed_variables=False) as tape:
   #             tape.watch(params)
-  #             px, qz = vae(x, sample_shape=sample_shape)
-  #             elbo = vae.elbo(x, px, qz, return_components=False)
+  #             px, qz = model(x, sample_shape=sample_shape)
+  #             elbo = model.elbo(x, px, qz, return_components=False)
   #           grads = tape.gradient(elbo, params)
   #           for p, g in zip(params, grads):
   #             assert g is not None, \

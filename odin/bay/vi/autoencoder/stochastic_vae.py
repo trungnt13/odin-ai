@@ -77,9 +77,9 @@ class StochasticVAE(BetaVAE):
 
     Example:
     ```
-    vae = factorVAE()
-    x = vae.sample_data()
-    vae_step, discriminator_step = list(vae.train_steps(x))
+    model = factorVAE()
+    x = model.sample_data()
+    vae_step, discriminator_step = list(model.train_steps(x))
     # optimizer VAE with total correlation loss
     with tf.GradientTape(watch_accessed_variables=False) as tape:
       tape.watch(vae_step.parameters)
@@ -125,12 +125,12 @@ class ImputeVAE(BetaVAE):
   ```
   ds = MNIST()
   train = ds.create_dataset(partition='train')
-  vae = ImputeVAE(
+  model = ImputeVAE(
       encoder='mnist',
       outputs=RV((28, 28, 1), 'bern', name="Image"),
       impute_steps=3,
       sequential=True)
-  vae.fit(train, epochs=-1, max_iter=8000, compile_graph=True)
+  model.fit(train, epochs=-1, max_iter=8000, compile_graph=True)
   ```
   """
 

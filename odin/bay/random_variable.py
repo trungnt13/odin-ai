@@ -415,7 +415,7 @@ class RVconf:
                                         **posterior_kwargs)
     ## non-mixture distribution
     else:
-      layer = obl.DistributionDense(event_shape,
+      layer = obl.DistributionDense(event_shape=event_shape,
                                     autoregressive=self.autoregressive,
                                     posterior=distribution_layer,
                                     prior=prior,

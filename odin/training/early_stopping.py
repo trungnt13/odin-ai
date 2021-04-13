@@ -83,11 +83,11 @@ class EarlyStopping:
   --------
   ```python
   def callback():
-    signal = es.update(vae.trainer.last_valid_loss)
+    signal = es.update(model.trainer.last_valid_loss)
     if signal < 0:
-      vae.trainer.terminate()
+      model.trainer.terminate()
     elif signal > 0:
-      vae.save_weights()
+      model.save_weights()
   ```
 
   References

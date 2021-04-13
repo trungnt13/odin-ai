@@ -243,9 +243,9 @@ class FactorVAE(AnnealingVAE):
     -------
 
     ```
-    vae = FactorVAE()
-    x = vae.sample_data()
-    vae_step, discriminator_step = list(vae.train_steps(x))
+    model = FactorVAE()
+    x = model.sample_data()
+    vae_step, discriminator_step = list(model.train_steps(x))
     # optimizer VAE with total correlation loss
     with tf.GradientTape(watch_accessed_variables=False) as tape:
       tape.watch(vae_step.parameters)

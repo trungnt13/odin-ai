@@ -202,7 +202,7 @@ class HierarchicalLatents(Wrapper):
   def kl_divergence(self,
                     analytic: bool = False,
                     reverse: bool = False,
-                    free_bits: float = 0.25,
+                    free_bits: Optional[float] = None,
                     raise_not_init: bool = True) -> tf.Tensor:
     if self._disable:
       return tf.zeros((), dtype=self.dtype)
@@ -424,90 +424,6 @@ class BiConvLatents(HierarchicalLatents):
     return outputs
 
 
-class ParallelLatents(BiConvLatents):
-  """Because information will take the shortest path to flow, it
-  is recommended to set the number of units to be smaller or equal than
-  `z0`
-
-  References
-  ----------
-  Zhao, S., Song, J., Ermon, S., 2017. Learning Hierarchical Features from
-      Generative Models. arXiv:1702.08396 [cs, stat].
-  """
-
-  def build(self, input_shape=None):
-    super(BiConvLatents, self).build(input_shape)
-    if self._disable:
-      return
-    decoder_shape = self.layer.compute_output_shape(input_shape)
-    layer, layer_t = _NDIMS_CONV[self.input_ndim]
-    # === 1. create projection layer
-    assert self.encoder is not None, \
-      'ParallelLatents require encoder to be specified'
-    assert self.encoder.built
-    encoder_shape = decoder_shape
-    # posterior projection
-    self._conv_posterior = layer(**self._network_kw, name='ConvPosterior')
-    self._conv_posterior.build(encoder_shape)
-    # === 2. distribution
-    params_shape = self._conv_posterior.compute_output_shape(decoder_shape)
-    self._dist_posterior = DistributionLambda(
-      make_distribution_fn=partial(_create_dist,
-                                   event_ndims=len(params_shape) - 1,
-                                   dtype=self.dtype),
-      name=f'{self.name}_posterior')
-    self._dist_posterior.build(params_shape)
-    # dynamically infer the shape
-    latents_shape = tf.convert_to_tensor(self._dist_posterior(
-      keras.layers.Input(params_shape[1:]))).shape
-    self._latents_shape = latents_shape[1:]
-    # create the prior
-    self._prior = Independent(
-      Normal(loc=tf.zeros(self.latents_shape, dtype=self.dtype),
-             scale=tf.ones(self.latents_shape, dtype=self.dtype)),
-      reinterpreted_batch_ndims=len(self.latents_shape),
-      name=f'{self.name}_prior')
-    # === 3. final output affine
-    self._conv_out = _upsample_by_conv(
-      layer, layer_t,
-      input_shape=latents_shape,
-      output_shape=decoder_shape,
-      kernel_size=self._conv_posterior.kernel_size,
-      padding=self._conv_posterior.padding,
-      strides=self._conv_posterior.strides)
-    # self._conv_deter = layer(filters=decoder_shape[-1], kernel_size=1,
-    #                          activation=self.layer.activation)
-
-  def call(self, inputs, training=None, mask=None, **kwargs):
-    # === 1. call the layer
-    if 'training' in self._args:
-      kwargs['training'] = training
-    if 'mask' in self._args:
-      kwargs['mask'] = mask
-    hidden_d = self.layer.call(inputs, **kwargs)
-    if self._disable:
-      return hidden_d
-    # === 2. inference
-    if self.is_inference:
-      hidden_e = self.encoder._last_outputs
-      # just stop inference if there is no Encoder state
-      tf.debugging.assert_equal(tf.shape(hidden_e), tf.shape(hidden_d),
-                                f'Shape of inference {hidden_e.shape} and '
-                                f'generative {hidden_d.shape} mismatch. '
-                                f'Change to sampling mode if possible')
-      posterior = self._dist_posterior(self._conv_posterior(hidden_e))
-      self._posterior = posterior
-      outputs = tf.convert_to_tensor(posterior)
-    else:
-      outputs = self.prior.sample(tf.shape(hidden_d)[0])
-    # === 3. projection and combine
-    outputs = self._conv_out(outputs)
-    outputs = self.output_activation(outputs)
-    # outputs = self.concat([outputs, hidden_d])
-    # outputs = self._conv_deter(outputs)
-    return outputs + self.residual_coef * hidden_d
-
-
 class BiDenseLatents(HierarchicalLatents):
   """Bidirectional inference for hierarchical latent variables
 
@@ -695,6 +611,122 @@ class BiDenseLatents(HierarchicalLatents):
     return outputs
 
 
+class ParallelLatents(HierarchicalLatents):
+  """Because information will take the shortest path to flow, it
+  is recommended to set the number of units to be smaller or equal than
+  `z0`
+
+  References
+  ----------
+  Zhao, S., Song, J., Ermon, S., 2017. Learning Hierarchical Features from
+      Generative Models. arXiv:1702.08396 [cs, stat].
+  """
+
+  def __init__(
+      self,
+      layer: Layer,
+      encoder: Optional[Layer] = None,
+      filters: int = 32,
+      kernel_size: Union[int, Sequence[int]] = 4,
+      strides: Union[int, Sequence[int]] = 2,
+      padding: Literal['valid', 'same'] = 'same',
+      conv_kw: Optional[Dict[str, Any]] = None,
+      output_activation: Union[None, 'str', Callable[[Any], Any]] = None,
+      residual_coef: float = 1.0,
+      **kwargs):
+    super().__init__(layer=layer, **kwargs)
+    if encoder is not None:
+      encoder._old_call = encoder.call
+      encoder.call = MethodType(_call, encoder)
+    self.encoder = encoder
+    self.residual_coef = residual_coef
+    if output_activation is None and hasattr(self.layer, 'activation'):
+      output_activation = self.layer.activation
+    self.output_activation = keras.activations.get(output_activation)
+    # === 1. for creating layer
+    self._network_kw = dict(
+      # parameters for loc and scale
+      filters=2 * filters,
+      kernel_size=kernel_size,
+      strides=strides,
+      padding=padding)
+    if conv_kw is not None:
+      self._network_kw.update(conv_kw)
+    # === 2. others
+    self._conv_posterior = None
+    self._conv_out = None
+    self._dist_posterior = None
+    self.concat = keras.layers.Concatenate(axis=-1)
+
+  @property
+  def is_inference(self) -> bool:
+    return (not self._is_sampling and
+            self.encoder is not None and
+            hasattr(self.encoder, '_last_outputs') and
+            self.encoder._last_outputs is not None)
+
+  def build(self, input_shape=None):
+    super().build(input_shape)
+    if self._disable:
+      return
+    decoder_shape = self.layer.compute_output_shape(input_shape)
+    layer, layer_t = _NDIMS_CONV[self.input_ndim]
+    # === 1. create projection layer
+    assert self.encoder is not None, \
+      'ParallelLatents require encoder to be specified'
+    # posterior projection (assume encoder shape and decoder shape the same)
+    self._conv_posterior = layer(**self._network_kw, name='ConvPosterior')
+    self._conv_posterior.build(decoder_shape)
+    # === 2. distribution
+    params_shape = self._conv_posterior.compute_output_shape(decoder_shape)
+    self._dist_posterior = DistributionLambda(
+      make_distribution_fn=partial(_create_dist,
+                                   event_ndims=len(params_shape) - 1,
+                                   dtype=self.dtype),
+      name=f'{self.name}_posterior')
+    self._dist_posterior.build(params_shape)
+    # dynamically infer the shape
+    latents_shape = tf.convert_to_tensor(self._dist_posterior(
+      keras.layers.Input(params_shape[1:]))).shape
+    self._latents_shape = latents_shape[1:]
+    # create the prior N(0,I)
+    self._prior = Independent(
+      Normal(loc=tf.zeros(self.latents_shape, dtype=self.dtype),
+             scale=tf.ones(self.latents_shape, dtype=self.dtype)),
+      reinterpreted_batch_ndims=len(self.latents_shape),
+      name=f'{self.name}_prior')
+    # === 3. final output affine
+    self._conv_out = _upsample_by_conv(
+      layer, layer_t,
+      input_shape=latents_shape,
+      output_shape=decoder_shape,
+      kernel_size=self._conv_posterior.kernel_size,
+      padding=self._conv_posterior.padding,
+      strides=self._conv_posterior.strides)
+
+  def call(self, inputs, training=None, mask=None, **kwargs):
+    hidden_d = super().call(inputs, training=training, mask=mask, **kwargs)
+    if self._disable:
+      return hidden_d
+    # === 2. inference
+    if self.is_inference:
+      hidden_e = self.encoder._last_outputs
+      # just stop inference if there is no Encoder state
+      tf.debugging.assert_equal(tf.shape(hidden_e), tf.shape(hidden_d),
+                                f'Shape of inference {hidden_e.shape} and '
+                                f'generative {hidden_d.shape} mismatch. '
+                                f'Change to sampling mode if possible')
+      posterior = self._dist_posterior(self._conv_posterior(hidden_e))
+      self._posterior = posterior
+      outputs = tf.convert_to_tensor(posterior)
+    else:
+      outputs = self.prior.sample(tf.shape(hidden_d)[0])
+    # === 3. projection and combine
+    outputs = self._conv_out(outputs)
+    outputs = self.output_activation(outputs)
+    return outputs + self.residual_coef * hidden_d
+
+
 # ===========================================================================
 # Hierarchical VAE
 # ===========================================================================
@@ -837,134 +869,6 @@ class HierarchicalVAE(AnnealingVAE):
       kl[f'kl_{layer.name}'] = self.beta * layer.kl_divergence(
         analytic=self.analytic, reverse=self.reverse,
         free_bits=self.free_bits)
-    return llk, kl
-
-
-# ===========================================================================
-# HVAE
-# ===========================================================================
-class HVAE(AnnealingVAE):
-  """ Hierarchical VAE
-
-  References
-  ----------
-  Tomczak, J.M., Welling, M., 2018. VAE with a VampPrior.
-      arXiv:1705.07120 [cs, stat].
-  """
-
-  def __init__(
-      self,
-      latents: RVconf = RVconf(32, 'mvndiag', projection=True, name="latents1"),
-      ladder_latents: List[int] = [16],
-      connection: NetConf = NetConf(300, activation='relu'),
-      name: str = 'HierarchicalVAE',
-      **kwargs,
-  ):
-    super().__init__(latents=latents, name=name, **kwargs)
-    ## create the hierarchical latents
-    self.ladder_q = [
-      RVconf(units, 'mvndiag', projection=True,
-             name=f'ladder_q{i}').create_posterior()
-      for i, units in enumerate(ladder_latents)
-    ]
-    self.ladder_p = [
-      RVconf(units, 'mvndiag', projection=True,
-             name=f'ladder_p{i}').create_posterior()
-      for i, units in enumerate(ladder_latents)
-    ]
-    self.n_ladder = len(ladder_latents)
-    ## create the connections
-    self.qz_to_qz = [
-      connection.create_network(name=f'qz{i}_to_qz{i + 1}')
-      for i in range(self.n_ladder)
-    ]
-    self.qz_to_pz = [
-      connection.create_network(name=f'qz{i}_to_pz{i + 1}')
-      for i in range(self.n_ladder)
-    ]
-    self.qz_to_px = [
-      connection.create_network(name=f'qz{i}_to_px')
-      for i in range(self.n_ladder + 1)
-    ]
-    ## other layers
-    self.ladder_encoders = [
-      keras.models.clone_model(self.encoder) for _ in range(self.n_ladder)
-    ]
-    self.concat = keras.layers.Concatenate(axis=-1)
-    units = sum(
-      np.prod(i.event_shape)
-      for i in as_tuple(self.ladder_q) + as_tuple(self.latents))
-    self.pre_decoder = keras.layers.Dense(units,
-                                          activation='linear',
-                                          name='pre_decoder')
-
-  def encode(self,
-             inputs,
-             training=None,
-             mask=None,
-             only_encoding=False,
-             **kwargs):
-    Q = super().encode(inputs,
-                       training=training,
-                       mask=mask,
-                       only_encoding=only_encoding,
-                       **kwargs)
-    Q = list(as_tuple(Q))
-    for i, (f_qz, f_e) in enumerate(zip(self.ladder_q, self.ladder_encoders)):
-      h_e = f_e(inputs, training=training, mask=mask)
-      if only_encoding:
-        Q.append(h_e)
-      else:
-        h_z = self.qz_to_qz[i](tf.convert_to_tensor(Q[-1]),
-                               training=training,
-                               mask=mask)
-        qz_x = f_qz(self.concat([h_e, h_z]),
-                    training=training,
-                    mask=mask,
-                    sample_shape=self.sample_shape)
-        Q.append(qz_x)
-    return tuple(Q)
-
-  def decode(self,
-             latents,
-             training=None,
-             mask=None,
-             only_decoding=False,
-             **kwargs):
-    h = []
-    for qz, fz in zip(latents, self.qz_to_px):
-      h.append(fz(tf.convert_to_tensor(qz), training=training, mask=mask))
-    h = self.concat(h)
-    h = self.pre_decoder(h, training=training)
-    px_z = super().decode(h,
-                          training=training,
-                          mask=mask,
-                          only_decoding=only_decoding,
-                          **kwargs)
-    if only_decoding:
-      return px_z
-    ## p(z_i|z_{i-1})
-    P = []
-    for i, f_pz in enumerate(self.ladder_p):
-      h_z = self.qz_to_pz[i](tf.convert_to_tensor(latents[i]),
-                             training=training,
-                             mask=mask)
-      pz_zi = f_pz(h_z, training=training, mask=mask)
-      P.append(pz_zi)
-    return as_tuple(px_z) + tuple(P)
-
-  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
-    llk, kl = super().elbo_components(inputs=inputs,
-                                      mask=mask,
-                                      training=training)
-    P, Q = self.last_outputs
-    for i, (pz, qz) in enumerate(zip(P[-self.n_ladder:], Q[-self.n_ladder:])):
-      d = self.beta * kl_divergence(q=qz,
-                                    p=pz,
-                                    analytic=self.analytic,
-                                    free_bits=self.free_bits,
-                                    reverse=self.reverse)
-      kl[f'kl_ladder{i}'] = d
     return llk, kl
 
 
