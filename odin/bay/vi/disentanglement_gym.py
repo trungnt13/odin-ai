@@ -1,7 +1,7 @@
 import contextlib
 import random
-from collections import OrderedDict
-from typing import Dict, List, Optional, Tuple, Union, Sequence, Callable
+from collections import OrderedDict, defaultdict
+from typing import Dict, List, Optional, Tuple, Union, Sequence, Callable, Any
 
 import numpy as np
 import tensorflow as tf
@@ -41,6 +41,10 @@ DataPartition = Literal['train', 'valid', 'test']
 CorrelationMethod = Literal['spearman', 'pearson', 'lasso', 'mi', 'importance']
 ConvertFunction = Callable[[List[Distribution]], tf.Tensor]
 Axes = Union[None, plt.Axes, Sequence[int], int]
+FactorFilter = Union[Callable[[Any], bool],
+                     Dict[Union[str, int], int],
+                     float, int, str,
+                     None]
 
 
 def concat_mean(dists: List[Distribution]) -> tf.Tensor:
@@ -159,6 +163,57 @@ def _to_image(gym, X, y, grids, dpi, ds, dsname):
   return image
 
 
+def _plot_latent_stats(mean, stddev, kld=None, weights=None, ax=None):
+  # === 2. plotting
+  ax = vs.to_axis(ax)
+  l1 = ax.plot(mean,
+               label='mean',
+               linewidth=0.5,
+               marker='o',
+               markersize=3,
+               color='r',
+               alpha=0.5)
+  l2 = ax.plot(stddev,
+               label='stddev',
+               linewidth=0.5,
+               marker='^',
+               markersize=3,
+               color='g',
+               alpha=0.5)
+  ax.set_ylim(-1.5, 1.5)
+  ax.tick_params(axis='y', colors='r')
+  ax.set_ylabel('q(z|x) Mean', color='r')
+  ax.grid(True)
+  lines = l1 + l2
+  ## plotting the weights
+  if kld is not None or weights is not None:
+    ax = ax.twinx()
+  if kld is not None:
+    lines += plt.plot(kld,
+                      label='KL(q|p)',
+                      linestyle='--',
+                      color='y',
+                      marker='s',
+                      markersize=2.5,
+                      linewidth=1.0,
+                      alpha=0.5)
+  if weights is not None:
+    l3 = ax.plot(weights,
+                 label='weights',
+                 linewidth=1.0,
+                 linestyle='--',
+                 marker='s',
+                 markersize=2.5,
+                 color='b',
+                 alpha=0.5)
+    ax.tick_params(axis='y', colors='b')
+    ax.grid(False)
+    ax.set_ylabel('L2-norm weights', color='b')
+    lines += l3
+  ax.legend(lines, [l.get_label() for l in lines], fontsize=8)
+  return ax
+
+
 def _boostrap_sampling(
     model: VariationalModel,
     inputs: List[np.ndarray],
@@ -265,6 +320,23 @@ try:
     nopython=True)
 except ImportError:
   pass
+
+
+def _create_factor_filter(known: FactorFilter,
+                          factor_names: List[str]
+                          ) -> Callable[[Any], bool]:
+  if callable(known):
+    return known
+  if known is None:
+    known = {}
+  if isinstance(known, dict):
+    known = {
+      factor_names.index(k) if isinstance(k, string_types) else int(k): v
+      for k, v in known.items()
+    }
+    return lambda x: all(x[k] == v for k, v in known.items())
+  else:
+    return lambda x: x == known
 
 
 class GroundTruth:
@@ -392,7 +464,7 @@ class GroundTruth:
 
   def sample_factors(
       self,
-      known_factors: Optional[Dict[Union[str, int], int]] = None,
+      factor_filter: FactorFilter = None,
       n_per_factor: int = 16,
       replace: bool = False,
       seed: int = 1) -> Tuple[np.ndarray, np.ndarray]:
@@ -400,7 +472,7 @@ class GroundTruth:
 
     Parameters
     ----------
-    known_factors : A Dictionary, mapping from factor_names or factor_index to
+    factor_filter : A Dictionary, mapping from factor_names or factor_index to
         factor_value, this establishes a list of known
         factors to sample from the unknown factors.
     n_per_factor : An Integer
@@ -417,26 +489,14 @@ class GroundTruth:
     indices : list of Integer
         the indices if sampled factors
     """
-    if known_factors is None:
-      known_factors = {}
-    random_state = np.random.RandomState(seed=seed)
-    if not isinstance(known_factors, dict):
-      known_factors = dict(known_factors)
-    known_factors = {
-      self.factor_names.index(k)
-      if isinstance(k, string_types) else int(k): v \
-      for k, v in known_factors.items()
-    }
-    # make sure value of known factor is the actual label
-    for idx, val in list(known_factors.items()):
-      assert val in self.unique_values
-      known_factors[idx] = val
+    factor_filter = _create_factor_filter(factor_filter, self.factor_names)
     # all samples with similar known factors
     samples = [(idx, x[None, :])
                for idx, x in enumerate(self._discrete_factors)
-               if all(x[k] == v for k, v in known_factors.items())]
-    indices = random_state.choice(len(samples), size=int(n_per_factor),
-                                  replace=replace)
+               if factor_filter(x)]
+    rand = np.random.RandomState(seed)
+    indices = rand.choice(len(samples), size=int(n_per_factor),
+                          replace=replace)
     factors = np.vstack([samples[i][1] for i in indices])
     return factors, np.array([samples[i][0] for i in indices])
 
@@ -790,50 +850,7 @@ class DisentanglementGym:
           w_d = tf.linalg.norm(tf.reshape(w, (w.shape[0], -1)), axis=1).numpy()
           break
     # === 2. plotting
-    ax = vs.to_axis(ax)
-    l1 = ax.plot(mean,
-                 label='mean',
-                 linewidth=0.5,
-                 marker='o',
-                 markersize=3,
-                 color='r',
-                 alpha=0.5)
-    l2 = ax.plot(stddev,
-                 label='stddev',
-                 linewidth=0.5,
-                 marker='^',
-                 markersize=3,
-                 color='g',
-                 alpha=0.5)
-    ax.set_ylim(-1.5, 1.5)
-    ax.tick_params(axis='y', colors='r')
-    ax.set_ylabel('q(z|x) Mean', color='r')
-    ax.grid(True)
-    lines = l1 + l2
-    ## plotting the weights
-    ax = ax.twinx()
-    lines += plt.plot(kld,
-                      label='KL(q|p)',
-                      linestyle='--',
-                      color='y',
-                      marker='s',
-                      markersize=2.5,
-                      linewidth=1.0,
-                      alpha=0.5)
-    if w_d is not None:
-      l3 = ax.plot(w_d,
-                   label='weights',
-                   linewidth=1.0,
-                   linestyle='--',
-                   marker='s',
-                   markersize=2.5,
-                   color='b',
-                   alpha=0.5)
-      ax.tick_params(axis='y', colors='b')
-      ax.grid(False)
-      ax.set_ylabel('L2-norm weights', color='b')
-      lines += l3
-    ax.legend(lines, [l.get_label() for l in lines], fontsize=8)
+    ax = _plot_latent_stats(mean, stddev, kld, w_d, ax)
     ax.set_title(f'{title} Z{latent_idx}')
     return ax
 
@@ -963,7 +980,7 @@ class DisentanglementGym:
     n_top_latents = min(self.n_latents, n_top_latents)
     if known_factors is not None and len(known_factors) > 0:
       factors, idx = self.groundtruth.sample_factors(
-        known_factors=known_factors,
+        factor_filter=known_factors,
         n_per_factor=1,
         seed=seed)
       factors = factors[0]
@@ -1136,6 +1153,97 @@ class DisentanglementGym:
     fig.suptitle(f"{method} {title}", fontsize=20)
     fig.tight_layout(rect=[0.0, 0.03, 1.0, 0.97])
     return fig
+
+  def plot_interpolation(self,
+                         factor1: FactorFilter,
+                         factor2: FactorFilter,
+                         n_points: int = 10,
+                         latent_idx: int = 0) -> Tuple[plt.Figure, plt.Figure]:
+    tf.random.set_seed(self.seed)
+    f1, idx1 = self.groundtruth.sample_factors(factor1,
+                                               n_per_factor=1,
+                                               seed=self.seed)
+    f2, idx2 = self.groundtruth.sample_factors(factor2,
+                                               n_per_factor=1,
+                                               seed=self.seed)
+    idx1, idx2 = idx1[0], idx2[0]
+    x1 = self.x_true[idx1:idx1 + 1]
+    x2 = self.x_true[idx2:idx2 + 1]
+    _, q1 = self.model(x1)
+    _, q2 = self.model(x2)
+
+    # applying interpolation
+    images = defaultdict(list)
+    latents = []
+    alpha = []
+    for a in np.linspace(0.01, 0.99, num=n_points):
+      alpha.append(a)
+      # mixing
+      x = x2 * a + (1. - a) * x1
+      images['mixing'].append(x)
+      p, q = self.model(x)
+      images['mixing_rec'].append(as_tuple(p)[0].mean())
+      latents.append(q)
+      # latent interpolation
+      z = [z2 * a + (1 - a) * z1 for z1, z2 in zip(as_tuple(q1), as_tuple(q2))]
+      if not isinstance(q1, (tuple, list)):
+        z = z[0]
+      p = self.model.decode(z)
+      images['mixing_latents'].append(as_tuple(p)[0].mean())
+    # plotting latents
+    ids = np.argsort(as_tuple(q1)[latent_idx].stddev().numpy().ravel())
+
+    def stats(dist):
+      d = as_tuple(dist)[latent_idx]
+      mean = d.mean().numpy()[0]
+      std = d.stddev().numpy()[0]
+      return mean[ids], std[ids]
+
+    fig_latents = plt.figure(figsize=(8, 5))
+    m, s = stats(q1)
+    plt.plot(m, color='green', label=r'$\mu_{x_1}$', marker='s', markersize=2,
+             linewidth=0.5, alpha=0.5)
+    plt.plot(s, color='green', label=r'$\sigma_{x_1}$', linestyle='--',
+             linewidth=0.6, alpha=0.9)
+    m, s = stats(q2)
+    plt.plot(m, color='red', label=r'$\mu_{x_2}$', marker='s', markersize=2,
+             linewidth=0.5, alpha=0.5)
+    plt.plot(s, color='red', label=r'$\sigma_{x_2}$', linestyle='--',
+             linewidth=0.6, alpha=0.9)
+    cmap = plt.get_cmap('binary')
+    for i, qz in enumerate(latents):
+      m, s = stats(qz)
+      a = alpha[i]
+      color = cmap(a)
+      line = plt.plot(m, marker='.', markersize=4 + a * 10, linewidth=0,
+                      markeredgewidth=0, label=rf'$\mu$-{a:.2f}',
+                      color=color, alpha=0.6)
+      plt.plot(s, linewidth=0.5, alpha=0.5, label=rf'$\sigma$-{a:.2f}',
+               color=line[0].get_color())
+    plt.legend(fontsize=6, ncol=2, bbox_to_anchor=(1.05, 1), loc='upper left')
+    # plotting images
+    n_row = len(images)
+    n_col = n_points
+    fig_reconstruction = plt.figure(figsize=(1.5 * n_col, 1.5 * n_row))
+    count = 1
+    for row, (name, imgs) in enumerate(images.items()):
+      for col, img in enumerate(imgs):
+        ax = plt.subplot(n_row, n_col, count)
+        img = _prepare_images(img, normalize=True)[0]
+        ax.imshow(img, cmap='gray' if img.ndim == 2 else None)
+        ax.tick_params('both',
+                       bottom=False, top=False, left=False, right=False,
+                       labelbottom=False, labeltop=False,
+                       labelleft=False, labelright=False)
+        ax.grid(False)
+        if col == 0:
+          ax.set_ylabel(name)
+        if row == 0:
+          ax.set_title(f'a={alpha[col]:.2f}')
+        count += 1
+    plt.tight_layout()
+    # plotting latents
+    return fig_reconstruction, fig_latents
 
   def mig_score(self,
                 convert_fn: ConvertFunction = concat_mean,

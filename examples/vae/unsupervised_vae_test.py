@@ -296,6 +296,8 @@ def model_gaussianout(args: Namespace):
 def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
   gym = DisentanglementGym(args.ds, model)
   with gym.run_model(n_samples=200, partition='test'):
+    # gym.plot_latents_stats()
+    gym.plot_interpolation(factor1=0, factor2=5)
     # print(gym.relative_disentanglement_strength())
     # print(gym.total_correlation())
     # print(gym.elbo())
@@ -313,7 +315,7 @@ def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
     # gym.plot_reconstruction_images()
     # gym.plot_prior_sampling()
   from odin import visual as vs
-  vs.plot_save('/tmp/tmp.png')
+  vs.plot_save('/tmp/tmp.pdf')
 
 
 def main(args: Namespace):
