@@ -2,7 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 import os
 from collections import defaultdict
-from typing import List, Optional, Type, Union
+from typing import List, Optional, Type, Union, Tuple
 from typing_extensions import Literal
 
 import numpy as np
@@ -26,11 +26,11 @@ from tensorflow_probability.python.distributions import Distribution
 from tqdm import tqdm
 
 __all__ = [
-    'separated_attr_predictability',
-    'importance_matrix',
-    'dci_scores',
-    'beta_vae_score',
-    'factor_vae_score',
+  'separated_attr_predictability',
+  'importance_matrix',
+  'dci_scores',
+  'beta_vae_score',
+  'factor_vae_score',
 ]
 
 
@@ -71,7 +71,7 @@ def completeness_score(matrix):
     matrix : is of shape `[n_latents, n_factors]`.
   """
   per_factor = 1. - sp.stats.entropy(
-      matrix + 1e-11, base=matrix.shape[0], axis=0)
+    matrix + 1e-11, base=matrix.shape[0], axis=0)
   if matrix.sum() == 0.:
     matrix = np.ones_like(matrix)
   factor_importance = matrix.sum(axis=0) / matrix.sum()
@@ -81,31 +81,35 @@ def completeness_score(matrix):
 def importance_matrix(
     repr_train: Union[Distribution, tf.Tensor, np.ndarray],
     factor_train: Union[tf.Tensor, np.ndarray],
-    repr_test: Optional[Union[Distribution, tf.Tensor, np.ndarray]] = None,
-    factor_test: Optional[Union[tf.Tensor, np.ndarray]] = None,
+    repr_test: Union[None, Distribution, tf.Tensor, np.ndarray] = None,
+    factor_test: Union[None, tf.Tensor, np.ndarray] = None,
     test_size: float = 0.2,
     seed: int = 1,
     verbose: bool = False,
     n_jobs: Optional[int] = 4,
-    cache_key: Optional[str] = None,
-):
+    cache_key: Optional[str] = None) -> Tuple[np.ndarray, float, float]:
   """Using Tree Classifier to estimate the importance of each
   representation for each factor.
 
   Parameters
   -----------
   repr_train, repr_test : a Matrix `(n_samples, n_features)`
-    input features for training the classifier
+      input features for training the classifier
   factor_train, factor_test : a Matrix `(n_samples, n_factors)`
-    discrete labels for the classifier
+      discrete labels for the classifier
+  test_size : float
+      if test data is not given, use train test split for training the tree
 
   Returns
   --------
-  importance_matrix : a Matrix of shape `(n_features, n_factors)`
+  importance_matrix : a Matrix of shape `[n_latents, n_factors]`
+      importance matrix
   train accuracy : a Scalar
+      accuracy for training data
   test accuracy : a Scalar
+      accuracy for testing data
   """
-  ## check the cahce
+  ## check the cache
   if cache_key is not None and cache_key in _cached_importance_matrix:
     return _cached_importance_matrix[cache_key]
   ## preprocess data
@@ -117,19 +121,19 @@ def importance_matrix(
   ## split the datasets
   if repr_test is None or factor_test is None:
     repr_train, repr_test, factor_train, factor_test = train_test_split(
-        repr_train, factor_train, test_size=0.2, random_state=seed)
+      repr_train, factor_train, test_size=test_size, random_state=seed)
   repr_train = np.asarray(repr_train)
   factor_train = np.asarray(factor_train)
 
-  def _train(factor_idx):
+  def _train(f_idx):
     model = fast_gbtree_classifier(X=repr_train,
-                                   y=factor_train[:, factor_idx],
+                                   y=factor_train[:, f_idx],
                                    random_state=seed,
                                    n_jobs=n_jobs)
-    feat = np.abs(model.feature_importances_)
-    train = np.mean(model.predict(repr_train) == factor_train[:, factor_idx])
-    test = np.mean(model.predict(repr_test) == factor_test[:, factor_idx])
-    return factor_idx, feat, train, test
+    mat = np.abs(model.feature_importances_)
+    trn_acc = np.mean(model.predict(repr_train) == factor_train[:, f_idx])
+    tst_acc = np.mean(model.predict(repr_test) == factor_test[:, f_idx])
+    return f_idx, mat, trn_acc, tst_acc
 
   # ====== compute importance based on gradient boosted trees ====== #
   matrix = np.zeros(shape=[n_latents, n_factors], dtype=np.float64)
@@ -241,7 +245,7 @@ def separated_attr_predictability(
   ## split the datasets
   if repr_test is None or factor_test is None:
     repr_train, repr_test, factor_train, factor_test = train_test_split(
-        repr_train, factor_train, test_size=0.2, random_state=seed)
+      repr_train, factor_train, test_size=0.2, random_state=seed)
   # ====== compute the score matrix ====== #
   score_matrix = np.zeros([n_latents, n_factors])
   for i in range(n_latents):
@@ -251,7 +255,7 @@ def separated_attr_predictability(
       if continuous_factors:
         # Attribute is considered continuous.
         cov_x_i_y_j = np.cov(x_i, y_j, ddof=1)
-        cov_x_y = cov_x_i_y_j[0, 1]**2
+        cov_x_y = cov_x_i_y_j[0, 1] ** 2
         var_x = cov_x_i_y_j[0, 0]
         var_y = cov_x_i_y_j[1, 1]
         if var_x > 1e-12:
@@ -270,7 +274,7 @@ def separated_attr_predictability(
         classifier.fit(normalizer.fit_transform(np.expand_dims(x_i, axis=-1)),
                        y_j)
         pred = classifier.predict(
-            normalizer.transform(np.expand_dims(x_i_test, axis=-1)))
+          normalizer.transform(np.expand_dims(x_i_test, axis=-1)))
         score_matrix[i, j] = np.mean(pred == y_j_test)
         del classifier
   # ====== compute_avg_diff_top_two ====== #
@@ -308,7 +312,7 @@ def _sampling_helper(representations: tfd.Distribution,
                      strategy: Literal['betavae', 'factorvae'],
                      desc: str = "Scoring",
                      **kwargs):
-  assert isinstance(representations, tfd.Distribution),\
+  assert isinstance(representations, tfd.Distribution), \
     f"representations must be instance of Distribution, but given: {type(representations)}"
   ## arguments
   size = representations.batch_shape[0]

@@ -281,7 +281,7 @@ def evaluate(vae: VariationalAutoencoder,
     images = vae.sample_traverse(x_travs[i:i + 1],
                                  min_val=-np.min(z_test[0].mean()),
                                  max_val=np.max(z_test[0].mean()),
-                                 n_top_latents=n_top_latents,
+                                 n_best_latents=n_top_latents,
                                  n_traverse_points=n_traverse_points,
                                  mode='linear')
     images = as_tuple(images)[0]

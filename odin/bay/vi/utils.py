@@ -270,8 +270,8 @@ def permute_dims(z):
 
 def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
                   feature_indices: Optional[Sequence[int]] = None,
-                  min_val: int = -2.0,
-                  max_val: int = 2.0,
+                  min_val: float = -2.0,
+                  max_val: float = 2.0,
                   n_traverse_points: int = 11,
                   mode: Literal['linear', 'quantile', 'gaussian'] = 'linear'
                   ) -> np.ndarray:

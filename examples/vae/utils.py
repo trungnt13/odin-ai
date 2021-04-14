@@ -34,14 +34,8 @@ np.random.seed(1)
 tf.random.set_seed(1)
 
 __all__ = [
-  'tsne_transform',
   'prepare_images',
   'prepare_labels',
-  'make_prediction',
-  'plot_reconstruction_images',
-  'plot_latents_pairs',
-  'plot_scatter',
-  'plot_prior_sampling',
   'save_figs',
   'set_cfg',
   'get_dir',
@@ -89,18 +83,6 @@ def get_ymean(py: Batchwise) -> np.ndarray:
       y = p.mode() if isinstance(p, Categorical) else p.mean()
     y_mean.append(y)
   return tf.concat(y_mean, 0).numpy()
-
-
-def tsne_transform(X: Union[Distribution, np.ndarray, tf.Tensor],
-                   args: Namespace) -> np.ndarray:
-  if isinstance(X, Distribution):
-    X = X.mean()
-  X = Pipeline([
-    ('zscore', StandardScaler()),
-    ('pca', PCA(min(X.shape[1], 512), random_state=args.seed))]
-  ).fit_transform(X)
-  return DimReduce.TSNE(X, n_components=2, random_state=args.seed,
-                        framework='sklearn')
 
 
 def prepare_labels(y_true: np.ndarray,
@@ -155,237 +137,9 @@ def prepare_images(x, normalize=False):
   return x
 
 
-def make_prediction(
-    args: Namespace,
-    vae: VariationalModel,
-    partition: Literal['train', 'valid', 'test'] = 'test',
-    take_count: int = -1,
-    n_images: int = 36,
-    verbose: bool = True
-) -> Tuple[float, float,
-           np.ndarray, np.ndarray, np.ndarray,
-           Optional[Distribution],
-           List[Distribution], List[Distribution]]:
-  """Generate output of model for given dataset
-
-  Returns
-  -------
-  llk_x, llk_y, x_org, x_rec, y_true, y_pred, all_qz, all_pz
-  """
-  rand: np.random.RandomState = np.random.RandomState(seed=args.seed)
-  dataset = _DS[args.ds]
-  ds = dataset.create_dataset(partition,
-                              label_percent=1.0,
-                              batch_size=int(args.bs * 1.5))
-  ds = ds.take(take_count)
-  progress = tqdm(ds, disable=not verbose)
-  llk_x, llk_y = [], []
-  y_true, y_pred = [], []
-  x_org, x_rec = [], []
-  Q_zs = []
-  P_zs = []
-  for x, y in progress:
-    P, Q = vae(x, training=False)
-    P = as_tuple(P)
-    Q, Q_prior = vae.get_latents(return_prior=True)
-    Q = as_tuple(Q)
-    Q_prior = as_tuple(Q_prior)
-    y_true.append(y)
-    px = P[0]
-    # semi-supervised
-    if len(P) > 1:
-      py = P[-1]
-      y_pred.append(to_dist(py))
-      if y.shape[1] == py.event_shape[0]:
-        llk_y.append(py.log_prob(y))
-    Q_zs.append(to_dist(Q))
-    P_zs.append(to_dist(Q_prior))
-    llk_x.append(px.log_prob(x))
-    # for the reconstruction
-    if rand.uniform() < 0.005 or len(x_org) < 2:
-      x_org.append(x)
-      x_rec.append(px.mean())
-  # log-likelihood
-  llk_x = tf.reduce_mean(tf.concat(llk_x, axis=0)).numpy()
-  llk_y = tf.reduce_mean(tf.concat(llk_y, axis=0)).numpy() \
-    if len(llk_y) > 0 else -np.inf
-  # latents
-  n_latents = len(Q_zs[0])
-  all_qz = [Batchwise([z[i] for z in Q_zs]) for i in range(n_latents)]
-  all_pz = [Batchwise([z[i] for z in P_zs])
-            if len(P_zs[0][i].batch_shape) > 0 else
-            P_zs[0][i]
-            for i in range(n_latents)]
-  # reconstruction
-  x_org = tf.concat(x_org, axis=0).numpy()
-  x_rec = tf.concat(x_rec, axis=0).numpy()
-  ids = rand.permutation(x_org.shape[0])
-  x_org = x_org[ids][:n_images]
-  x_rec = x_rec[ids][:n_images]
-  x_rec = prepare_images(x_rec, normalize=True)
-  x_org = prepare_images(x_org, normalize=False)
-  # labels
-  y_true = tf.concat(y_true, axis=0).numpy()
-  if len(y_pred) > 0:
-    y_pred = Batchwise(y_pred, name='LabelsTest')
-  else:
-    y_pred = None
-  return llk_x, llk_y, \
-         x_org, x_rec, \
-         y_true, y_pred, \
-         all_qz, all_pz
-
-
 # ===========================================================================
 # Helper for plotting
 # ===========================================================================
-def plot_reconstruction_images(org: np.ndarray, rec: np.ndarray, title: str):
-  fig = plt.figure(figsize=(12, 7))
-  n_images = org.shape[0]
-  n_rows = int(np.sqrt(n_images))
-  vs.plot_images(org, grids=(n_rows, n_rows), ax=(1, 2, 1),
-                 title=f'[{title}]Original')
-  vs.plot_images(rec, grids=(n_rows, n_rows), ax=(1, 2, 2),
-                 title=f'[{title}]Reconstructed')
-  plt.tight_layout()
-  return fig
-
-
-def plot_latents_traverse(x: np.ndarray, model: VariationalModel,
-                          args: Namespace):
-  x_travs = x
-  if x_travs.ndim == 3:  # grayscale image
-    x_travs = np.expand_dims(x_travs, -1)
-  else:  # color image
-    x_travs = np.transpose(x_travs, (0, 2, 3, 1))
-  rand = np.random.RandomState(seed=args.seed)
-  x_travs = x_travs[rand.permutation(x_travs.shape[0])]
-  n_visual_samples = 5
-  n_traverse_points = 21
-  n_top_latents = 10
-  plt.figure(figsize=(8, 3 * n_visual_samples))
-  for i in range(n_visual_samples):
-    images = model.sample_traverse(x_travs[i:i + 1],
-                                   min_val=-np.min(z_test[0].mean()),
-                                   max_val=np.max(z_test[0].mean()),
-                                   n_top_latents=n_top_latents,
-                                   n_traverse_points=n_traverse_points,
-                                   mode='linear')
-    images = as_tuple(images)[0]
-    images = _prepare_images(images.mean().numpy(), normalize=True)
-    vs.plot_images(images, grids=(n_top_latents, n_traverse_points),
-                   ax=(n_visual_samples, 1, i + 1))
-    if i == 0:
-      plt.title('Latents traverse')
-  plt.tight_layout()
-
-
-def plot_prior_sampling(model: VariationalModel, args: Namespace):
-  images = model.sample_observation(n=args.images, seed=args.seed)
-  images = as_tuple(images)[0]
-  images = prepare_images(images.mean().numpy(), normalize=True)
-  n_rows = int(np.sqrt(args.images))
-  fig = plt.figure(figsize=(5, 5), dpi=args.dpi)
-  vs.plot_images(images, grids=(n_rows, n_rows), title='Sampled')
-  return fig
-
-
-def plot_latents_pairs(z: np.ndarray,
-                       f: np.ndarray,
-                       correlation: np.ndarray,
-                       args: Namespace):
-  """Plot pair of `the two most correlated latent dimension` and each
-  `factor`.
-
-  Parameters
-  ----------
-  z : matrix shape [n_samples, zdim]
-  f : matrix shape [n_samples, n_factors]
-  correlation : matrix shape [zdim, n_factors]
-  args : parsed arguments
-
-  """
-  n_latents, n_factors = correlation.shape
-  correlation = np.abs(correlation)
-  assert z.shape[1] == n_latents, \
-    f'z={z.shape} f={f.shape} corr={correlation.shape}'
-  assert f.shape[1] == n_factors, \
-    f'z={z.shape} f={f.shape} corr={correlation.shape}'
-  assert z.shape[0] == f.shape[0], \
-    f'z={z.shape} f={f.shape} corr={correlation.shape}'
-  ds = _DS[args.ds]
-  labels = ds.labels
-  ## shuffling
-  rand = np.random.RandomState(seed=args.seed)
-  ids = rand.permutation(z.shape[0])
-  z = np.asarray(z)[ids][:args.points]
-  f = np.asarray(f)[ids][:args.points]
-  ## find the best latents for each labels
-  f2z = {f_idx: z_idx
-         for f_idx, z_idx in enumerate(np.argmax(correlation, axis=0))}
-  ## special cases
-  selected_labels = set(labels)
-  n_pairs = len(selected_labels) * (len(selected_labels) - 1) // 2
-  ## plotting each pairs
-  ncol = 2
-  nrow = n_pairs
-  fig = plt.figure(figsize=(ncol * 3.5, nrow * 3), dpi=args.dpi)
-  c = 1
-  styles = dict(size=10, alpha=0.8, color='bwr', cbar=True, cbar_nticks=5,
-                cbar_ticks_rotation=0, cbar_fontsize=8, fontsize=10, grid=False)
-  for f1 in range(n_factors):
-    for f2 in range(f1 + 1, n_factors):
-      if (labels[f1] not in selected_labels or
-          labels[f2] not in selected_labels):
-        continue
-      name1 = labels[f1]
-      name2 = labels[f2]
-      z1 = f2z[f1]  # best for f1
-      z2 = f2z[f2]  # best for f2
-      vs.plot_scatter(x=z[:, z1],
-                      y=z[:, z2],
-                      val=f[:, f1].astype(np.float32),
-                      xlabel=f"Z#{z1} - best for '{name1}'",
-                      ylabel=f"Z#{z2} - best for '{name2}'",
-                      title=f"Colored by: '{name1}'",
-                      ax=(nrow, ncol, c),
-                      **styles)
-      vs.plot_scatter(x=z[:, z1],
-                      y=z[:, z2],
-                      val=f[:, f2].astype(np.float32),
-                      xlabel=f"Z#{z1} - best for '{name1}'",
-                      ylabel=f"Z#{z2} - best for '{name2}'",
-                      title=f"Colored by: '{name2}'",
-                      ax=(nrow, ncol, c + 1),
-                      **styles)
-      c += 2
-  plt.tight_layout()
-  return fig
-
-
-def plot_scatter(args: Namespace,
-                 X: np.ndarray,
-                 y_true: np.ndarray,
-                 y_pred: Optional[np.ndarray] = None,
-                 title: str = ''):
-  n_points = args.points * 2
-  rand = np.random.RandomState(seed=args.seed)
-  ids = rand.permutation(len(y_true))[:n_points]
-  y_true = y_true[ids]
-  if y_pred is not None:
-    y_pred = y_pred[ids]
-  # tsne plot
-  kw = dict(x=X[:, 0], y=X[:, 1], grid=False, size=12.0, alpha=0.8)
-  fig = plt.figure(figsize=(6 if y_pred is None else 12, 6), dpi=args.dpi)
-  vs.plot_scatter(color=y_true, title=f'[True]{title}',
-                  ax=plt.gca() if y_pred is None else (1, 2, 1),
-                  **kw)
-  if y_pred is not None:
-    vs.plot_scatter(color=y_pred, title=f'[Pred]{title}', ax=(1, 2, 2),
-                    **kw)
-  return fig
-
-
 def save_figs(args: Namespace,
               name: str,
               figs: Optional[Sequence[plt.Figure]] = None):
@@ -466,7 +220,7 @@ def get_model(args: Namespace,
 def get_args(extra: Optional[Dict[str, Tuple[type, Any]]] = None
              ) -> Namespace:
   parser = ArgumentParser()
-  parser.add_argument('model', type=str)
+  parser.add_argument('vae', type=str)
   parser.add_argument('ds', type=str)
   parser.add_argument('zdim', type=int)
   parser.add_argument('-it', type=int, default=80000)

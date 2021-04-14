@@ -16,6 +16,7 @@ from odin.bay.vi import Correlation
 from odin.fuel import get_dataset, ImageDataset
 from odin.networks import get_networks
 from utils import *
+from matplotlib import pyplot as plt
 
 
 # ===========================================================================
@@ -294,28 +295,25 @@ def model_gaussianout(args: Namespace):
 # ===========================================================================
 def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
   gym = DisentanglementGym(args.ds, model)
-  with gym.run_vae():
-    pass
-  exit()
-  (llk_x, llk_y,
-   x_org, x_rec,
-   y_true, y_pred,
-   Qz, Pz) = make_prediction(args, model, 'test', take_count=10)
-  (true_ids, true_labels,
-   pred_ids, pred_labels) = prepare_labels(y_true, y_pred, args)
-  save_figs(args, 'reconstruction',
-            plot_reconstruction_images(x_org, x_rec, title='test'))
-  save_figs(args, 'samples',
-            plot_prior_sampling(model, args))
-  for idx, qz in enumerate(Qz):
-    z = qz.mean()
-    corr_spear = Correlation.Spearman(z, y_true)
-    save_figs(args, f'pairs_z{idx}',
-              plot_latents_pairs(z, y_true, corr_spear, args))
-    z_tsne = tsne_transform(z, args)
-    save_figs(args, f'scatter_z{idx}',
-              plot_scatter(args, z_tsne, y_true=true_labels,
-                           y_pred=pred_labels))
+  with gym.run_model(n_samples=200, partition='test'):
+    # print(gym.relative_disentanglement_strength())
+    # print(gym.total_correlation())
+    # print(gym.elbo())
+    # print(gym.log_likelihood())
+    # gym.plot_latents_stats()
+    # print(gym.betavae_score())
+    # print(gym.factorvae_score())
+    # gym.plot_histogram_disentanglement()
+    # gym.plot_correlation(method='mi', sorting='match', ax=(1, 2, 1))
+    # gym.plot_correlation(n_top_latents=None, sorting='total', ax=(1, 2, 2))
+    # gym.plot_correlation(method='mi', sorting='stddev', ax=(1, 2, 2))
+    # gym.plot_latents_traverse()
+    # gym.plot_latents_factors()
+    # gym.plot_latents_tsne(use_umap=True)
+    # gym.plot_reconstruction_images()
+    # gym.plot_prior_sampling()
+  from odin import visual as vs
+  vs.plot_save('/tmp/tmp.png')
 
 
 def main(args: Namespace):

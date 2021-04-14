@@ -327,22 +327,27 @@ class VariationalModel(Networks):
   def sample_traverse(
       self,
       inputs: Union[TensorType, List[TensorType]],
-      n_top_latents: int = 5,
-      min_val: int = -2.0,
-      max_val: int = 2.0,
       n_traverse_points: int = 11,
+      n_best_latents: int = 5,
+      min_val: float = -2.0,
+      max_val: float = 2.0,
       mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
+      smallest_stddev: bool = True,
       training: bool = False,
-      mask: Optional[TensorType] = None) -> Distribution:
+      mask: Optional[TensorType] = None) -> Tuple[Distribution, Sequence[int]]:
     from odin.bay.vi import traverse_dims
     latents = self.encode(inputs, training=training, mask=mask)
     stddev = np.sum(latents.stddev(), axis=0)
-    top_latents = np.argsort(stddev)[::-1][:int(n_top_latents)]
+    # smaller stddev is better
+    if smallest_stddev:
+      top_latents = np.argsort(stddev)[:int(n_best_latents)]
+    else:
+      top_latents = np.argsort(stddev)[::-1][:int(n_best_latents)]
     latents = traverse_dims(latents, feature_indices=top_latents,
                             min_val=min_val, max_val=max_val,
                             n_traverse_points=n_traverse_points,
                             mode=mode)
-    return self.decode(latents, training=training, mask=mask)
+    return self.decode(latents, training=training, mask=mask), top_latents
 
   def encode(self,
              inputs: Union[TensorType, Sequence[TensorType]],

@@ -4,12 +4,13 @@ from __future__ import absolute_import, division, print_function
 
 import itertools
 from numbers import Number
+from typing import Union
 
 import numpy as np
 from numba import njit
 from scipy.optimize import linear_sum_assignment
 from six import string_types
-
+from typing_extensions import Literal
 
 
 def _nan_policy(mtx, policy):
@@ -104,13 +105,19 @@ def diagonal_bruteforce_search(matrix):
   return best_perm
 
 
-def diagonal_linear_assignment(matrix, nan_policy='propagate'):
-  r""" Solve the diagonal linear assignment problem using the
+def diagonal_linear_assignment(
+    matrix: np.ndarray,
+    nan_policy: Union[
+      Number, Literal['propagate', 'raise', 'omit']] = 'propagate'):
+  """ Solve the diagonal linear assignment problem using the
   Hungarian algorithm, this version find the best permutation of columns
   (instead of rows).
 
-  Arguments:
-    nan_policy : {'propagate', 'raise', 'omit'}, optional
+  Parameters
+  ----------
+  matrix : np.ndarray
+      a matrix
+  nan_policy : {'propagate', 'raise', 'omit'}, optional
       Defines how to handle when input contains nan.
       The following options are available (default is 'propagate'):
         - 'propagate': returns nan
@@ -118,9 +125,10 @@ def diagonal_linear_assignment(matrix, nan_policy='propagate'):
         - 'omit': performs the calculations ignoring nan values
         - `Number`: replace all NaN values with given number
 
-  Return:
-    indices : array
-      the columns order that give the maximum diagonal sum
+  Return
+  ------
+  indices : array
+    the columns order that give the maximum diagonal sum
   """
   matrix = _nan_policy(matrix, nan_policy)
   # NaN values
