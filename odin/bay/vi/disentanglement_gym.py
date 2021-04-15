@@ -871,7 +871,9 @@ class DisentanglementGym(vs.Visualizer):
     # === 2. plotting
     fig = plt.figure(figsize=(np.log2(np.prod(zdims)) + 2, 5))
     ax = _plot_latent_stats(mean, stddev, kld, w_d, plt.gca())
+    collapse = int(np.sum(np.abs(stddev - 1.0) <= 0.05))
     ax.set_title(f'{title} Z{latent_idx} '
+                 f'{collapse}/{np.prod(zdims)} collapsed '
                  f'(kl:{self.kl_divergence()[latent_idx]:.2f})')
     self.add_figure(f'latents_stats{latent_idx}', fig)
     return fig
@@ -990,10 +992,14 @@ class DisentanglementGym(vs.Visualizer):
                          random_state=rand.randint(1e8),
                          framework='sklearn')
     y = y[ids]
+    # update title
+    scores = self.clustering_score()
+    new_title = f"{title} " \
+                f"{' '.join([f'{k}:{v:.2f}' for k, v in scores.items()])}"
     # plot
     ax = plt.gca()
     vs.plot_scatter(x=z[:, 0], y=z[:, 1], grid=False, legend_ncol=2,
-                    size=12.0, alpha=0.8, color=y, title=title, ax=ax)
+                    size=12.0, alpha=0.8, color=y, title=new_title, ax=ax)
     self.add_figure(f"latents_{'umap' if use_umap else 'tsne'}{title}",
                     fig)
     return fig
@@ -1350,18 +1356,21 @@ class DisentanglementGym(vs.Visualizer):
 
   def clustering_score(
       self, convert_fn: ConvertFunction = concat_mean) -> Dict[str, float]:
-    z = convert_fn(self.qz_x).numpy()
-    y_true = _prepare_categorical(self.y_true, self.ds, return_index=True)
-    y_pred = fast_kmeans(z,
-                         n_clusters=len(np.unique(y_true)),
-                         n_init=200,
-                         random_state=self.seed).predict(z)
-    return dict(
-      ari=metrics.adjusted_rand_score(y_true, y_pred),
-      ami=metrics.adjusted_mutual_info_score(y_true, y_pred),
-      nmi=metrics.normalized_mutual_info_score(y_true, y_pred),
-      asw=metrics.silhouette_score(z, y_true, random_state=self.seed)
-    )
+    self._assert_sampled()
+    if 'clustering' not in _CACHE[self._cache_key]:
+      z = convert_fn(self.qz_x).numpy()
+      y_true = _prepare_categorical(self.y_true, self.ds, return_index=True)
+      y_pred = fast_kmeans(z,
+                           n_clusters=len(np.unique(y_true)),
+                           n_init=200,
+                           random_state=self.seed).predict(z)
+      _CACHE[self._cache_key]['clustering'] = dict(
+        ari=metrics.adjusted_rand_score(y_true, y_pred),
+        ami=metrics.adjusted_mutual_info_score(y_true, y_pred),
+        nmi=metrics.normalized_mutual_info_score(y_true, y_pred),
+        asw=metrics.silhouette_score(z, y_true, random_state=self.seed)
+      )
+    return _CACHE[self._cache_key]['clustering']
 
   def relative_disentanglement_strength(
       self,
