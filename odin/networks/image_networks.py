@@ -832,7 +832,7 @@ def get_networks(dataset_name: str,
 
 def get_optimizer_info(
     dataset_name: str,
-    batch_size: int = 100,
+    batch_size: int = 64,
 ) -> Dict[str, Any]:
   """Return information for optimizing networks of given datasets,
   this is create with the assumption that batch_size=32

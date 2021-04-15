@@ -134,7 +134,9 @@ class HierarchicalLatents(Wrapper):
                beta: float = 1.,
                disable: bool = False,
                **kwargs):
-    super().__init__(layer=layer, **kwargs)
+    super().__init__(layer=layer,
+                     trainable=not disable and kwargs.pop('trainable', True),
+                     **kwargs)
     # store the last distributions
     self._posterior = None
     self._prior = None
@@ -168,6 +170,7 @@ class HierarchicalLatents(Wrapper):
   def enable(self):
     """Enable stochastic inference and generation for this variable"""
     self._disable = False
+    self.trainable = True
     return self
 
   @property

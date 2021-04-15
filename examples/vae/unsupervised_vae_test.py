@@ -14,7 +14,7 @@ from odin.bay import VariationalModel, VariationalAutoencoder, \
   DistributionDense, BetaVAE, AnnealingVAE, DisentanglementGym
 from odin.bay.vi import Correlation
 from odin.fuel import get_dataset, ImageDataset
-from odin.networks import get_networks
+from odin.networks import get_networks, TrainStep
 from utils import *
 from matplotlib import pyplot as plt
 
@@ -106,10 +106,10 @@ class Freebits(BetaVAE):
     return llk, kl_new
 
 
-class EquilibriumVAE(VariationalAutoencoder):
+class EquilibriumVAE(BetaVAE):
 
-  def __init__(self, dropout: float = 0., **kwargs):
-    super().__init__(**kwargs)
+  def __init__(self, dropout: float = 0., beta=1.0, **kwargs):
+    super().__init__(beta=beta, **kwargs)
     self.dropout = float(dropout)
 
   def encode(self, inputs, training=None, **kwargs):
@@ -126,7 +126,7 @@ class EquilibriumVAE(VariationalAutoencoder):
     self.free_bits = free_bits
     zdim = int(np.prod(self.latents.event_shape))
     C = tf.constant(self.free_bits * zdim, dtype=self.dtype)
-    kl = {k: tf.math.abs(v - C) for k, v in kl.items()}
+    kl = {k: self.beta * tf.math.abs(v - C) for k, v in kl.items()}
     # kl = {k: tf.math.sign(v - C) * (v - C) for k, v in kl.items()}
     return llk, kl
 
@@ -205,7 +205,6 @@ class Interpolate(BetaVAE):
 # ===========================================================================
 # Extra models
 # ===========================================================================
-
 # === 1. VAE with free-bits
 def model_rvae(args: Namespace):
   return VariationalAutoencoder(**get_networks(args.ds, zdim=args.zdim),
@@ -295,27 +294,16 @@ def model_gaussianout(args: Namespace):
 # ===========================================================================
 def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
   gym = DisentanglementGym(args.ds, model)
-  with gym.run_model(n_samples=200, partition='test'):
-    # gym.plot_latents_stats()
-    gym.plot_interpolation(factor1=0, factor2=5)
-    # print(gym.relative_disentanglement_strength())
-    # print(gym.total_correlation())
-    # print(gym.elbo())
-    # print(gym.log_likelihood())
-    # gym.plot_latents_stats()
-    # print(gym.betavae_score())
-    # print(gym.factorvae_score())
-    # gym.plot_histogram_disentanglement()
-    # gym.plot_correlation(method='mi', sorting='match', ax=(1, 2, 1))
-    # gym.plot_correlation(n_top_latents=None, sorting='total', ax=(1, 2, 2))
-    # gym.plot_correlation(method='mi', sorting='stddev', ax=(1, 2, 2))
-    # gym.plot_latents_traverse()
-    # gym.plot_latents_factors()
-    # gym.plot_latents_tsne(use_umap=True)
-    # gym.plot_reconstruction_images()
-    # gym.plot_prior_sampling()
-  from odin import visual as vs
-  vs.plot_save('/tmp/tmp.pdf')
+  with gym.run_model(n_samples=-1, partition='test'):
+    gym.plot_reconstruction_images()
+    gym.plot_latents_sampling()
+    gym.plot_latents_traverse()
+    gym.plot_latents_factors()
+    gym.plot_latents_tsne()
+    gym.plot_latents_stats()
+    gym.plot_correlation(method='spearman')
+    gym.plot_correlation(method='pearson')
+  gym.save_figures(get_results_path(args), verbose=True)
 
 
 def main(args: Namespace):

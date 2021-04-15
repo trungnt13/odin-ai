@@ -1237,19 +1237,19 @@ class NetConf(dict):
       "Given network '%s', only support: %s" % (self.network, network_types)
 
   def keys(self):
-    for i in fields(self):
+    for i in dataclasses.fields(self):
       yield i.name
 
   def values(self):
-    for i in fields(self):
+    for i in dataclasses.fields(self):
       yield i.default
 
   def __iter__(self):
-    for i in fields(self):
+    for i in dataclasses.fields(self):
       yield i.name, i.default
 
   def __len__(self):
-    return len(fields(self))
+    return len(dataclasses.fields(self))
 
   def __getitem__(self, key):
     return getattr(self, key)

@@ -17,7 +17,7 @@ import warnings
 from collections import Mapping, OrderedDict, defaultdict
 from contextlib import contextmanager
 from numbers import Number
-from typing import List, Optional, Tuple, Union
+from typing import List, Optional, Tuple, Union, Sequence
 
 import numpy as np
 from odin.utils import as_tuple
@@ -1112,7 +1112,7 @@ def plot_detection_curve(x,
     # main line
     # TODO: add EER value later
     name_fmt = lambda name, dcf, eer: (
-          'EER=%.2f;minDCF=%.2f' % (eer * 100, dcf * 100)) \
+        'EER=%.2f;minDCF=%.2f' % (eer * 100, dcf * 100)) \
       if name is None else \
       ('%s (EER=%.2f;minDCF=%.2f)' % (name, eer * 100, dcf * 100))
     labels_new = []
@@ -1288,19 +1288,13 @@ def plot_to_image(figure: plt.Figure,
 
 
 def plot_save(path: str = '/tmp/tmp.pdf',
-              figs=None,
-              dpi: int = 180,
+              figs: Union[None, plt.Figure, Sequence[plt.Figure]] = None,
+              dpi: Optional[int] = None,
               tight_plot: bool = False,
               clear_all: bool = True,
               verbose: bool = False,
               transparent: bool = False):
-  """
-  Parameters
-  ----------
-  clear_all: bool
-      if True, remove all saved figures from current figure list
-      in matplotlib
-  """
+  """Save all figures to pdf or png file"""
   if tight_plot:
     plt.tight_layout()
   if os.path.exists(path) and os.path.isfile(path):

@@ -82,7 +82,12 @@ def _print_summary(print_fn: Callable,
     log_tag = f" * [VALID]{log_tag}"
   print_fn(f"{log_tag} #{int(n_iter)} loss:{loss:.4f}")
   for k, v in metrics.items():
-    v = str(v) if _is_text(v) else f"{v:.4f}"
+    if _is_text(v):
+      v = str(v)
+    elif hasattr(v, 'shape'):
+      v = f"{tf.reduce_mean(v):.4f}"
+    else:
+      v = f"{v:.4f}"
     print_fn(f"{len(log_tag) * ' '} {k}:{v}")
 
 

@@ -45,6 +45,12 @@ FactorFilter = Union[Callable[[Any], bool],
                      Dict[Union[str, int], int],
                      float, int, str,
                      None]
+DatasetNames = Literal['shapes3d', 'shapes3dsmall',
+                       'dsprites', 'dspritessmall',
+                       'celeba', 'celebasmall',
+                       'fashionmnist', 'mnist',
+                       'cifar10', 'cifar100', 'svhn',
+                       'cortex', 'pbmc']
 
 
 def concat_mean(dists: List[Distribution]) -> tf.Tensor:
@@ -58,6 +64,9 @@ def first_mean(dists: List[Distribution]) -> tf.Tensor:
 # ===========================================================================
 # Helpers
 # ===========================================================================
+_CACHE = defaultdict(dict)
+
+
 def _dist(p: Union[Distribution, Sequence[Distribution]]
           ) -> Union[Sequence[Distribution], Distribution]:
   """Convert DeferredTensor back to original Distribution"""
@@ -211,6 +220,7 @@ def _plot_latent_stats(mean, stddev, kld=None, weights=None, ax=None):
     ax.set_ylabel('L2-norm weights', color='b')
     lines += l3
   ax.legend(lines, [l.get_label() for l in lines], fontsize=8)
+  ax.grid(alpha=0.5)
   return ax
 
 
@@ -540,7 +550,7 @@ class GroundTruth:
 # ===========================================================================
 # Disentanglement Gym
 # ===========================================================================
-class DisentanglementGym:
+class DisentanglementGym(vs.Visualizer):
   """Disentanglement Gym
 
   Parameters
@@ -558,18 +568,17 @@ class DisentanglementGym:
   @typechecked
   def __init__(
       self,
-      dataset: Literal['shapes3d', 'shapes3dsmall',
-                       'dsprites', 'dspritessmall',
-                       'celeba', 'celebasmall',
-                       'fashionmnist', 'mnist',
-                       'cifar10', 'cifar100', 'svhn',
-                       'cortex', 'pbmc'],
+      dataset: Union[ImageDataset, DatasetNames],
       model: VariationalModel,
-      batch_size: int = 64,
+      batch_size: int = 32,
       seed: int = 1):
     self.seed = seed
-    self.ds = get_dataset(dataset)
-    self.dsname = str(dataset).lower().strip()
+    if isinstance(dataset, string_types):
+      self.ds = get_dataset(dataset)
+      self.dsname = str(dataset).lower().strip()
+    else:
+      self.ds = dataset
+      self.dsname = dataset.name
     self._batch_size = int(batch_size)
     self.labels_name = self.ds.labels
     ## set seed is importance for comparable results
@@ -753,8 +762,11 @@ class DisentanglementGym:
     self._cache_key = uuid(12)
     # === 1. prepare data
     ds = self._data[partition]
-    ds = ds.take(int(np.ceil(n_samples / self._batch_size)))
-    progress = tqdm(ds, disable=not verbose)
+    if n_samples > 0:
+      ds = ds.take(int(np.ceil(n_samples / self._batch_size)))
+    progress = tqdm(ds,
+                    desc=f"{self.model.name}-{self.ds.name}",
+                    disable=not verbose)
     # === 2. running
     x_true = []
     y_true = []
@@ -791,10 +803,16 @@ class DisentanglementGym:
     self._pz = all_pz
     self._x_true = x_true
     self._y_true = y_true
+    try:
+      import seaborn
+      seaborn.set()
+    except ImportError:
+      plt.rc('axes', axisbelow=True)
     yield self
     self._context_setup = False
 
-  def plot_reconstruction_images(self, n_images: int = 36,
+  def plot_reconstruction_images(self,
+                                 n_images: int = 36,
                                  title: str = '') -> plt.Figure:
     self._assert_sampled()
     rand = np.random.RandomState(self.seed)
@@ -804,15 +822,16 @@ class DisentanglementGym:
     rec = _prepare_images(self.px_z[0].mean().numpy()[ids], normalize=True)
     fig = plt.figure(figsize=(12, 7))
     vs.plot_images(org, grids=(n_rows, n_rows), ax=(1, 2, 1),
-                   title=f'[{title}]Original')
+                   title=f'{title} Original')
     vs.plot_images(rec, grids=(n_rows, n_rows), ax=(1, 2, 2),
-                   title=f'[{title}]Reconstructed')
+                   title=f'{title} Reconstructed '
+                         f'(llk:{self.log_likelihood()[0]:.2f})')
     plt.tight_layout()
+    self.add_figure(f'reconstruction{title}', fig)
     return fig
 
   def plot_latents_stats(self,
                          latent_idx: int = 0,
-                         ax: Axes = None,
                          title: str = '') -> plt.Figure:
     self._assert_sampled()
     # === 0. prepare the latents
@@ -820,7 +839,7 @@ class DisentanglementGym:
     pz = self.pz[latent_idx]
     mean = np.mean(qz.mean(), 0)
     stddev = np.mean(qz.stddev(), 0)
-    zdim = mean.shape
+    zdims = mean.shape
     # sort by stddev
     ids = np.argsort(stddev)
     mean = mean[ids]
@@ -836,7 +855,7 @@ class DisentanglementGym:
     w_d = None
     if hasattr(self.model, 'decoder'):
       w = self.model.decoder.trainable_variables[0]
-      if w.shape[:-1] == zdim:
+      if w.shape[:-1] == zdims:
         w_d = w
         if w_d.shape.ndims == 2:  # dense weights
           w_d = tf.linalg.norm(w_d, axis=-1)
@@ -846,19 +865,23 @@ class DisentanglementGym:
     else:
       for w in self.model.trainable_variables:
         name = w.name
-        if w.shape.rank > 0 and w.shape[0] == zdim and '/kernel' in name:
+        if w.shape.rank > 0 and w.shape[0] == zdims and '/kernel' in name:
           w_d = tf.linalg.norm(tf.reshape(w, (w.shape[0], -1)), axis=1).numpy()
           break
     # === 2. plotting
-    ax = _plot_latent_stats(mean, stddev, kld, w_d, ax)
-    ax.set_title(f'{title} Z{latent_idx}')
-    return ax
+    fig = plt.figure(figsize=(np.log2(np.prod(zdims)) + 2, 5))
+    ax = _plot_latent_stats(mean, stddev, kld, w_d, plt.gca())
+    ax.set_title(f'{title} Z{latent_idx} '
+                 f'(kl:{self.kl_divergence()[latent_idx]:.2f})')
+    self.add_figure(f'latents_stats{latent_idx}', fig)
+    return fig
 
   def plot_latents_factors(
       self,
       convert_fn: ConvertFunction = first_mean,
-      correlation: CorrelationMethod = 'spearman',
-      n_points: int = 2000) -> plt.Figure:
+      method: CorrelationMethod = 'spearman',
+      n_points: int = 4000,
+      title: str = '') -> plt.Figure:
     """Plot pair of `the two most correlated latent dimension` and each
     `factor`.
 
@@ -866,25 +889,26 @@ class DisentanglementGym:
     ----------
     convert_fn : Callable
         convert list of Distribution to a Tensor
-    correlation : {'spearman', 'pearson', 'lasso'}
+    method : {'spearman', 'pearson', 'lasso', 'mi', 'importance'}
         correlation method
     n_points : int
         number of scatter points
-
+    title : str
+        figure title
     """
     self._assert_sampled()
     # === 0. prepare data
-    correlation = self.get_correlation_matrix(convert_fn, correlation)
-    n_latents, n_factors = correlation.shape
-    correlation = np.abs(correlation)
+    mat = self.get_correlation_matrix(convert_fn, method)
+    n_latents, n_factors = mat.shape
+    mat = np.abs(mat)
     z = convert_fn(self.qz_x)
     f = self.y_true
     assert z.shape[1] == n_latents, \
-      f'z={z.shape} f={f.shape} corr={correlation.shape}'
+      f'z={z.shape} f={f.shape} corr={mat.shape}'
     assert f.shape[1] == n_factors, \
-      f'z={z.shape} f={f.shape} corr={correlation.shape}'
+      f'z={z.shape} f={f.shape} corr={mat.shape}'
     assert z.shape[0] == f.shape[0], \
-      f'z={z.shape} f={f.shape} corr={correlation.shape}'
+      f'z={z.shape} f={f.shape} corr={mat.shape}'
     labels = self.ds.labels
     # === 1. shuffling
     rand = np.random.RandomState(seed=self.seed)
@@ -893,7 +917,7 @@ class DisentanglementGym:
     f = np.asarray(f)[ids][:int(n_points)]
     ## find the best latents for each labels
     f2z = {f_idx: z_idx
-           for f_idx, z_idx in enumerate(np.argmax(correlation, axis=0))}
+           for f_idx, z_idx in enumerate(np.argmax(mat, axis=0))}
     ## special cases
     selected_labels = set(labels)
     n_pairs = len(selected_labels) * (len(selected_labels) - 1) // 2
@@ -932,6 +956,10 @@ class DisentanglementGym:
                         **styles)
         c += 2
     plt.tight_layout()
+    if len(title) > 0:
+      plt.suptitle(f"{title}")
+      plt.tight_layout(rect=[0.0, 0.03, 1.0, 0.97])
+    self.add_figure(f'pairs_{method}{title}', fig)
     return fig
 
   def plot_latents_tsne(
@@ -939,9 +967,8 @@ class DisentanglementGym:
       convert_fn: ConvertFunction = concat_mean,
       y: Optional[np.ndarray] = None,
       n_points: int = 2000,
-      ax: Axes = None,
       use_umap: bool = False,
-      title: str = '') -> plt.Axes:
+      title: str = '') -> plt.Figure:
     self._assert_sampled()
     z = convert_fn(self.qz_x)
     if hasattr(z, 'numpy'):
@@ -952,6 +979,7 @@ class DisentanglementGym:
       y = y.numpy()
     y = _prepare_categorical(y, self.ds)
     # shuffling
+    fig = plt.figure(figsize=(8, 8))
     rand = np.random.RandomState(seed=self.seed)
     ids = rand.permutation(z.shape[0])[:n_points]
     if use_umap:
@@ -963,32 +991,29 @@ class DisentanglementGym:
                          framework='sklearn')
     y = y[ids]
     # plot
-    ax = vs.to_axis2D(ax)
-    vs.plot_scatter(x=z[:, 0], y=z[:, 1], grid=False,
+    ax = plt.gca()
+    vs.plot_scatter(x=z[:, 0], y=z[:, 1], grid=False, legend_ncol=2,
                     size=12.0, alpha=0.8, color=y, title=title, ax=ax)
-    return ax
+    self.add_figure(f"latents_{'umap' if use_umap else 'tsne'}{title}",
+                    fig)
+    return fig
 
   def plot_latents_traverse(
       self,
-      known_factors: Optional[Dict[Union[str, int], int]] = None,
+      factors: FactorFilter = None,
       n_traverse_points: int = 21,
       n_top_latents: int = 10,
       min_val: float = -2.5,
       max_val: float = 2.5,
-      seed: int = 1) -> plt.Figure:
+      seed: int = 1,
+      title: str = '') -> plt.Figure:
     self._assert_sampled()
     n_top_latents = min(self.n_latents, n_top_latents)
-    if known_factors is not None and len(known_factors) > 0:
-      factors, idx = self.groundtruth.sample_factors(
-        factor_filter=known_factors,
-        n_per_factor=1,
-        seed=seed)
-      factors = factors[0]
-      idx = idx[0]
-    else:
-      rand = np.random.RandomState(seed=seed)
-      idx = rand.choice(self.n_samples, size=1, replace=False)[0]
-      factors = self.y_true[idx]
+    factors, idx = self.groundtruth.sample_factors(
+      factor_filter=factors,
+      n_per_factor=1,
+      seed=seed)
+    factors, idx = factors[0], idx[0]
     x = self.x_true[idx:idx + 1]
     images, top_latents = self.model.sample_traverse(
       x,
@@ -1004,16 +1029,23 @@ class DisentanglementGym:
     vs.plot_images(images, grids=(n_top_latents, n_traverse_points),
                    ax=plt.gca())
     plt.tight_layout()
-    plt.title(f'Factors={factors} Latents={top_latents}', fontsize=12)
+    plt.title(f'{title} Factors={factors} Latents={top_latents}', fontsize=12)
+    self.add_figure(f'latents_traverse{title}', fig)
     return fig
 
-  def plot_prior_sampling(self, n_images: int = 36) -> plt.Figure:
+  def plot_latents_sampling(self,
+                            n_images: int = 36,
+                            title: str = '') -> plt.Figure:
     n_rows = int(np.sqrt(n_images))
     images = self.model.sample_observation(n=n_images, seed=self.seed)
     images = as_tuple(images)[0]
     images = _prepare_images(images.mean().numpy(), normalize=True)
     fig = plt.figure(figsize=(5, 5))
     vs.plot_images(images, grids=(n_rows, n_rows), title='Sampled')
+    if len(title) > 0:
+      plt.suptitle(f"{title}")
+      plt.tight_layout(rect=[0.0, 0.03, 1.0, 0.97])
+    self.add_figure(f'latents_sampling{title}', fig)
     return fig
 
   def plot_correlation(
@@ -1022,7 +1054,7 @@ class DisentanglementGym:
       method: CorrelationMethod = 'spearman',
       n_top_latents: Optional[int] = None,
       sorting: Literal['match', 'stddev', 'total'] = 'match',
-      ax: Axes = None) -> plt.Axes:
+      title: str = '') -> plt.Figure:
     """Plot correlation matrix between latents and factors"""
     if n_top_latents is None:
       n_top_latents = self.n_factors
@@ -1052,7 +1084,8 @@ class DisentanglementGym:
     mat = mat[:, latent_ids]
     n_factors, n_latents = mat.shape
     # plotting
-    ax = vs.to_axis(ax)
+    fig = plt.figure(figsize=(n_latents, n_factors))
+    ax = plt.gca()
     ax.set_facecolor('dimgrey')
     # fig = ax.get_figure()
     # bbox = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
@@ -1082,8 +1115,9 @@ class DisentanglementGym:
     ax.set_yticks(np.arange(n_factors + 1) + 1)
     ax.set_yticklabels(list(self.labels_name) + [''], fontsize=8)
     ax.set_ylabel('Factors')
-    ax.set_title(f'Diagonal {method} score: {sum(np.diag(mat)):.2f}')
-    return ax
+    ax.set_title(f'{title} Diagonal {method} score: {sum(np.diag(mat)):.2f}')
+    self.add_figure(f'{method}_{sorting}{title}', fig)
+    return fig
 
   def plot_histogram_disentanglement(
       self,
@@ -1152,13 +1186,15 @@ class DisentanglementGym:
     ### fine tune the plot
     fig.suptitle(f"{method} {title}", fontsize=20)
     fig.tight_layout(rect=[0.0, 0.03, 1.0, 0.97])
+    self.add_figure(f'histogram_{method}{title}', fig)
     return fig
 
   def plot_interpolation(self,
                          factor1: FactorFilter,
                          factor2: FactorFilter,
                          n_points: int = 10,
-                         latent_idx: int = 0) -> Tuple[plt.Figure, plt.Figure]:
+                         latent_idx: int = 0,
+                         title: str = '') -> Tuple[plt.Figure, plt.Figure]:
     tf.random.set_seed(self.seed)
     f1, idx1 = self.groundtruth.sample_factors(factor1,
                                                n_per_factor=1,
@@ -1190,7 +1226,7 @@ class DisentanglementGym:
         z = z[0]
       p = self.model.decode(z)
       images['mixing_latents'].append(as_tuple(p)[0].mean())
-    # plotting latents
+    # === 1. plot latents
     ids = np.argsort(as_tuple(q1)[latent_idx].stddev().numpy().ravel())
 
     def stats(dist):
@@ -1221,7 +1257,9 @@ class DisentanglementGym:
       plt.plot(s, linewidth=0.5, alpha=0.5, label=rf'$\sigma$-{a:.2f}',
                color=line[0].get_color())
     plt.legend(fontsize=6, ncol=2, bbox_to_anchor=(1.05, 1), loc='upper left')
-    # plotting images
+    plt.suptitle(f"{title}")
+    plt.tight_layout(rect=[0.0, 0.03, 1.0, 0.97])
+    # === 2. plot images
     n_row = len(images)
     n_col = n_points
     fig_reconstruction = plt.figure(figsize=(1.5 * n_col, 1.5 * n_row))
@@ -1242,7 +1280,11 @@ class DisentanglementGym:
           ax.set_title(f'a={alpha[col]:.2f}')
         count += 1
     plt.tight_layout()
-    # plotting latents
+    plt.suptitle(f"{title}")
+    plt.tight_layout(rect=[0.0, 0.03, 1.0, 0.97])
+    # save figures
+    self.add_figure(f'interp_reconst{title}', fig_reconstruction)
+    self.add_figure(f'interp_latents{title}', fig_latents)
     return fig_reconstruction, fig_latents
 
   def mig_score(self,
@@ -1352,17 +1394,34 @@ class DisentanglementGym:
     from odin.bay.helpers import kl_divergence
     self._assert_sampled()
     with tf.device('/CPU:0'):
-      llk = {f'llk{i}': p.log_prob(x)
-             for i, (p, x) in enumerate(zip(self.px_z,
-                                            [self.x_true, self.y_true]))}
-      kl = {f'kl{i}': kl_divergence(q, p, analytic=False)
-            for i, (q, p) in enumerate(zip(self.qz_x, self.pz))}
-      return float(np.mean(self.model.elbo(llk, kl)))
+      if 'elbo' not in _CACHE[self._cache_key]:
+        llk = {f'llk{i}': p.log_prob(x)
+               for i, (p, x) in enumerate(zip(self.px_z,
+                                              [self.x_true, self.y_true]))}
+        kl = {f'kl{i}': kl_divergence(q, p, analytic=False)
+              for i, (q, p) in enumerate(zip(self.qz_x, self.pz))}
+        _CACHE[self._cache_key]['elbo'] = float(
+          np.mean(self.model.elbo(llk, kl)))
+    return _CACHE[self._cache_key]['elbo']
 
   def log_likelihood(self) -> Sequence[float]:
     self._assert_sampled()
     with tf.device('/CPU:0'):
-      llk = [np.mean(p.log_prob(x))
-             for i, (p, x) in enumerate(zip(self.px_z,
-                                            [self.x_true, self.y_true]))]
-      return tuple(llk)
+      if 'llk' not in _CACHE[self._cache_key]:
+        llk = [np.mean(p.log_prob(x))
+               for i, (p, x) in enumerate(zip(self.px_z,
+                                              [self.x_true, self.y_true]))]
+        _CACHE[self._cache_key]['llk'] = tuple(llk)
+      return _CACHE[self._cache_key]['llk']
+
+  def kl_divergence(self) -> Sequence[float]:
+    self._assert_sampled()
+    with tf.device('/CPU:0'):
+      if 'kl' not in _CACHE[self._cache_key]:
+        kl = []
+        for i, (q, p) in enumerate(zip(self.qz_x, self.pz)):
+          z = q.sample(self.seed)
+          kl.append(
+            float(tf.reduce_mean(q.log_prob(z) - p.log_prob(z)).numpy()))
+        _CACHE[self._cache_key]['kl'] = tuple(kl)
+      return _CACHE[self._cache_key]['kl']
