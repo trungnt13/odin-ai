@@ -668,7 +668,9 @@ class DisentanglementGym(vs.Visualizer):
   @property
   def n_latents(self) -> int:
     self._assert_sampled()
-    return int(sum(np.prod(q.event_shape) for q in self.qz_x))
+    return int(sum(
+      np.prod((q.batch_shape + q.event_shape)[1:])
+      for q in self.qz_x))
 
   @property
   def n_factors(self) -> int:
@@ -790,10 +792,15 @@ class DisentanglementGym(vs.Visualizer):
     # latents
     n_latents = len(Q_zs[0])
     all_qz = [Batchwise([z[i] for z in Q_zs]) for i in range(n_latents)]
-    all_pz = [Batchwise([z[i] for z in P_zs])
-              if len(P_zs[0][i].batch_shape) > 0 else
-              P_zs[0][i]
-              for i in range(n_latents)]
+    all_pz = []
+    for i in range(n_latents):
+      p = [z[i] for z in P_zs]
+      if all(qz.batch_shape == pz.batch_shape
+             for qz, pz in zip(all_qz[i].distributions, p)):
+        p = Batchwise(p)
+      else:
+        p = p[0]
+      all_pz.append(p)
     # labels
     x_true = tf.concat(x_true, axis=0).numpy()
     y_true = tf.concat(y_true, axis=0).numpy()
@@ -1009,8 +1016,8 @@ class DisentanglementGym(vs.Visualizer):
       factors: FactorFilter = None,
       n_traverse_points: int = 21,
       n_top_latents: int = 10,
-      min_val: float = -2.5,
-      max_val: float = 2.5,
+      min_val: float = -3,
+      max_val: float = 3,
       seed: int = 1,
       title: str = '') -> plt.Figure:
     self._assert_sampled()
@@ -1195,20 +1202,24 @@ class DisentanglementGym(vs.Visualizer):
     self.add_figure(f'histogram_{method}{title}', fig)
     return fig
 
-  def plot_interpolation(self,
-                         factor1: FactorFilter,
-                         factor2: FactorFilter,
-                         n_points: int = 10,
-                         latent_idx: int = 0,
-                         title: str = '') -> Tuple[plt.Figure, plt.Figure]:
+  def plot_interpolation(
+      self,
+      factor1: FactorFilter,
+      factor2: Optional[FactorFilter] = None,
+      n_points: int = 10,
+      latent_idx: int = 0,
+      strategy: Literal['mixing', 'dropout', 'noise'] = 'mixing',
+      title: str = '') -> Tuple[plt.Figure, plt.Figure]:
     tf.random.set_seed(self.seed)
     f1, idx1 = self.groundtruth.sample_factors(factor1,
                                                n_per_factor=1,
                                                seed=self.seed)
-    f2, idx2 = self.groundtruth.sample_factors(factor2,
-                                               n_per_factor=1,
-                                               seed=self.seed)
-    idx1, idx2 = idx1[0], idx2[0]
+    f1, idx1 = f1[0], idx1[0]
+    if strategy == 'mixing':
+      f2, idx2 = self.groundtruth.sample_factors(factor2,
+                                                 n_per_factor=1,
+                                                 seed=self.seed)
+      f2, idx2 = f2[0], idx2[0]
     x1 = self.x_true[idx1:idx1 + 1]
     x2 = self.x_true[idx2:idx2 + 1]
     _, q1 = self.model(x1)

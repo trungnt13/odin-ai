@@ -4,26 +4,25 @@ import inspect
 import os
 from argparse import ArgumentParser, Namespace
 from collections import defaultdict
+from copy import deepcopy
 from functools import partial
-from typing import Dict, Any, Tuple, Union, Callable, Optional, Sequence, List
+from itertools import product
+from numbers import Number
+from typing import Dict, Any, Tuple, Union, Callable, Optional, Sequence
 
 import numpy as np
 import seaborn as sns
 import tensorflow as tf
 from matplotlib import pyplot as plt
-from sklearn.decomposition import PCA
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
+from six import string_types
 from tensorflow_probability.python.distributions import Distribution, Normal, \
   Blockwise, Categorical
-from tqdm import tqdm
-from typing_extensions import Literal
+from typeguard import typechecked
 
 from odin import visual as vs
 from odin.bay import VariationalModel, get_vae
 from odin.bay.distributions import Batchwise
 from odin.fuel import ImageDataset, get_dataset
-from odin.ml import DimReduce
 from odin.networks import get_optimizer_info, get_networks
 from odin.utils import as_tuple
 from odin.utils.decorators import schedule
@@ -43,6 +42,7 @@ __all__ = [
   'get_model_path',
   'get_results_path',
   'get_args',
+  'run_multi',
   'train',
 ]
 
@@ -219,10 +219,13 @@ def get_model(args: Namespace,
 
 def get_args(extra: Optional[Dict[str, Tuple[type, Any]]] = None
              ) -> Namespace:
+  def int_or_str(x):
+    return int(x) if isinstance(x, Number) else x
+
   parser = ArgumentParser()
   parser.add_argument('vae', type=str)
   parser.add_argument('ds', type=str)
-  parser.add_argument('zdim', type=int)
+  parser.add_argument('zdim', type=int_or_str)
   parser.add_argument('-it', type=int, default=80000)
   parser.add_argument('-bs', type=int, default=32)
   parser.add_argument('-clipnorm', type=float, default=100.)
@@ -239,6 +242,27 @@ def get_args(extra: Optional[Dict[str, Tuple[type, Any]]] = None
   parser.add_argument('--override', action='store_true')
   parser.add_argument('--debug', action='store_true')
   return parser.parse_args()
+
+
+@typechecked()
+def run_multi(main_fn: Callable[[Namespace], Any]):
+  args = get_args()
+  vae = args.vae.split(',')
+  ds = args.ds.split(',')
+  zdim = (map(int, args.zdim.split(','))
+          if isinstance(args.zdim, string_types) else
+          [args.zdim])
+  for vae, ds, zdim in product(vae, ds, zdim):
+    args_copy = deepcopy(args)
+    args_copy.vae = vae
+    args_copy.ds = ds
+    args_copy.zdim = zdim
+    print('*** Running configuration:', args_copy)
+    try:
+      main_fn(args_copy)
+    except Exception:
+      from traceback import print_exc
+      print_exc()
 
 
 # ===========================================================================

@@ -8,6 +8,7 @@ from six import string_types
 from tensorflow.keras.optimizers.schedules import LearningRateSchedule
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer, Activation, Flatten
+from tensorflow_probability.python.distributions import Normal
 from tensorflow_probability.python.distributions.pixel_cnn import \
   _PixelCNNNetwork
 from tensorflow_probability.python.layers import DistributionLambda
@@ -89,14 +90,17 @@ def _parse_distribution(input_shape: Tuple[int, int, int],
     last_layer = Activation('linear')
   elif distribution == 'bernoulli':
     n_params = 1
-    observation = RVconf(input_shape, "bernoulli", projection=False,
-                         name="image").create_posterior()
-    last_layer = Flatten()
+    observation = DistributionLambda(
+      lambda p: Independent(Bernoulli(logits=p), len(input_shape)),
+      name="image")
+    last_layer = Activation('linear')
   elif distribution == 'gaussian':
     n_params = 2
-    observation = RVconf(input_shape, "normal", projection=False,
-                         name="image").create_posterior()
-    last_layer = Flatten()
+    observation = DistributionLambda(
+      lambda p: Independent(Normal(*tf.split(p, 2, -1)), len(input_shape)),
+      name="image"
+    )
+    last_layer = Activation('linear')
   else:
     raise ValueError(f'No support for distribution {distribution}')
   return n_params, observation, last_layer

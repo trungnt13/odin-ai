@@ -179,29 +179,6 @@ class GaussianOut(BetaVAE):
                      **kwargs)
 
 
-class Interpolate(BetaVAE):
-
-  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
-    llk, kl = super().elbo_components(inputs=inputs,
-                                      mask=mask,
-                                      training=training)
-    px, qz = self.last_outputs
-    z = qz.mean()
-    z1 = z[0:1]
-    z2 = z[1:2]
-    a = tf.expand_dims(tf.linspace(0.01, 0.99, num=10), -1)
-    z = z1 * a + (1 - a) * z2
-    x = tf.stop_gradient(self.decode(z).mean())
-    llk1, kl1 = super().elbo_components(inputs=x,
-                                        mask=mask,
-                                        training=training)
-    for k, v in llk1.items():
-      llk[k] = tf.concat([llk[k], v], 0)
-    for k, v in kl1.items():
-      kl[k] = tf.concat([kl[k], v], 0)
-    return llk, kl
-
-
 # ===========================================================================
 # Extra models
 # ===========================================================================
@@ -227,33 +204,34 @@ def model_vae3(args: Namespace):
 
 
 # === 2. equilibrium VAE
-# free-bits=0.5
+# beta=1 free-bits=0.5
 def model_equilibriumvae1(args: Namespace):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         free_bits=0.5)
 
 
-# free-bits=1
+# beta=1 free-bits=1
 def model_equilibriumvae2(args: Namespace):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         free_bits=1.0)
 
 
-# free-bits=1.5
+# beta=1 free-bits=1.5
 def model_equilibriumvae3(args: Namespace):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         free_bits=1.5)
 
 
-# free-bits=0.5, dropout=0.3
+# beta=1 free-bits=0.5, dropout=0.3
 def model_equilibriumvae4(args: Namespace):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         free_bits=0.5, dropout=0.3)
 
 
-# === 3. interpolate
-def model_interpolate1(args: Namespace):
-  return Interpolate(**get_networks(args.ds, zdim=args.zdim))
+# beta=5 free-bits=0.5, dropout=0.
+def model_equilibriumvae5(args: Namespace):
+  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
+                        free_bits=0.5, dropout=0., beta=5)
 
 
 # === 4. others
@@ -295,12 +273,12 @@ def model_gaussianout(args: Namespace):
 def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
   gym = DisentanglementGym(args.ds, model)
   with gym.run_model(n_samples=-1, partition='test'):
+    gym.plot_latents_traverse(n_top_latents=20)
+    gym.plot_latents_stats()
     gym.plot_reconstruction_images()
     gym.plot_latents_sampling()
-    gym.plot_latents_traverse()
     gym.plot_latents_factors()
     gym.plot_latents_tsne()
-    gym.plot_latents_stats()
     gym.plot_correlation(method='spearman')
     gym.plot_correlation(method='pearson')
   gym.save_figures(get_results_path(args), verbose=True)
@@ -330,4 +308,4 @@ def main(args: Namespace):
 
 if __name__ == '__main__':
   set_cfg(root_path=os.path.expanduser('~/exp/unsupervised'))
-  main(get_args())
+  run_multi(main)
