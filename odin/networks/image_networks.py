@@ -560,6 +560,52 @@ shapes3dsmall_networks = partial(shapes3d_networks, small=True)
 
 
 # ===========================================================================
+# Halfmoons
+# ===========================================================================
+def _halfmoons_distribution(x: tf.Tensor) -> Blockwise:
+  dtype = x.dtype
+  py = JointDistributionSequential([
+    Gamma(concentration=tf.math.softplus(x[..., 0]),
+          rate=tf.math.softplus(x[..., 1]),
+          name='x'),
+    Gamma(concentration=tf.math.softplus(x[..., 2]),
+          rate=tf.math.softplus(x[..., 3]),
+          name='y'),
+    Gamma(concentration=tf.math.softplus(x[..., 4]),
+          rate=tf.math.softplus(x[..., 5]),
+          name='color'),
+    Categorical(logits=x[..., 6:10], dtype=dtype, name='shape'),
+  ])
+  return Blockwise(py, name='shapes3d')
+
+
+def halfmoons_networks(qz: str = 'mvndiag',
+                       zdim: Optional[int] = None,
+                       activation: Union[Callable, str] = tf.nn.elu,
+                       is_semi_supervised: bool = False,
+                       centerize_image: bool = True,
+                       skip_generator: bool = False,
+                       **kwargs) -> Dict[str, Layer]:
+  if zdim is None:
+    zdim = 5
+  networks = dsprites_networks(qz=qz,
+                               zdim=zdim,
+                               activation=activation,
+                               is_semi_supervised=False,
+                               centerize_image=centerize_image,
+                               skip_generator=skip_generator,
+                               distribution='bernoulli',
+                               n_channels=3)
+  if is_semi_supervised:
+    from odin.bay.layers import DistributionDense
+    networks['labels'] = DistributionDense(event_shape=(4,),
+                                           posterior=_halfmoons_distribution,
+                                           units=10,
+                                           name='geometry3d')
+  return networks
+
+
+# ===========================================================================
 # CelebA
 # ===========================================================================
 def _celeba_distribution(x: tf.Tensor) -> Blockwise:
@@ -861,7 +907,10 @@ def get_optimizer_info(
   decay_steps = 10000
   init_lr = 1e-3
   ### image networks
-  if dataset_name == 'mnist':
+  if dataset_name == 'halfmoons':
+    n_epochs = 200
+    n_samples = 3200
+  elif dataset_name == 'mnist':
     n_epochs = 800
     n_samples = 55000
   elif dataset_name == 'fashionmnist':

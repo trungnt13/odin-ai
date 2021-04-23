@@ -50,7 +50,8 @@ DatasetNames = Literal['shapes3d', 'shapes3dsmall',
                        'celeba', 'celebasmall',
                        'fashionmnist', 'mnist',
                        'cifar10', 'cifar100', 'svhn',
-                       'cortex', 'pbmc']
+                       'cortex', 'pbmc',
+                       'halfmoons']
 
 
 def concat_mean(dists: List[Distribution]) -> tf.Tensor:
@@ -104,6 +105,9 @@ def _prepare_categorical(y: np.ndarray, ds: ImageDataset,
   elif 'dsprites' in dsname:
     y_categorical = y[:, 2]
     names = ['square', 'ellipse', 'heart']
+  elif 'halfmoons' in dsname:
+    y_categorical = y[:, -1]
+    names = ['circle', 'square', 'triangle', 'pentagon']
   elif 'pbmc' == dsname:
     names = ['CD4', 'CD8', 'CD45RA', 'CD45RO']
     y_probs = []
@@ -138,38 +142,6 @@ def _prepare_images(x, normalize=False):
   else:  # color image
     x = np.transpose(x, (0, 3, 1, 2))
   return x
-
-
-def _to_image(gym, X, y, grids, dpi, ds, dsname):
-  # single-cell
-  if dsname in ('cortex', 'pbmc'):
-    import scanpy as sc
-    if hasattr(X, 'numpy'):
-      X = X.numpy()
-    adata = sc.AnnData(X=X)
-    adata.var.index = ds.xvar
-    sc.pp.recipe_zheng17(adata, n_top_genes=50)
-    # no labels
-    adata.obs['celltype'] = \
-      _prepare_categorical(y, dsname=dsname, labels=ds.yvar)[0]
-    axes = sc.pl.heatmap(adata,
-                         var_names=adata.var_names,
-                         groupby='celltype',
-                         show_gene_labels=True,
-                         show=False)
-    fig = axes['heatmap_ax'].get_figure()
-  # image
-  else:
-    if X.shape[-1] == 1:  # grayscale image
-      X = np.squeeze(X, axis=-1)
-    else:  # color image
-      X = np.transpose(X, (0, 3, 1, 2))
-    nrows, ncols = grids
-    fig = vs.plot_figure(nrows=nrows, ncols=ncols)
-    vs.plot_images(X, grids=grids)
-  # convert figure to image
-  image = vs.plot_to_image(fig, dpi=dpi)
-  return image
 
 
 def _plot_latent_stats(mean, stddev, kld=None, weights=None, ax=None):
@@ -619,8 +591,8 @@ class DisentanglementGym(vs.Visualizer):
   def groundtruth(self) -> GroundTruth:
     self._assert_sampled()
     if self._groundtruth is None:
-      categorical = False
       n_bins = None
+      factor_names = self.labels_name
       if self.dsname in ['fashionmnist', 'mnist',
                          'cifar10', 'cifar100', 'svhn',
                          'cortex', 'pbmc']:
@@ -629,10 +601,12 @@ class DisentanglementGym(vs.Visualizer):
       elif self.dsname in ['shapes3d', 'shapes3dsmall']:
         categorical = [False, False, True, False, False, False]
         n_bins = [15, 8, 4, 10, 10, 10]
-        factor_names = self.labels_name
       elif self.dsname in ['dsprites', 'dspritessmall']:
         categorical = [False, False, True, False, False]
         n_bins = [10, 6, 3, 8, 8]
+      elif self.dsname == 'halfmoons':
+        categorical = [False, False, False, True]
+        n_bins = [10, 10, 10, 4]
       else:
         raise NotImplementedError
       self._groundtruth = GroundTruth(self.y_true,

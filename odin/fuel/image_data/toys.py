@@ -1,4 +1,3 @@
-import io
 import os
 from multiprocessing import cpu_count
 from typing import List
@@ -12,7 +11,8 @@ from ._base import ImageDataset
 
 
 def make_halfmoons(n_samples_per_factors=100,
-                   image_size=32,
+                   image_size=64,
+                   marker_size=10.,
                    seed=1,
                    n_cpu=4):
   from matplotlib import pyplot as plt
@@ -49,22 +49,27 @@ def make_halfmoons(n_samples_per_factors=100,
     for i in ids:
       fig = plt.figure(figsize=(image_size / dpi, image_size / dpi),
                        dpi=dpi,
-                       frameon=False)
-      plt.scatter(x[i, 0], x[i, 1],
-                  s=1.0,
-                  marker=shapes[i],
-                  color=cmap(colors[i]))
-      plt.xlim([-1.2, 1.2])
-      plt.ylim([-1.2, 1.2])
-      plt.axis('off')
+                       facecolor="black",
+                       frameon=True)
+      ax = plt.gca()
+      ax.set_facecolor('black')
+      ax.scatter(x[i, 0], x[i, 1],
+                 s=marker_size,
+                 marker=shapes[i],
+                 color=cmap(colors[i]),
+                 antialiased=True,
+                 edgecolors='none')
+      ax.set_xlim([-1.2, 1.2])
+      ax.set_ylim([-1.2, 1.2])
+      ax.axis('off')
+      ax.margins(0)
       fig.tight_layout(pad=0)
-      plt.gca().margins(0)
       # convert to array
-      buf = io.BytesIO()
-      fig.savefig(buf, format='png', dpi=dpi)
+      fig.canvas.draw()
+      img = np.frombuffer(fig.canvas.tostring_rgb(), np.uint8)
+      img = np.reshape(img, (image_size, image_size, 3))
+      # img = np.asarray(fig.canvas.buffer_rgba())[:, :, :3]
       plt.close(fig)
-      buf.seek(0)
-      img = tf.image.decode_png(buf.getvalue(), channels=3).numpy()
       # save data
       all_x.append(np.expand_dims(img, 0))
       all_y.append(
@@ -90,15 +95,21 @@ class HalfMoons(ImageDataset):
   of each data points include some factor of variations:
 
   The factors are:
-
     - x position [-1, 1]
     - y position [-1, 1]
     - labels [0, 1]
     - colors [-1, 1] cmap 'coolwarm' (10 linearly spaced values)
-    - shapes [0 'circle', 1 'square', 2 'triangle']
+    - shapes [0 'circle', 1 'square', 2 'triangle', 3 'pentagon']
 
-  There are 3000 images,
+  There are 4000 images,
   i.e. 100 images for each combination of color and shape
+
+  The tensorflow datasets don't include the labels as factors
+
+  Raw numpy arrays (included the labels) could be accessed via attributes:
+    - x_train, y_train
+    - x_valid, y_valid
+    - x_test, y_test
 
   """
 
@@ -107,13 +118,14 @@ class HalfMoons(ImageDataset):
                n_cpu: int = -1,
                seed: int = 1):
     super(HalfMoons, self).__init__()
+    self.image_size = 64
     if n_cpu <= 0:
       n_cpu = cpu_count() - 1
     path = os.path.abspath(os.path.expanduser(path))
     if '.npz' not in path.lower():
       path = f'{path}.npz'
     if not os.path.exists(path):
-      X, Y = make_halfmoons(image_size=32, n_cpu=n_cpu, seed=seed)
+      X, Y = make_halfmoons(image_size=self.image_size, n_cpu=n_cpu, seed=seed)
       np.savez_compressed(path, X=X, Y=Y)
     else:
       data = np.load(path)
@@ -135,6 +147,10 @@ class HalfMoons(ImageDataset):
     self.y_train = y_train
     self.y_valid = y_valid
     self.y_test = y_test
+    # remove the labels
+    y_train = y_train[:, [0, 1, 3, 4]]
+    y_valid = y_valid[:, [0, 1, 3, 4]]
+    y_test = y_test[:, [0, 1, 3, 4]]
     # tensorflow datasets
     self.train = tf.data.Dataset.zip((
       tf.data.Dataset.from_tensor_slices(x_train),
@@ -152,8 +168,8 @@ class HalfMoons(ImageDataset):
 
   @property
   def shape(self) -> List[int]:
-    return [32, 32, 3]
+    return [self.image_size, self.image_size, 3]
 
   @property
   def labels(self) -> List[str]:
-    return ['x', 'y', 'label', 'color', 'shape']
+    return ['x', 'y', 'color', 'shape']
