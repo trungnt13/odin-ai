@@ -11,7 +11,7 @@ from tensorflow_probability.python.distributions import (NOT_REPARAMETERIZED,
 
 __all__ = [
   'Vamprior',
-  'vampriorVAE'
+  'VampriorVAE'
 ]
 
 
@@ -101,7 +101,7 @@ class Vamprior(Distribution):
     return qz._sample_n(1, seed=seed)
 
 
-class vampriorVAE(BetaVAE):
+class VampriorVAE(BetaVAE):
   """ An example of Vamprior VAE. In practice, vamprior could be integrated into
   any VAE model by changing the prior of specified latents variable.
 
@@ -111,17 +111,17 @@ class vampriorVAE(BetaVAE):
 
   """
 
-  def __init__(self,
-               n_components: int = 500,
-               pseudoinputs_mean: float = -0.05,
-               pseudoinputs_std: float = 0.01,
-               beta: Union[float, Interpolation] = linear(vmin=1e-6,
-                                                          vmax=1.,
-                                                          length=2000,
-                                                          delay_in=0),
-               name: str = 'VampriorVAE',
-               **kwargs):
-    super().__init__(beta=beta, name=name, **kwargs)
+  def __init__(
+      self,
+      n_components: int = 500,
+      pseudoinputs_mean: float = -0.05,
+      pseudoinputs_std: float = 0.01,
+      beta: Union[float, Interpolation] = linear(vmin=1e-6,
+                                                 vmax=1.,
+                                                 steps=2000,
+                                                 delay_in=0),
+      **kwargs):
+    super().__init__(beta=beta, **kwargs)
     self.n_components = n_components
     self.pseudoinputs_mean = pseudoinputs_mean
     self.pseudoinputs_std = pseudoinputs_std

@@ -140,7 +140,7 @@ class MIVAE(BetaVAE):
                                     projection=True,
                                     name='codes'),
       steps_without_mi: int = 100,
-      beta: Coefficient = linear(vmin=1e-6, vmax=1., length=2000),
+      beta: Coefficient = linear(vmin=1e-6, vmax=1., steps=2000),
       beta_codes: Coefficient = 0.,
       name: str = 'MutualInfoVAE',
       **kwargs,

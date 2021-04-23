@@ -40,7 +40,7 @@ class SemafoBase(AnnealingVAE, SemiSupervisedVAE):
       alpha: float = 10.0,
       mi_coef: Union[float, Interpolation] = linear(vmin=0.1,
                                                     vmax=0.05,
-                                                    length=20000),
+                                                    steps=20000),
       reverse_mi: bool = False,
       steps_without_mi: int = 1000,
       **kwargs,

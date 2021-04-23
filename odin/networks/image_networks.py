@@ -13,6 +13,7 @@ from tensorflow_probability.python.distributions.pixel_cnn import \
   _PixelCNNNetwork
 from tensorflow_probability.python.layers import DistributionLambda
 from typeguard import typechecked
+from typing_extensions import Literal
 
 from odin.bay.distributions import (Blockwise, Categorical, ContinuousBernoulli,
                                     Distribution, Gamma,
@@ -41,66 +42,63 @@ __all__ = [
 # ===========================================================================
 # Helpers
 # ===========================================================================
-def _mixture_quantized_logistic(n_components=10,
-                                n_channels=3) -> DistributionLambda:
-  return DistributionLambda(
-    lambda params: MixtureQuantizedLogistic(params,
-                                            n_components=n_components,
-                                            n_channels=n_channels,
-                                            inputs_domain='sigmoid',
-                                            high=255,
-                                            low=0),
-    convert_to_tensor_fn=Distribution.mean,
-    name='image'
-  )
-
-
-def _quantized_logistic() -> DistributionLambda:
-  return DistributionLambda(
-    lambda params: QuantizedLogistic(
-      *[
-        # loc
-        p if i == 0 else
-        # Ensure scales are positive and do not collapse to near-zero
-        tf.nn.softplus(p) + tf.cast(tf.exp(-7.), tf.float32)
-        for i, p in enumerate(tf.split(params, 2, -1))],
-      low=0,
-      high=255,
-      inputs_domain='sigmoid',
-      reinterpreted_batch_ndims=3),
-    convert_to_tensor_fn=Distribution.sample,
-    name='image'
-  )
-
-
-def _parse_distribution(input_shape: Tuple[int, int, int],
-                        distribution: str
-                        ) -> Tuple[int, DistributionLambda, Layer]:
-  from odin.bay.random_variable import RVconf
+def _parse_distribution(
+    input_shape: Tuple[int, int, int],
+    distribution: Literal['qlogistic', 'mixqlogistic', 'bernoulli', 'gaussian'],
+    n_components=10,
+    n_channels=3) -> Tuple[int, DistributionLambda, Layer]:
+  from odin.bay.layers import DistributionDense
   n_channels = input_shape[-1]
+  last_layer = Activation('linear')
+  # === 1. Quantized logistic
   if distribution == 'qlogistic':
     n_params = 2
-    observation = _quantized_logistic()
-    last_layer = Activation('linear')
+    observation = DistributionLambda(
+      lambda params: QuantizedLogistic(
+        *[
+          # loc
+          p if i == 0 else
+          # Ensure scales are positive and do not collapse to near-zero
+          tf.nn.softplus(p) + tf.cast(tf.exp(-7.), tf.float32)
+          for i, p in enumerate(tf.split(params, 2, -1))],
+        low=0,
+        high=255,
+        inputs_domain='sigmoid',
+        reinterpreted_batch_ndims=3),
+      convert_to_tensor_fn=Distribution.sample,
+      name='image'
+    )
+  # === 2. Mixture Quantized logistic
   elif distribution == 'mixqlogistic':
     n_params = MixtureQuantizedLogistic.params_size(
-      n_components=10,
+      n_components=n_components,
       n_channels=n_channels) // n_channels
-    observation = _mixture_quantized_logistic()
-    last_layer = Activation('linear')
+    observation = DistributionLambda(
+      lambda params: MixtureQuantizedLogistic(params,
+                                              n_components=n_components,
+                                              n_channels=n_channels,
+                                              inputs_domain='sigmoid',
+                                              high=255,
+                                              low=0),
+      convert_to_tensor_fn=Distribution.mean,
+      name='image')
+  # === 3. Bernoulli
   elif distribution == 'bernoulli':
     n_params = 1
-    observation = DistributionLambda(
-      lambda p: Independent(Bernoulli(logits=p), len(input_shape)),
+    observation = DistributionDense(
+      event_shape=input_shape,
+      posterior=lambda p: Independent(Bernoulli(logits=p), len(input_shape)),
+      projection=False,
       name="image")
-    last_layer = Activation('linear')
+  # === 4. Gaussian
   elif distribution == 'gaussian':
     n_params = 2
-    observation = DistributionLambda(
-      lambda p: Independent(Normal(*tf.split(p, 2, -1)), len(input_shape)),
-      name="image"
-    )
-    last_layer = Activation('linear')
+    observation = DistributionDense(
+      event_shape=input_shape,
+      posterior=lambda p: Independent(Normal(
+        *tf.split(p, 2, -1)), len(input_shape)),
+      projection=False,
+      name="image")
   else:
     raise ValueError(f'No support for distribution {distribution}')
   return n_params, observation, last_layer
@@ -618,7 +616,7 @@ def celeba_networks(qz: str = 'mvndiag',
     decoder = SequentialNetwork(layers=layers, name='Decoder')
   latents = RVconf((zdim,), qz, projection=True,
                    name="latents").create_posterior()
-  observation = _quantized_logistic()
+  observation = _parse_distribution(input_shape, 'qlogistic')
   networks = dict(encoder=encoder,
                   decoder=decoder,
                   observation=observation,

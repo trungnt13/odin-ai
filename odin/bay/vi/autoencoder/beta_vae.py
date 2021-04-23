@@ -70,7 +70,7 @@ class AnnealingVAE(BetaVAE):
       self,
       beta: Union[float, Interpolation] = linear(vmin=1e-6,
                                                  vmax=1.0,
-                                                 length=2000,
+                                                 steps=2000,
                                                  delay_in=0),
       **kwargs,
   ):
@@ -99,8 +99,8 @@ class BetaTCVAE(BetaVAE):
     return llk, kl
 
 
-class CapacitateVAE(VAE):
-  """Creates an annealedVAE model.
+class BetaCapacityVAE(VAE):
+  """Creates an Beta-VAE with controlled capacity model.
 
   Implementing Eq. 8 of (Burgess et al. 2018)
 
@@ -110,7 +110,7 @@ class CapacitateVAE(VAE):
   c_max: a Scalar. Maximum capacity of the bottleneck.
     is gradually increased from zero to a value large enough to produce
     good quality reconstructions
-  iter_max: an Integer. Number of iteration until reach the maximum
+  n_steps: an Integer. Number of iteration until reach the maximum
     capacity (start from 0).
   interpolation : a String. Type of interpolation for increasing capacity.
 
@@ -126,10 +126,10 @@ class CapacitateVAE(VAE):
   """
 
   def __init__(self,
-               gamma: float = 1.0,
-               c_min: float = 0.,
+               gamma: float = 10.0,
+               c_min: float = 0.01,
                c_max: float = 25.,
-               iter_max: int = 1000,
+               n_steps: int = 10000,
                interpolation: str = 'linear',
                **kwargs):
     super().__init__(**kwargs)
@@ -137,7 +137,7 @@ class CapacitateVAE(VAE):
     self.interpolation = interp.get(str(interpolation))(
       vmin=tf.constant(c_min, self.dtype),
       vmax=tf.constant(c_max, self.dtype),
-      norm=int(iter_max))
+      steps=int(n_steps))
 
   def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     llk, kl = super().elbo_components(inputs, mask=mask, training=training)

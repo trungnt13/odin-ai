@@ -69,7 +69,7 @@ class HypersphericalVAE(BetaVAE):
         None, SphericalUniform, VonMisesFisher, PowerSpherical] = None,
       beta: Union[float, Interpolation] = linear(vmin=1e-6,
                                                  vmax=1.,
-                                                 length=2000,
+                                                 steps=2000,
                                                  delay_in=0),
       **kwargs):
     event_shape = latents.event_shape

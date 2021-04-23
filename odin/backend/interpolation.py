@@ -3,24 +3,15 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
+from typing import Optional
 
 import numpy as np
 import tensorflow as tf
+from typing_extensions import Type
 
 
 def cbrt(x):
   return tf.pow(x, 1 / 3)
-
-
-def get(name=None):
-  all_interpolation = {}
-  for key, val in globals().items():
-    if inspect.isclass(val) and issubclass(
-        val, Interpolation) and val is not Interpolation:
-      all_interpolation[key] = val
-  if name is None:
-    return [i[-1] for i in sorted(all_interpolation.items())]
-  return all_interpolation[name]
 
 
 # ===========================================================================
@@ -35,7 +26,7 @@ class Interpolation(object):
     Minimum value for the interpolation output, the return range is [vmin, vmax]
   vmax : Scalar (default: 1).
     Maximum value for the interpolation output, the return range is [vmin, vmax]
-  length : Scalar (optional).
+  steps : Scalar (optional).
     Normalization constant for the input value,
     the repeat cycle in case of cyclical scheduling.
   cyclical : Boolean.
@@ -49,13 +40,13 @@ class Interpolation(object):
   def __init__(self,
                vmin: float = 0.,
                vmax: float = 1.,
-               length: float = 1,
+               steps: float = 1,
                delay_in: float = 0,
                delay_out: float = 0,
                cyclical: bool = False):
     self.vmin = vmin
     self.vmax = vmax
-    self.length = length
+    self.length = steps
     self.cyclical = cyclical
     self.delay_in = max(delay_in, 0)
     self.delay_out = max(delay_out, 0)
@@ -83,8 +74,8 @@ class Interpolation(object):
 
   def __str__(self):
     return "<%s(%.2f,%.2f,%d) cyclical:%s delay:(%d,%d)>" % \
-      (self.__class__.__name__, self.vmin, self.vmax,
-       self.length, self.cyclical, self.delay_in, self.delay_out)
+           (self.__class__.__name__, self.vmin, self.vmax,
+            self.length, self.cyclical, self.delay_in, self.delay_out)
 
   def __call__(self, a):
     return self.apply(a)
@@ -164,7 +155,7 @@ class power(Interpolation):
                inverse=False):
     super().__init__(vmin=vmin,
                      vmax=vmax,
-                     length=length,
+                     steps=length,
                      cyclical=cyclical,
                      delay_in=delay_in,
                      delay_out=delay_out)
@@ -173,9 +164,9 @@ class power(Interpolation):
 
   def _alpha(self, a):
     return tf.where(
-        a <= 0.5,
-        tf.pow(a * 2, self.power) / 2,
-        tf.pow((a - 1) * 2, self.power) / ((self.power % 2 - 0.5) * 4) + 1)
+      a <= 0.5,
+      tf.pow(a * 2, self.power) / 2,
+      tf.pow((a - 1) * 2, self.power) / ((self.power % 2 - 0.5) * 4) + 1)
 
 
 class powerIn(power):
@@ -220,8 +211,8 @@ class sineOut(Interpolation):
 class circle(Interpolation):
 
   def _alpha(self, a):
-    return tf.where(a <= 0.5, (1 - tf.sqrt(1 - (a * 2)**2)) / 2,
-                    (tf.sqrt(1 - ((a - 1) * 2)**2) + 1) / 2)
+    return tf.where(a <= 0.5, (1 - tf.sqrt(1 - (a * 2) ** 2)) / 2,
+                    (tf.sqrt(1 - ((a - 1) * 2) ** 2) + 1) / 2)
 
 
 class circleIn(Interpolation):
@@ -251,7 +242,7 @@ class swing(Interpolation):
                delay_out=0):
     super().__init__(vmin=vmin,
                      vmax=vmax,
-                     length=length,
+                     steps=length,
                      cyclical=cyclical,
                      delay_in=delay_in,
                      delay_out=delay_out)
@@ -260,10 +251,10 @@ class swing(Interpolation):
   def _alpha(self, a):
     scale = self.scale
     return tf.where(
-          a <= 0.5, \
-          (a * 2) ** 2 * ((scale + 1) * a * 2 - scale) / 2, \
-          ((a - 1) * 2) ** 2 * ((scale + 1) * ((a - 1) * 2) + scale) / 2 + 1 \
-        )
+      a <= 0.5, \
+      (a * 2) ** 2 * ((scale + 1) * a * 2 - scale) / 2, \
+      ((a - 1) * 2) ** 2 * ((scale + 1) * ((a - 1) * 2) + scale) / 2 + 1 \
+      )
 
 
 class swingIn(swing):
@@ -313,7 +304,7 @@ class exp(Interpolation):
                power=5.):
     super().__init__(vmin=vmin,
                      vmax=vmax,
-                     length=length,
+                     steps=length,
                      cyclical=cyclical,
                      delay_in=delay_in,
                      delay_out=delay_out)
@@ -328,9 +319,9 @@ class exp(Interpolation):
     min_val = self.min_val
     scale = self.scale
     return tf.where(
-            a <= 0.5, \
-            (tf.pow(base, power * (a * 2 - 1)) - min_val) * scale / 2, \
-            (2 - (tf.pow(base, -power * (a * 2 - 1)) - min_val) * scale) / 2)
+      a <= 0.5, \
+      (tf.pow(base, power * (a * 2 - 1)) - min_val) * scale / 2, \
+      (2 - (tf.pow(base, -power * (a * 2 - 1)) - min_val) * scale) / 2)
 
 
 class expIn(exp):
@@ -371,7 +362,7 @@ class elastic(Interpolation):
                bounces=7.):
     super().__init__(vmin=vmin,
                      vmax=vmax,
-                     length=length,
+                     steps=length,
                      cyclical=cyclical,
                      delay_in=delay_in,
                      delay_out=delay_out)
@@ -389,7 +380,8 @@ class elastic(Interpolation):
     return tf.where(
       a <= 0.5, \
       tf.pow(base, power * (a * 2 - 1)) * tf.sin(a * 2 * bounces) * scale / 2, \
-      1 - tf.pow(base, power * ((1 - a) * 2 - 1)) * tf.sin((1 - a) * 2 * bounces) * scale / 2
+      1 - tf.pow(base, power * ((1 - a) * 2 - 1)) * tf.sin(
+        (1 - a) * 2 * bounces) * scale / 2
     )
 
 
@@ -417,5 +409,20 @@ class elasticOut(elastic):
     return tf.where(
       a == 0, \
       tf.zeros_like(a), \
-      1 - tf.pow(base, power * ((1 - a) - 1)) * tf.sin((1 - a) * bounces) * scale
+      1 - tf.pow(base, power * ((1 - a) - 1)) * tf.sin(
+        (1 - a) * bounces) * scale
     )
+
+
+# ===========================================================================
+# Helpers
+# ===========================================================================
+def get(name: Optional[str] = None) -> Type[Interpolation]:
+  all_interpolation = {}
+  for key, val in globals().items():
+    if inspect.isclass(val) and issubclass(
+        val, Interpolation) and val is not Interpolation:
+      all_interpolation[key] = val
+  if name is None:
+    return [i[-1] for i in sorted(all_interpolation.items())]
+  return all_interpolation[name]

@@ -16,12 +16,12 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from six import string_types
 from tensorflow_probability.python.distributions import Distribution, Normal, \
-  Blockwise, Categorical
+  Blockwise, Categorical, Bernoulli
 from typeguard import typechecked
 
 from odin import visual as vs
 from odin.bay import VariationalModel, get_vae
-from odin.bay.distributions import Batchwise
+from odin.bay.distributions import Batchwise, QuantizedLogistic
 from odin.fuel import ImageDataset, get_dataset
 from odin.networks import get_optimizer_info, get_networks
 from odin.utils import as_tuple
@@ -298,6 +298,37 @@ class Callback:
 
   @staticmethod
   @schedule(5)
+  def llk_pixels(model: VariationalModel, valid_ds: tf.data.Dataset):
+    llk = []
+    for x, y in valid_ds.take(5):
+      px, _ = _call(model, x, y, decode=True)
+      px = as_tuple(px)[0]
+      if hasattr(px, 'distribution'):
+        px = px.distribution
+      if isinstance(px, Bernoulli):
+        px = Bernoulli(logits=px.logits)
+      elif isinstance(px, Normal):
+        px = Normal(loc=px.loc, scale=px.scale)
+      elif isinstance(px, QuantizedLogistic):
+        px = QuantizedLogistic(loc=px.loc, scale=px.scale,
+                               low=px.low, high=px.high,
+                               inputs_domain=px.inputs_domain,
+                               reinterpreted_batch_ndims=None)
+      else:
+        return  # nothing to do
+      llk.append(px.log_prob(x))
+    llk = tf.reshape(tf.reduce_mean(tf.concat(llk, 0), 0), -1)
+    tf.summary.histogram('valid/llk_pixels', llk, step=model.step)
+    fig = plt.figure(figsize=(6, 3))
+    y = llk.numpy()
+    x = np.arange(len(y))
+    plt.scatter(x, y, marker='o', s=8, c='salmon', alpha=0.6, linewidths=0)
+    plt.ylabel('Log-likelihood', fontsize=8)
+    plt.tick_params(axis='x', labelbottom=False)
+    tf.summary.image('llk_pixels', vs.plot_to_image(fig, dpi=100))
+
+  @staticmethod
+  @schedule(5)
   def latent_units(model: VariationalModel,
                    valid_ds: tf.data.Dataset):
     weights = model.weights
@@ -379,7 +410,8 @@ def train(
     model: VariationalModel,
     ds: ImageDataset,
     args: Namespace,
-    on_batch_end: Sequence[Callable[..., Any]] = (Callback.latent_units,),
+    on_batch_end: Sequence[Callable[..., Any]] = (Callback.latent_units,
+                                                  Callback.llk_pixels),
     on_valid_end: Sequence[Callable[..., Any]] = (Callback.save_best_llk,),
     label_percent: float = 0,
     oversample_ratio: float = 0.5) -> VariationalModel:
