@@ -317,15 +317,27 @@ class Callback:
       else:
         return  # nothing to do
       llk.append(px.log_prob(x))
-    llk = tf.reshape(tf.reduce_mean(tf.concat(llk, 0), 0), -1)
+    # average over all channels
+    llk_image = tf.reduce_mean(tf.reduce_mean(tf.concat(llk, 0), axis=0),
+                               axis=-1)
+    llk = tf.reshape(llk_image, -1)
     tf.summary.histogram('valid/llk_pixels', llk, step=model.step)
-    fig = plt.figure(figsize=(6, 3))
-    y = llk.numpy()
-    x = np.arange(len(y))
-    plt.scatter(x, y, marker='o', s=8, c='salmon', alpha=0.6, linewidths=0)
-    plt.ylabel('Log-likelihood', fontsize=8)
-    plt.tick_params(axis='x', labelbottom=False)
-    tf.summary.image('llk_pixels', vs.plot_to_image(fig, dpi=100))
+    # show the image heatmap of llk pixels
+    fig = plt.figure(figsize=(3, 3))
+    ax = plt.gca()
+    im = ax.pcolormesh(llk_image.numpy(),
+                       cmap='Spectral',
+                       vmin=np.min(llk),
+                       vmax=np.max(llk))
+    ax.axis('off')
+    ax.margins(0.)
+    # color bar
+    ticks = np.linspace(np.min(llk), np.max(llk), 5)
+    cbar = plt.colorbar(im, ax=ax, fraction=0.04, pad=0.02, ticks=ticks)
+    cbar.ax.set_yticklabels([f'{i:.2f}' for i in ticks])
+    cbar.ax.tick_params(labelsize=6)
+    plt.tight_layout()
+    tf.summary.image('llk_heatmap', vs.plot_to_image(fig, dpi=100))
 
   @staticmethod
   @schedule(5)
@@ -391,7 +403,9 @@ class Callback:
     for x, y in valid_ds.take(_n_valid_batches):
       px, qz = _call(model, x, y)
       px: Distribution = as_tuple(px)[0]
-      if px.event_shape == x.shape[1:]:  # VAE
+      if len(px.event_shape) == 0 and px.batch_shape[1:] == x.shape[1:]:
+        llk.append(tf.reduce_sum(px.log_prob(x), tf.range(1, x.shape.rank)))
+      elif px.event_shape == x.shape[1:]:  # VAE
         llk.append(px.log_prob(x))
       else:  # VIB
         llk.append(px.log_prob(y))

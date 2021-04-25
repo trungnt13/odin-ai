@@ -9,13 +9,15 @@ from matplotlib import pyplot as plt
 from six import string_types
 from sklearn import metrics
 from sklearn.mixture import GaussianMixture
-from tensorflow_probability.python.distributions import Distribution, Normal
+from tensorflow_probability.python.distributions import Distribution, Normal, \
+  Bernoulli
 from tqdm import tqdm
 from typeguard import typechecked
 from typing_extensions import Literal
 
 from odin import visual as vs
-from odin.bay.distributions import Batchwise
+from odin.bay.distributions import Batchwise, QuantizedLogistic, \
+  MixtureQuantizedLogistic
 from odin.bay.vi._base import VariationalModel
 from odin.bay.vi.autoencoder import VariationalAutoencoder
 from odin.bay.vi.losses import total_correlation
@@ -35,6 +37,7 @@ __all__ = [
   'DisentanglementGym',
   'Correlation',
   'DimReduce',
+  'plot_latent_stats'
 ]
 
 DataPartition = Literal['train', 'valid', 'test']
@@ -144,7 +147,12 @@ def _prepare_images(x, normalize=False):
   return x
 
 
-def _plot_latent_stats(mean, stddev, kld=None, weights=None, ax=None):
+def plot_latent_stats(mean,
+                      stddev,
+                      kld=None,
+                      weights=None,
+                      ax=None,
+                      name='q(z|x)'):
   # === 2. plotting
   ax = vs.to_axis(ax)
   l1 = ax.plot(mean,
@@ -163,7 +171,7 @@ def _plot_latent_stats(mean, stddev, kld=None, weights=None, ax=None):
                alpha=0.5)
   ax.set_ylim(-1.5, 1.5)
   ax.tick_params(axis='y', colors='r')
-  ax.set_ylabel('q(z|x) Mean', color='r')
+  ax.set_ylabel(f'{name} Mean', color='r')
   ax.grid(True)
   lines = l1 + l2
   ## plotting the weights
@@ -543,8 +551,10 @@ class DisentanglementGym(vs.Visualizer):
       dataset: Union[ImageDataset, DatasetNames],
       model: VariationalModel,
       batch_size: int = 32,
+      dpi: int = 200,
       seed: int = 1):
-    self.seed = seed
+    self.seed = int(seed)
+    self.dpi = int(dpi)
     if isinstance(dataset, string_types):
       self.ds = get_dataset(dataset)
       self.dsname = str(dataset).lower().strip()
@@ -792,16 +802,16 @@ class DisentanglementGym(vs.Visualizer):
     yield self
     self._context_setup = False
 
-  def plot_reconstruction_images(self,
-                                 n_images: int = 36,
-                                 title: str = '') -> plt.Figure:
+  def plot_reconstruction(self,
+                          n_images: int = 36,
+                          title: str = '') -> plt.Figure:
     self._assert_sampled()
     rand = np.random.RandomState(self.seed)
     n_rows = int(np.sqrt(n_images))
     ids = rand.permutation(self.n_samples)[:n_images]
     org = _prepare_images(self.x_true[ids])
     rec = _prepare_images(self.px_z[0].mean().numpy()[ids], normalize=True)
-    fig = plt.figure(figsize=(12, 7))
+    fig = plt.figure(figsize=(12, 7), dpi=self.dpi)
     vs.plot_images(org, grids=(n_rows, n_rows), ax=(1, 2, 1),
                    title=f'{title} Original')
     vs.plot_images(rec, grids=(n_rows, n_rows), ax=(1, 2, 2),
@@ -809,6 +819,72 @@ class DisentanglementGym(vs.Visualizer):
                          f'(llk:{self.log_likelihood()[0]:.2f})')
     plt.tight_layout()
     self.add_figure(f'reconstruction{title}', fig)
+    return fig
+
+  def plot_distortion(self, title: str = '') -> plt.Figure:
+    with tf.device('/CPU:0'):
+      start = 0
+      llk = []
+      for px in self.px_z[0].distributions:
+        x = self.x_true[start: start + px.batch_shape[0]]
+        start += px.batch_shape[0]
+        if hasattr(px, 'distribution'):
+          px = px.distribution
+        if isinstance(px, Bernoulli):
+          px = Bernoulli(logits=px.logits)
+        elif isinstance(px, Normal):
+          px = Normal(loc=px.loc, scale=px.scale)
+        elif isinstance(px, QuantizedLogistic):
+          px = QuantizedLogistic(loc=px.loc, scale=px.scale,
+                                 low=px.low, high=px.high,
+                                 inputs_domain=px.inputs_domain,
+                                 reinterpreted_batch_ndims=None)
+        elif isinstance(px, MixtureQuantizedLogistic):
+          raise NotImplementedError
+        else:
+          raise NotImplementedError
+        llk.append(px.log_prob(x))
+      # aggregate and statistics
+      llk = -np.concatenate(llk, 0)
+      mean = np.mean(llk, 0)
+      mean_lims = (np.min(mean), np.max(mean))
+      std = np.std(llk, 0)
+      std_lims = (np.min(std), np.max(std))
+      n_channels = llk.shape[-1]
+
+      # helper
+      def ax_config(im, ax, lims):
+        ax.axis('off')
+        ax.margins(0)
+        ax.grid(False)
+        ticks = np.linspace(lims[0], lims[1], num=5)
+        cbar = plt.colorbar(im, ax=ax, fraction=0.04, pad=0.02, ticks=ticks)
+        cbar.ax.set_yticklabels([f'{i:.2f}' for i in ticks])
+        cbar.ax.tick_params(labelsize=6, length=2, width=0.5)
+
+      # plotting
+      fig = plt.figure(figsize=(2 * 2, n_channels * 2), dpi=self.dpi)
+      idx = 1
+      for i in range(n_channels):
+        # mean
+        ax = plt.subplot(n_channels, 2, idx)
+        im = ax.pcolormesh(mean[:, :, i], cmap='Spectral',
+                           vmin=mean_lims[0], vmax=mean_lims[1],
+                           linewidth=0, rasterized=True)
+        ax.set_title(rf'$\mu$', fontsize=6)
+        ax_config(im, ax, mean_lims)
+        ax.set_ylabel(f'Channel{i}')
+        idx += 1
+        # std
+        ax = plt.subplot(n_channels, 2, idx)
+        im = ax.pcolormesh(std[:, :, i], cmap='Spectral',
+                           vmin=std_lims[0], vmax=std_lims[1],
+                           linewidth=0, rasterized=True)
+        ax.set_title(rf'$\sigma$', fontsize=6)
+        ax_config(im, ax, std_lims)
+        idx += 1
+      plt.tight_layout()
+    self.add_figure(f'distortion{title}', fig)
     return fig
 
   def plot_latents_stats(self,
@@ -850,8 +926,8 @@ class DisentanglementGym(vs.Visualizer):
           w_d = tf.linalg.norm(tf.reshape(w, (w.shape[0], -1)), axis=1).numpy()
           break
     # === 2. plotting
-    fig = plt.figure(figsize=(np.log2(np.prod(zdims)) + 2, 5))
-    ax = _plot_latent_stats(mean, stddev, kld, w_d, plt.gca())
+    fig = plt.figure(figsize=(np.log2(np.prod(zdims)) + 2, 5), dpi=self.dpi)
+    ax = plot_latent_stats(mean, stddev, kld, w_d, plt.gca())
     collapse = int(np.sum(np.abs(stddev - 1.0) <= 0.05))
     ax.set_title(f'{title} Z{latent_idx} '
                  f'{collapse}/{np.prod(zdims)} collapsed '
@@ -907,7 +983,7 @@ class DisentanglementGym(vs.Visualizer):
     ## plotting each pairs
     ncol = 2
     nrow = n_pairs
-    fig = plt.figure(figsize=(ncol * 3.5, nrow * 3))
+    fig = plt.figure(figsize=(ncol * 3.5, nrow * 3), dpi=self.dpi)
     c = 1
     styles = dict(size=10, alpha=0.8, color='bwr', cbar=True, cbar_nticks=5,
                   cbar_ticks_rotation=0, cbar_fontsize=8, fontsize=10,
@@ -962,7 +1038,7 @@ class DisentanglementGym(vs.Visualizer):
       y = y.numpy()
     y = _prepare_categorical(y, self.ds)
     # shuffling
-    fig = plt.figure(figsize=(8, 8))
+    fig = plt.figure(figsize=(8, 8), dpi=self.dpi)
     rand = np.random.RandomState(seed=self.seed)
     ids = rand.permutation(z.shape[0])[:n_points]
     if use_umap:
@@ -1012,7 +1088,8 @@ class DisentanglementGym(vs.Visualizer):
     images = as_tuple(images)[0]
     images = _prepare_images(images.mean().numpy(), normalize=True)
     ## plotting
-    fig = plt.figure(figsize=(1.5 * n_traverse_points, 1.5 * n_top_latents))
+    fig = plt.figure(figsize=(1.5 * n_traverse_points, 1.5 * n_top_latents),
+                     dpi=self.dpi)
     vs.plot_images(images, grids=(n_top_latents, n_traverse_points),
                    ax=plt.gca())
     plt.tight_layout()
@@ -1027,7 +1104,7 @@ class DisentanglementGym(vs.Visualizer):
     images = self.model.sample_observation(n=n_images, seed=self.seed)
     images = as_tuple(images)[0]
     images = _prepare_images(images.mean().numpy(), normalize=True)
-    fig = plt.figure(figsize=(5, 5))
+    fig = plt.figure(figsize=(5, 5), dpi=self.dpi)
     vs.plot_images(images, grids=(n_rows, n_rows), title='Sampled')
     if len(title) > 0:
       plt.suptitle(f"{title}")
@@ -1071,7 +1148,7 @@ class DisentanglementGym(vs.Visualizer):
     mat = mat[:, latent_ids]
     n_factors, n_latents = mat.shape
     # plotting
-    fig = plt.figure(figsize=(n_latents, n_factors))
+    fig = plt.figure(figsize=(n_latents, n_factors), dpi=self.dpi)
     ax = plt.gca()
     ax.set_facecolor('dimgrey')
     # fig = ax.get_figure()
@@ -1143,7 +1220,7 @@ class DisentanglementGym(vs.Visualizer):
     ### create the figure
     n_row = F.shape[1]
     n_col = Z.shape[1] + 1
-    fig = plt.figure(figsize=(n_col * 2.8, n_row * 3))
+    fig = plt.figure(figsize=(n_col * 2.8, n_row * 3), dpi=self.dpi)
     count = 1
     for fidx, (f, fname) in enumerate(zip(F.T, factor_names)):
       # the first plot show how the factor clustered
@@ -1253,7 +1330,8 @@ class DisentanglementGym(vs.Visualizer):
     # === 2. plot images
     n_row = len(images)
     n_col = n_points
-    fig_reconstruction = plt.figure(figsize=(1.5 * n_col, 1.5 * n_row))
+    fig_reconstruction = plt.figure(figsize=(1.5 * n_col, 1.5 * n_row),
+                                    dpi=self.dpi)
     count = 1
     for row, (name, imgs) in enumerate(images.items()):
       for col, img in enumerate(imgs):
@@ -1389,7 +1467,7 @@ class DisentanglementGym(vs.Visualizer):
     self._assert_sampled()
     with tf.device('/CPU:0'):
       if 'elbo' not in _CACHE[self._cache_key]:
-        llk = {f'llk{i}': p.log_prob(x)
+        llk = {f'llk{i}': p.log_prob(tf.convert_to_tensor(x))
                for i, (p, x) in enumerate(zip(self.px_z,
                                               [self.x_true, self.y_true]))}
         kl = {f'kl{i}': kl_divergence(q, p, analytic=False)
@@ -1399,12 +1477,14 @@ class DisentanglementGym(vs.Visualizer):
     return _CACHE[self._cache_key]['elbo']
 
   def log_likelihood(self) -> Sequence[float]:
+    """Conditional log likelihood `p(x|z)`"""
     self._assert_sampled()
     with tf.device('/CPU:0'):
       if 'llk' not in _CACHE[self._cache_key]:
-        llk = [np.mean(p.log_prob(x))
-               for i, (p, x) in enumerate(zip(self.px_z,
-                                              [self.x_true, self.y_true]))]
+        llk = []
+        for i, (p, x) in enumerate(zip(self.px_z, [self.x_true, self.y_true])):
+          x = tf.convert_to_tensor(x)
+          llk.append(np.mean(p.log_prob(x)))
         _CACHE[self._cache_key]['llk'] = tuple(llk)
       return _CACHE[self._cache_key]['llk']
 

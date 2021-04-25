@@ -7,10 +7,12 @@ from typing_extensions import Literal
 from odin.backend.types_helpers import DataType, LabelType
 from tensorflow.python.data import Dataset
 
-
 # ===========================================================================
 # Helpers
 # ===========================================================================
+Partition = Literal['train', 'valid', 'test', 'unlabelled']
+
+
 def get_partition(part,
                   train=None,
                   valid=None,
@@ -99,7 +101,7 @@ class IterableDataset:
     return self._labels_indices
 
   @property
-  def labels(self) -> List[str]:
+  def labels(self) -> np.ndarray:
     return np.array([])
 
   @property
@@ -117,8 +119,7 @@ class IterableDataset:
     raise NotImplementedError()
 
   def create_dataset(self,
-                     partition: Literal['train', 'valid', 'test',
-                                        'unlabelled'] = 'train',
+                     partition: Partition = 'train',
                      *,
                      batch_size: Optional[int] = 32,
                      drop_remainder: bool = False,
@@ -138,8 +139,7 @@ class IterableDataset:
             prefetch: int = tf.data.experimental.AUTOTUNE,
             cache: str = '',
             parallel: Optional[int] = None,
-            partition: Literal['train', 'valid', 'test',
-                               'unlabelled'] = 'train',
+            partition: Partition = 'train',
             label_percent: bool = False,
             seed: int = 1,
             verbose: bool = False):

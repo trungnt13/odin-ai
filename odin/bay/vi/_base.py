@@ -317,10 +317,10 @@ class VariationalModel(Networks):
     return Q
 
   def sample_observation(self, n: int = 1, seed: int = 1,
-                         training: bool = False) -> Distribution:
+                         training: bool = False, **kwargs) -> Distribution:
     raise NotImplementedError
 
-  def sample_prior(self, n: int = 1, seed: int = 1) -> tf.Tensor:
+  def sample_prior(self, n: int = 1, seed: int = 1, **kwargs) -> tf.Tensor:
     """Sampling from prior distribution"""
     raise NotImplementedError
 

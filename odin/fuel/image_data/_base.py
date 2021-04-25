@@ -10,7 +10,7 @@ from tqdm import tqdm
 from typing_extensions import Literal
 
 from odin.backend.types_helpers import DataType, LabelType
-from odin.fuel.dataset_base import IterableDataset, get_partition
+from odin.fuel.dataset_base import IterableDataset, get_partition, Partition
 from odin.utils import as_tuple
 from odin.utils.cache_utils import get_cache_path
 from tensorflow.python.data import Dataset
@@ -32,6 +32,7 @@ def _extract_labeled_examples(ds, normalize_method=None
 class ImageDataset(IterableDataset):
 
   def __init__(self):
+    super(ImageDataset, self).__init__()
     self.train = None
     self.valid = None
     self.test = None
@@ -64,11 +65,11 @@ class ImageDataset(IterableDataset):
     return self._label_type
 
   def sample_images(self,
-                    save_path=None,
-                    dpi=200,
-                    n_samples=25,
-                    partition='train',
-                    seed=1):
+                    save_path: Optional[str] = None,
+                    dpi: int = 200,
+                    n_samples: int = 25,
+                    partition: Partition = 'train',
+                    seed: int = 1):
     """ Sample a subset of image from training set """
     n = int(np.sqrt(n_samples))
     assert n * n == n_samples, "Sqrt of n_samples is not an integer"
@@ -167,9 +168,9 @@ class ImageDataset(IterableDataset):
 
   def create_dataset(
       self,
-      partition: Literal['train', 'valid', 'test'] = 'train',
+      partition: Partition = 'train',
       *,
-      batch_size: Optional[int] = 100,
+      batch_size: Optional[int] = 64,
       drop_remainder: bool = False,
       shuffle: int = 1000,
       cache: Optional[str] = '',
@@ -384,5 +385,5 @@ class ImageDataset(IterableDataset):
 
   def __str__(self):
     name = self.__class__.__name__
-    return (f"<{name} {self.shape} X:{self.data_type} " 
+    return (f"<{name} {self.shape} X:{self.data_type} "
             f"y:{self.label_type} {self.labels}>")

@@ -2,6 +2,7 @@ import inspect
 from typing import Optional, Type
 
 from odin.bay.random_variable import RVconf
+from odin.networks import NetConf
 from odin.bay.vi.autoencoder.auxiliary_vae import *
 from odin.bay.vi.autoencoder.beta_vae import *
 from odin.bay.vi.autoencoder.conditional_vae import *
@@ -19,9 +20,9 @@ from odin.bay.vi.autoencoder.stochastic_vae import *
 from odin.bay.vi.autoencoder.vamprior import *
 from odin.bay.vi.autoencoder.variational_autoencoder import *
 from odin.bay.vi.autoencoder.vq_vae import *
-from odin.networks import NetConf
 from odin.bay.vi.autoencoder.semafo_vae import *
 from six import string_types
+from odin.bay.vi.autoencoder.two_stage_vae import *
 
 
 def get_vae(name: str = None) -> Type[VariationalAutoencoder]:

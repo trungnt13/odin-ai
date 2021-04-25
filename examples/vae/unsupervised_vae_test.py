@@ -14,9 +14,11 @@ from tensorflow_probability.python.distributions import Normal, Distribution, \
 from odin.bay import VariationalModel, VariationalAutoencoder, \
   DistributionDense, BetaVAE, AnnealingVAE, DisentanglementGym, RVconf, \
   BetaCapacityVAE
+from odin.bay.distributions import QuantizedLogistic
 from odin.bay.vi import Correlation
 from odin.fuel import get_dataset, ImageDataset
 from odin.networks import get_networks, TrainStep
+from odin.utils import as_tuple
 from utils import *
 from matplotlib import pyplot as plt
 
@@ -111,12 +113,14 @@ class Freebits(BetaVAE):
 class EquilibriumVAE(BetaVAE):
 
   def __init__(self, R: float = 0., C: float = 0.,
+               random_capacity: bool = False,
                dropout: float = 0., beta=1.0, **kwargs):
     kwargs.pop('free_bits', None)
     super().__init__(beta=beta, free_bits=None, **kwargs)
     self.R = float(R)
     self.C = float(C)
     self.dropout = float(dropout)
+    self.random_capacity = bool(random_capacity)
 
   def encode(self, inputs, training=None, **kwargs):
     if self.dropout > 0 and training:
@@ -124,14 +128,41 @@ class EquilibriumVAE(BetaVAE):
     return super().encode(inputs, training=training, **kwargs)
 
   def elbo_components(self, inputs, training=None, mask=None, **kwargs):
-    llk, kl = super().elbo_components(inputs=inputs,
-                                      mask=mask,
-                                      training=training)
-    llk = {k: v if self.R == 0 else -tf.math.abs(v - self.R)
-           for k, v in llk.items()}
-    zdim = int(np.prod(self.latents.event_shape))
-    C = tf.constant(self.C * zdim, dtype=self.dtype)
-    kl = {k: self.beta * tf.math.abs(v - C) for k, v in kl.items()}
+    px, qz = self(inputs, training=training, mask=mask)
+    # === 1. reconstructed information
+    llk = {}
+    for p, x in zip(as_tuple(px), as_tuple(inputs)):
+      name = p.name.split('_')[1]
+      if hasattr(p, 'distribution'):
+        p = p.distribution
+      if isinstance(p, Bernoulli):
+        p = Bernoulli(logits=p.logits)
+      elif isinstance(px, Normal):
+        p = Normal(loc=p.loc, scale=p.scale)
+      elif isinstance(p, QuantizedLogistic):
+        p = QuantizedLogistic(loc=p.loc, scale=p.scale,
+                              low=p.low, high=p.high,
+                              inputs_domain=p.inputs_domain,
+                              reinterpreted_batch_ndims=None)
+      lk = p.log_prob(x)
+      if self.R != 0.:
+        lk = tf.minimum(lk, self.R)
+      lk = tf.reduce_sum(lk, tf.range(1, x.shape.rank))
+      llk[f'llk_{name}'] = lk
+    # === 2. latent capacity
+    kl = {}
+    for q in as_tuple(qz):
+      name = q.name.split('_')[1]
+      kl_q = q.KL_divergence(analytic=self.analytic)
+      if self.C > 0:
+        zdim = int(np.prod(q.event_shape))
+        C = tf.constant(self.C * zdim, dtype=self.dtype)
+        if self.random_capacity:
+          C = C * tf.random.uniform(shape=[], minval=0., maxval=1.,
+                                    dtype=self.dtype)
+        kl_q = tf.math.abs(kl_q - C)
+      kl_q = self.beta * kl_q
+      kl[f'kl_{name}'] = kl_q
     return llk, kl
 
 
@@ -181,6 +212,13 @@ class GaussianOut(BetaVAE):
     networks['observation'] = obs_new
     super().__init__(free_bits=free_bits, beta=beta, **networks,
                      **kwargs)
+
+
+# Gaussian mixture posterior
+class GMMVAE(BetaVAE):
+
+  def __init__(self, **kwargs):
+    super(GMMVAE, self).__init__(**kwargs)
 
 
 # ===========================================================================
@@ -329,10 +367,23 @@ def model_equilibriumvae5(args: Namespace):
                         C=0.5, dropout=0., beta=5)
 
 
-# beta=1 R=-50 C=0.5, dropout=0.
+# beta=1 R=-0.1 C=0., dropout=0.
 def model_equilibriumvae6(args: Namespace):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
-                        R=-50, C=0.5, dropout=0., beta=5)
+                        R=-0.1, C=0., dropout=0., beta=1.)
+
+
+# beta=1 R=-0.1 C=0.5, dropout=0.
+def model_equilibriumvae7(args: Namespace):
+  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
+                        R=-0.1, C=0.5, dropout=0., beta=1.)
+
+
+# beta=1 C=1.0, random_capacity=True
+def model_equilibriumvae8(args: Namespace):
+  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
+                        R=0.0, C=1.0, random_capacity=True, dropout=0.0,
+                        beta=1.)
 
 
 # === 4. others
@@ -374,10 +425,11 @@ def model_gaussianout(args: Namespace):
 def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
   gym = DisentanglementGym(args.ds, model)
   with gym.run_model(n_samples=-1, partition='test'):
+    gym.plot_distortion()
     for i in range(3):
       gym.plot_latents_traverse(n_top_latents=20, title=f'_x{i}', seed=i)
     gym.plot_latents_stats()
-    gym.plot_reconstruction_images()
+    gym.plot_reconstruction()
     gym.plot_latents_sampling()
     gym.plot_latents_factors()
     gym.plot_latents_tsne()

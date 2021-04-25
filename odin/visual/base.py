@@ -58,6 +58,8 @@ class Visualizer(object):
     verbose : bool
         print out the log
     """
+    if dpi is None and hasattr(self, 'dpi'):
+      dpi = self.dpi
     # checking arguments
     figures = _FIGURE_LIST[id(self)]
     if len(figures) == 0:

@@ -109,7 +109,7 @@ class Batchwise(Distribution):
       n = di.batch_shape[axis]
       xi = tf.gather(x, tf.range(start, start + n),
                      axis=n_mcmc_dims + axis)
-      llk.append(di._log_prob(xi, **kwargs))
+      llk.append(di.log_prob(xi, **kwargs))
       start += n
     return tf.concat(llk, axis=n_mcmc_dims + axis)
 

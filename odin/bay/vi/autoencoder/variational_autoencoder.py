@@ -263,7 +263,7 @@ class VariationalAutoencoder(VariationalModel):
   def latent_shape(self) -> Sequence[Union[None, int]]:
     return self.decoder.input_shape
 
-  def sample_prior(self, n: int = 1, seed: int = 1) -> Tensor:
+  def sample_prior(self, n: int = 1, seed: int = 1, **kwargs) -> Tensor:
     """Sampling from prior distribution"""
     return bk.atleast_2d(
       self.latents.sample(sample_shape=n, seed=seed))
@@ -280,7 +280,7 @@ class VariationalAutoencoder(VariationalModel):
       self.observation.sample(sample_shape=n, seed=seed))
 
   def sample_observation(self, n: int = 1, seed: int = 1,
-                         training: bool = False) -> Distribution:
+                         training: bool = False, **kwargs) -> Distribution:
     """Sample observation using latents prios"""
     z = self.sample_prior(n, seed=seed)
     return self.decode(z, training=training)

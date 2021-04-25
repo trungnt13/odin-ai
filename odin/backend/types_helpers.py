@@ -26,7 +26,8 @@ __all__ = [
   'DataType',
   'LabelType',
   'Scalar',
-  'Optimizer'
+  'Optimizer',
+  'Activation'
 ]
 
 Coefficient = Union[Number, Interpolation]
@@ -51,3 +52,4 @@ DataType = Literal['image', 'audio', 'text', 'gene']
 LabelType = Literal['binary', 'categorical', 'factor']
 
 Optimizer = OptimizerV2
+Activation = Union[Callable[[TensorType], TensorType], str]
