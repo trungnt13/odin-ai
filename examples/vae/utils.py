@@ -20,7 +20,7 @@ from tensorflow_probability.python.distributions import Distribution, Normal, \
 from typeguard import typechecked
 
 from odin import visual as vs
-from odin.bay import VariationalModel, get_vae
+from odin.bay import VariationalModel, get_vae, Vamprior
 from odin.bay.distributions import Batchwise, QuantizedLogistic
 from odin.fuel import ImageDataset, get_dataset
 from odin.networks import get_optimizer_info, get_networks
@@ -353,15 +353,23 @@ class Callback:
       Pz.append(as_tuple(pz))
     n_latents = len(Qz[0])
     for i in range(n_latents):
-      qz: Sequence[Distribution] = [Normal(loc=q[i].mean(), scale=q[i].stddev())
-                                    for q in Qz]
-      pz: Sequence[Distribution] = [Normal(loc=p[i].mean(), scale=p[i].stddev())
-                                    for p in Pz]
+      qz: Sequence[Distribution] = [q[i] for q in Qz]
+      pz: Sequence[Distribution] = [p[i] for p in Pz]
       # tracking kl
       kld = []
       for q, p in zip(qz, pz):
+        q = Normal(loc=q.mean(), scale=q.stddev())
         z = q.sample()
-        kld.append(q.log_prob(z) - p.log_prob(z))
+        if isinstance(p, Vamprior):
+          C = p.C
+          p = p.distribution  # [n_components, zdim]
+          p = Normal(loc=p.mean(), scale=p.stddev())
+          kld.append(
+            q.log_prob(z) -
+            (tf.reduce_logsumexp(p.log_prob(tf.expand_dims(z, 1)), 1) - C))
+        else:
+          p = Normal(loc=p.mean(), scale=p.stddev())
+          kld.append(q.log_prob(z) - p.log_prob(z))
       kld = tf.reshape(tf.reduce_mean(tf.concat(kld, 0), axis=0), -1).numpy()
       # mean and stddev
       mean = tf.reduce_mean(tf.concat([d.mean() for d in qz], axis=0), 0)

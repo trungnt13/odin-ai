@@ -1,6 +1,6 @@
 import tensorflow as tf
 from numbers import Number
-from typing import Callable, List, Union, Sequence
+from typing import Callable, List, Union, Sequence, Any
 
 from numpy import ndarray
 from scipy.sparse import spmatrix
@@ -11,6 +11,8 @@ from typing_extensions import Literal
 
 from odin.backend.interpolation import Interpolation
 from tensorflow.python.keras.optimizer_v2.optimizer_v2 import OptimizerV2
+from tensorflow.python.keras.initializers.initializers_v2 import \
+  Initializer as InitializerV2
 
 __all__ = [
   'Coefficient',
@@ -27,7 +29,8 @@ __all__ = [
   'LabelType',
   'Scalar',
   'Optimizer',
-  'Activation'
+  'Activation',
+  'Initializer'
 ]
 
 Coefficient = Union[Number, Interpolation]
@@ -53,3 +56,4 @@ LabelType = Literal['binary', 'categorical', 'factor']
 
 Optimizer = OptimizerV2
 Activation = Union[Callable[[TensorType], TensorType], str]
+Initializer = Union[str, InitializerV2, Callable[[Any], TensorType]]

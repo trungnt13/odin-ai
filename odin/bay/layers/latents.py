@@ -1,7 +1,9 @@
+from typing import Optional
+
 import tensorflow as tf
 from tensorflow_probability.python.distributions import (Independent,
                                                          MultivariateNormalDiag,
-                                                         Normal)
+                                                         Normal, Distribution)
 
 from odin.bay.layers.continuous import (MultivariateNormalLayer,
                                         NormalLayer)
@@ -68,11 +70,19 @@ class NormalLatents(DistributionDense):
 
 class MixtureNormalLatents(MixtureDensityNetwork):
 
-  def __init__(self, units, n_components=8, projection=True, **kwargs):
+  def __init__(self,
+               units,
+               n_components=8,
+               projection=True,
+               prior: Optional[Distribution] = None,
+               **kwargs):
     kwargs['covariance'] = 'none'
     kwargs['n_components'] = int(n_components)
     super().__init__(units, projection=projection, **kwargs)
-    self.set_prior()
+    if prior is None:
+      self.set_prior()
+    else:
+      self.prior = prior
 
 
 class MixtureMVNDiagLatents(MixtureDensityNetwork):

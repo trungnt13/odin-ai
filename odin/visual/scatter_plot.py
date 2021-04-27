@@ -357,7 +357,9 @@ def _plot_scatter_points(*, x, y, z, val, color, marker, size, size_range,
       ax.set_yticklabels([])
       if is_3D_mode:
         ax.set_zticklabels([])
-    ax.grid(grid)
+    if grid:
+      ax.set_axisbelow(True)
+      ax.grid(grid, which='both', axis='both', linewidth=0.8, alpha=0.5)
     if xlabel is not None:
       ax.set_xlabel(str(xlabel), fontsize=fontsize - 1)
     if ylabel is not None:
@@ -401,7 +403,7 @@ def plot_scatter(x: np.ndarray,
                  legend_colspace=0.4,
                  centroids=False,
                  max_n_points=None,
-                 fontsize=10,
+                 fontsize=8,
                  xlabel=None,
                  ylabel=None,
                  title=None):

@@ -2,6 +2,9 @@ from typing import Callable, List, Optional, Union
 
 import numpy as np
 import tensorflow as tf
+from tensorflow_probability.python.glm.fisher_scoring import num_cols
+
+from odin.backend import atleast_2d
 from odin.backend.interpolation import Interpolation, linear
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.utils import as_tuple
@@ -67,6 +70,7 @@ class Vamprior(Distribution):
                      parameters={},
                      name=name)
     self.n_components = n_components
+    # trainable
     self.means = keras.layers.Dense(
       units=int(np.prod(input_shape)),
       use_bias=False,
@@ -77,10 +81,19 @@ class Vamprior(Distribution):
     if pseudoinputs is not None:
       self.means.kernel.assign(pseudoinputs)
     # create an idle input for calling pseudo-inputs
-    self.idle_input = tf.eye(n_components, n_components, dtype=dtype)
+    self.idle_input = tf.eye(num_rows=n_components, num_columns=n_components,
+                             dtype=dtype)
     self.C = tf.math.log(tf.constant(self.n_components, dtype=dtype))
     self.fn_encoding = fn_encoding
     self.input_shape = as_tuple(input_shape, t=int)
+
+  @property
+  def distribution(self) -> Distribution:
+    X = self.means(self.idle_input)  # [n_components, input_size]
+    X = tf.reshape(X, (-1,) + self.input_shape)
+    # calculate params for given data
+    qz = self.fn_encoding(X)  # [n_components, zdim]
+    return qz
 
   def _log_prob(self, z):
     # calculate params
@@ -93,12 +106,31 @@ class Vamprior(Distribution):
     a = tf.reduce_logsumexp(a, axis=-1)  # [batch_dim]
     return a
 
-  def _sample_n(self, n, seed=None):
-    means = self.means(self.idle_input)[:n]  # [n, input_size]
-    means = tf.reshape(means,
-                       (-1,) + self.input_shape)  # [n_components, input_shape]
+  def _mean(self, **kwargs):
+    means = self.means(self.idle_input)
+    means = tf.reshape(means, (-1,) + self.input_shape)
     qz = self.fn_encoding(means)  # [n_components, zdim]
-    return qz._sample_n(1, seed=seed)
+    return qz.mean()
+
+  def _stddev(self, **kwargs):
+    means = self.means(self.idle_input)
+    means = tf.reshape(means, (-1,) + self.input_shape)
+    qz = self.fn_encoding(means)  # [n_components, zdim]
+    return qz.stddev()
+
+  def _sample_n(self, n, seed=None, **kwargs):
+    # https://github.com/jmtomczak/vae_vampprior/blob/bb6ff3e58036adbea448e82d7bc55593d605b52c/models/VAE.py#L159
+    # means = self.means(self.idle_input)[0:N]
+    # z_sample_gen_mean, z_sample_gen_logvar = self.q_z(means)
+    # z_sample_rand = self.reparameterize(z_sample_gen_mean, z_sample_gen_logvar)
+    ids = tf.random.shuffle(tf.range(self.n_components, dtype=tf.int32),
+                            seed=seed)[:n]
+    means = tf.gather(self.means(self.idle_input), indices=ids, axis=0)
+    means = tf.reshape(means, (-1,) + self.input_shape)
+    qz = self.fn_encoding(means)
+    return qz.sample(seed=seed)
+    # z = qz.sample(n, seed=seed)
+    # return tf.reduce_mean(z, axis=1)
 
 
 class VampriorVAE(BetaVAE):

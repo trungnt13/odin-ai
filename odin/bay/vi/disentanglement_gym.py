@@ -169,7 +169,7 @@ def plot_latent_stats(mean,
                markersize=3,
                color='g',
                alpha=0.5)
-  ax.set_ylim(-1.5, 1.5)
+  # ax.set_ylim(-1.5, 1.5)
   ax.tick_params(axis='y', colors='r')
   ax.set_ylabel(f'{name} Mean', color='r')
   ax.grid(True)
@@ -890,7 +890,9 @@ class DisentanglementGym(vs.Visualizer):
   def plot_latents_stats(self,
                          latent_idx: int = 0,
                          title: str = '') -> plt.Figure:
+    from odin.bay import Vamprior
     self._assert_sampled()
+    rand = np.random.RandomState(seed=self.seed)
     # === 0. prepare the latents
     qz = self.qz_x[latent_idx]
     pz = self.pz[latent_idx]
@@ -904,9 +906,18 @@ class DisentanglementGym(vs.Visualizer):
     # kld
     with tf.device('/CPU:0'):
       q = Normal(qz.mean(), qz.stddev())
-      p = Normal(pz.mean(), pz.stddev())
-      z = q.sample()
-      kld = tf.reduce_mean(q.log_prob(z) - p.log_prob(z), axis=0)
+      z = q.sample(seed=rand.randint(1e8))
+      if isinstance(pz, Vamprior):
+        C = pz.C
+        p = pz.distribution  # [n_components, zdim]
+        p = Normal(loc=p.mean(), scale=p.stddev())
+        kld = tf.reduce_mean(
+          q.log_prob(z) -
+          (tf.reduce_logsumexp(p.log_prob(tf.expand_dims(z, 1)), 1) - C),
+          axis=0)
+      else:
+        p = Normal(pz.mean(), pz.stddev())
+        kld = tf.reduce_mean(q.log_prob(z) - p.log_prob(z), axis=0)
     kld = kld.numpy()[ids]
     # === 1. get the weights
     w_d = None
@@ -939,7 +950,7 @@ class DisentanglementGym(vs.Visualizer):
       self,
       convert_fn: ConvertFunction = first_mean,
       method: CorrelationMethod = 'spearman',
-      n_points: int = 4000,
+      n_points: int = 5000,
       title: str = '') -> plt.Figure:
     """Plot pair of `the two most correlated latent dimension` and each
     `factor`.
@@ -1490,11 +1501,12 @@ class DisentanglementGym(vs.Visualizer):
 
   def kl_divergence(self) -> Sequence[float]:
     self._assert_sampled()
+    rand = np.random.RandomState(seed=self.seed)
     with tf.device('/CPU:0'):
       if 'kl' not in _CACHE[self._cache_key]:
         kl = []
         for i, (q, p) in enumerate(zip(self.qz_x, self.pz)):
-          z = q.sample(self.seed)
+          z = q.sample(seed=rand.randint(1e8))
           kl.append(
             float(tf.reduce_mean(q.log_prob(z) - p.log_prob(z)).numpy()))
         _CACHE[self._cache_key]['kl'] = tuple(kl)

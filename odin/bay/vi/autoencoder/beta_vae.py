@@ -43,6 +43,29 @@ class BetaVAE(VAE):
     return llk, kl
 
 
+class BetaGammaVAE(BetaVAE):
+  """`ELBO = gamma * llk - beta * kl`"""
+
+  def __init__(self,
+               gamma: Union[float, Interpolation] = 1.0,
+               **kwargs):
+    super().__init__(**kwargs)
+    self._gamma = gamma
+
+  @property
+  def gamma(self) -> tf.Tensor:
+    if callable(self._gamma):
+      return self._gamma(self.step)
+    return tf.constant(self._gamma, dtype=self.dtype)
+
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
+    llk, kl = super().elbo_components(inputs=inputs,
+                                      mask=mask,
+                                      training=training)
+    llk = {key: self.gamma * val for key, val in llk.items()}
+    return llk, kl
+
+
 class Beta10VAE(BetaVAE):
 
   def __init__(self, **kwargs):

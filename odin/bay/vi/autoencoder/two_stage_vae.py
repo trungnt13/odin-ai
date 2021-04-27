@@ -26,21 +26,27 @@ class TwoStageVAE(BetaVAE):
 
   def __init__(
       self,
-      second_units: Sequence[int] = (1024, 1024, 1024),
-      second_zdim: Optional[int] = None,
+      stage2_units: Sequence[int] = (1024, 1024, 1024),
+      stage2_zdim: Optional[int] = None,
+      stage2_iter_ratio: int = 4,
+      stage2_optimizer: Optional[Optimizer] = None,
       activation: Activation = tf.nn.relu,
       initializer: Optional[Initializer] = None,
       auto_train_2stages: bool = True,
-      ratio_2stages: int = 3,
       **kwargs):
     """
     Parameters
     ----------
-    second_units : Sequence[int]
+    stage2_units : Sequence[int]
         list of hidden units for encoder and decoder of the second stage
-    second_zdim : Optional[int]
+    stage2_zdim : Optional[int]
         number of latents units for second stage, by default, the same
         number of units as first stage latents.
+    stage2_iter_ratio : int
+        if stage-1 is trained for `n` steps, then stage-2 is trained for
+        `ratio_2stages * n` steps.
+    stage2_optimizer : OptimizerV2
+        specialized optimizer for stage-2, if None, use `Adam(lr=1e-4)`
     activation : Activation
         activation function for hidden layers of the second stage
     auto_train_2stages : bool
@@ -48,42 +54,47 @@ class TwoStageVAE(BetaVAE):
         number of iteration right after the first stage training,
         i.e. single call to fit function will involve the two stage
         subsequently
-    ratio_2stages : int
-        if stage-1 is trained for `n` steps, then stage-2 is trained for
-        `ratio_2stages * n` steps.
     """
     super(TwoStageVAE, self).__init__(**kwargs)
     # True = stage-1 (vanilla VAE training)
     # False = stage-2 (second VAE training)
-    self._train_first_stage = True
-    self._eval_first_stage = True
-    self.ratio_2stages = int(ratio_2stages)
+    self._train_stage1 = True
+    self._eval_stage1 = True
+    self.stage2_iter_ratio = int(stage2_iter_ratio)
     self._auto_train_2stages = bool(auto_train_2stages)
+    if stage2_optimizer is None:
+      stage2_optimizer = tf.optimizers.Adam(learning_rate=1e-4)
+    self.stage2_optimizer = stage2_optimizer
     # === 1. prepare the inputs
     zdim = sum(np.prod(z.event_shape) for z in as_tuple(self.latents))
-    if second_zdim is None:
-      second_zdim = zdim
+    if stage2_zdim is None:
+      stage2_zdim = zdim
     x_inp = keras.Input([zdim])
-    z_inp = keras.Input([second_zdim])
+    z_inp = keras.Input([stage2_zdim])
     kw = dict(activation=activation,
               kernel_initializer=initializer)
     # === 2. encoder
     x_out = x_inp
-    for i, units in enumerate(second_units):
+    for i, units in enumerate(stage2_units):
       x_out = tf.keras.layers.Dense(units, name=f'Encoder2_{i}', **kw)(x_out)
     x_out = tf.keras.layers.Concatenate(-1)([x_inp, x_out])
     self.encoder2 = keras.Model(inputs=x_inp, outputs=x_out, name='Encoder2')
     # === 3. decoder
     z_out = z_inp
-    for i, units in enumerate(second_units[::-1]):
+    for i, units in enumerate(stage2_units[::-1]):
       z_out = tf.keras.layers.Dense(units, name=f'Decoder2_{i}', **kw)(z_out)
     z_out = tf.keras.layers.Concatenate(-1)([z_inp, z_out])
     self.decoder2 = keras.Model(inputs=z_inp, outputs=z_out, name='Decoder2')
     # === 4. latents and outputs
-    self.latents2 = MVNDiagLatents(units=second_zdim, name='Latents2')
+    self.latents2 = MVNDiagLatents(units=stage2_zdim, name='Latents2')
     self.latents2(self.encoder2.output)
     self.observation2 = MVNDiagLatents(units=zdim, name='Observation2')
     self.observation2(self.decoder2.output)
+    self.stage2_layers = [self.encoder2, self.latents2, self.decoder2,
+                          self.observation2]
+    self.stage1_layers = [i for i in self.layers if i not in self.stage2_layers]
+    for i in self.stage2_layers:
+      i.trainable = False
 
   def sample_prior(self, n: int = 1, seed: int = 1,
                    two_stage: bool = True) -> tf.Tensor:
@@ -107,7 +118,9 @@ class TwoStageVAE(BetaVAE):
       - 1: training vanillaVAE
       - 2: training the second VAE converge to the true manifold
     """
-    self._train_first_stage = stage == 1
+    self._train_stage1 = stage == 1
+    for i in (self.stage2_layers if self._train_stage1 else self.stage1_layers):
+      i.trainable = False
     return self
 
   def set_eval_stage(self, stage: Literal[1, 2]) -> 'TwoStageVAE':
@@ -116,7 +129,7 @@ class TwoStageVAE(BetaVAE):
       - 1: evaluate using latents from vanilla VAE
       - 2: use the enhanced latents from two stage VAE
     """
-    self._eval_first_stage = stage == 1
+    self._eval_stage1 = stage == 1
     return self
 
   def encode(self,
@@ -135,7 +148,7 @@ class TwoStageVAE(BetaVAE):
                                            training=training,
                                            mask=mask,
                                            **kwargs)
-    if not self._eval_first_stage:
+    if not self._eval_stage1:
       qz_x = self.observation2(
         self.decoder2(
           self.latents2(
@@ -179,7 +192,7 @@ class TwoStageVAE(BetaVAE):
                                               free_bits=self.free_bits)}
 
   def elbo_components(self, inputs, training=None, mask=None, **kwargs):
-    if self._train_first_stage:
+    if self._train_stage1:
       return super().elbo_components(inputs, training=training, mask=mask,
                                      **kwargs)
     else:
@@ -188,14 +201,16 @@ class TwoStageVAE(BetaVAE):
 
   def fit(self, train, *, valid=None, **kwargs) -> 'TwoStageVAE':
     super(TwoStageVAE, self).fit(train, valid=valid, **kwargs)
-    if self._train_first_stage and self._auto_train_2stages:
+    if self._train_stage1 and self._auto_train_2stages:
       self.set_train_stage(2)
-      for k in ['on_batch_end', 'on_valid_end', 'optimizer', 'learning_rate']:
+      for k in ['on_batch_end', 'on_valid_end', 'optimizer',
+                'learning_rate', 'optimizer']:
         kwargs.pop(k, None)
       super(TwoStageVAE, self).fit(
         train,
-        epochs=kwargs.pop('epochs', -1) * self.ratio_2stages,
-        max_iter=kwargs.pop('max_iter', 1000) * self.ratio_2stages,
+        optimizer=self.stage2_optimizer,
+        epochs=kwargs.pop('epochs', -1) * self.stage2_iter_ratio,
+        max_iter=kwargs.pop('max_iter', 1000) * self.stage2_iter_ratio,
         **kwargs)
       self.set_train_stage(1)
     return self

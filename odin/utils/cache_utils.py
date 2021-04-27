@@ -11,11 +11,15 @@ from decorator import FunctionMaker
 from six import string_types
 from six.moves import builtins
 
-__all__ = ['get_cache_path', 'lru_cache', 'cache_disk', 'cache_memory']
+__all__ = ['set_cache_dir',
+           'get_cache_path',
+           'lru_cache',
+           'cache_disk',
+           'cache_memory']
 
 # to set the cache dir, set the environment CACHE_DIR
 __cache_dir = os.environ.get(
-    "CACHE_DIR", os.path.join(os.path.expanduser('~'), '.odin_cache'))
+  "CACHE_DIR", os.path.join(os.path.expanduser('~'), '.odin_cache'))
 _memory = None
 # check cache_dir
 if not os.path.exists(__cache_dir):
@@ -24,7 +28,16 @@ elif os.path.isfile(__cache_dir):
   raise ValueError("Invalid cache directory at path:" + __cache_dir)
 
 
-# Don't use memmap anymore, carefull when cache big numpy ndarray results
+def set_cache_dir(path: str):
+  global __cache_dir
+  __cache_dir = path
+  if not os.path.exists(path):
+    os.makedirs(path)
+  elif os.path.isfile(path):
+    raise ValueError(f"Invalid cache directory: {__cache_dir}")
+
+
+# Don't use memmap anymore, careful when cache big numpy ndarray results
 def get_cache_memory():
   try:
     from joblib import Memory
@@ -91,7 +104,7 @@ def cache_disk(function):
 # ===========================================================================
 # Cache
 # ===========================================================================
-__CACHE = defaultdict(lambda: ([], []))  #id(function) -> (KEY_ARGS, RET_VALUE)
+__CACHE = defaultdict(lambda: ([], []))  # id(function) -> (KEY_ARGS, RET_VALUE)
 __NO_ARGUMENT = '___NO_ARGUMENT___'
 
 
@@ -179,8 +192,8 @@ def cache_memory(func, *attrs):
         # __cache__ specified in args
         if any(isinstance(a, string_types) and a == '__cache__' for a in args):
           args = tuple([
-              a for a in args
-              if not isinstance(a, string_types) or a != '__cache__'
+            a for a in args
+            if not isinstance(a, string_types) or a != '__cache__'
           ])
         # __cache__ specified in kwargs
         elif '__cache__' in kwargs:

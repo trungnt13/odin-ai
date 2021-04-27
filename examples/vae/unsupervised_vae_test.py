@@ -15,6 +15,7 @@ from odin.bay import VariationalModel, VariationalAutoencoder, \
   DistributionDense, BetaVAE, AnnealingVAE, DisentanglementGym, RVconf, \
   BetaCapacityVAE
 from odin.bay.distributions import QuantizedLogistic
+from odin.bay.layers import MixtureNormalLatents
 from odin.bay.vi import Correlation
 from odin.fuel import get_dataset, ImageDataset
 from odin.networks import get_networks, TrainStep
@@ -217,8 +218,18 @@ class GaussianOut(BetaVAE):
 # Gaussian mixture posterior
 class GMMVAE(BetaVAE):
 
-  def __init__(self, **kwargs):
-    super(GMMVAE, self).__init__(**kwargs)
+  def __init__(self, n_components=10, prior=None, **kwargs):
+    latents = kwargs.pop('latents')
+    latents = MixtureNormalLatents(units=np.prod(latents.event_shape),
+                                   n_components=n_components,
+                                   prior=prior,
+                                   name=latents.name)
+    # p: MixtureSameFamily = latents.prior
+    # mix: Categorical = p.mixture_distribution
+    # print(mix.probs_parameter())
+    # print(p.components_distribution.distribution.loc)
+    # print(p.components_distribution.distribution.scale)
+    super(GMMVAE, self).__init__(latents=latents, **kwargs)
 
 
 # ===========================================================================
@@ -419,12 +430,30 @@ def model_gaussianout(args: Namespace):
   return GaussianOut(args)
 
 
+# n_components = 10
+def model_gmmvae1(args: Namespace):
+  return GMMVAE(n_components=10, **get_networks(args.ds, zdim=args.zdim))
+
+
+# n_components = 50
+def model_gmmvae2(args: Namespace):
+  return GMMVAE(n_components=50, **get_networks(args.ds, zdim=args.zdim))
+
+
+# n_components = 10, prior=N(0, 1)
+def model_gmmvae3(args: Namespace):
+  zdim = args.zdim
+  prior = Independent(Normal(loc=tf.zeros([zdim]), scale=tf.ones([zdim])), 1)
+  return GMMVAE(n_components=10, prior=prior, analytic=False,
+                **get_networks(args.ds, zdim=args.zdim))
+
+
 # ===========================================================================
 # Main
 # ===========================================================================
 def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
   gym = DisentanglementGym(args.ds, model)
-  with gym.run_model(n_samples=-1, partition='test'):
+  with gym.run_model(n_samples=100, partition='test'):
     gym.plot_distortion()
     for i in range(3):
       gym.plot_latents_traverse(n_top_latents=20, title=f'_x{i}', seed=i)

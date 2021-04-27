@@ -1,8 +1,10 @@
 import tensorflow as tf
-from odin.bay.vi.autoencoder.variational_autoencoder import VariationalAutoencoder, LayerCreator
+from odin.bay.vi.autoencoder.variational_autoencoder import \
+  VariationalAutoencoder, LayerCreator
 from odin.bay.random_variable import RVconf
 from odin.utils import as_tuple
-from odin.bay.layers import DistributionDense, VectorDeterministicLayer, DeterministicLayer
+from odin.bay.layers import DistributionDense, VectorDeterministicLayer, \
+  DeterministicLayer
 
 
 # ===========================================================================
@@ -13,23 +15,10 @@ def _mse_log_prob(x_pred, x_true):
 
 
 def _copy_distribution_dense(p: DistributionDense, posterior, posterior_kwargs):
-  return DistributionDense(
-      event_shape=p.event_shape,
-      posterior=posterior,
-      posterior_kwargs=posterior_kwargs,
-      activation=p.activation,
-      use_bias=p.use_bias,
-      dropout=p._dropout,
-      projection=p.projection,
-      flatten_inputs=p.flatten_inputs,
-      kernel_initializer=p.kernel_initializer,
-      bias_initializer=p.bias_initializer,
-      kernel_regularizer=p.kernel_regularizer,
-      bias_regularizer=p.bias_regularizer,
-      activity_regularizer=p.activity_regularizer,
-      kernel_constraint=p.kernel_constraint,
-      bias_constraint=p.bias_constraint,
-  )
+  init_args = dict(p._init_args)
+  init_args['posterior'] = posterior
+  init_args['posterior_kwargs'] = posterior_kwargs
+  return DistributionDense(**init_args)
 
 
 # ===========================================================================
@@ -106,10 +95,10 @@ class _DeterministicLatents(VariationalAutoencoder):
                                                                           ord=1)
       if self.weights_l2coeff > 0:
         kl[f'{name}_weightsl2'] = self.weights_l2coeff * tf.linalg.norm(
-            layer.trainable_weights[0], ord=2)
+          layer.trainable_weights[0], ord=2)
       if self.weights_l1coeff > 0:
         kl[f'{name}_weightsl1'] = self.weights_l1coeff * tf.linalg.norm(
-            layer.trainable_weights[0], ord=1)
+          layer.trainable_weights[0], ord=1)
     return llk, kl
 
 
@@ -136,7 +125,7 @@ class Autoencoder(_DeterministicLatents):
         px = _copy_distribution_dense(px,
                                       posterior=DeterministicLayer,
                                       posterior_kwargs=dict(
-                                          log_prob=_mse_log_prob, name='MSE'))
+                                        log_prob=_mse_log_prob, name='MSE'))
       deterministic_obs.append(px)
     if len(deterministic_obs) == 1:
       deterministic_obs = deterministic_obs[0]

@@ -475,7 +475,7 @@ class MixtureDensityNetwork(DistributionDense):
       tie_loc: bool = False,
       tie_scale: bool = False,
       loc_activation: Union[str, Callable] = 'linear',
-      scale_activation: Union[str, Callable] = 'softplus1',
+      scale_activation: Union[str, Callable] = 'softplus',
       convert_to_tensor_fn: Callable = Distribution.sample,
       use_bias: bool = True,
       dropout: float = 0.0,
@@ -491,7 +491,7 @@ class MixtureDensityNetwork(DistributionDense):
     self.covariance = covariance
     self.n_components = n_components
     super().__init__(event_shape=units,
-                     posterior='mixgaussian',
+                     posterior='mdn',
                      posterior_kwargs=dict(n_components=int(n_components),
                                            covariance=str(covariance),
                                            loc_activation=loc_activation,
