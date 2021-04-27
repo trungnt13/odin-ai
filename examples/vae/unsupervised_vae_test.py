@@ -1,14 +1,14 @@
 import inspect
 import os
+import shutil
 from argparse import Namespace
 from functools import partial
 from typing import Sequence
 
 import numpy as np
 import tensorflow as tf
-from tensorflow.python.keras.layers import Dropout
-from tensorflow_probability.python.distributions import Normal, Distribution, \
-  Gamma, Bernoulli, Independent, ContinuousBernoulli, MixtureSameFamily, \
+from tensorflow_probability.python.distributions import Normal, Gamma, \
+  Bernoulli, Independent, MixtureSameFamily, \
   MultivariateNormalDiag, Categorical
 
 from odin.bay import VariationalModel, VariationalAutoencoder, \
@@ -16,12 +16,10 @@ from odin.bay import VariationalModel, VariationalAutoencoder, \
   BetaCapacityVAE
 from odin.bay.distributions import QuantizedLogistic
 from odin.bay.layers import MixtureNormalLatents
-from odin.bay.vi import Correlation
 from odin.fuel import get_dataset, ImageDataset
-from odin.networks import get_networks, TrainStep
+from odin.networks import get_networks
 from odin.utils import as_tuple
 from utils import *
-from matplotlib import pyplot as plt
 
 
 # ===========================================================================
@@ -452,11 +450,23 @@ def model_gmmvae3(args: Namespace):
 # Main
 # ===========================================================================
 def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
+  # === 1. prepare path
+  path = get_results_path(args)
+  if args.override and os.path.exists(path):
+    print('Override results at path:', path)
+    shutil.rmtree(path)
+    os.makedirs(path)
+  # === 2. run the Gym
   gym = DisentanglementGym(args.ds, model)
-  with gym.run_model(n_samples=100, partition='test'):
+  with gym.run_model(n_samples=-1, partition='test'):
+    # should be max here
+    stddev = np.max(gym.qz_x[0].stddev(), 0)
     gym.plot_distortion()
     for i in range(3):
-      gym.plot_latents_traverse(n_top_latents=20, title=f'_x{i}', seed=i)
+      gym.plot_latents_traverse(n_top_latents=20, title=f'_x{i}',
+                                max_val=3 * stddev,
+                                min_val=-3 * stddev,
+                                mode='linear', seed=i)
     gym.plot_latents_stats()
     gym.plot_reconstruction()
     gym.plot_latents_sampling()
@@ -464,7 +474,7 @@ def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
     gym.plot_latents_tsne()
     gym.plot_correlation(method='spearman')
     gym.plot_correlation(method='pearson')
-  gym.save_figures(get_results_path(args), verbose=True)
+  gym.save_figures(path, verbose=True)
 
 
 def main(args: Namespace):

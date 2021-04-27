@@ -1,6 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import types
+from numbers import Number
 from typing import List, Tuple, Union, Sequence, Optional
 
 import numpy as np
@@ -270,8 +271,8 @@ def permute_dims(z):
 
 def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
                   feature_indices: Optional[Sequence[int]] = None,
-                  min_val: float = -2.0,
-                  max_val: float = 2.0,
+                  min_val: Union[float, np.ndarray] = -2.0,
+                  max_val: Union[float, np.ndarray] = 2.0,
                   n_traverse_points: int = 11,
                   mode: Literal['linear', 'quantile', 'gaussian'] = 'linear'
                   ) -> np.ndarray:
@@ -323,15 +324,19 @@ def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
   # === 0. list of indices, repeat for each index
   if len(feature_indices) > 1:
     arr = [
-      traverse_dims(x,
-                    feature_indices=i,
-                    min_val=min_val,
-                    max_val=max_val,
-                    n_traverse_points=n_traverse_points,
-                    mode=mode) for i in feature_indices
-    ]
+      traverse_dims(
+        x,
+        feature_indices=i,
+        min_val=min_val,
+        max_val=max_val,
+        n_traverse_points=n_traverse_points,
+        mode=mode) for i in feature_indices]
     return np.concatenate(arr, axis=0)
   # === 1. single index
+  if not isinstance(min_val, Number):
+    min_val = min_val[feature_indices]
+  if not isinstance(max_val, Number):
+    max_val = max_val[feature_indices]
   feature_indices = feature_indices[0]
   n_traverse_points = int(n_traverse_points)
   assert n_traverse_points % 2 == 1, \
@@ -362,17 +367,18 @@ def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
     x_range = np.linspace(min_val, max_val, num=n_traverse_points)
   # min-max quantile
   elif mode == 'quantile':
-    x_range = np.linspace(min(x_org[:, feature_indices]),
-                          max(x_org[:, feature_indices]),
-                          num=n_traverse_points)
+    if x_org.shape[0] == 1:
+      vmin, vmax = np.min(x_org), np.max(x_org)
+    else:
+      vmin = np.min(x_org[:, feature_indices])
+      vmax = np.max(x_org[:, feature_indices])
+    x_range = np.linspace(vmin, vmax, num=n_traverse_points)
   # gaussian quantile
   elif mode == 'gaussian':
-    dist = Normal(
-      loc=tf.reduce_mean(px.mean()[:, feature_indices]),
-      scale=tf.reduce_mean(px.stddev()[:, feature_indices]),
-    )
+    dist = Normal(loc=tf.reduce_mean(px.mean(), 0)[feature_indices],
+                  scale=tf.reduce_max(px.stddev(), 0)[feature_indices])
     x_range = []
-    for i in np.linspace(1e-8, 1.0 - 1e-8,
+    for i in np.linspace(1e-6, 1.0 - 1e-6,
                          num=n_traverse_points,
                          dtype=np.float32):
       x_range.append(dist.quantile(i))

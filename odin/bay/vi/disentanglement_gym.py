@@ -1075,13 +1075,20 @@ class DisentanglementGym(vs.Visualizer):
   def plot_latents_traverse(
       self,
       factors: FactorFilter = None,
-      n_traverse_points: int = 21,
+      n_traverse_points: int = 25,
       n_top_latents: int = 10,
-      min_val: float = -3,
-      max_val: float = 3,
+      min_val: Optional[float] = -3,
+      max_val: Optional[float] = 3,
+      mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
       seed: int = 1,
       title: str = '') -> plt.Figure:
     self._assert_sampled()
+    if min_val is None or max_val is None:
+      stddev = np.max(self.qz_x[0].stddev(), 0)
+      if max_val is None:
+        max_val = 3 * stddev
+      if min_val is None:
+        min_val = -3 * stddev
     n_top_latents = min(self.n_latents, n_top_latents)
     factors, idx = self.groundtruth.sample_factors(
       factor_filter=factors,
@@ -1095,7 +1102,7 @@ class DisentanglementGym(vs.Visualizer):
       max_val=max_val,
       n_best_latents=n_top_latents,
       n_traverse_points=n_traverse_points,
-      mode='linear')
+      mode=mode)
     images = as_tuple(images)[0]
     images = _prepare_images(images.mean().numpy(), normalize=True)
     ## plotting
@@ -1104,8 +1111,9 @@ class DisentanglementGym(vs.Visualizer):
     vs.plot_images(images, grids=(n_top_latents, n_traverse_points),
                    ax=plt.gca())
     plt.tight_layout()
-    plt.title(f'{title} Factors={factors} Latents={top_latents}', fontsize=12)
-    self.add_figure(f'latents_traverse{title}', fig)
+    plt.title(f'{title} Mode={mode} Factors={factors} Latents={top_latents}',
+              fontsize=12)
+    self.add_figure(f'traverse_{mode}{title}', fig)
     return fig
 
   def plot_latents_sampling(self,

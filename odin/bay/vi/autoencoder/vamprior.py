@@ -19,7 +19,7 @@ __all__ = [
 
 
 def hard_probs(x):
-  return tf.clip_by_value(x, 0.0, 1.0)
+  return tf.clip_by_value(x, 0.0 + 1e-6, 1.0 - 1e-6)
 
 
 class Vamprior(Distribution):

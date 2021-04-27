@@ -335,6 +335,38 @@ class VariationalModel(Networks):
       smallest_stddev: bool = True,
       training: bool = False,
       mask: Optional[TensorType] = None) -> Tuple[Distribution, Sequence[int]]:
+    """Traversing a dimension of a matrix between given range
+
+    Parameters
+    ----------
+    min_val : int, optional
+        minimum value of the traverse, by default -2.0
+    max_val : int, optional
+        maximum value of the traverse, by default 2.0
+    n_traverse_points : int, optional
+        number of points in the traverse, must be odd number, by default 11
+    mode : {'linear', 'quantile', 'gaussian'}, optional
+        'linear' mode take linear interpolation between the `min_val` and
+        `max_val`.
+        'quantile' mode return `num` quantiles based on min and max values
+        inferred from the data.
+        'gaussian' mode takes `num` Gaussian quantiles, by default 'linear'
+
+    Returns
+    -------
+    np.ndarray
+        the ndarray with traversed axes
+
+    Example
+    --------
+    For `n_traverse_points=3`, and `feature_indices=[0]`,
+    the return latents are:
+    ```
+    [[-2., 0.47],
+     [ 0., 0.47],
+     [ 2., 0.47]]
+    ```
+    """
     from odin.bay.vi import traverse_dims
     latents = self.encode(inputs, training=training, mask=mask)
     stddev = np.sum(latents.stddev(), axis=0)
@@ -343,7 +375,8 @@ class VariationalModel(Networks):
       top_latents = np.argsort(stddev)[:int(n_best_latents)]
     else:
       top_latents = np.argsort(stddev)[::-1][:int(n_best_latents)]
-    latents = traverse_dims(latents, feature_indices=top_latents,
+    latents = traverse_dims(latents,
+                            feature_indices=top_latents,
                             min_val=min_val, max_val=max_val,
                             n_traverse_points=n_traverse_points,
                             mode=mode)

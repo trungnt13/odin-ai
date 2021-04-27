@@ -4,10 +4,12 @@ import itertools
 import os
 import pickle
 import shutil
+from typing import Optional
 
 import numpy as np
 import pandas as pd
 import tensorflow as tf
+from matplotlib import pyplot as plt
 from tensorflow import keras
 from tensorflow.python.keras.layers import Dense, Flatten
 from tqdm import tqdm
@@ -17,6 +19,10 @@ from odin.utils import MPI
 from multiprocessing import cpu_count
 from odin.bay import BetaVAE, MVNDiagLatents, DistributionDense, BetaGammaVAE
 from odin.networks.image_networks import CenterAt0
+from odin import visual as vs
+import seaborn as sns
+
+sns.set()
 
 # ===========================================================================
 # Config
@@ -29,6 +35,8 @@ cache_path = os.path.join(save_path, 'cache')
 if not os.path.exists(cache_path):
   os.makedirs(cache_path)
 # [0.001, 0.005, 0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 1., 2., 3., 5.]
+# beta = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
+# gamma = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
 beta = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
 gamma = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
 zdim = [2, 5, 10, 20, 35, 60, 80]
@@ -130,6 +138,31 @@ def evaluate(job):
               au_mean=au_mean, au_std=au_std)
 
 
+# ===========================================================================
+# Plotting helper
+# ===========================================================================
+def plot(df: pd.DataFrame,
+         x: str, y: str,
+         hue: Optional[str] = None,
+         size: Optional[str] = None,
+         style: Optional[str] = None,
+         title: Optional[str] = None,
+         ax=None):
+  if ax is None:
+    ax = plt.gca()
+  splot = sns.scatterplot(x=x, y=y, hue=hue, size=size, style=style,
+                          data=df, sizes=(40, 250), ax=ax, alpha=0.95,
+                          linewidth=0, palette='coolwarm')
+  splot.set(xscale="log")
+  splot.set(yscale="log")
+  plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0., fontsize=12)
+  if title is not None:
+    ax.set_title(title)
+
+
+# ===========================================================================
+# Main
+# ===========================================================================
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument('mode', type=int)
@@ -167,6 +200,32 @@ if __name__ == '__main__':
       df = pd.DataFrame(df)
       with open(path, 'wb') as f:
         pickle.dump(df, f)
-    print(df)
+    # add elbo
+    df['elbo'] = df['llk'] - df['kl']
+    # fix zdim, show llk and kl
+    n_cols = 4
+    n_rows = int(np.ceil(len(zdim) / n_cols))
+    plt.figure(figsize=(n_cols * 6, n_rows * 5), dpi=200)
+    for i, (zdim, group) in tqdm(enumerate(df.groupby('zdim'))):
+      ax = plt.subplot(n_rows, n_cols, i + 1)
+      plot(group, x='beta', y='gamma', hue='llk', size='kl',
+           title=f'zdim={zdim}', ax=ax)
+    plt.tight_layout()
+    # fix zdim, show au and llk
+    plt.figure(figsize=(n_cols * 6, n_rows * 5), dpi=200)
+    for i, (zdim, group) in tqdm(enumerate(df.groupby('zdim'))):
+      ax = plt.subplot(n_rows, n_cols, i + 1)
+      plot(group, x='beta', y='gamma', hue='llk', size='au_std',
+           title=f'zdim={zdim}', ax=ax)
+    plt.tight_layout()
+    # fix zdim, show au and elbo
+    plt.figure(figsize=(n_cols * 6, n_rows * 5), dpi=200)
+    for i, (zdim, group) in tqdm(enumerate(df.groupby('zdim'))):
+      ax = plt.subplot(n_rows, n_cols, i + 1)
+      plot(group, x='beta', y='gamma', hue='elbo', size='au_std',
+           title=f'zdim={zdim}', ax=ax)
+    plt.tight_layout()
+    # save all figures
+    vs.plot_save()
   else:
     raise NotImplementedError(f'No support mode={args.mode}')
