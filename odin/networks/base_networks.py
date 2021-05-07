@@ -204,7 +204,6 @@ class Networks(keras.Model, MD5object):
   def __init__(self,
                path: Optional[str] = None,
                step: int = 0,
-               aggregate_gradients: bool = False,
                *args,
                **kwargs):
     super().__init__(name=kwargs.pop('name', type(self).__name__),
@@ -220,7 +219,6 @@ class Networks(keras.Model, MD5object):
                                       trainable=False,
                                       name='SkippedUpdate')
     self._save_path = path
-    self._aggregate_gradients = aggregate_gradients
     with trackable.no_automatic_dependency_tracking_scope(self):
       self._last_outputs = None
       self._trainer = None
@@ -407,7 +405,7 @@ class Networks(keras.Model, MD5object):
       nan_gradients_policy: Literal[
         'ignore', 'skip', 'raise', 'restore'] = 'skip',
       allow_none_gradients: bool = False,
-      aggregate_gradients: Optional[bool] = None,
+      aggregate_gradients: bool = False,
       track_gradients: bool = False,
       *args,
       **kwargs,
@@ -443,7 +441,7 @@ class Networks(keras.Model, MD5object):
         ,default is 'skip'
     allow_none_gradients : bool, optional
         allow variables with None gradients during training, by default False
-    aggregate_gradients : bool, optional
+    aggregate_gradients : bool
         only used in multi-steps training, if True, aggregate gradients
         from multiple steps before updating. Otherwise, make updates
         separately for each returned step.
@@ -457,8 +455,6 @@ class Networks(keras.Model, MD5object):
         loss : a Scalar, the loss Tensor used for optimization
         metrics : a Dictionary, mapping from name to values
     """
-    if aggregate_gradients is None:
-      aggregate_gradients = self._aggregate_gradients
     if training:
       self.step.assign_add(1)
     ## prepare the optimizer
@@ -848,6 +844,11 @@ class SequentialNetwork(keras.Sequential):
     super().__init__(layers=None if layers is None else layers, name=name)
     self._track_outputs = False
     self._input_shape = None
+    self._last_outputs = None
+
+  @property
+  def last_outputs(self) -> Optional[List[Tuple[Layer, Tensor]]]:
+    return self._last_outputs
 
   @property
   def input_shape(self) -> Sequence[Union[None, int]]:
@@ -903,6 +904,7 @@ class SequentialNetwork(keras.Sequential):
       mask = getattr(outputs, '_keras_mask', None)
     if self._track_outputs:
       outputs._last_outputs = last_outputs
+      self._last_outputs = last_outputs
     return outputs
 
   def __repr__(self):

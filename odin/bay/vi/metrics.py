@@ -510,13 +510,32 @@ class Correlation(IntFlag):
   def is_single(self) -> bool:
     return len(self) == 1
 
-  def __call__(self,
-               x1: Union[Distribution, np.ndarray, tf.Tensor],
-               x2: Union[Distribution, np.ndarray, tf.Tensor],
-               seed: int = 1,
-               verbose: bool = False,
-               **kwargs) -> Union[np.ndarray, List[np.ndarray]]:
+  def apply(self,
+            x1: Union[Distribution, np.ndarray, tf.Tensor],
+            x2: Union[Distribution, np.ndarray, tf.Tensor],
+            seed: int = 1,
+            verbose: bool = False,
+            **kwargs) -> Union[np.ndarray, List[np.ndarray]]:
+    """
 
+    Parameters
+    ----------
+    x1 : `numpy.ndarray`
+        a matrix, shape `[n_samples, n_features1]`
+    x2 : `numpy.ndarray`
+        a matrix, shape `[n_samples, n_features2]`
+    seed : int
+        random seed
+    verbose : bool
+        verbose mode
+    kwargs : Dict
+        extra keyword arguments for the method
+
+    Returns
+    -------
+    Correlation matrix shape `[n_features1, n_features2]`
+
+    """
     if hasattr(x1, 'numpy'):
       x1 = x1.numpy()
     if hasattr(x2, 'numpy'):
@@ -537,3 +556,6 @@ class Correlation(IntFlag):
     elif self == Correlation.Importance:
       fn = lambda *args, **kw: importance_matrix(*args, **kw)[0]
     return fn(x1, x2, seed=seed, verbose=verbose, **kwargs)
+
+  def __call__(self, x1, x2, seed, verbose, **kwargs):
+    return self.apply(x1, x2, seed, verbose, **kwargs)

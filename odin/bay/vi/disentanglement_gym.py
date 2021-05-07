@@ -1,7 +1,8 @@
 import contextlib
 import random
 from collections import OrderedDict, defaultdict
-from typing import Dict, List, Optional, Tuple, Union, Sequence, Callable, Any
+from typing import Dict, List, Optional, Tuple, Union, Sequence, Callable, Any, \
+  Iterator
 
 import numpy as np
 import tensorflow as tf
@@ -16,6 +17,7 @@ from typeguard import typechecked
 from typing_extensions import Literal
 
 from odin import visual as vs
+from odin.backend import TensorType
 from odin.bay.distributions import Batchwise, QuantizedLogistic, \
   MixtureQuantizedLogistic
 from odin.bay.vi._base import VariationalModel
@@ -92,11 +94,18 @@ def _save_image(arr, path):
 def _prepare_categorical(y: np.ndarray, ds: ImageDataset,
                          return_index: bool = False) -> np.ndarray:
   """Return categorical labels and factors-based label"""
-  dsname = ds.name
-  labels = ds.labels
+  if ds is None:
+    dsname = None
+    labels = None
+  else:
+    dsname = ds.name
+    labels = ds.labels
   if hasattr(y, 'numpy'):
     y = y.numpy()
-  if dsname in ('mnist', 'fashionmnist', 'cifar10', 'cifar100', 'cortex'):
+  if dsname is None:  # unknown
+    y_categorical = tf.argmax(y, axis=-1)
+    names = np.array([f'#{i}' for i in range(y.shape[1])])
+  elif dsname in ('mnist', 'fashionmnist', 'cifar10', 'cifar100', 'cortex'):
     y_categorical = tf.argmax(y, axis=-1)
     names = labels
   elif 'celeba' in dsname:
@@ -366,7 +375,7 @@ class GroundTruth:
   def __init__(
       self,
       factors: Union[tf.Tensor, np.ndarray, tf.data.Dataset],
-      factor_names: Optional[List[str]] = None,
+      factor_names: Optional[Sequence[str]] = None,
       categorical: Union[bool, List[bool]] = False,
       n_bins: Optional[Union[int, List[int]]] = None,
       strategy: Literal['uniform', 'quantile', 'kmeans', 'gmm'] = 'uniform',
@@ -398,7 +407,11 @@ class GroundTruth:
     if factor_names is None:
       factor_names = [f'F{i}' for i in range(n_factors)]
     else:
-      factor_names = [str(i) for i in tf.nest.flatten(factor_names)]
+      factor_names = [str(i) for i in ([factor_names]
+                                       if not isinstance(factor_names,
+                                                         (tuple, list,
+                                                          np.ndarray))
+                                       else factor_names)]
     assert len(factor_names) == n_factors, \
       f'Given {n_factors} but only {len(factor_names)} names'
     # store the attributes
@@ -548,34 +561,45 @@ class DisentanglementGym(vs.Visualizer):
   @typechecked
   def __init__(
       self,
-      dataset: Union[ImageDataset, DatasetNames],
       model: VariationalModel,
+      dataset: Union[None, ImageDataset, DatasetNames] = None,
+      train: Optional[Any] = None,
+      valid: Optional[Any] = None,
+      test: Optional[Any] = None,
+      labels_name: Optional[Sequence[str]] = None,
       batch_size: int = 32,
       dpi: int = 200,
       seed: int = 1):
     self.seed = int(seed)
     self.dpi = int(dpi)
+    self._batch_size = int(batch_size)
+    self.model = model
+    # === 1. prepare dataset
     if isinstance(dataset, string_types):
       self.ds = get_dataset(dataset)
       self.dsname = str(dataset).lower().strip()
-    else:
+    elif isinstance(dataset, ImageDataset):
       self.ds = dataset
       self.dsname = dataset.name
-    self._batch_size = int(batch_size)
-    self.labels_name = self.ds.labels
-    ## set seed is importance for comparable results
-    kw = dict(batch_size=batch_size,
-              label_percent=True,
-              shuffle=1000,
-              seed=seed)
-    self._data = dict(
-      train=self.ds.create_dataset(partition='train', **kw),
-      valid=self.ds.create_dataset(partition='valid', **kw),
-      test=self.ds.create_dataset(partition='test', **kw),
-    )
-    self.model = model
+    else:
+      self.ds = None
+      self.dsname = 'unknown'
+    if dataset is None:
+      self._labels_name = labels_name
+      self._data = dict(train=train, valid=valid, test=test)
+    else:
+      self._labels_name = self.ds.labels
+      kw = dict(batch_size=batch_size,
+                label_percent=True,
+                shuffle=1000,
+                seed=seed)
+      self._data = dict(
+        train=self.ds.create_dataset(partition='train', **kw),
+        valid=self.ds.create_dataset(partition='valid', **kw),
+        test=self.ds.create_dataset(partition='test', **kw),
+      )
+    # === 3. attributes
     self._context_setup = False
-    ## attributes
     self._x_true = None
     self._y_true = None
     self._groundtruth = None
@@ -586,6 +610,11 @@ class DisentanglementGym(vs.Visualizer):
 
   def _assert_sampled(self):
     assert self._context_setup, 'Call method run_model to produce the samples'
+
+  @property
+  def labels_name(self) -> Sequence[str]:
+    return np.array([f'#{i} ' for i in range(self.y_true.shape[1])]) \
+      if self._labels_name is None else self._labels_name
 
   @property
   def x_true(self) -> np.ndarray:
@@ -739,7 +768,7 @@ class DisentanglementGym(vs.Visualizer):
   @contextlib.contextmanager
   def run_model(self,
                 *,
-                n_samples: int = 200,
+                n_samples: int = -1,
                 partition: DataPartition = 'test',
                 verbose: bool = True) -> 'DisentanglementGym':
     # === 0. setup
@@ -748,10 +777,23 @@ class DisentanglementGym(vs.Visualizer):
     self._cache_key = uuid(12)
     # === 1. prepare data
     ds = self._data[partition]
+    if ds is None:
+      raise ValueError(f'No dataset for partition {partition}')
+    if not isinstance(ds, tf.data.Dataset):
+      if isinstance(ds, TensorType):
+        ds = tf.data.Dataset.from_tensor_slices(ds)
+      elif isinstance(ds, (tuple, list)):
+        ds = tf.data.Dataset.zip(tuple([tf.data.Dataset.from_tensor_slices(i)
+                                        for i in ds]))
+      else:
+        raise ValueError(f'No support for dataset type: {type(ds)}')
     if n_samples > 0:
       ds = ds.take(int(np.ceil(n_samples / self._batch_size)))
+    structure = tf.data.experimental.get_structure(ds)
+    assert len(structure) == 2, \
+      f'Dataset must return inputs and target, but given: {structure}'
     progress = tqdm(ds,
-                    desc=f"{self.model.name}-{self.ds.name}",
+                    desc=f"{self.model.name}-{self.dsname}",
                     disable=not verbose)
     # === 2. running
     x_true = []
@@ -1035,7 +1077,7 @@ class DisentanglementGym(vs.Visualizer):
   def plot_latents_tsne(
       self,
       convert_fn: ConvertFunction = concat_mean,
-      y: Optional[np.ndarray] = None,
+      y_true: Optional[np.ndarray] = None,
       n_points: int = 2000,
       use_umap: bool = False,
       title: str = '') -> plt.Figure:
@@ -1043,8 +1085,7 @@ class DisentanglementGym(vs.Visualizer):
     z = convert_fn(self.qz_x)
     if hasattr(z, 'numpy'):
       z = z.numpy()
-    if y is None:
-      y = self.y_true
+    y = self.y_true if y_true is None else y_true
     if hasattr(y, 'numpy'):
       y = y.numpy()
     y = _prepare_categorical(y, self.ds)
@@ -1075,7 +1116,7 @@ class DisentanglementGym(vs.Visualizer):
   def plot_latents_traverse(
       self,
       factors: FactorFilter = None,
-      n_traverse_points: int = 25,
+      n_traverse_points: int = 31,
       n_top_latents: int = 10,
       min_val: Optional[float] = -3,
       max_val: Optional[float] = 3,
@@ -1084,6 +1125,7 @@ class DisentanglementGym(vs.Visualizer):
       title: str = '') -> plt.Figure:
     self._assert_sampled()
     if min_val is None or max_val is None:
+      # should be max here
       stddev = np.max(self.qz_x[0].stddev(), 0)
       if max_val is None:
         max_val = 3 * stddev
@@ -1170,12 +1212,6 @@ class DisentanglementGym(vs.Visualizer):
     fig = plt.figure(figsize=(n_latents, n_factors), dpi=self.dpi)
     ax = plt.gca()
     ax.set_facecolor('dimgrey')
-    # fig = ax.get_figure()
-    # bbox = ax.get_window_extent().transformed(fig.dpi_scale_trans.inverted())
-    # width, height = bbox.width, bbox.height
-    # width *= fig.dpi
-    # height *= fig.dpi
-    # s = min(width, height) / (0.5 * min(n_latents, n_factors))
     for i, row in enumerate(mat):
       row_max = np.argmax(row)
       for j, col in enumerate(row):
@@ -1184,7 +1220,7 @@ class DisentanglementGym(vs.Visualizer):
         else:
           color = 'white' if i != j else 'silver'
         point = plt.Circle((j + 1, i + 1),
-                           radius=col * 1 / n_factors * 5,
+                           radius=col * 0.35,
                            color=color)
         ax.add_patch(point)
         # ax.scatter(j, i, s=col * s, marker='o',
@@ -1519,3 +1555,15 @@ class DisentanglementGym(vs.Visualizer):
             float(tf.reduce_mean(q.log_prob(z) - p.log_prob(z)).numpy()))
         _CACHE[self._cache_key]['kl'] = tuple(kl)
       return _CACHE[self._cache_key]['kl']
+
+  def active_units(self) -> Sequence[int]:
+    self._assert_sampled()
+    with tf.device('/CPU:0'):
+      au = []
+      for q, p in zip(self.qz_x, self.pz):
+        q_std = np.mean(q.stddev(), axis=0).ravel()
+        p_std = p.stddev()
+        if p_std.shape.rank > 1:
+          p_std = np.mean(p_std, axis=0).ravel()
+        au.append(np.sum(np.abs(q_std - p_std) >= 0.05 * p_std))
+      return tuple(au)

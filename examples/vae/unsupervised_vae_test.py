@@ -1,7 +1,6 @@
 import inspect
 import os
 import shutil
-from argparse import Namespace
 from functools import partial
 from typing import Sequence
 
@@ -13,7 +12,7 @@ from tensorflow_probability.python.distributions import Normal, Gamma, \
 
 from odin.bay import VariationalModel, VariationalAutoencoder, \
   DistributionDense, BetaVAE, AnnealingVAE, DisentanglementGym, RVconf, \
-  BetaCapacityVAE
+  BetaCapacityVAE, BetaGammaVAE
 from odin.bay.distributions import QuantizedLogistic
 from odin.bay.layers import MixtureNormalLatents
 from odin.fuel import get_dataset, ImageDataset
@@ -48,7 +47,7 @@ def make_gaussian_out(p: tf.Tensor,
 
 class MultiCapacity(BetaVAE):
 
-  def __init__(self, args: Namespace, **kwargs):
+  def __init__(self, args: Arguments, **kwargs):
     networks = get_networks(args.ds, zdim=args.zdim)
     zdim = args.zdim
     prior = Normal(loc=tf.zeros([zdim]), scale=tf.ones([zdim]))
@@ -85,7 +84,7 @@ class MultiCapacity(BetaVAE):
 
 class Freebits(BetaVAE):
 
-  def __init__(self, args: Namespace, free_bits=None, beta=1, **kwargs):
+  def __init__(self, args: Arguments, free_bits=None, beta=1, **kwargs):
     networks = get_networks(args.ds, zdim=args.zdim)
     zdim = args.zdim
     prior = Normal(loc=tf.zeros([zdim]), scale=tf.ones([zdim]))
@@ -167,7 +166,7 @@ class EquilibriumVAE(BetaVAE):
 
 class GammaVAE(AnnealingVAE):
 
-  def __init__(self, args: Namespace, **kwargs):
+  def __init__(self, args: Arguments, **kwargs):
     networks = get_networks(args.ds, zdim=args.zdim)
     zdim = args.zdim
     prior = Gamma(rate=tf.fill([zdim], 0.3),
@@ -186,7 +185,7 @@ class GammaVAE(AnnealingVAE):
 # prior N(0, 2)
 class Normal2VAE(Freebits):
 
-  def __init__(self, args: Namespace, free_bits=None, beta=1, **kwargs):
+  def __init__(self, args: Arguments, free_bits=None, beta=1, **kwargs):
     networks = get_networks(args.ds, zdim=args.zdim)
     zdim = args.zdim
     prior = Normal(loc=tf.zeros([zdim]), scale=tf.fill([zdim], 2.))
@@ -199,7 +198,7 @@ class Normal2VAE(Freebits):
 
 class GaussianOut(BetaVAE):
 
-  def __init__(self, args: Namespace, free_bits=None, beta=1., **kwargs):
+  def __init__(self, args: Arguments, free_bits=None, beta=1., **kwargs):
     networks = get_networks(args.ds, zdim=args.zdim)
     obs: DistributionDense = networks['observation']
     event_shape = obs.event_shape
@@ -230,31 +229,55 @@ class GMMVAE(BetaVAE):
     super(GMMVAE, self).__init__(latents=latents, **kwargs)
 
 
+class IWGammaVAE(VariationalAutoencoder):
+
+  def __init__(self, gamma: float = 2.0, n_iw: int = 10, **kwargs):
+    super().__init__(**kwargs)
+    self.gamma = gamma
+    self.n_iw = n_iw
+
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
+    llk, kl = super().elbo_components(inputs, training, mask, **kwargs)
+    llk = {k: self.gamma * v for k, v in llk.items()}
+    # D(q(z)||p(z))
+    ids = tf.range(inputs.shape[0], dtype=tf.int32)
+    tf.random.shuffle(ids)
+    ids = ids[:self.n_iw]
+    x = tf.gather(inputs, ids, axis=0)
+    qz_x = self.encode(x, training=training, mask=mask)
+    pz = qz_x.KL_divergence.prior
+    qx = tf.constant(1. / inputs.shape[0], dtype=self.dtype)
+    z = tf.convert_to_tensor(qz_x)
+    kl[f'kl_iw'] = tf.reduce_mean(
+      qz_x.log_prob(z) - pz.log_prob(z) + tf.math.log(qx), 0)
+    return llk, kl
+
+
 # ===========================================================================
 # Extra models
 # ===========================================================================
 # === 1. VAE with free-bits
-def model_rvae(args: Namespace):
+def model_rvae(args: Arguments):
   return VariationalAutoencoder(**get_networks(args.ds, zdim=args.zdim),
                                 reverse=True)
 
 
-def model_vae1(args: Namespace):
+def model_vae1(args: Arguments):
   return VariationalAutoencoder(**get_networks(args.ds, zdim=args.zdim),
                                 free_bits=0.5)
 
 
-def model_vae2(args: Namespace):
+def model_vae2(args: Arguments):
   return VariationalAutoencoder(**get_networks(args.ds, zdim=args.zdim),
                                 free_bits=1.0)
 
 
-def model_vae3(args: Namespace):
+def model_vae3(args: Arguments):
   return VariationalAutoencoder(**get_networks(args.ds, zdim=args.zdim),
                                 free_bits=1.5)
 
 
-def model_fullcov(args: Namespace):
+def model_fullcov(args: Arguments):
   nets = get_networks(args.ds, zdim=args.zdim)
   zdims = int(np.prod(nets['latents'].event_shape))
   nets['latents'] = RVconf(
@@ -266,7 +289,7 @@ def model_fullcov(args: Namespace):
   return VariationalAutoencoder(**nets, name='FullCov')
 
 
-def model_gmmprior(args: Namespace):
+def model_gmmprior(args: Arguments):
   nets = get_networks(args.ds, zdim=args.zdim)
   latent_size = np.prod(nets['latents'].event_shape)
   n_components = 100
@@ -284,7 +307,7 @@ def model_gmmprior(args: Namespace):
   return VariationalAutoencoder(**nets, name='GMMPrior')
 
 
-def model_fullcovgmm(args: Namespace):
+def model_fullcovgmm(args: Arguments):
   nets = get_networks(args.ds, zdim=args.zdim)
   latent_size = int(np.prod(nets['latents'].event_shape))
   n_components = 100
@@ -310,136 +333,170 @@ def model_fullcovgmm(args: Namespace):
 # === 1.1. Beta-Capacity VAE (Bugress 2018)
 
 # beta=10 C=[0.01, 25]
-def model_bcvae1(args: Namespace):
+def model_bcvae1(args: Arguments):
   nets = get_networks(args.ds, zdim=args.zdim)
   return BetaCapacityVAE(**nets, c_min=0.01, c_max=25, gamma=10, n_steps=60000)
 
 
 # beta=5 C=[0.01, 25]
-def model_bcvae2(args: Namespace):
+def model_bcvae2(args: Arguments):
   nets = get_networks(args.ds, zdim=args.zdim)
   return BetaCapacityVAE(**nets, c_min=0.01, c_max=25, gamma=5, n_steps=60000)
 
 
 # beta = 0.05
-def model_bvae1(args: Namespace):
+def model_bvae1(args: Arguments):
   nets = get_networks(args.ds, zdim=args.zdim)
   return BetaVAE(**nets, beta=0.05)
 
 
 # beta = 0.1
-def model_bvae2(args: Namespace):
+def model_bvae2(args: Arguments):
   nets = get_networks(args.ds, zdim=args.zdim)
   return BetaVAE(**nets, beta=0.1)
 
 
 # beta = 0.5
-def model_bvae3(args: Namespace):
+def model_bvae3(args: Arguments):
   nets = get_networks(args.ds, zdim=args.zdim)
   return BetaVAE(**nets, beta=0.5)
 
 
 # beta = 2
-def model_bvae4(args: Namespace):
+def model_bvae4(args: Arguments):
   nets = get_networks(args.ds, zdim=args.zdim)
   return BetaVAE(**nets, beta=2)
 
 
+# gamma=2; beta = 1.0
+def model_gvae1(args: Arguments):
+  nets = get_networks(args.ds, zdim=args.zdim)
+  return BetaGammaVAE(**nets, beta=1.0, gamma=2.0)
+
+
+# gamma=5; beta = 1.0
+def model_gvae2(args: Arguments):
+  nets = get_networks(args.ds, zdim=args.zdim)
+  return BetaGammaVAE(**nets, beta=1.0, gamma=5.0)
+
+
+# gamma=2.0; beta=2.0
+def model_gvae3(args: Arguments):
+  nets = get_networks(args.ds, zdim=args.zdim)
+  return BetaGammaVAE(**nets, beta=2.0, gamma=2.0)
+
+
+# gamma=5.0; beta=2.0
+def model_gvae4(args: Arguments):
+  nets = get_networks(args.ds, zdim=args.zdim)
+  return BetaGammaVAE(**nets, beta=2.0, gamma=5.0)
+
+
 # === 2. equilibrium VAE
 # beta=1 C=0.5
-def model_equilibriumvae1(args: Namespace):
+def model_equilibriumvae1(args: Arguments):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         C=0.5)
 
 
 # beta=1 C=1
-def model_equilibriumvae2(args: Namespace):
+def model_equilibriumvae2(args: Arguments):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         C=1.0)
 
 
 # beta=1 C=1.5
-def model_equilibriumvae3(args: Namespace):
+def model_equilibriumvae3(args: Arguments):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         C=1.5)
 
 
 # beta=1 C=0.5, dropout=0.3
-def model_equilibriumvae4(args: Namespace):
+def model_equilibriumvae4(args: Arguments):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         C=0.5, dropout=0.3)
 
 
 # beta=5 C=0.5, dropout=0.
-def model_equilibriumvae5(args: Namespace):
+def model_equilibriumvae5(args: Arguments):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         C=0.5, dropout=0., beta=5)
 
 
 # beta=1 R=-0.1 C=0., dropout=0.
-def model_equilibriumvae6(args: Namespace):
+def model_equilibriumvae6(args: Arguments):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         R=-0.1, C=0., dropout=0., beta=1.)
 
 
 # beta=1 R=-0.1 C=0.5, dropout=0.
-def model_equilibriumvae7(args: Namespace):
+def model_equilibriumvae7(args: Arguments):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         R=-0.1, C=0.5, dropout=0., beta=1.)
 
 
 # beta=1 C=1.0, random_capacity=True
-def model_equilibriumvae8(args: Namespace):
+def model_equilibriumvae8(args: Arguments):
   return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
                         R=0.0, C=1.0, random_capacity=True, dropout=0.0,
                         beta=1.)
 
 
-# === 4. others
+# === 4. IWGamma
+# gamma=1.0, iw=10
+def model_iwgamma1(args: Arguments):
+  return IWGammaVAE(gamma=1.0, n_iw=10, **get_networks(args.ds))
 
-def model_multicapacity(args: Namespace):
+
+# gamma=2.0, iw=10
+def model_iwgamma2(args: Arguments):
+  return IWGammaVAE(gamma=2.0, n_iw=10, **get_networks(args.ds))
+
+
+# === 5. others
+def model_multicapacity(args: Arguments):
   return MultiCapacity(args, beta=5, free_bits=1.0)
 
 
 # beta=1, free_bits=None
-def model_freebits(args: Namespace):
+def model_freebits(args: Arguments):
   return Freebits(args, beta=1, free_bits=None)
 
 
 # beta=1, free_bits=0.5
-def model_freebits1(args: Namespace):
+def model_freebits1(args: Arguments):
   return Freebits(args, beta=1, free_bits=0.5)
 
 
 # beta=5, free_bits=0.5
-def model_freebits2(args: Namespace):
+def model_freebits2(args: Arguments):
   return Freebits(args, beta=5, free_bits=0.5)
 
 
-def model_gamma1(args: Namespace):
+def model_gamma1(args: Arguments):
   return GammaVAE(args)
 
 
-def model_normal2(args: Namespace):
+def model_normal2(args: Arguments):
   return Normal2VAE(args)
 
 
-def model_gaussianout(args: Namespace):
+def model_gaussianout(args: Arguments):
   return GaussianOut(args)
 
 
 # n_components = 10
-def model_gmmvae1(args: Namespace):
+def model_gmmvae1(args: Arguments):
   return GMMVAE(n_components=10, **get_networks(args.ds, zdim=args.zdim))
 
 
 # n_components = 50
-def model_gmmvae2(args: Namespace):
+def model_gmmvae2(args: Arguments):
   return GMMVAE(n_components=50, **get_networks(args.ds, zdim=args.zdim))
 
 
 # n_components = 10, prior=N(0, 1)
-def model_gmmvae3(args: Namespace):
+def model_gmmvae3(args: Arguments):
   zdim = args.zdim
   prior = Independent(Normal(loc=tf.zeros([zdim]), scale=tf.ones([zdim])), 1)
   return GMMVAE(n_components=10, prior=prior, analytic=False,
@@ -449,7 +506,7 @@ def model_gmmvae3(args: Namespace):
 # ===========================================================================
 # Main
 # ===========================================================================
-def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
+def evaluate(model: VariationalModel, ds: ImageDataset, args: Arguments):
   # === 1. prepare path
   path = get_results_path(args)
   if args.override and os.path.exists(path):
@@ -457,7 +514,7 @@ def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
     shutil.rmtree(path)
     os.makedirs(path)
   # === 2. run the Gym
-  gym = DisentanglementGym(args.ds, model)
+  gym = DisentanglementGym(dataset=args.ds, model=model)
   with gym.run_model(n_samples=-1, partition='test'):
     # should be max here
     stddev = np.max(gym.qz_x[0].stddev(), 0)
@@ -477,7 +534,7 @@ def evaluate(model: VariationalModel, ds: ImageDataset, args: Namespace):
   gym.save_figures(path, verbose=True)
 
 
-def main(args: Namespace):
+def main(args: Arguments):
   # === 0. set configs
   ds = get_dataset(args.ds)
   # === 1. get model
@@ -501,4 +558,4 @@ def main(args: Namespace):
 
 if __name__ == '__main__':
   set_cfg(root_path=os.path.expanduser('~/exp/unsupervised'))
-  run_multi(main)
+  run_multi(main, args=get_args())

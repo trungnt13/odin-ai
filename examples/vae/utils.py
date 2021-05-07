@@ -10,6 +10,7 @@ from itertools import product
 from numbers import Number
 from typing import Dict, Any, Tuple, Union, Callable, Optional, Sequence
 
+import dataclasses
 import numpy as np
 import seaborn as sns
 import tensorflow as tf
@@ -33,11 +34,12 @@ np.random.seed(1)
 tf.random.set_seed(1)
 
 __all__ = [
+  'Arguments',
   'prepare_images',
   'prepare_labels',
   'save_figs',
   'set_cfg',
-  'get_dir',
+  'get_output_dir',
   'get_model',
   'get_model_path',
   'get_results_path',
@@ -57,6 +59,26 @@ _DS: Dict[str, ImageDataset] = defaultdictkey(lambda name: get_dataset(name))
 # ===========================================================================
 # Helper for evaluation
 # ===========================================================================
+@dataclasses.dataclass
+class Arguments:
+  vae: str = ''
+  ds: str = ''
+  zdim: Union[str, int] = 32
+  it: int = 80000
+  bs: int = 32
+  clipnorm: float = 100.
+  dpi: int = 100
+  points: int = 4000
+  images: int = 36
+  seed: int = 1
+  eval: bool = False
+  override: bool = False
+  debug: bool = False
+  # semi-supervised
+  py: float = 0.0
+  ratio: float = 0.1
+
+
 def to_dist(p: Union[Distribution, Sequence[Distribution]]
             ) -> Union[Sequence[Distribution], Distribution]:
   """Convert DeferredTensor back to original Distribution"""
@@ -87,7 +109,7 @@ def get_ymean(py: Batchwise) -> np.ndarray:
 
 def prepare_labels(y_true: np.ndarray,
                    y_pred: Optional[Distribution],
-                   args: Namespace
+                   args: Arguments
                    ) -> Tuple[np.ndarray, np.ndarray,
                               Optional[np.ndarray], Optional[np.ndarray]]:
   """Prepare categorical labels
@@ -140,7 +162,7 @@ def prepare_images(x, normalize=False):
 # ===========================================================================
 # Helper for plotting
 # ===========================================================================
-def save_figs(args: Namespace,
+def save_figs(args: Arguments,
               name: str,
               figs: Optional[Sequence[plt.Figure]] = None):
   path = get_results_path(args)
@@ -170,7 +192,7 @@ def set_cfg(root_path: Optional[str] = None,
       print(f'  {k[1:]:20s}', v)
 
 
-def get_dir(args: Namespace) -> str:
+def get_output_dir(args: Arguments) -> str:
   if not os.path.exists(_root_path):
     os.makedirs(_root_path)
   path = f'{_root_path}/{args.ds}/{args.vae}_z{args.zdim}_i{args.it}'
@@ -182,20 +204,20 @@ def get_dir(args: Namespace) -> str:
   return path
 
 
-def get_model_path(args: Namespace) -> str:
-  save_dir = get_dir(args)
+def get_model_path(args: Arguments) -> str:
+  save_dir = get_output_dir(args)
   return f'{save_dir}/model'
 
 
-def get_results_path(args: Namespace) -> str:
-  save_dir = get_dir(args)
+def get_results_path(args: Arguments) -> str:
+  save_dir = get_output_dir(args)
   path = f'{save_dir}/results'
   if not os.path.exists(path):
     os.makedirs(path)
   return path
 
 
-def get_model(args: Namespace,
+def get_model(args: Arguments,
               return_dataset: bool = True,
               encoder: Any = None,
               decoder: Any = None,
@@ -217,36 +239,37 @@ def get_model(args: Namespace,
   return vae
 
 
-def get_args(extra: Optional[Dict[str, Tuple[type, Any]]] = None
-             ) -> Namespace:
-  def int_or_str(x):
-    return int(x) if isinstance(x, Number) else x
-
+def get_args(defaults: Optional[Dict[str, Any]] = None) -> Arguments:
+  if defaults is None:
+    defaults = {}
+  final_args = Arguments()
   parser = ArgumentParser()
   parser.add_argument('vae', type=str)
   parser.add_argument('ds', type=str)
-  parser.add_argument('zdim', type=int_or_str)
-  parser.add_argument('-it', type=int, default=80000)
-  parser.add_argument('-bs', type=int, default=32)
-  parser.add_argument('-clipnorm', type=float, default=100.)
-  ## for visualization
-  parser.add_argument('-dpi', type=int, default=100)
-  parser.add_argument('-points', type=int, default=2000)
-  parser.add_argument('-images', type=int, default=36)
-  parser.add_argument('-seed', type=int, default=1)
-  if extra is not None:
-    for k, (t, d) in extra.items():
-      _extra_kw.append(k)
-      parser.add_argument(f'-{k}', type=t, default=d)
-  parser.add_argument('--eval', action='store_true')
-  parser.add_argument('--override', action='store_true')
-  parser.add_argument('--debug', action='store_true')
-  return parser.parse_args()
+  parser.add_argument(
+    'zdim',
+    type=lambda t: int(t) if isinstance(t, Number) else str(t),
+    default=32)
+  for k, v in final_args.__annotations__.items():
+    if k in ['vae', 'ds', 'zdim']:
+      continue
+    val = defaults.get(k, getattr(final_args, k))
+    if v == bool:
+      parser.add_argument(f'--{k}',
+                          action=f'store_{"false" if val else "true"}')
+    else:
+      parser.add_argument(f'-{k}', type=v, default=val)
+  args: Namespace = parser.parse_args()
+  for k in dir(args):
+    if '_' == k[0]:
+      continue
+    setattr(final_args, k, getattr(args, k))
+  return final_args
 
 
 @typechecked()
-def run_multi(main_fn: Callable[[Namespace], Any]):
-  args = get_args()
+def run_multi(main_fn: Callable[[Arguments], Any],
+              args: Arguments):
   vae = args.vae.split(',')
   ds = args.ds.split(',')
   zdim = (map(int, args.zdim.split(','))
@@ -431,14 +454,16 @@ class Callback:
 def train(
     model: VariationalModel,
     ds: ImageDataset,
-    args: Namespace,
+    args: Arguments,
     on_batch_end: Sequence[Callable[..., Any]] = (Callback.latent_units,
                                                   Callback.llk_pixels),
     on_valid_end: Sequence[Callable[..., Any]] = (Callback.save_best_llk,),
     label_percent: float = 0,
-    oversample_ratio: float = 0.5) -> VariationalModel:
-  print(model)
-  save_dir = get_dir(args)
+    oversample_ratio: float = 0.5,
+    verbose: bool = True) -> VariationalModel:
+  if verbose:
+    print(model)
+  save_dir = get_output_dir(args)
   print('Save dir:', save_dir)
   model_path = get_model_path(args)
   model.save_path = model_path

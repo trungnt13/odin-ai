@@ -10,9 +10,9 @@ from sklearn.model_selection import train_test_split
 from ._base import ImageDataset
 
 
-def make_halfmoons(n_samples_per_factors=100,
+def make_halfmoons(n_samples_per_factors=200,
                    image_size=64,
-                   marker_size=10.,
+                   marker_size=12.,
                    seed=1,
                    n_cpu=4):
   from matplotlib import pyplot as plt

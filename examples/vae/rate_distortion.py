@@ -37,8 +37,8 @@ if not os.path.exists(cache_path):
 # [0.001, 0.005, 0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 1., 2., 3., 5.]
 # beta = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
 # gamma = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
-beta = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
-gamma = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
+beta = [0.001, 0.005, 0.01, 0.1, 0.5, 1., 2.5, 5., 10]
+gamma = [0.001, 0.005, 0.01, 0.1, 0.5, 1., 2.5, 5., 10]
 zdim = [2, 5, 10, 20, 35, 60, 80]
 OVERRIDE = False
 
@@ -183,6 +183,7 @@ if __name__ == '__main__':
   # === 3. evaluating
   elif args.mode == 1:
     path = os.path.join(cache_path, 'results')
+    # === 4. get evaluating results
     if os.path.exists(path) and OVERRIDE:
       os.remove(path)
     if os.path.exists(path):
@@ -202,6 +203,7 @@ if __name__ == '__main__':
         pickle.dump(df, f)
     # add elbo
     df['elbo'] = df['llk'] - df['kl']
+    # === 5. plotting
     # fix zdim, show llk and kl
     n_cols = 4
     n_rows = int(np.ceil(len(zdim) / n_cols))
