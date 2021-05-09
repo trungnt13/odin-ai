@@ -30,7 +30,7 @@ class BetaVAE(VAE):
     self._beta = beta
 
   @property
-  def beta(self) -> tf.Tensor:
+  def beta(self) -> Union[tf.Tensor, float]:
     if callable(self._beta):
       return self._beta(self.step)
     return tf.constant(self._beta, dtype=self.dtype)
@@ -53,7 +53,7 @@ class BetaGammaVAE(BetaVAE):
     self._gamma = gamma
 
   @property
-  def gamma(self) -> tf.Tensor:
+  def gamma(self) -> Union[tf.Tensor, float]:
     if callable(self._gamma):
       return self._gamma(self.step)
     return tf.constant(self._gamma, dtype=self.dtype)

@@ -497,6 +497,34 @@ class Trainer(object):
     self._last_train_loss = None
     self._last_train_metrics = {}
 
+  def set_optimize_fn(self,
+                      optimize: Callable[..., Tuple[Tensor, Dict[str, Any]]],
+                      compile_graph: bool = True,
+                      autograph: bool = False,
+                      experimental: bool = False):
+    assert callable(optimize), \
+      'optimize function must be callable with input arguments ' \
+      '(inputs, training)'
+    if isinstance(optimize, partial):
+      func_name = optimize.func
+    elif isinstance(optimize, Function):
+      func_name = optimize._python_function
+    else:
+      func_name = optimize
+    if inspect.ismethod(func_name):
+      func_obj = func_name.__self__
+    else:
+      func_obj = None
+    func_name = func_name.__name__
+    if compile_graph and not isinstance(optimize, Function):
+      optimize = tf.function(optimize,
+                             autograph=bool(autograph),
+                             experimental_compile=experimental)
+    self._optimize = optimize
+    self._func_obj = func_obj
+    self._func_name = func_name
+    return self
+
   def fit(self,
           train_ds: DatasetV2,
           optimize: Callable[..., Tuple[Tensor, Dict[str, Any]]],
@@ -530,10 +558,16 @@ class Trainer(object):
         of iteration.
     valid_interval : a Scalar.
         The number of second until next validation.
+    compile_graph : bool
+        compile the function to graph for computational optimization.
     autograph : Boolean.
         Enable static graph for the `optimize` function.
+    experimental : bool
+        experimental compiling
     logging_interval : Scalar. Interval for print out log information
         (in second).
+    log_tag : str
+        string for tagging the training process
     max_iter : An Integer or `None`. Maximum number of iteration for
         training. If `max_iter <= 0`, iterate the training data until the end.
     on_batch_end : Callable take no input arguments.
@@ -550,17 +584,10 @@ class Trainer(object):
       return loss, dict(llk=0, div=0, elbo=0)
     ```
     """
-    if isinstance(optimize, partial):
-      func_name = optimize.func
-    elif isinstance(optimize, Function):
-      func_name = optimize._python_function
-    else:
-      func_name = optimize
-    if inspect.ismethod(func_name):
-      func_obj = func_name.__self__
-    else:
-      func_obj = None
-    func_name = func_name.__name__
+    self.set_optimize_fn(optimize,
+                         compile_graph=compile_graph,
+                         autograph=autograph,
+                         experimental=experimental)
     # reset last stored valid losses
     if len(log_tag) > 0:
       log_tag += " "
@@ -579,21 +606,13 @@ class Trainer(object):
     valid_interval = float(valid_interval)
     if valid_interval > 0:  # prefer the interval
       valid_freq = 1
-    ### create autograph version of optimize
-    assert callable(optimize), \
-      'optimize function must be callable with input arguments ' \
-      '(inputs, training)'
-    if compile_graph and not isinstance(optimize, Function):
-      optimize = tf.function(optimize,
-                             autograph=bool(autograph),
-                             experimental_compile=experimental)
 
     ### helper function for training iteration
     def fn_step(inputs, training):
       if isinstance(inputs, dict):
-        loss, metrics = optimize(training=training, **inputs)
+        loss, metrics = self._optimize(training=training, **inputs)
       else:
-        loss, metrics = optimize(inputs, training=training)
+        loss, metrics = self._optimize(inputs, training=training)
       if not isinstance(metrics, dict):
         raise RuntimeError(
           f"Metrics must be instance of dictionary, but return: {metrics}")
@@ -714,12 +733,13 @@ class Trainer(object):
         tf.summary.trace_off()
       train()  # training
       if self.trace_on:
-        tf.summary.trace_export(name=func_name,
+        tf.summary.trace_export(name=self._func_name,
                                 step=0,
                                 profiler_outdir=self.logdir)
         tf.summary.trace_off()
-    if isinstance(func_obj, (Model, Sequential)):
-      self.write_keras_graph(func_obj, name=func_obj.__class__.__name__)
+    if isinstance(self._func_obj, (Model, Sequential)):
+      self.write_keras_graph(self._func_obj,
+                             name=self._func_obj.__class__.__name__)
     self.summary_writer.flush()
     self._current_train_progress = None
     return self

@@ -2,7 +2,7 @@ import contextlib
 import random
 from collections import OrderedDict, defaultdict
 from typing import Dict, List, Optional, Tuple, Union, Sequence, Callable, Any, \
-  Iterator
+  Iterator, Text
 
 import numpy as np
 import tensorflow as tf
@@ -562,7 +562,7 @@ class DisentanglementGym(vs.Visualizer):
   def __init__(
       self,
       model: VariationalModel,
-      dataset: Union[None, ImageDataset, DatasetNames] = None,
+      dataset: Union[None, ImageDataset, DatasetNames, Text] = None,
       train: Optional[Any] = None,
       valid: Optional[Any] = None,
       test: Optional[Any] = None,
@@ -1542,6 +1542,31 @@ class DisentanglementGym(vs.Visualizer):
           llk.append(np.mean(p.log_prob(x)))
         _CACHE[self._cache_key]['llk'] = tuple(llk)
       return _CACHE[self._cache_key]['llk']
+
+  def accuracy_score(self) -> Sequence[float]:
+    """Measure the accuracy of the reconstruction and the original data,
+    for continuous examples, use threshold value 0.5"""
+    self._assert_sampled()
+    with tf.device('/CPU:0'):
+      if 'acc' not in _CACHE[self._cache_key]:
+        acc = []
+        for i, (p, x) in enumerate(zip(self.px_z, [self.x_true, self.y_true])):
+          true = np.asarray(x)
+          try:
+            pred = p.mean().numpy()
+          except:
+            pred = p.mode().numpy()
+          true = np.reshape(true, (true.shape[0], -1))
+          pred = np.reshape(pred, (pred.shape[0], -1))
+          if np.all(np.sum(true, -1) == 1.):
+            true = np.argmax(true, -1)
+            pred = np.argmax(pred, -1)
+          else:
+            true = np.ravel(np.round(true))
+            pred = np.ravel(np.round(pred))
+          acc.append(np.sum(true == pred) / len(true))
+        _CACHE[self._cache_key]['acc'] = tuple(acc)
+      return _CACHE[self._cache_key]['acc']
 
   def kl_divergence(self) -> Sequence[float]:
     self._assert_sampled()

@@ -128,7 +128,7 @@ class IterableDataset:
                      cache: str = '',
                      parallel: Optional[int] = None,
                      label_percent: bool = False,
-                     seed: int = 1) -> Dataset:
+                     seed: int = 1) -> tf.data.Dataset:
     """ Create tensorflow Dataset """
     raise NotImplementedError()
 

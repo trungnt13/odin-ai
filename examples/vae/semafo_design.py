@@ -1,6 +1,8 @@
 import os
+import shutil
 from functools import partial
-from typing import List, Type
+from functools import partial
+from typing import Optional, Callable, List
 
 import numpy as np
 import tensorflow as tf
@@ -8,20 +10,20 @@ from sklearn.metrics import accuracy_score
 from tensorflow.python.keras import Sequential, Input
 from tensorflow.python.keras.layers import Dense, Flatten, Concatenate
 
-from odin.backend import interpolation
-from odin.bay import VariationalAutoencoder, \
-  DistributionDense, MVNDiagLatents, BetaGammaVAE, DisentanglementGym, \
-  kl_divergence
-from odin.fuel import MNIST, get_dataset
-from odin.networks import get_networks, get_optimizer_info, CenterAt0, \
-  SequentialNetwork, TrainStep
-from utils import get_args, train, run_multi, set_cfg, Arguments, get_model_path
+from odin.bay import DistributionDense, MVNDiagLatents, BetaGammaVAE, \
+  kl_divergence, DisentanglementGym
+from odin.fuel import get_dataset, ImageDataset
+from odin.networks import get_networks, SequentialNetwork, TrainStep, Networks
+from utils import get_args, train, run_multi, set_cfg, Arguments, \
+  get_model_path, get_results_path
 
 # ===========================================================================
 # Const and helper
 # ===========================================================================
 dense = partial(Dense, activation='relu')
 INPUT_SHAPE = ()
+ds: Optional[ImageDataset] = None
+valid_ds: Optional[tf.data.Dataset] = None
 
 
 def networks(input_dim, name) -> Sequential:
@@ -207,30 +209,30 @@ class SemafoBase(VAE):
 
 class Semafo(SemafoBase):
 
-  def __init__(self, **kwargs):
-    super().__init__(beta=interpolation.linear(1e-3, 1., 2000), **kwargs)
+  def __init__(self,
+               coef_llk_py: float = 10.,
+               coef_llk_qy: float = 50.,
+               n_iw_y: int = 1, **kwargs):
+    super().__init__(**kwargs)
+    self.n_iw_y = int(n_iw_y)
+    self.coef_llk_py = float(coef_llk_py)
+    self.coef_llk_qy = float(coef_llk_qy)
 
   def build(self, input_shape=None):
     super().build(input_shape)
-    encoder: SequentialNetwork = self.encoder
-    decoder: SequentialNetwork = self.decoder
-    labels: DistributionDense = self.labels
 
-    # for i, (l, t) in enumerate(encoder.last_outputs):
-    #   print(f'[{i}]', l)
-    #   print('  ', t)
-    # for i, (l, t) in enumerate(decoder.last_outputs):
-    #   print(f'[{i}]', l)
-    #   print('  ', t)
-    x_e = encoder.last_outputs[2][1]
-    hdim = int(np.prod(x_e.shape[1:]))
-
-    self.encoder2 = networks(hdim, 'Encoder2')
-    self.latents2 = MVNDiagLatents(units=self.zdim, name='Latents2')
+    self.encoder2 = networks(self.ydim, 'Encoder2')
+    self.latents2 = MVNDiagLatents(units=self.ydim, name='Latents2')
     self.latents2(self.encoder2.output)
-    self.decoder2 = networks(self.zdim, 'Decoder2')
-    self.observation2 = MVNDiagLatents(units=hdim, name='Observation2')
+    self.decoder2 = networks(self.latents2.event_size, 'Decoder2')
+    self.observation2 = DistributionDense(**self.labels.get_config())
     self.observation2(self.decoder2.output)
+
+    self.latents_prior = SequentialNetwork([
+      networks(self.ydim, 'Prior'),
+      MVNDiagLatents(self.zdim, name=f'{self.latents.name}_prior')
+    ], name='latents_prior')
+    self.latents_prior.build([None] + self.latents2.event_shape)
 
     self.vae2_params = self.encoder2.trainable_variables + \
                        self.decoder2.trainable_variables + \
@@ -239,71 +241,6 @@ class Semafo(SemafoBase):
     vae2_params_id = set([id(i) for i in self.vae2_params])
     self.vae1_params = [v for v in self.trainable_variables
                         if id(v) not in vae2_params_id]
-
-  def call_auxiliary(self, x, training=None):
-    x = self.flatten(x)
-    h_e = self.encoder2(x, training=training)
-    qu = self.latents2(h_e, training=training)
-    h_d = self.decoder2(qu, training=training)
-    px = self.observation2(h_d, training=training)
-    return px, qu
-
-  def train_steps(self, inputs, training=None, mask=None, name='', **kwargs):
-    x_u, x_s, y_s = inputs
-
-    def elbo1():
-      (px, py), qz = self(x_u, training=training)
-
-      h_out = self.encoder.last_outputs[2][1]
-      h_in = self.decoder.last_outputs[1][1]
-      ph, qu = self.call_auxiliary(h_in, training=training)
-
-      llk = dict(llk_x=px.log_prob(x_u))
-      z = tf.convert_to_tensor(qz)
-      kl = dict(kl_z=self.beta * (qz.log_prob(z) - qu.log_prob(z)))
-
-      loss = tf.reduce_mean(-self.elbo(llk, kl))
-      return loss, {k: tf.reduce_mean(v) for k, v in dict(**llk, **kl).items()}
-
-    yield TrainStep(parameters=self.vae1_params, func=elbo1)
-
-    def elbo2():
-      (px, py), qz = self(x_u, training=training)
-
-      h_out = self.encoder.last_outputs[2][1]
-      h_in = self.decoder.last_outputs[1][1]
-      ph, qu = self.call_auxiliary(h_in, training=training)
-
-      llk = dict(llk_u=ph.log_prob(self.flatten(h_out)))
-      kl = dict(kl_u=qu.KL_divergence())
-      loss = tf.reduce_mean(-self.elbo(llk, kl))
-      return loss, {k: tf.reduce_mean(v) for k, v in dict(**llk, **kl).items()}
-
-    yield TrainStep(parameters=self.vae2_params, func=elbo2)
-
-
-class Semafo2(SemafoBase):
-
-  def __init__(self, n_iw: int = 10, **kwargs):
-    super(Semafo2, self).__init__(**kwargs)
-    self.n_iw = int(n_iw)
-
-  def build(self, input_shape=None):
-    super(Semafo2, self).build(input_shape)
-    self.encoder2 = networks(self.ydim, name='Encoder2')
-    self.decoder2 = networks(self.zdim, name='Decoder2')
-    self.latents2 = MVNDiagLatents(self.zdim, name='Latents2')
-    self.latents2(self.encoder2.output)
-    self.observation2 = DistributionDense(**self.labels.get_config())
-    self.observation2(self.decoder2.output)
-
-    self.params2 = self.encoder2.trainable_variables + \
-                   self.decoder2.trainable_variables + \
-                   self.latents2.trainable_variables + \
-                   self.observation2.trainable_variables
-    params2_ids = set([id(i) for i in self.params2])
-    self.params1 = [i for i in self.trainable_variables
-                    if id(i) not in params2_ids]
 
   def encode_aux(self, y, training=None):
     h_e = self.encoder2(y, training=training)
@@ -323,75 +260,64 @@ class Semafo2(SemafoBase):
   def train_steps(self, inputs, training=None, mask=None, name='', **kwargs):
     x_u, x_s, y_s = inputs
 
-    def elbo_s():
+    # === 1. Supervised
+    def elbo_sup():
       (px_z, qy_z), qz_x = self(x_s, training=training)
       py_u, qu_y = self.call_aux(y_s, training=training)
+      pz_u = self.latents_prior(qu_y, training=training)
 
-      z = tf.convert_to_tensor(qz_x, dtype=self.dtype)
       llk = dict(
-        llk_x=px_z.log_prob(x_s),
-        llk_y=10 * py_u.log_prob(y_s))
+        llk_px_sup=self.gamma * px_z.log_prob(x_s),
+        llk_py_sup=self.gamma * self.coef_llk_py * py_u.log_prob(y_s),
+        llk_qy_sup=self.gamma * self.coef_llk_py * qy_z.log_prob(y_s)
+      )
+
+      z = tf.convert_to_tensor(qz_x)
       kl = dict(
-        kl_u=qu_y.KL_divergence(),
-        kl_z=qz_x.log_prob(z) - qu_y.log_prob(z))
-      return to_elbo(self, llk, kl)
-
-    yield TrainStep(parameters=self.trainable_variables,
-                    func=elbo_s)
-
-    def elbo_u():
-      (px_z, qy_z), qz_x = self(x_u, training=training)
-
-      # log(q(y|z))
-      y_u = tf.convert_to_tensor(qy_z, dtype=self.dtype)
-      log_qy_z = qy_z.log_prob(y_u)
-
-      # encode
-      qu_y = self.encode_aux(y_u, training=training)
-      pu = qu_y.KL_divergence.prior
-      # decode
-      u_org = qu_y.sample(self.n_iw)
-      u = tf.reshape(u_org, (-1, u_org.shape[-1]))
-      py_u = self.decode_aux(u, training=training)
-      # log(p(y))
-      log_py = py_u.log_prob(tf.tile(y_u, (self.n_iw, 1))) + \
-               pu.log_prob(u) + \
-               tf.reshape(qu_y.log_prob(u_org), [-1])
-      log_py = tf.reduce_logsumexp(tf.reshape(log_py, (self.n_iw, -1)), 0) - \
-               tf.math.log(tf.constant(self.n_iw, dtype=self.dtype))
-
-      # D(q(z|x)||p(z|y)) ~ D(q(z|x)||q(u|y))
-      z = tf.convert_to_tensor(qz_x, dtype=self.dtype)
-      llk = dict(
-        llk_x=px_z.log_prob(x_u))
-      kl = dict(
-        kl_y=log_qy_z - log_py,
-        kl_z=qz_x.log_prob(z) - qu_y.log_prob(z)
+        kl_z_sup=self.beta * (qz_x.log_prob(z) - pz_u.log_prob(z)),
+        kl_u_sup=self.beta * qu_y.KL_divergence(analytic=self.analytic)
       )
       return to_elbo(self, llk, kl)
 
+    yield TrainStep(parameters=self.trainable_variables, func=elbo_sup)
+
+    # === 2. Unsupervised
+    def elbo_uns():
+      (px_z, qy_z), qz_x = self(x_u, training=training)
+      y_u = tf.convert_to_tensor(qy_z, dtype=self.dtype)
+      py_u, qu_y = self.call_aux(y_u, training=training)
+      pz_u = self.latents_prior(qu_y, training=training)
+
+      llk = dict(
+        llk_px_uns=self.gamma * px_z.log_prob(x_u),
+        llk_py_uns=self.gamma * self.coef_llk_py * py_u.log_prob(y_u)
+      )
+
+      z = tf.convert_to_tensor(qz_x)
+      kl = dict(
+        kl_z_uns=self.beta * (qz_x.log_prob(z) - pz_u.log_prob(z)),
+        kl_u_uns=self.beta * qu_y.KL_divergence(analytic=self.analytic),
+        llk_qy=self.coef_llk_qy * qy_z.log_prob(y_u)
+      )
+
+      return to_elbo(self, llk, kl)
+
+    yield TrainStep(parameters=self.trainable_variables, func=elbo_uns)
+
+  def train_steps1(self, inputs, training=None, mask=None, name='', **kwargs):
+    x_u, x_s, y_s = inputs
     yield TrainStep(parameters=self.trainable_variables,
-                    func=elbo_u)
+                    func=lambda: (tf.constant(0.), {}))
 
+  def fit(self, *args, **kwargs) -> 'Networks':
+    on_batch_end: List[Callable] = kwargs.pop('on_batch_end', lambda: None)
 
-class Semafo3(SemafoBase):
+    def switch_stage():
+      if self.step.numpy() > 1000:
+        pass
 
-  def build(self, input_shape=None):
-    super(Semafo2, self).build(input_shape)
-    self.encoder2 = networks(self.ydim, name='Encoder2')
-    self.decoder2 = networks(self.zdim, name='Decoder2')
-    self.latents2 = MVNDiagLatents(self.zdim, name='Latents2')
-    self.latents2(self.encoder2.output)
-    self.observation2 = DistributionDense(**self.labels.get_config())
-    self.observation2(self.decoder2.output)
-
-    self.params2 = self.encoder2.trainable_variables + \
-                   self.decoder2.trainable_variables + \
-                   self.latents2.trainable_variables + \
-                   self.observation2.trainable_variables
-    params2_ids = set([id(i) for i in self.params2])
-    self.params1 = [i for i in self.trainable_variables
-                    if id(i) not in params2_ids]
+    on_batch_end.append(switch_stage)
+    return super().fit(on_batch_end=on_batch_end, *args, **kwargs)
 
 
 # ===========================================================================
@@ -404,7 +330,9 @@ def main(args: Arguments):
       model = v
       break
   # === 0. build the model
-  model: BetaGammaVAE = model()
+  model: BetaGammaVAE = model(
+    **get_networks(args.ds,
+                   is_semi_supervised=model.is_semi_supervised()))
   model.build((None,) + INPUT_SHAPE)
   is_semi = model.is_semi_supervised()
   # === 1. training
@@ -414,12 +342,35 @@ def main(args: Arguments):
           oversample_ratio=args.ratio)
   # === 2. evaluation
   else:
+    path = get_results_path(args)
+    if args.override and os.path.exists(path):
+      print('Override results at path:', path)
+      shutil.rmtree(path)
+      os.makedirs(path)
+    # load model weights
     model.load_weights(get_model_path(args), raise_notfound=True, verbose=True)
+    gym = DisentanglementGym(model=model,
+                             dataset=args.ds,
+                             batch_size=args.bs,
+                             dpi=args.dpi,
+                             seed=args.seed)
+    with gym.run_model(n_samples=-1, partition='valid'):
+      gym.plot_latents_tsne()
+      gym.plot_latents_factors()
+      gym.plot_latents_stats()
+      gym.plot_latents_traverse()
+      gym.plot_reconstruction()
+      gym.plot_latents_sampling()
+    gym.save_figures(path, verbose=True)
 
 
+# ===========================================================================
+# Main
+# ===========================================================================
 if __name__ == '__main__':
   set_cfg(root_path='/home/trung/exp/semafo')
   args = get_args(dict(py=0.004, ratio=0.1, it=400000))
   ds = get_dataset(args.ds)
+  valid_ds = ds.create_dataset('valid', label_percent=1.0)
   INPUT_SHAPE = ds.shape
   run_multi(main, args=args)

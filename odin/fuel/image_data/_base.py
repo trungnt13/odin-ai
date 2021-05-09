@@ -181,7 +181,7 @@ class ImageDataset(IterableDataset):
       fixed_oversample: bool = False,
       normalize: Literal['probs', 'tanh', 'raster'] = 'probs',
       seed: int = 1,
-  ) -> Dataset:
+  ) -> tf.data.Dataset:
     """Create `tensorflow.data.Dataset` for the loaded dataset
 
     Parameters
@@ -380,7 +380,7 @@ class ImageDataset(IterableDataset):
       ds = ds.cache(filename=str(cache))
     if prefetch is not None:
       ds = ds.prefetch(buffer_size=prefetch)
-    ds: Dataset
+    ds: tf.data.Dataset
     return ds
 
   def __str__(self):

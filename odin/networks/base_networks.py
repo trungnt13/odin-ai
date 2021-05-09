@@ -223,6 +223,17 @@ class Networks(keras.Model, MD5object):
       self._last_outputs = None
       self._trainer = None
       self._early_stopping = EarlyStopping()
+      # for training stage
+      self._training_stage = 0
+      self._training_fn = dict()
+      for k in dir(self):
+        if 'train_steps' == k[:11]:
+          idx = k[11:]
+          if len(idx) == 0:
+            idx = '0'
+          self._training_fn[int(idx)] = getattr(self, k)
+      self._optimize_kwargs = dict()
+      self._compile_config = dict()
 
   def get_config(self) -> Dict[str, Any]:
     args = dict(self._init_args)
@@ -392,6 +403,15 @@ class Networks(keras.Model, MD5object):
                     *args,
                     **kwargs)
 
+  def train_steps1(self,
+                   inputs: TensorType,
+                   training: bool = True,
+                   name: str = '',
+                   *args,
+                   **kwargs
+                   ) -> Iterator[Callable[[], Tuple[Scalar, Dict[str, Any]]]]:
+    raise NotImplementedError
+
   def optimize(
       self,
       inputs: Union[TensorType, Sequence[TensorType]],
@@ -469,8 +489,9 @@ class Networks(keras.Model, MD5object):
     n_optimizer = len(optimizer)
     ## start optimizing step-by-step
     all_updates = []  # [(opt, grad_params), ...]
+    train_fn = self._training_fn[self._training_stage]
     for step_idx, step in enumerate(
-        self.train_steps(inputs=inputs, training=training, *args, **kwargs)):
+        train_fn(inputs=inputs, training=training, *args, **kwargs)):
       step: Union[TrainStep, Callable]
       opt = None
       if inspect.isfunction(step):
@@ -599,6 +620,18 @@ class Networks(keras.Model, MD5object):
         optimizer.apply_gradients(grads_params)
     ## return
     return total_loss, all_metrics
+
+  def set_training_stage(self, stage: int) -> 'Networks':
+    """Switch to next the training stage defined by the method
+    `train_steps{$index}`"""
+    last_stage = self._training_stage
+    if last_stage != stage:
+      self._training_stage = stage
+      if self._optimize_kwargs is not None:
+        self.trainer.set_optimize_fn(
+          partial(self.optimize, **self._optimize_kwargs),
+          **self._compile_config)
+    return self
 
   def fit(
       self,
@@ -745,17 +778,19 @@ class Networks(keras.Model, MD5object):
         self.restore_checkpoint.assign(False)
         self.load_weights(raise_notfound=True, verbose=True)
 
+    self._optimize_kwargs.update(allow_none_gradients=allow_none_gradients,
+                                 track_gradients=track_gradients,
+                                 clipnorm=clipnorm,
+                                 clipvalue=clipvalue,
+                                 global_clipnorm=global_clipnorm,
+                                 skip_update_threshold=skip_update_threshold,
+                                 when_skip_update=when_skip_update,
+                                 nan_gradients_policy=nan_gradients_policy)
+    self._compile_config['compile_graph'] = compile_graph
+    self._compile_config['autograph'] = autograph
     self.trainer.fit(
       train_ds=train,
-      optimize=partial(self.optimize,
-                       allow_none_gradients=allow_none_gradients,
-                       track_gradients=track_gradients,
-                       clipnorm=clipnorm,
-                       clipvalue=clipvalue,
-                       global_clipnorm=global_clipnorm,
-                       skip_update_threshold=skip_update_threshold,
-                       when_skip_update=when_skip_update,
-                       nan_gradients_policy=nan_gradients_policy),
+      optimize=partial(self.optimize, **self._optimize_kwargs),
       valid_ds=valid,
       valid_freq=valid_freq,
       valid_interval=valid_interval,
@@ -767,6 +802,7 @@ class Networks(keras.Model, MD5object):
       on_valid_end=(restore_weights,) + as_tuple(on_valid_end),
       on_batch_end=on_batch_end
     )
+    self._optimize_kwargs.clear()
     return self
 
   def plot_learning_curves(self,
