@@ -1552,10 +1552,14 @@ class DisentanglementGym(vs.Visualizer):
         acc = []
         for i, (p, x) in enumerate(zip(self.px_z, [self.x_true, self.y_true])):
           true = np.asarray(x)
-          try:
-            pred = p.mean().numpy()
-          except:
-            pred = p.mode().numpy()
+          if 'Relaxed' in str(type(p.distributions[0])):
+            pred = np.concatenate(
+              [d.distribution.probs_parameter() for d in p.distributions], 0)
+          else:
+            try:
+              pred = p.mean().numpy()
+            except:
+              pred = p.mode().numpy()
           true = np.reshape(true, (true.shape[0], -1))
           pred = np.reshape(pred, (pred.shape[0], -1))
           if np.all(np.sum(true, -1) == 1.):

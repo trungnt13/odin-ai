@@ -3,6 +3,9 @@ from typing import Optional
 
 import tensorflow as tf
 from odin.bay.distributions import ZeroInflated
+from tensorflow_probability.python.distributions import \
+  RelaxedOneHotCategorical, RelaxedBernoulli, Independent, Distribution, \
+  Bernoulli, ContinuousBernoulli, Categorical, OneHotCategorical
 from tensorflow_probability.python import distributions as tfd
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.internal import \
@@ -37,7 +40,7 @@ class BernoulliLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               convert_to_tensor_fn=tfd.Distribution.sample,
+               convert_to_tensor_fn=Distribution.sample,
                sample_dtype: Optional[tf.DType] = None,
                validate_args: bool = False,
                continuous: bool = False,
@@ -77,15 +80,15 @@ class BernoulliLayer(DistributionLambda):
       axis=0,
     )
     if continuous:
-      dist = tfd.ContinuousBernoulli(logits=tf.reshape(params, new_shape),
-                                     dtype=dtype or params.dtype.base_dtype,
-                                     lims=lims,
-                                     validate_args=validate_args)
+      dist = ContinuousBernoulli(logits=tf.reshape(params, new_shape),
+                                 dtype=dtype or params.dtype.base_dtype,
+                                 lims=lims,
+                                 validate_args=validate_args)
     else:
-      dist = tfd.Bernoulli(logits=tf.reshape(params, new_shape),
-                           dtype=dtype or params.dtype.base_dtype,
-                           validate_args=validate_args)
-    dist = tfd.Independent(
+      dist = Bernoulli(logits=tf.reshape(params, new_shape),
+                       dtype=dtype or params.dtype.base_dtype,
+                       validate_args=validate_args)
+    dist = Independent(
       dist,
       reinterpreted_batch_ndims=tf.size(input=event_shape),
       name=name,
@@ -104,7 +107,7 @@ class ContinuousBernoulliLayer(BernoulliLayer):
 
   def __init__(self,
                event_shape=(),
-               convert_to_tensor_fn=tfd.Distribution.sample,
+               convert_to_tensor_fn=Distribution.sample,
                sample_dtype: Optional[tf.DType] = None,
                lims=(0.499, 0.501),
                validate_args: bool = False,
@@ -138,7 +141,7 @@ class ZIBernoulliLayer(DistributionLambda):
   def __init__(self,
                event_shape=(),
                given_logits=True,
-               convert_to_tensor_fn=tfd.Distribution.sample,
+               convert_to_tensor_fn=Distribution.sample,
                validate_args=False,
                **kwargs):
     super(ZIBernoulliLayer, self).__init__(
@@ -165,15 +168,15 @@ class ZIBernoulliLayer(DistributionLambda):
     )
     (bernoulli_params, rate_params) = tf.split(params, 2, axis=-1)
     bernoulli_params = tf.reshape(bernoulli_params, output_shape)
-    bern = tfd.Bernoulli(logits=bernoulli_params if given_logits else None,
-                         probs=bernoulli_params if not given_logits else None,
-                         validate_args=validate_args)
+    bern = Bernoulli(logits=bernoulli_params if given_logits else None,
+                     probs=bernoulli_params if not given_logits else None,
+                     validate_args=validate_args)
     zibern = ZeroInflated(count_distribution=bern,
                           logits=tf.reshape(rate_params, output_shape),
                           validate_args=validate_args)
-    return tfd.Independent(zibern,
-                           reinterpreted_batch_ndims=tf.size(input=event_shape),
-                           name=name)
+    return Independent(zibern,
+                       reinterpreted_batch_ndims=tf.size(input=event_shape),
+                       name=name)
 
   @staticmethod
   def params_size(event_shape=(), name='ZeroInflatedBernoulli_params_size'):
@@ -185,7 +188,7 @@ class CategoricalLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               convert_to_tensor_fn=tfd.Distribution.sample,
+               convert_to_tensor_fn=Distribution.sample,
                probs_input=False,
                sample_dtype=None,
                validate_args=False,
@@ -202,7 +205,7 @@ class CategoricalLayer(DistributionLambda):
           name='CategoricalLayer'):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
-    return tfd.Categorical(
+    return Categorical(
       logits=params if not probs_input else None,
       probs=tf.clip_by_value(params, 1e-8, 1 - 1e-8) \
         if probs_input else None,
@@ -241,7 +244,7 @@ class OneHotCategoricalLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               convert_to_tensor_fn=tfd.Distribution.sample,
+               convert_to_tensor_fn=Distribution.sample,
                probs_input=False,
                sample_dtype=None,
                validate_args=False,
@@ -264,11 +267,11 @@ class OneHotCategoricalLayer(DistributionLambda):
     else:
       logits = params
       probs = None
-    dist = tfd.OneHotCategorical(logits=logits,
-                                 probs=probs,
-                                 dtype=dtype or params.dtype,
-                                 validate_args=validate_args,
-                                 name=name)
+    dist = OneHotCategorical(logits=logits,
+                             probs=probs,
+                             dtype=dtype or params.dtype,
+                             validate_args=validate_args,
+                             name=name)
     return dist
 
   @staticmethod
@@ -306,7 +309,7 @@ class RelaxedOneHotCategoricalLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               convert_to_tensor_fn=tfd.Distribution.sample,
+               convert_to_tensor_fn=Distribution.sample,
                temperature=0.5,
                probs_input=False,
                validate_args=False,
@@ -328,11 +331,11 @@ class RelaxedOneHotCategoricalLayer(DistributionLambda):
           name='RelaxedOneHotCategoricalLayer'):
     """Create the distribution instance from a `params` vector."""
     params = tf.convert_to_tensor(value=params, name='params')
-    return tfd.RelaxedOneHotCategorical(temperature=temperature,
-                                        logits=None if probs_input else params,
-                                        probs=params if probs_input else None,
-                                        validate_args=validate_args,
-                                        name=name)
+    return RelaxedOneHotCategorical(temperature=temperature,
+                                    logits=None if probs_input else params,
+                                    probs=params if probs_input else None,
+                                    validate_args=validate_args,
+                                    name=name)
 
   @staticmethod
   def params_size(event_shape, name='RelaxedSoftmaxLayer_params_size'):
@@ -395,7 +398,7 @@ class RelaxedBernoulliLayer(DistributionLambda):
 
   def __init__(self,
                event_shape=(),
-               convert_to_tensor_fn=tfd.Distribution.sample,
+               convert_to_tensor_fn=Distribution.sample,
                temperature=0.5,
                probs_input=False,
                validate_args=False,
@@ -429,11 +432,11 @@ class RelaxedBernoulliLayer(DistributionLambda):
       axis=0,
     )
     params = tf.reshape(params, new_shape)
-    dist = tfd.Independent(
-      tfd.RelaxedBernoulli(temperature=temperature,
-                           logits=None if probs_input else params,
-                           probs=params if probs_input else None,
-                           validate_args=validate_args),
+    dist = Independent(
+      RelaxedBernoulli(temperature=temperature,
+                       logits=None if probs_input else params,
+                       probs=params if probs_input else None,
+                       validate_args=validate_args),
       reinterpreted_batch_ndims=tf.size(input=event_shape),
       name=name,
     )
