@@ -115,17 +115,30 @@ class Hierarchical(VAE):
     self._is_sampling = bool(is_sampling)
     return self
 
-  def sample_traverse(
-      self,
-      inputs: Union[TensorType, List[TensorType]],
-      n_traverse_points: int = 11,
-      n_best_latents: int = 5,
-      min_val: float = -2.0,
-      max_val: float = 2.0,
-      mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
-      smallest_stddev: bool = True,
-      training: bool = False,
-      mask: Optional[TensorType] = None):
+  def get_latents(self, inputs=None, training=None, mask=None,
+                  return_prior=False, **kwargs):
+    is_sampling = self._is_sampling
+    self.set_sampling(False)
+    if inputs is None:
+      if self.last_outputs is None:
+        raise RuntimeError(f'Cannot get_latents of {self.name} '
+                           'both inputs and last_outputs are None.')
+      (px, qy), qz = self.last_outputs
+    else:
+      (px, qy), qz = self(inputs, training=training, mask=mask, **kwargs)
+    self.set_sampling(is_sampling)
+    posterior = [qz]
+    prior = [qz.KL_divergence.prior]
+    for name, q, p, beta in px.kl_pairs:
+      posterior.append(q)
+      prior.append(p)
+    if return_prior:
+      return posterior, prior
+    return posterior
+
+  def sample_traverse(self, inputs, n_traverse_points=11, n_best_latents=5,
+                      min_val=-2.0, max_val=2.0, mode='linear',
+                      smallest_stddev=True, training=False, mask=None):
     from odin.bay.vi import traverse_dims
     latents = self.encode(inputs, training=training, mask=mask)
     stddev = np.sum(latents.stddev(), axis=0)
@@ -148,10 +161,7 @@ class Hierarchical(VAE):
       latents._last_outputs = last_outputs
     return self.decode(latents, training=training, mask=mask), top_latents
 
-  def encode(self,
-             inputs,
-             training=None,
-             **kwargs):
+  def encode(self, inputs, training=None, **kwargs):
     latents = super().encode(inputs, training=training, **kwargs)
     latents._last_outputs = [i for _, i in self.encoder.last_outputs]
     return latents
@@ -619,17 +629,9 @@ class SemafoH(Semafo):
     super().__init__(**kwargs)
     self._is_sampling = False
 
-  def sample_traverse(
-      self,
-      inputs: Union[TensorType, List[TensorType]],
-      n_traverse_points: int = 11,
-      n_best_latents: int = 5,
-      min_val: float = -2.0,
-      max_val: float = 2.0,
-      mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
-      smallest_stddev: bool = True,
-      training: bool = False,
-      mask: Optional[TensorType] = None):
+  def sample_traverse(self, inputs, n_traverse_points=11, n_best_latents=5,
+                      min_val=-2.0, max_val=2.0, mode='linear',
+                      smallest_stddev=True, training=False, mask=None):
     from odin.bay.vi import traverse_dims
     latents = self.encode(inputs, training=training, mask=mask)
     stddev = np.sum(latents.stddev(), axis=0)
@@ -660,7 +662,7 @@ class SemafoH(Semafo):
     self._is_sampling = bool(is_sampling)
     return self
 
-  def build(self, input_shape):
+  def build(self, input_shape=None):
     self.z1 = dict(
       post=dense(128, name='post1'),
       prior=dense(128, name='prior1'),
@@ -671,6 +673,27 @@ class SemafoH(Semafo):
       beta=1.,
     )
     super(SemafoH, self).build(input_shape)
+
+  def get_latents(self, inputs=None, training=None, mask=None,
+                  return_prior=False, **kwargs):
+    is_sampling = self._is_sampling
+    self.set_sampling(False)
+    if inputs is None:
+      if self.last_outputs is None:
+        raise RuntimeError(f'Cannot get_latents of {self.name} '
+                           'both inputs and last_outputs are None.')
+      (px, qy), qz = self.last_outputs
+    else:
+      (px, qy), qz = self(inputs, training=training, mask=mask, **kwargs)
+    self.set_sampling(is_sampling)
+    posterior = [qz]
+    prior = [qz.KL_divergence.prior]
+    for name, q, p, beta in px.kl_pairs:
+      posterior.append(q)
+      prior.append(p)
+    if return_prior:
+      return posterior, prior
+    return posterior
 
   def encode(self, inputs, training=None, **kwargs):
     latents = super(SemafoH, self).encode(inputs, training=training, **kwargs)
@@ -910,6 +933,12 @@ def main(args: Arguments):
                              seed=args.seed)
     with gym.run_model(n_samples=-1, partition='test'):
       print(gym.accuracy_score())
+      # latents t-SNE
+      gym.plot_latents_tsne()
+      if gym.n_latent_vars > 1:
+        for i in range(gym.n_latent_vars):
+          gym.plot_latents_tsne(convert_fn=lambda dists: dists[i].mean(),
+                                title=f'_z{i}')
       # sampling prior
       if model.is_hierarchical():
         model.set_sampling(True)
@@ -925,11 +954,13 @@ def main(args: Arguments):
       # inference
       if model.is_hierarchical():
         model.set_sampling(False)
-      gym.plot_latents_tsne()
-      gym.plot_latents_factors()
-      gym.plot_latents_stats()
+      for i in range(gym.n_latent_vars):
+        gym.plot_latents_factors(convert_fn=lambda dists: dists[i].mean(),
+                                 title=f'_z{i}')
+        gym.plot_correlation(convert_fn=lambda dists: dists[i].mean(),
+                             title=f'_z{i}')
+        gym.plot_latents_stats(latent_idx=i)
       gym.plot_reconstruction()
-      gym.plot_correlation()
     gym.save_figures(path, verbose=True)
 
 

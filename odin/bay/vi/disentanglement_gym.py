@@ -687,16 +687,22 @@ class DisentanglementGym(vs.Visualizer):
     return self.x_true.shape[0]
 
   @property
-  def n_latents(self) -> int:
+  def latents_dim(self) -> int:
     self._assert_sampled()
     return int(sum(
       np.prod((q.batch_shape + q.event_shape)[1:])
       for q in self.qz_x))
 
   @property
-  def n_factors(self) -> int:
+  def factors_dim(self) -> int:
     self._assert_sampled()
     return self.y_true.shape[1]
+
+  @property
+  def n_latent_vars(self) -> int:
+    """Number of latents variables (useful when having hierarchical latent
+    variables)"""
+    return len(self.qz_x)
 
   def get_correlation_matrix(
       self,
@@ -742,11 +748,12 @@ class DisentanglementGym(vs.Visualizer):
     """
     z = convert_fn(self.qz_x).numpy()
     f = self.y_true
+    cache_key = f'{self._cache_key}_{id(convert_fn)}'
     if method in ('spearman', 'pearson', 'lasso'):
       mat = correlation_matrix(x1=z,
                                x2=f,
                                method=method,
-                               cache_key=self._cache_key,
+                               cache_key=cache_key,
                                seed=self.seed)
     elif method == 'mi':
       mat = mutual_info_estimate(representations=z,
@@ -755,14 +762,14 @@ class DisentanglementGym(vs.Visualizer):
                                  continuous_factors=False,
                                  n_neighbors=n_neighbors,
                                  n_cpu=n_cpu,
-                                 cache_key=self._cache_key,
+                                 cache_key=cache_key,
                                  seed=self.seed)
     elif method == 'importance':
       mat = importance_matrix(repr_train=z,
                               factor_train=f,
                               test_size=0.4,
                               seed=self.seed,
-                              cache_key=self._cache_key,
+                              cache_key=cache_key,
                               n_jobs=1)[0]
     else:
       raise ValueError(f'No support for correlation method: {method}')
@@ -770,7 +777,7 @@ class DisentanglementGym(vs.Visualizer):
     if sort_pairs:
       ids = diagonal_linear_assignment(mat)
       mat = mat[ids, :]
-      return mat, OrderedDict(zip(range(self.n_factors), ids))
+      return mat, OrderedDict(zip(range(self.factors_dim), ids))
     return mat
 
   @contextlib.contextmanager
@@ -1139,7 +1146,7 @@ class DisentanglementGym(vs.Visualizer):
         max_val = 3 * stddev
       if min_val is None:
         min_val = -3 * stddev
-    n_top_latents = min(self.n_latents, n_top_latents)
+    n_top_latents = min(self.latents_dim, n_top_latents)
     factors, idx = self.groundtruth.sample_factors(
       factor_filter=factors,
       n_per_factor=1,
@@ -1190,7 +1197,7 @@ class DisentanglementGym(vs.Visualizer):
       title: str = '') -> plt.Figure:
     """Plot correlation matrix between latents and factors"""
     if n_top_latents is None:
-      n_top_latents = self.n_factors
+      n_top_latents = self.factors_dim
     # [n_latents, n_factors]
     mat = self.get_correlation_matrix(convert_fn=convert_fn, method=method)
     if n_top_latents < 0:
@@ -1265,7 +1272,7 @@ class DisentanglementGym(vs.Visualizer):
                   cbar=False,
                   alpha=0.8)
     # get all relevant factors
-    factor_indices = np.arange(self.n_factors)
+    factor_indices = np.arange(self.factors_dim)
     ### correlation
     corr = self.get_correlation_matrix(convert_fn, method=method)
     ### sorting the latents
@@ -1456,7 +1463,7 @@ class DisentanglementGym(vs.Visualizer):
     self._assert_sampled()
     z = convert_fn(self.qz_x).numpy()
     f = self.groundtruth.discretized_factors
-    return dci_scores(z, f, cache_key=self._cache_key)
+    return dci_scores(z, f, cache_key=f'{self._cache_key}_{id(convert_fn)}')
 
   def betavae_score(self,
                     latent_idx: int = 0,
@@ -1480,23 +1487,25 @@ class DisentanglementGym(vs.Visualizer):
                             seed=self.seed,
                             verbose=True)
 
-  def clustering_score(
-      self, convert_fn: ConvertFunction = concat_mean) -> Dict[str, float]:
+  def clustering_score(self,
+                       convert_fn: ConvertFunction = concat_mean
+                       ) -> Dict[str, float]:
     self._assert_sampled()
-    if 'clustering' not in _CACHE[self._cache_key]:
+    key = f'clustering_{id(convert_fn)}'
+    if key not in _CACHE[self._cache_key]:
       z = convert_fn(self.qz_x).numpy()
       y_true = _prepare_categorical(self.y_true, self.ds, return_index=True)
       y_pred = fast_kmeans(z,
                            n_clusters=len(np.unique(y_true)),
                            n_init=200,
                            random_state=self.seed).predict(z)
-      _CACHE[self._cache_key]['clustering'] = dict(
+      _CACHE[self._cache_key][key] = dict(
         ari=metrics.adjusted_rand_score(y_true, y_pred),
         ami=metrics.adjusted_mutual_info_score(y_true, y_pred),
         nmi=metrics.normalized_mutual_info_score(y_true, y_pred),
         asw=metrics.silhouette_score(z, y_true, random_state=self.seed)
       )
-    return _CACHE[self._cache_key]['clustering']
+    return _CACHE[self._cache_key][key]
 
   def relative_disentanglement_strength(
       self,
