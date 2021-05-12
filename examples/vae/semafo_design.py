@@ -1,22 +1,20 @@
 import os
 import shutil
 from functools import partial
-from functools import partial
-from typing import Optional, Callable, List, Union
+from typing import Optional, Callable, List, Union, Any, Dict
 
 import numpy as np
 import tensorflow as tf
-from sklearn.metrics import accuracy_score
 from tensorflow.python.keras import Sequential, Input
 from tensorflow.python.keras.layers import Dense, Flatten, Concatenate
+from typing_extensions import Literal
 
+from odin.backend import TensorType
 from odin.bay import DistributionDense, MVNDiagLatents, BetaGammaVAE, \
-  kl_divergence, DisentanglementGym, VariationalAutoencoder
-from odin.bay.distributions import RelaxedSoftmax
+  kl_divergence, DisentanglementGym
 from odin.bay.layers import RelaxedOneHotCategoricalLayer
 from odin.fuel import get_dataset, ImageDataset
 from odin.networks import get_networks, SequentialNetwork, TrainStep, Networks
-from odin.utils import as_tuple
 from utils import get_args, train, run_multi, set_cfg, Arguments, \
   get_model_path, get_results_path, Callback
 
@@ -107,29 +105,83 @@ class Hierarchical(VAE):
       pz=MVNDiagLatents(48, name='pz1'),
       qz=MVNDiagLatents(48, name='qz1'),
     )
+    self._is_sampling = False
 
-  def decode(self, latents, training=None, mask=None, only_decoding=False,
+  @classmethod
+  def is_hierarchical(cls) -> bool:
+    return True
+
+  def set_sampling(self, is_sampling: bool):
+    self._is_sampling = bool(is_sampling)
+    return self
+
+  def sample_traverse(
+      self,
+      inputs: Union[TensorType, List[TensorType]],
+      n_traverse_points: int = 11,
+      n_best_latents: int = 5,
+      min_val: float = -2.0,
+      max_val: float = 2.0,
+      mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
+      smallest_stddev: bool = True,
+      training: bool = False,
+      mask: Optional[TensorType] = None):
+    from odin.bay.vi import traverse_dims
+    latents = self.encode(inputs, training=training, mask=mask)
+    stddev = np.sum(latents.stddev(), axis=0)
+    # smaller stddev is better
+    if smallest_stddev:
+      top_latents = np.argsort(stddev)[:int(n_best_latents)]
+    else:
+      top_latents = np.argsort(stddev)[::-1][:int(n_best_latents)]
+    # keep the encoder states for the posteriors
+    last_outputs = [i for i in latents._last_outputs]
+    latents = traverse_dims(latents,
+                            feature_indices=top_latents,
+                            min_val=min_val, max_val=max_val,
+                            n_traverse_points=n_traverse_points,
+                            mode=mode)
+    latents = tf.convert_to_tensor(latents)
+    if not self._is_sampling:
+      n_tiles = n_traverse_points * len(top_latents)
+      last_outputs = [tf.tile(i, [n_tiles, 1]) for i in last_outputs]
+      latents._last_outputs = last_outputs
+    return self.decode(latents, training=training, mask=mask), top_latents
+
+  def encode(self,
+             inputs,
+             training=None,
              **kwargs):
-    x = latents
+    latents = super().encode(inputs, training=training, **kwargs)
+    latents._last_outputs = [i for _, i in self.encoder.last_outputs]
+    return latents
+
+  def decode(self, latents, training=None, **kwargs):
+    z_org = tf.convert_to_tensor(latents)
+    z = z_org
     kl_pairs = []
     for i, layer in enumerate(self.decoder.layers):
-      x = layer(x, training=training)
+      z = layer(z, training=training)
       if i in [1]:
-        z = getattr(self, f'z{i}')
+        zlayers = getattr(self, f'z{i}')
         # prior
-        h_prior = z['prior'](x, training=training)
-        pz = z['pz'](h_prior, training=training)
-        # posterior
-        h_post = z['post'](self.concat([x, self.encoder.last_outputs[2][1]]),
-                           training=training)
-        qz = z['qz'](h_post, training=training)
-        kl_pairs.append((f'z{i}', qz, pz))
+        h_prior = zlayers['prior'](z, training=training)
+        pz = zlayers['pz'](h_prior, training=training)
+        if not self._is_sampling:  # posterior (inference mode)
+          if not hasattr(latents, '_last_outputs'):
+            raise RuntimeError('No encoder states found for hierarchical model')
+          h_e = latents._last_outputs[2]
+          h_post = zlayers['post'](self.concat([z, h_e]), training=training)
+          qz = zlayers['qz'](h_post, training=training)
+          kl_pairs.append((f'z{i}', qz, pz))
+        else:  # sampling mode
+          qz = pz
         # output
-        h_deter = z['deter'](x, training=training)
-        x = z['out'](self.concat([h_deter, qz]), training=training)
-    px = self.observation(x, training=training)
-    px.kl_pairs = kl_pairs
-    return px
+        h_deter = zlayers['deter'](z, training=training)
+        z = zlayers['out'](self.concat([h_deter, qz]), training=training)
+    px_z = self.observation(z, training=training)
+    px_z.kl_pairs = kl_pairs
+    return px_z
 
   def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     llk, kl = super().elbo_components(inputs, training=training, mask=mask,
@@ -272,7 +324,8 @@ class Semafo(VAE):
     y = np.diag([1.] * 10)
     y = np.tile(y, [int(np.ceil(n / 10)), 1])[:n]
     qu_y = self.encode_aux(y, training=False)
-    pz_u = self.latents_prior(qu_y, training=False)
+    u = qu_y.sample(seed=seed)
+    pz_u = self.latents_prior(u, training=False)
     return pz_u.mean()
     # return pz_u.sample(seed=seed)
 
@@ -397,10 +450,10 @@ class Semafo2(Semafo):
   def decode(self, latents, training=None, **kwargs):
     px_z = super(Semafo, self).decode(latents, training=training, **kwargs)
     if hasattr(latents, '_qy_x'):
-      py_z = latents._qy_x
+      qy_x = latents._qy_x
     else:
-      py_z = None
-    return px_z, py_z
+      qy_x = None
+    return px_z, qy_x
 
 
 class Semafo2a(Semafo2):
@@ -562,6 +615,51 @@ class Semafo2Stage(Semafo):
 
 class SemafoH(Semafo):
 
+  def __init__(self, **kwargs):
+    super().__init__(**kwargs)
+    self._is_sampling = False
+
+  def sample_traverse(
+      self,
+      inputs: Union[TensorType, List[TensorType]],
+      n_traverse_points: int = 11,
+      n_best_latents: int = 5,
+      min_val: float = -2.0,
+      max_val: float = 2.0,
+      mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
+      smallest_stddev: bool = True,
+      training: bool = False,
+      mask: Optional[TensorType] = None):
+    from odin.bay.vi import traverse_dims
+    latents = self.encode(inputs, training=training, mask=mask)
+    stddev = np.sum(latents.stddev(), axis=0)
+    # smaller stddev is better
+    if smallest_stddev:
+      top_latents = np.argsort(stddev)[:int(n_best_latents)]
+    else:
+      top_latents = np.argsort(stddev)[::-1][:int(n_best_latents)]
+    # keep the encoder states for the posteriors
+    last_outputs = [i for i in latents._last_outputs]
+    latents = traverse_dims(latents,
+                            feature_indices=top_latents,
+                            min_val=min_val, max_val=max_val,
+                            n_traverse_points=n_traverse_points,
+                            mode=mode)
+    latents = tf.convert_to_tensor(latents)
+    if not self._is_sampling:
+      n_tiles = n_traverse_points * len(top_latents)
+      last_outputs = [tf.tile(i, [n_tiles, 1]) for i in last_outputs]
+      latents._last_outputs = last_outputs
+    return self.decode(latents, training=training, mask=mask), top_latents
+
+  @classmethod
+  def is_hierarchical(cls) -> bool:
+    return True
+
+  def set_sampling(self, is_sampling: bool):
+    self._is_sampling = bool(is_sampling)
+    return self
+
   def build(self, input_shape):
     self.z1 = dict(
       post=dense(128, name='post1'),
@@ -570,8 +668,14 @@ class SemafoH(Semafo):
       out=dense(300, name='out1'),
       pz=MVNDiagLatents(48, name='pz1'),
       qz=MVNDiagLatents(48, name='qz1'),
+      beta=1.,
     )
     super(SemafoH, self).build(input_shape)
+
+  def encode(self, inputs, training=None, **kwargs):
+    latents = super(SemafoH, self).encode(inputs, training=training, **kwargs)
+    latents._last_outputs = [i for _, i in self.encoder.last_outputs]
+    return latents
 
   def decode(self, latents, training=None, **kwargs):
     z_org = tf.convert_to_tensor(latents)
@@ -584,12 +688,15 @@ class SemafoH(Semafo):
         # prior
         h_prior = zlayers['prior'](z, training=training)
         pz = zlayers['pz'](h_prior, training=training)
-        # posterior
-        h_post = zlayers['post'](
-          self.concat([z, self.encoder.last_outputs[2][1]]),
-          training=training)
-        qz = zlayers['qz'](h_post, training=training)
-        kl_pairs.append((f'z{i}', qz, pz))
+        if not self._is_sampling:  # posterior (inference mode)
+          if not hasattr(latents, '_last_outputs'):
+            raise RuntimeError('No encoder states found for hierarchical model')
+          h_e = latents._last_outputs[2]
+          h_post = zlayers['post'](self.concat([z, h_e]), training=training)
+          qz = zlayers['qz'](h_post, training=training)
+          kl_pairs.append((f'z{i}', qz, pz, zlayers['beta']))
+        else:  # sampling mode
+          qz = pz
         # output
         h_deter = zlayers['deter'](z, training=training)
         z = zlayers['out'](self.concat([h_deter, qz]), training=training)
@@ -603,8 +710,8 @@ class SemafoH(Semafo):
     llk, kl = super().elbo_components(inputs, training=training, mask=mask,
                                       **kwargs)
     px, qz = self.last_outputs
-    for name, q, p in px.kl_pairs:
-      kl[f'kl_{name}'] = kl_divergence(q, p, analytic=self.analytic)
+    for name, q, p, beta in px.kl_pairs:
+      kl[f'kl_{name}'] = beta * kl_divergence(q, p, analytic=self.analytic)
     return llk, kl
 
   def train_steps(self, inputs, training=None, mask=None, name='', **kwargs):
@@ -629,8 +736,8 @@ class SemafoH(Semafo):
         kl_z_sup=self.beta_sup * (qz_x.log_prob(z) - pz_u.log_prob(z)),
         kl_u_sup=self.beta_sup * qu_y.KL_divergence(analytic=self.analytic)
       )
-      for n, q, p in px_z.kl_pairs:
-        kl[f'kl_{n}'] = kl_divergence(q, p, analytic=self.analytic)
+      for n, q, p, beta in px_z.kl_pairs:
+        kl[f'kl_{n}'] = beta * kl_divergence(q, p, analytic=self.analytic)
 
       return to_elbo(self, llk, kl)
 
@@ -656,12 +763,113 @@ class SemafoH(Semafo):
         llk_qy=self.coef_H_qy *
                qy_z.log_prob(tf.clip_by_value(y_u, 1e-6, 1. - 1e-6))
       )
-      for n, q, p in px_z.kl_pairs:
-        kl[f'kl_{n}'] = kl_divergence(q, p, analytic=self.analytic)
+      for n, q, p, beta in px_z.kl_pairs:
+        kl[f'kl_{n}'] = beta * kl_divergence(q, p, analytic=self.analytic)
 
       return to_elbo(self, llk, kl)
 
     yield TrainStep(parameters=self.trainable_variables, func=elbo_uns)
+
+
+class SemafoHb2(SemafoH):
+
+  def build(self, input_shape):
+    self.z1 = dict(
+      post=dense(128, name='post1'),
+      prior=dense(128, name='prior1'),
+      deter=dense(128, name='deter1'),
+      out=dense(300, name='out1'),
+      pz=MVNDiagLatents(48, name='pz1'),
+      qz=MVNDiagLatents(48, name='qz1'),
+      beta=2.0,
+    )
+    super(SemafoH, self).build(input_shape)
+
+
+class Semafo2H(SemafoH):
+
+  def build(self, input_shape=None):
+    # === 0. q(y|x)
+    labels = self.labels_org
+    self.labels = SequentialNetwork([
+      Flatten(),
+      DistributionDense(event_shape=[10],
+                        projection=True,
+                        posterior=RelaxedOneHotCategoricalLayer,
+                        posterior_kwargs=dict(temperature=0.5),
+                        name='Digits')],
+      name='qy_x')
+    # === 1. Hierarchical p(z|z_i) and q(z|z_i,x)
+    self.z1 = dict(
+      post=dense(128, name='post1'),
+      prior=dense(128, name='prior1'),
+      deter=dense(128, name='deter1'),
+      out=dense(300, name='out1'),
+      pz=MVNDiagLatents(48, name='pz1'),
+      qz=MVNDiagLatents(48, name='qz1'),
+      beta=1.0,
+    )
+    super(Semafo, self).build(input_shape)
+    # === 3. semafo
+    self.encoder2 = networks(self.ydim, 'Encoder2')
+    self.latents2 = MVNDiagLatents(units=self.ydim, name='Latents2')
+    self.latents2(self.encoder2.output)
+    self.decoder2 = networks(self.latents2.event_size, 'Decoder2')
+    self.observation2 = DistributionDense(**labels.get_config())
+    self.observation2(self.decoder2.output)
+    # === 4. prior p(z|u)
+    self.latents_prior = SequentialNetwork([
+      networks(self.ydim, 'Prior'),
+      MVNDiagLatents(self.zdim, name=f'{self.latents.name}_prior')
+    ], name='latents_prior')
+    self.latents_prior.build([None] + self.latents2.event_shape)
+    # === 5. split the params for different updates
+    self.vae2_params = self.encoder2.trainable_variables + \
+                       self.decoder2.trainable_variables + \
+                       self.latents2.trainable_variables + \
+                       self.observation2.trainable_variables
+    vae2_params_id = set([id(i) for i in self.vae2_params])
+    self.vae1_params = [v for v in self.trainable_variables
+                        if id(v) not in vae2_params_id]
+
+  def encode(self, inputs, training=None, **kwargs):
+    h_e = self.encoder(inputs, training=training)
+    last_outputs = [i for _, i in self.encoder.last_outputs]
+    qy_x = self.labels(tf.concat(last_outputs, -1), training=training)
+    h_e = self.concat([qy_x, h_e])
+    qz_xy = self.latents(h_e, training=training)
+    qz_xy._qy_x = qy_x
+    qz_xy._last_outputs = last_outputs
+    return qz_xy
+
+  def decode(self, latents, training=None, **kwargs):
+    z_org = tf.convert_to_tensor(latents)
+    z = z_org
+    kl_pairs = []
+    for i, layer in enumerate(self.decoder.layers):
+      z = layer(z, training=training)
+      if i in [1]:
+        zlayers: Dict[str, Any] = getattr(self, f'z{i}')
+        # prior
+        h_prior = zlayers['prior'](z, training=training)
+        pz = zlayers['pz'](h_prior, training=training)
+        if not self._is_sampling:  # posterior (inference mode)
+          if not hasattr(latents, '_last_outputs'):
+            raise RuntimeError('No encoder states found for hierarchical model')
+          h_e = latents._last_outputs[2]
+          h_post = zlayers['post'](self.concat([z, h_e]), training=training)
+          qz = zlayers['qz'](h_post, training=training)
+          kl_pairs.append((f'z{i}', qz, pz, zlayers['beta']))
+        else:  # sampling mode
+          qz = pz
+        # output
+        h_deter = zlayers['deter'](z, training=training)
+        z = zlayers['out'](self.concat([h_deter, qz]), training=training)
+    px_z = self.observation(z, training=training)
+    px_z.kl_pairs = kl_pairs
+    # === 2. q(y|z)
+    qy_x = latents._qy_x if hasattr(latents, '_qy_x') else None
+    return px_z, qy_x
 
 
 # ===========================================================================
@@ -702,11 +910,21 @@ def main(args: Arguments):
                              seed=args.seed)
     with gym.run_model(n_samples=-1, partition='test'):
       print(gym.accuracy_score())
-      try:
-        gym.plot_latents_sampling()
+      # sampling prior
+      if model.is_hierarchical():
+        model.set_sampling(True)
+      gym.plot_latents_sampling()
+      # traverse
+      if model.is_hierarchical():
+        model.set_sampling(True)
+        gym.plot_latents_traverse(title='_prior')
+        model.set_sampling(False)
+        gym.plot_latents_traverse(title='_post')
+      else:
         gym.plot_latents_traverse()
-      except:
-        pass
+      # inference
+      if model.is_hierarchical():
+        model.set_sampling(False)
       gym.plot_latents_tsne()
       gym.plot_latents_factors()
       gym.plot_latents_stats()

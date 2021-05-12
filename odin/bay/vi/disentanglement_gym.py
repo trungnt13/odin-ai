@@ -612,6 +612,14 @@ class DisentanglementGym(vs.Visualizer):
     assert self._context_setup, 'Call method run_model to produce the samples'
 
   @property
+  def is_semi_supervised(self) -> bool:
+    return self.model.is_semi_supervised()
+
+  @property
+  def is_hierarchical(self) -> bool:
+    return self.model.is_hierarchical()
+
+  @property
   def labels_name(self) -> Sequence[str]:
     return np.array([f'#{i} ' for i in range(self.y_true.shape[1])]) \
       if self._labels_name is None else self._labels_name
