@@ -59,12 +59,18 @@ DatasetNames = Literal['shapes3d', 'shapes3dsmall',
                        'halfmoons']
 
 
+def _reshape2D(x: tf.Tensor) -> tf.Tensor:
+  if x.shape.rank == 1:
+    return x
+  return tf.reshape(x, (x.shape[0], -1))
+
+
 def concat_mean(dists: List[Distribution]) -> tf.Tensor:
-  return tf.concat([d.mean() for d in dists], -1)
+  return tf.concat([_reshape2D(d.mean()) for d in dists], -1)
 
 
 def first_mean(dists: List[Distribution]) -> tf.Tensor:
-  return dists[0].mean()
+  return _reshape2D(dists[0].mean())
 
 
 # ===========================================================================
@@ -953,8 +959,8 @@ class DisentanglementGym(vs.Visualizer):
     # === 0. prepare the latents
     qz = self.qz_x[latent_idx]
     pz = self.pz[latent_idx]
-    mean = np.mean(qz.mean(), 0)
-    stddev = np.mean(qz.stddev(), 0)
+    mean = np.mean(_reshape2D(qz.mean()), 0)
+    stddev = np.mean(_reshape2D(qz.stddev()), 0)
     zdims = mean.shape
     # sort by stddev
     ids = np.argsort(stddev)
@@ -962,18 +968,21 @@ class DisentanglementGym(vs.Visualizer):
     stddev = stddev[ids]
     # kld
     with tf.device('/CPU:0'):
-      q = Normal(qz.mean(), qz.stddev())
+      q = Normal(loc=_reshape2D(qz.mean()),
+                 scale=_reshape2D(qz.stddev()))
       z = q.sample(seed=rand.randint(1e8))
       if isinstance(pz, Vamprior):
         C = pz.C
         p = pz.distribution  # [n_components, zdim]
-        p = Normal(loc=p.mean(), scale=p.stddev())
+        p = Normal(loc=_reshape2D(p.mean()),
+                   scale=_reshape2D(p.stddev()))
         kld = tf.reduce_mean(
           q.log_prob(z) -
           (tf.reduce_logsumexp(p.log_prob(tf.expand_dims(z, 1)), 1) - C),
           axis=0)
       else:
-        p = Normal(pz.mean(), pz.stddev())
+        p = Normal(loc=_reshape2D(pz.mean()),
+                   scale=_reshape2D(pz.stddev()))
         kld = tf.reduce_mean(q.log_prob(z) - p.log_prob(z), axis=0)
     kld = kld.numpy()[ids]
     # === 1. get the weights
@@ -1007,7 +1016,7 @@ class DisentanglementGym(vs.Visualizer):
       self,
       convert_fn: ConvertFunction = first_mean,
       method: CorrelationMethod = 'spearman',
-      n_points: int = 5000,
+      n_points: int = 4000,
       title: str = '') -> plt.Figure:
     """Plot pair of `the two most correlated latent dimension` and each
     `factor`.
@@ -1093,7 +1102,7 @@ class DisentanglementGym(vs.Visualizer):
       self,
       convert_fn: ConvertFunction = concat_mean,
       y_true: Optional[np.ndarray] = None,
-      n_points: int = 2000,
+      n_points: int = 4000,
       use_umap: bool = False,
       title: str = '') -> plt.Figure:
     self._assert_sampled()
@@ -1108,14 +1117,12 @@ class DisentanglementGym(vs.Visualizer):
     fig = plt.figure(figsize=(8, 8), dpi=self.dpi)
     rand = np.random.RandomState(seed=self.seed)
     ids = rand.permutation(z.shape[0])[:n_points]
-    if use_umap:
-      z = DimReduce.UMAP(z[ids],
-                         random_state=rand.randint(1e8))
-    else:
-      z = DimReduce.TSNE(z[ids],
-                         random_state=rand.randint(1e8),
-                         framework='sklearn')
+    z = z[ids]
     y = y[ids]
+    if use_umap:
+      z = DimReduce.UMAP(z, random_state=rand.randint(1e8))
+    else:
+      z = DimReduce.TSNE(z, random_state=rand.randint(1e8), framework='sklearn')
     # update title
     scores = self.clustering_score()
     new_title = f"{title} " \
@@ -1498,7 +1505,8 @@ class DisentanglementGym(vs.Visualizer):
       y_pred = fast_kmeans(z,
                            n_clusters=len(np.unique(y_true)),
                            n_init=200,
-                           random_state=self.seed).predict(z)
+                           random_state=self.seed,
+                           framework='sklearn').predict(z)
       _CACHE[self._cache_key][key] = dict(
         ari=metrics.adjusted_rand_score(y_true, y_pred),
         ami=metrics.adjusted_mutual_info_score(y_true, y_pred),

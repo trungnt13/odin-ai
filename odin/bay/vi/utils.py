@@ -334,8 +334,10 @@ def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
     return np.concatenate(arr, axis=0)
   # === 1. single index
   if not isinstance(min_val, Number):
+    assert len(min_val) == x.shape[-1]
     min_val = min_val[feature_indices]
   if not isinstance(max_val, Number):
+    assert len(max_val) == x.shape[-1]
     max_val = max_val[feature_indices]
   feature_indices = feature_indices[0]
   n_traverse_points = int(n_traverse_points)

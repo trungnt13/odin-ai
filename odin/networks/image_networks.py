@@ -230,8 +230,6 @@ def mnist_networks(
 ) -> Dict[str, Layer]:
   """Network for MNIST dataset image size (28, 28, 1)"""
   from odin.bay.random_variable import RVconf
-  from odin.bay.vi.autoencoder import BiConvLatents, ParallelLatents, \
-    BiDenseLatents
   n_channels = int(kwargs.get('n_channels', 1))
   proj_dim = 196
   input_shape = (28, 28, n_channels)
@@ -244,10 +242,10 @@ def mnist_networks(
     [
       keras.layers.InputLayer(input_shape),
       CenterAt0(enable=centerize_image),
-      conv(32, 5, strides=1, name='encoder0'),
-      conv(32, 5, strides=2, name='encoder1'),
-      conv(64, 5, strides=1, name='encoder2'),
-      conv(64, 5, strides=2, name='encoder3'),
+      conv(32, 5, strides=1, name='encoder0'),  # 28, 28, 32
+      conv(32, 5, strides=2, name='encoder1'),  # 14, 14, 32
+      conv(64, 5, strides=1, name='encoder2'),  # 14, 14, 64
+      conv(64, 5, strides=2, name='encoder3'),  # 7 , 7 , 64
       keras.layers.Flatten(),
       keras.layers.Dense(proj_dim, activation='linear', name='encoder_proj')
     ],
@@ -255,14 +253,11 @@ def mnist_networks(
   )
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder_proj'),
-    keras.layers.Reshape((7, 7, proj_dim // 49)),
-    deconv(64, 5, strides=2, name='decoder2'),
-    BiConvLatents(conv(64, 5, strides=1, name='decoder3'),
-                  encoder=encoder.layers[3],
-                  filters=64, kernel_size=14, strides=1, padding='valid',
-                  disable=True, name='latents1'),
-    deconv(32, 5, strides=2, name='decoder4'),
-    conv(32, 5, strides=1, name='decoder5'),
+    keras.layers.Reshape((7, 7, proj_dim // 49)),  # 7, 7, 4
+    deconv(64, 5, strides=2, name='decoder2'),  # 14, 14, 64
+    conv(64, 5, strides=1, name='decoder3'),  # 14, 14, 64
+    deconv(32, 5, strides=2, name='decoder4'),  # 28, 28, 32
+    conv(32, 5, strides=1, name='decoder5'),  # 28, 28, 32
     conv(n_channels * n_params, 1, strides=1, activation='linear',
          name='decoder6'),
     last_layer
