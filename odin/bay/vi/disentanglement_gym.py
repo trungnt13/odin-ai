@@ -1610,7 +1610,7 @@ class DisentanglementGym(vs.Visualizer):
         _CACHE[self._cache_key]['kl'] = tuple(kl)
       return _CACHE[self._cache_key]['kl']
 
-  def active_units(self) -> Sequence[int]:
+  def active_units(self, tolerant: float = 0.05) -> Sequence[int]:
     self._assert_sampled()
     with tf.device('/CPU:0'):
       au = []
@@ -1619,5 +1619,20 @@ class DisentanglementGym(vs.Visualizer):
         p_std = p.stddev()
         if p_std.shape.rank > 1:
           p_std = np.mean(p_std, axis=0).ravel()
-        au.append(np.sum(np.abs(q_std - p_std) >= 0.05 * p_std))
+        au.append(int(np.sum(np.abs(q_std - p_std) >= tolerant * p_std)))
       return tuple(au)
+
+  def write_report(self, path_txt: str, verbose: bool = True):
+    with open(path_txt, 'w') as f:
+      for name in ['accuracy_score', 'log_likelihood', 'kl_divergence',
+                   'active_units']:
+        method = getattr(self, name)
+        scores = method()
+        text = f'{name.capitalize():20s}: {scores}'
+        if verbose:
+          print(text)
+        f.write(text + '\n')
+      f.flush()
+    if verbose:
+      print(f'Saved report to {path_txt}')
+    return self

@@ -1014,20 +1014,23 @@ class SemafoH(Semafo):
                         name='Digits')],
       name='qy_z')
 
-    super(Semafo, self).build(input_shape)
+    ydim = int(np.prod(labels.event_shape))
+    zdim = int(np.prod(self.latents.event_shape))
 
-    self.encoder2 = networks(self.ydim, 'Encoder2')
-    self.latents2 = MVNDiagLatents(units=self.ydim, name='Latents2')
+    self.encoder2 = networks(ydim, 'Encoder2')
+    self.latents2 = MVNDiagLatents(units=ydim, name='Latents2')
     self.latents2(self.encoder2.output)
     self.decoder2 = networks(self.latents2.event_size, 'Decoder2')
     self.observation2 = DistributionDense(**labels.get_config())
     self.observation2(self.decoder2.output)
 
     self.latents_prior = SequentialNetwork([
-      networks(self.ydim, 'Prior'),
-      MVNDiagLatents(self.zdim, name=f'{self.latents.name}_prior')
+      networks(ydim, 'Prior'),
+      MVNDiagLatents(zdim, name=f'{self.latents.name}_prior')
     ], name='latents_prior')
     self.latents_prior.build([None] + self.latents2.event_shape)
+
+    super(Semafo, self).build(input_shape)
 
     self.vae2_params = self.encoder2.trainable_variables + \
                        self.decoder2.trainable_variables + \
@@ -1476,6 +1479,187 @@ class Semafo3H(SemafoH):
       return to_elbo(self, llk, kl)
 
     yield TrainStep(parameters=self.trainable_variables, func=elbo_uns)
+
+
+# ===========================================================================
+# Redesign the skip connection
+# ===========================================================================
+class SemafoSkip(SemafoH):
+
+  def __init__(self,
+               coef_deter: float = 1.0,
+               coef_qy_z1: float = 0.0,
+               **kwargs):
+    super().__init__(**kwargs)
+    self.coef_deter = float(coef_deter)
+    self.coef_qy_z1 = float(coef_qy_z1)
+
+  def build(self, input_shape=None):
+    ydim = int(np.prod(self.labels_org.event_shape))
+    self.latents_prior1 = networks(ydim, 'LatentsPrior1')
+    self.latents_prior1.build([None, ydim])
+    self.qy_z1 = Dense(32, name='ProjectZ1qY')
+    super().build(input_shape)
+
+  def sample_prior(self, n: int = 1, seed: int = 1,
+                   return_distribution: bool = False, **kwargs):
+    y = np.diag([1.] * 10)
+    y = np.tile(y, [int(np.ceil(n / 10)), 1])[:n]
+    qu_y = self.encode_aux(y, training=False)
+    u = qu_y.sample(seed=seed)
+    pz_u = self.latents_prior(u, training=False)
+    if return_distribution:
+      p = pz_u
+    else:
+      p = pz_u.mean()
+    # add the labels for p(z1|z0,u)
+    p.labels = y
+    return p
+
+  def encode(self, inputs, training=None, **kwargs):
+    if isinstance(inputs, (tuple, list)):
+      x, y = inputs
+    else:
+      x = inputs
+      y = None
+    qz_x = super().encode(x, training=training, **kwargs)
+    # add the labels for p(z1|z0,u)
+    qz_x.labels = y
+    return qz_x
+
+  def decode(self, latents, training=None, **kwargs):
+    if isinstance(latents, (tuple, list)):
+      priors = latents[1:]
+      latents = latents[0]
+    else:
+      priors = [None]
+    z_org = tf.convert_to_tensor(latents)
+    z = z_org
+    kl_pairs = []
+    z_prev = [z_org]
+    # === 0. q(y|z)
+    if self.coef_qy_z1 > 0.:
+      if not hasattr(latents, 'last_outputs'):
+        qy_z = None
+      else:
+        qy_z = self.labels(
+          self.concat([self.qy_z1(latents.last_outputs[2]), z_org]),
+          training=training)
+    else:
+      qy_z = self.labels(z_org, training=training)
+    labels = latents.labels if hasattr(latents, 'labels') else None
+    if labels is None:
+      labels = tf.convert_to_tensor(qy_z)
+    # === 0. hierarchical latents
+    for i, layer in enumerate(self.decoder.layers):
+      z = layer(z, training=training)
+      if i in [1]:
+        zlayers = getattr(self, f'z{i}')
+        z_samples = priors.pop(0)
+        if z_samples is None:
+          qu_y = self.encode_aux(labels, training=training)
+          u = self.latents_prior1(qu_y, training=training)
+          # prior (only conditioning on u for the prior)
+          h_prior = zlayers['prior'](self.concat([z, u]), training=training)
+          pz = zlayers['pz'](h_prior, training=training)
+          # posterior (inference mode)
+          if not self._is_sampling:
+            if not hasattr(latents, 'last_outputs'):
+              raise RuntimeError(
+                'No encoder states found for hierarchical model')
+            h_e = latents.last_outputs[2]
+            h_post = zlayers['post'](self.concat([z, h_e]), training=training)
+            qz = zlayers['qz'](h_post, training=training)
+          # sampling mode
+          else:
+            qz = pz
+          kl_pairs.append((f'z{i}', qz, pz, zlayers['beta']))
+          # output
+          z_samples = tf.convert_to_tensor(qz)
+        z_prev.append(z_samples)
+        if self.coef_deter > 0.:
+          h_deter = zlayers['deter'](z, training=training)
+          z_samples = self.concat([self.coef_deter * h_deter, z_samples])
+        z = zlayers['out'](z_samples, training=training)
+    # === 1. p(x|z0,z1)
+    px_z = self.observation(z, training=training)
+    px_z.kl_pairs = kl_pairs
+    return px_z, qy_z
+
+  def train_steps(self, inputs, training=None, mask=None, name='', **kwargs):
+    x_u, x_s, y_s = inputs
+
+    # === 1. Supervised
+    def elbo_sup():
+      # only change here, provide label for p(z1|z0,u)
+      (px_z, qy_z), qz_x = self([x_s, y_s], training=training)
+      py_u, qu_y = self.call_aux(y_s, training=training)
+      pz_u = self.latents_prior(qu_y, training=training)
+
+      llk = dict(
+        llk_px_sup=self.gamma_sup * px_z.log_prob(x_s),
+        llk_py_sup=self.gamma_sup * self.gamma_py *
+                   py_u.log_prob(y_s),
+        llk_qy_sup=self.gamma_sup * self.gamma_py *
+                   qy_z.log_prob(tf.clip_by_value(y_s, 1e-6, 1. - 1e-6))
+      )
+
+      z = tf.convert_to_tensor(qz_x)
+      kl = dict(
+        kl_z_sup=self.beta_sup * (qz_x.log_prob(z) - pz_u.log_prob(z)),
+        kl_u_sup=self.beta_sup * qu_y.KL_divergence(analytic=self.analytic)
+      )
+      for n, q, p, beta in px_z.kl_pairs:
+        kl[f'kl_{n}'] = beta * kl_divergence(q, p, analytic=self.analytic)
+
+      return to_elbo(self, llk, kl)
+
+    yield TrainStep(parameters=self.trainable_variables, func=elbo_sup)
+
+    # === 2. Unsupervised
+    def elbo_uns():
+      (px_z, qy_z), qz_x = self(x_u, training=training)
+      y_u = tf.convert_to_tensor(qy_z, dtype=self.dtype)
+      py_u, qu_y = self.call_aux(y_u, training=training)
+      pz_u = self.latents_prior(qu_y, training=training)
+
+      llk = dict(
+        llk_px_uns=self.gamma_uns * px_z.log_prob(x_u),
+        llk_py_uns=self.gamma_uns * self.gamma_py *
+                   py_u.log_prob(y_u)
+      )
+
+      z = tf.convert_to_tensor(qz_x)
+      kl = dict(
+        kl_z_uns=self.beta_uns * (qz_x.log_prob(z) - pz_u.log_prob(z)),
+        kl_u_uns=self.beta_uns * qu_y.KL_divergence(analytic=self.analytic),
+        llk_qy=self.coef_H_qy *
+               qy_z.log_prob(tf.clip_by_value(y_u, 1e-6, 1. - 1e-6))
+      )
+      for n, q, p, beta in px_z.kl_pairs:
+        kl[f'kl_{n}'] = beta * kl_divergence(q, p, analytic=self.analytic)
+
+      return to_elbo(self, llk, kl)
+
+    yield TrainStep(parameters=self.trainable_variables, func=elbo_uns)
+
+
+class SemafoSkip00(SemafoSkip):
+
+  def __init__(self, **kwargs):
+    super().__init__(coef_deter=0.0, **kwargs)
+
+
+class SemafoSkip01(SemafoSkip):
+
+  def __init__(self, **kwargs):
+    super().__init__(coef_deter=0.1, **kwargs)
+
+
+class SemafoFullSkip00(SemafoSkip):
+
+  def __init__(self, **kwargs):
+    super().__init__(coef_deter=0.0, coef_qy_z1=1.0, **kwargs)
 
 
 # ===========================================================================
