@@ -460,6 +460,8 @@ def train(
     on_valid_end: Sequence[Callable[..., Any]] = (Callback.save_best_llk,),
     label_percent: float = 0,
     oversample_ratio: float = 0.5,
+    train_data_map: Optional[Callable] = None,
+    valid_data_map: Optional[Callable] = None,
     verbose: bool = True) -> VariationalModel:
   if verbose:
     print(model)
@@ -489,6 +491,11 @@ def train(
   valid_ds = ds.create_dataset('valid', batch_size=64, label_percent=1.0)
   train_ds: tf.data.Dataset
   valid_ds: tf.data.Dataset
+
+  if train_data_map is not None:
+    train_ds = train_ds.map(train_data_map)
+  if valid_data_map is not None:
+    valid_ds = valid_ds.map(valid_data_map)
 
   # === 2. callback
   all_attrs = dict(locals())
