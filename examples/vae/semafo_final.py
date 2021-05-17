@@ -277,10 +277,11 @@ def reparameterize(labels: DistributionDense) -> SequentialNetwork:
   if dsname in ('mnist', 'fashionmnist', 'cifar10'):
     return SequentialNetwork([
       # networks(None, 'EncoderY', batchnorm=True),
-      DistributionDense(event_shape=[ydim], projection=True,
-                        posterior=RelaxedOneHotCategoricalLayer,
-                        posterior_kwargs=dict(temperature=0.5),
-                        name='Labels')],
+      DistributionDense(event_shape=[DigitsDistribution.output_dim],
+                        projection=True,
+                        posterior=lambda params: DigitsDistribution(params),
+                        units=DigitsDistribution.input_dim,
+                        name='Digits')],
       name='qy_z')
   elif dsname == 'dsprites':
     return SequentialNetwork([
@@ -288,17 +289,16 @@ def reparameterize(labels: DistributionDense) -> SequentialNetwork:
                         projection=True,
                         posterior=lambda params: dSpritesDistribution(params),
                         units=dSpritesDistribution.input_dim,
-                        name='Geometry2D')],
+                        name='Shapes2D')],
       name='qy_z')
   elif dsname == 'shapes3d':
-    # return SequentialNetwork([
-    #   DistributionDense(event_shape=[6],
-    #                     projection=True,
-    #                     posterior=_shapes3d_reparams,
-    #                     units=10,
-    #                     name='Geometry3D')],
-    #   name='qy_z')
-    pass
+    return SequentialNetwork([
+      DistributionDense(event_shape=[Shapes3DDistribution.output_dim],
+                        projection=True,
+                        posterior=lambda params: Shapes3DDistribution(params),
+                        units=Shapes3DDistribution.input_dim,
+                        name='Shapes3D')],
+      name='qy_z')
   raise NotImplementedError(f'No support for {dsname} and labels {labels}.')
 
 
@@ -528,7 +528,7 @@ class SemafoVAE(VariationalAutoencoder):
         llk_py_sup=self.gamma_sup * self.gamma_py *
                    py_u.log_prob(y_s),
         llk_qy_sup=self.gamma_sup * self.gamma_py *
-                   qy_z.log_prob(y_s)  # tf.clip_by_value(y_s, 1e-6, 1. - 1e-6)
+                   qy_z.log_prob(tf.clip_by_value(y_s, 1e-6, 1. - 1e-6))
       )
 
       z = tf.convert_to_tensor(qz_x)
@@ -566,7 +566,7 @@ class SemafoVAE(VariationalAutoencoder):
         kl_z_uns=self.beta_uns * (qz_x.log_prob(z) - pz_u.log_prob(z)),
         kl_u_uns=self.beta_uns * qu_y.KL_divergence(analytic=self.analytic),
         llk_qy_uns=self.coef_H_qy *
-                   qy_z.log_prob(y_u)  # tf.clip_by_value(y_u, 1e-6, 1. - 1e-6)
+                   qy_z.log_prob(tf.clip_by_value(y_u, 1e-6, 1. - 1e-6))
       )
       # for hierarchical VAE
       if hasattr(px_z, 'kl_pairs'):
