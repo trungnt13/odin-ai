@@ -488,6 +488,11 @@ def train(
                                label_percent=label_percent,
                                oversample_ratio=oversample_ratio,
                                fixed_oversample=True)
+  # TODO: just for testing here
+  # train_ds = ds.create_dataset('train', batch_size=args.bs,
+  #                              label_percent=0.2,
+  #                              oversample_ratio=0.0,
+  #                              fixed_oversample=False)
   valid_ds = ds.create_dataset('valid', batch_size=64, label_percent=1.0)
   train_ds: tf.data.Dataset
   valid_ds: tf.data.Dataset

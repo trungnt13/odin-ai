@@ -12,7 +12,7 @@ from tensorflow.python.keras.layers import Dense, Flatten, Concatenate, Conv2D, 
   Conv2DTranspose, GlobalAvgPool2D, BatchNormalization, Activation, Reshape
 from tensorflow_probability.python.distributions import Normal, Independent, \
   Blockwise, JointDistributionSequential, VonMises, Gamma, Categorical, \
-  Bernoulli, RelaxedBernoulli, Poisson, Distribution, RelaxedOneHotCategorical, \
+  Bernoulli, RelaxedBernoulli, Distribution, RelaxedOneHotCategorical, \
   OneHotCategorical
 from tensorflow_probability.python.internal.reparameterization import \
   FULLY_REPARAMETERIZED
@@ -21,13 +21,13 @@ from tensorflow_probability.python.layers import DistributionLambda
 from odin import visual as vs
 from odin.bay import DistributionDense, MVNDiagLatents, kl_divergence, \
   DisentanglementGym, VariationalAutoencoder, get_vae, BiConvLatents
-from odin.bay.layers import RelaxedOneHotCategoricalLayer
 from odin.bay.vi import traverse_dims
-from odin.fuel import get_dataset, ImageDataset
+from odin.fuel import get_dataset
 from odin.networks import get_networks, SequentialNetwork, TrainStep
 from odin.utils import as_tuple
 from utils import get_args, train, run_multi, set_cfg, Arguments, \
   get_model_path, get_results_path, Callback, prepare_images
+from tensorflow.python.training.tracking import base as trackable
 
 # ===========================================================================
 # Const and helper
@@ -72,6 +72,37 @@ def _create_normal(params):
   d = Normal(loc, scale)
   d = Independent(d, reinterpreted_batch_ndims=loc.shape.rank - 1)
   return d
+
+
+def _create_dsprites(p: tf.Tensor) -> Blockwise:
+  return Blockwise(
+    JointDistributionSequential([
+      VonMises(loc=0.,
+               concentration=tf.math.softplus(p[..., 0]),
+               name='orientation'),
+      Gamma(concentration=tf.math.softplus(p[..., 1]),
+            rate=tf.math.softplus(p[..., 2]),
+            name='scale'),
+      OneHotCategorical(logits=p[..., 3:6], dtype=tf.float32, name='shape'),
+      Bernoulli(logits=p[..., 6], dtype=tf.float32, name='x_position'),
+      Bernoulli(logits=p[..., 7], dtype=tf.float32, name='y_position'),
+    ]), name='shapes2d')
+
+
+def _create_shapes3D(p: tf.Tensor) -> Blockwise:
+  return Blockwise(
+    JointDistributionSequential([
+      VonMises(loc=0.,
+               concentration=tf.math.softplus(p[..., 0]),
+               name='orientation'),
+      Gamma(concentration=tf.math.softplus(p[..., 1]),
+            rate=tf.math.softplus(p[..., 2]),
+            name='scale'),
+      Categorical(logits=p[..., 3:7], dtype=tf.float32, name='shape'),
+      Bernoulli(logits=p[..., 7], dtype=tf.float32, name='floor_hue'),
+      Bernoulli(logits=p[..., 8], dtype=tf.float32, name='wall_hue'),
+      Bernoulli(logits=p[..., 9], dtype=tf.float32, name='object_hue'),
+    ]))
 
 
 class dSpritesDistribution(Distribution):
@@ -251,14 +282,13 @@ class DigitsDistribution(RelaxedOneHotCategorical):
 
   def __init__(self,
                logits=None,
-               probs=None,
                temperature=0.5,
                validate_args=False,
                allow_nan_stats=True,
                name='DigitsDistribution'):
     super(DigitsDistribution, self).__init__(temperature=temperature,
                                              logits=logits,
-                                             probs=probs,
+                                             probs=None,
                                              validate_args=validate_args,
                                              allow_nan_stats=allow_nan_stats,
                                              name=name)
@@ -272,32 +302,31 @@ class DigitsDistribution(RelaxedOneHotCategorical):
 
 
 def reparameterize(labels: DistributionDense) -> SequentialNetwork:
-  ydim = int(np.prod(labels.event_shape))
   dsname = config.ds.lower()
   if dsname in ('mnist', 'fashionmnist', 'cifar10'):
     return SequentialNetwork([
       # networks(None, 'EncoderY', batchnorm=True),
       DistributionDense(event_shape=[DigitsDistribution.output_dim],
                         projection=True,
-                        posterior=lambda params: DigitsDistribution(params),
+                        posterior=DigitsDistribution,
                         units=DigitsDistribution.input_dim,
-                        name='Digits')],
+                        name='Digits_qy')],
       name='qy_z')
   elif dsname == 'dsprites':
     return SequentialNetwork([
       DistributionDense(event_shape=[dSpritesDistribution.output_dim],
                         projection=True,
-                        posterior=lambda params: dSpritesDistribution(params),
+                        posterior=dSpritesDistribution,
                         units=dSpritesDistribution.input_dim,
-                        name='Shapes2D')],
+                        name='Shapes2D_qy')],
       name='qy_z')
   elif dsname == 'shapes3d':
     return SequentialNetwork([
       DistributionDense(event_shape=[Shapes3DDistribution.output_dim],
                         projection=True,
-                        posterior=lambda params: Shapes3DDistribution(params),
+                        posterior=Shapes3DDistribution,
                         units=Shapes3DDistribution.input_dim,
-                        name='Shapes3D')],
+                        name='Shapes3D_qy')],
       name='qy_z')
   raise NotImplementedError(f'No support for {dsname} and labels {labels}.')
 
@@ -414,21 +443,20 @@ class SemafoVAE(VariationalAutoencoder):
     self.gamma_py = float(gamma_py)
     self.beta_uns = float(beta_uns)
     self.beta_sup = float(beta_sup)
-    self.labels_org = labels
     # === 1. fixed utility layers
     self.flatten = Flatten()
     self.concat = Concatenate(-1)
     self.global_avg = GlobalAvgPool2D()
     # === 2. reparameterized q(y|z)
-    ydim = int(np.prod(self.labels_org.event_shape))
+    ydim = int(np.prod(labels.event_shape))
     zdim = int(np.prod(self.latents.event_shape))
-    self.labels = reparameterize(self.labels_org)  # q(y|z0,z1,x)
+    self.labels = reparameterize(labels)  # q(y|z0,z1,x)
     # === 3. second VAE for y and u
-    self.encoder2 = dense_networks(self.qy_size, 'Encoder2')
+    self.encoder2 = dense_networks(ydim, 'Encoder2')
     self.latents2 = MVNDiagLatents(units=ydim, name='Latents2')
     self.latents2(self.encoder2.output)
     self.decoder2 = dense_networks(self.latents2.event_size, 'Decoder2')
-    self.observation2 = DistributionDense(**self.labels_org.get_config())
+    self.observation2 = labels
     self.observation2(self.decoder2.output)
     # === 4. p(z|u)
     self.latents_prior = SequentialNetwork([
@@ -436,10 +464,6 @@ class SemafoVAE(VariationalAutoencoder):
       MVNDiagLatents(zdim)
     ], name=f'{self.latents.name}_prior')
     self.latents_prior.build([None] + self.latents2.event_shape)
-
-  @property
-  def qy_size(self) -> int:
-    return int(np.prod(self.labels.layers[-1].event_shape))
 
   def encode(self, inputs, training=None, **kwargs):
     if isinstance(inputs, (tuple, list)):
@@ -514,71 +538,99 @@ class SemafoVAE(VariationalAutoencoder):
           q, p, analytic=self.analytic)
     return llk, kl
 
-  def train_steps(self, inputs, training=None, mask=None, name='', **kwargs):
+  def elbo_sup(self, x_s, y_s, training):
+    (px_z, qy_z), qz_x = self([x_s, y_s], training=training)
+    py_u, qu_y = self.call_aux(y_s, training=training)
+    pz_u = self.latents_prior(qu_y, training=training)
+
+    llk = dict(
+      llk_px_sup=self.gamma_sup * px_z.log_prob(x_s),
+      llk_py_sup=self.gamma_sup * self.gamma_py *
+                 py_u.log_prob(y_s),
+      llk_qy_sup=self.gamma_sup * self.gamma_py *
+                 qy_z.log_prob(tf.clip_by_value(y_s, 1e-6, 1. - 1e-6))
+    )
+
+    z = tf.convert_to_tensor(qz_x)
+    kl = dict(
+      kl_z_sup=self.beta_sup * (qz_x.log_prob(z) - pz_u.log_prob(z)),
+      kl_u_sup=self.beta_sup * qu_y.KL_divergence(analytic=self.analytic)
+    )
+
+    # for hierarchical VAE
+    if hasattr(px_z, 'kl_pairs'):
+      for i, (cfg, q, p) in enumerate(px_z.kl_pairs):
+        kl_qp = kl_divergence(q, p, analytic=self.analytic)
+        if cfg.C is not None:
+          kl_qp = tf.math.abs(kl_qp - cfg.C * np.prod(q.event_shape))
+        kl[f'kl_z{i + 1}'] = cfg.beta * kl_qp
+
+    return to_elbo(self, llk, kl)
+
+  def elbo_uns(self, x_u, training):
+    (px_z, qy_z), qz_x = self(x_u, training=training)
+    y_u = tf.convert_to_tensor(qy_z, dtype=self.dtype)
+    py_u, qu_y = self.call_aux(y_u, training=training)
+    pz_u = self.latents_prior(qu_y, training=training)
+
+    llk = dict(
+      llk_px_uns=self.gamma_uns * px_z.log_prob(x_u),
+      llk_py_uns=self.gamma_uns * self.gamma_py *
+                 py_u.log_prob(y_u)
+    )
+
+    z = tf.convert_to_tensor(qz_x)
+    kl = dict(
+      kl_z_uns=self.beta_uns * (qz_x.log_prob(z) - pz_u.log_prob(z)),
+      kl_u_uns=self.beta_uns * qu_y.KL_divergence(analytic=self.analytic),
+      llk_qy_uns=self.coef_H_qy *
+                 qy_z.log_prob(tf.clip_by_value(y_u, 1e-6, 1. - 1e-6))
+    )
+    # for hierarchical VAE
+    if hasattr(px_z, 'kl_pairs'):
+      for i, (cfg, q, p) in enumerate(px_z.kl_pairs):
+        kl_qp = kl_divergence(q, p, analytic=self.analytic)
+        if cfg.C is not None:
+          kl_qp = tf.math.abs(kl_qp - cfg.C * np.prod(q.event_shape))
+        kl[f'kl_z{i + 1}'] = cfg.beta * kl_qp
+
+    return to_elbo(self, llk, kl)
+
+  def train_steps(self, inputs, training=None, **kwargs):
     x_u, x_s, y_s = inputs
 
     # === 1. Supervised
     def elbo_sup():
-      (px_z, qy_z), qz_x = self([x_s, y_s], training=training)
-      py_u, qu_y = self.call_aux(y_s, training=training)
-      pz_u = self.latents_prior(qu_y, training=training)
+      return self.elbo_sup(x_s, y_s, training)
 
-      llk = dict(
-        llk_px_sup=self.gamma_sup * px_z.log_prob(x_s),
-        llk_py_sup=self.gamma_sup * self.gamma_py *
-                   py_u.log_prob(y_s),
-        llk_qy_sup=self.gamma_sup * self.gamma_py *
-                   qy_z.log_prob(tf.clip_by_value(y_s, 1e-6, 1. - 1e-6))
-      )
+    yield TrainStep(parameters=self.trainable_variables, func=elbo_sup)
 
-      z = tf.convert_to_tensor(qz_x)
-      kl = dict(
-        kl_z_sup=self.beta_sup * (qz_x.log_prob(z) - pz_u.log_prob(z)),
-        kl_u_sup=self.beta_sup * qu_y.KL_divergence(analytic=self.analytic)
-      )
-      # for hierarchical VAE
-      if hasattr(px_z, 'kl_pairs'):
-        for i, (cfg, q, p) in enumerate(px_z.kl_pairs):
-          kl_qp = kl_divergence(q, p, analytic=self.analytic)
-          if cfg.C is not None:
-            kl_qp = tf.math.abs(kl_qp - cfg.C * np.prod(q.event_shape))
-          kl[f'kl_z{i + 1}'] = cfg.beta * kl_qp
+  def train_steps1(self, inputs, training=None, **kwargs):
+    x_u, x_s, y_s = inputs
 
-      return to_elbo(self, llk, kl)
+    # === 1. Supervised
+    def elbo_sup():
+      return self.elbo_sup(x_s, y_s, training)
 
     yield TrainStep(parameters=self.trainable_variables, func=elbo_sup)
 
     # === 2. Unsupervised
     def elbo_uns():
-      (px_z, qy_z), qz_x = self(x_u, training=training)
-      y_u = tf.convert_to_tensor(qy_z, dtype=self.dtype)
-      py_u, qu_y = self.call_aux(y_u, training=training)
-      pz_u = self.latents_prior(qu_y, training=training)
-
-      llk = dict(
-        llk_px_uns=self.gamma_uns * px_z.log_prob(x_u),
-        llk_py_uns=self.gamma_uns * self.gamma_py *
-                   py_u.log_prob(y_u)
-      )
-
-      z = tf.convert_to_tensor(qz_x)
-      kl = dict(
-        kl_z_uns=self.beta_uns * (qz_x.log_prob(z) - pz_u.log_prob(z)),
-        kl_u_uns=self.beta_uns * qu_y.KL_divergence(analytic=self.analytic),
-        llk_qy_uns=self.coef_H_qy *
-                   qy_z.log_prob(tf.clip_by_value(y_u, 1e-6, 1. - 1e-6))
-      )
-      # for hierarchical VAE
-      if hasattr(px_z, 'kl_pairs'):
-        for i, (cfg, q, p) in enumerate(px_z.kl_pairs):
-          kl_qp = kl_divergence(q, p, analytic=self.analytic)
-          if cfg.C is not None:
-            kl_qp = tf.math.abs(kl_qp - cfg.C * np.prod(q.event_shape))
-          kl[f'kl_z{i + 1}'] = cfg.beta * kl_qp
-
-      return to_elbo(self, llk, kl)
+      return self.elbo_uns(x_u, training)
 
     yield TrainStep(parameters=self.trainable_variables, func=elbo_uns)
+
+  def fit(self, *args, **kwargs):
+    on_batch_end = kwargs.pop('on_batch_end', [])
+
+    def switch_training():
+      # priming q(y|z0,z1,x) so it generate some reasonable data
+      if self.step.numpy() > 800:
+        self.set_training_stage(1)
+
+    on_batch_end.append(switch_training)
+    return super(SemafoVAE, self).fit(on_batch_end=on_batch_end, *args,
+                                      **kwargs)
 
 
 # ===========================================================================
@@ -829,39 +881,16 @@ def main(args: Arguments):
   if args.ds.lower() == 'dsprites':
     networks['labels'] = DistributionDense(
       event_shape=(dSpritesDistribution.output_dim,),
-      posterior=lambda p: Blockwise(
-        JointDistributionSequential([
-          VonMises(loc=0.,
-                   concentration=tf.math.softplus(p[..., 0]),
-                   name='orientation'),
-          Gamma(concentration=tf.math.softplus(p[..., 1]),
-                rate=tf.math.softplus(p[..., 2]),
-                name='scale'),
-          OneHotCategorical(logits=p[..., 3:6], dtype=tf.float32, name='shape'),
-          Bernoulli(logits=p[..., 6], dtype=tf.float32, name='x_position'),
-          Bernoulli(logits=p[..., 7], dtype=tf.float32, name='y_position'),
-        ]), name='shapes2d'),
+      posterior=_create_dsprites,
       units=dSpritesDistribution.input_dim,
-      name='geometry2d')
+      name='Shapes2D_py')
   # for shapes3d
   elif args.ds.lower() == 'shapes3d':
     networks['labels'] = DistributionDense(
       event_shape=(Shapes3DDistribution.output_dim,),
-      posterior=lambda p: Blockwise(
-        JointDistributionSequential([
-          VonMises(loc=0.,
-                   concentration=tf.math.softplus(p[..., 0]),
-                   name='orientation'),
-          Gamma(concentration=tf.math.softplus(p[..., 1]),
-                rate=tf.math.softplus(p[..., 2]),
-                name='scale'),
-          Categorical(logits=p[..., 3:7], dtype=tf.float32, name='shape'),
-          Bernoulli(logits=p[..., 7], dtype=tf.float32, name='floor_hue'),
-          Bernoulli(logits=p[..., 8], dtype=tf.float32, name='wall_hue'),
-          Bernoulli(logits=p[..., 9], dtype=tf.float32, name='object_hue'),
-        ]), name='shapes2d'),
+      posterior=_create_shapes3D,
       units=Shapes3DDistribution.input_dim,
-      name='geometry3d')
+      name='Shapes3D_py')
   # create and build the model
   model: VariationalAutoencoder = model(**networks)
   model.build((None,) + ds.shape)
@@ -870,7 +899,7 @@ def main(args: Arguments):
     train(model, ds, args,
           label_percent=args.py if is_semi else 0.0,
           on_batch_end=(),
-          on_valid_end=(Callback.save_best_llk,),
+          on_valid_end=(),  # Callback.save_best_llk,
           oversample_ratio=args.ratio,
           train_data_map=train_data_map,
           valid_data_map=valid_data_map)
