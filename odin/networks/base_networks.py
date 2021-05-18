@@ -621,6 +621,10 @@ class Networks(keras.Model, MD5object):
     ## return
     return total_loss, all_metrics
 
+  @property
+  def training_stage(self) -> int:
+    return self._training_stage
+
   def set_training_stage(self, stage: int) -> 'Networks':
     """Switch to next the training stage defined by the method
     `train_steps{$index}`"""

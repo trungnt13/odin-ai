@@ -369,6 +369,7 @@ class DistributionDense(Layer):
     # tensorflow tries to serialize the distribution, which raise exception
     # when saving the graphs, to avoid this, store it as non-tracking list.
     with trackable.no_automatic_dependency_tracking_scope(self):
+      # self._no_dependency
       self._most_recently_built_distribution = posterior
     ## NOTE: all distribution has the method kl_divergence, so we cannot use it
     posterior.KL_divergence = KLdivergence(

@@ -86,7 +86,7 @@ def _create_dsprites(p: tf.Tensor) -> Blockwise:
       OneHotCategorical(logits=p[..., 3:6], dtype=tf.float32, name='shape'),
       Bernoulli(logits=p[..., 6], dtype=tf.float32, name='x_position'),
       Bernoulli(logits=p[..., 7], dtype=tf.float32, name='y_position'),
-    ]), name='shapes2d')
+    ]), name='Shapes2D')
 
 
 def _create_shapes3D(p: tf.Tensor) -> Blockwise:
@@ -102,7 +102,7 @@ def _create_shapes3D(p: tf.Tensor) -> Blockwise:
       Bernoulli(logits=p[..., 7], dtype=tf.float32, name='floor_hue'),
       Bernoulli(logits=p[..., 8], dtype=tf.float32, name='wall_hue'),
       Bernoulli(logits=p[..., 9], dtype=tf.float32, name='object_hue'),
-    ]))
+    ]), name='Shapes3D')
 
 
 class dSpritesDistribution(Distribution):
@@ -301,8 +301,7 @@ class DigitsDistribution(RelaxedOneHotCategorical):
     return super(DigitsDistribution, self).probs_parameter()
 
 
-def reparameterize(labels: DistributionDense) -> SequentialNetwork:
-  dsname = config.ds.lower()
+def reparameterize(dsname: str) -> SequentialNetwork:
   if dsname in ('mnist', 'fashionmnist', 'cifar10'):
     return SequentialNetwork([
       # networks(None, 'EncoderY', batchnorm=True),
@@ -328,7 +327,7 @@ def reparameterize(labels: DistributionDense) -> SequentialNetwork:
                         units=Shapes3DDistribution.input_dim,
                         name='Shapes3D_qy')],
       name='qy_z')
-  raise NotImplementedError(f'No support for {dsname} and labels {labels}.')
+  raise NotImplementedError(f'No support for {dsname}.')
 
 
 # ===========================================================================
@@ -376,14 +375,21 @@ class LatentConfig:
 
 
 DefaultHierarchy = dict(
+  ###
   shapes3d=dict(encoder=3, decoder=2,
                 filters=32, kernel=8, strides=4),
+  ###
   dsprites=dict(encoder=3, decoder=2,
                 filters=32, kernel=8, strides=4),
-  cifar10=dict(encoder=3, decoder=3,
-               filters=32, kernel=8, strides=4),
+  ###
+  cifar10=[dict(encoder=3, decoder=3,
+                filters=32, kernel=8, strides=4),
+           dict(encoder=1, decoder=5,
+                filters=16, kernel=8, strides=4)],
+  ###
   fashionmnist=dict(encoder=3, decoder=3,
                     filters=16, kernel=14, strides=7),
+  ###
   mnist=dict(encoder=3, decoder=3,
              filters=16, kernel=14, strides=7),
 )
@@ -391,8 +397,8 @@ DefaultHierarchy = dict(
 DefaultGamma = dict(
   shapes3d=5.,
   dsprites=5.,
-  cifar10=5.,
-  fashionmnist=5.,
+  cifar10=10.,
+  fashionmnist=10.,
   mnist=5.,
 )
 
@@ -402,6 +408,22 @@ DefaultGammaPy = dict(
   cifar10=10.,
   fashionmnist=10.,
   mnist=10.,
+)
+
+DefaultSemi = dict(
+  shapes3d=(0.1, 0.1),
+  dsprites=(0.1, 0.1),
+  cifar10=(0.1, 0.1),
+  fashionmnist=(0.01, 0.1),
+  mnist=(0.004, 0.1),
+)
+
+DefaultPretrain = dict(
+  shapes3d=(10000, 800),
+  dsprites=(10000, 800),
+  cifar10=(10000, 800),
+  fashionmnist=(1000, 500),
+  mnist=(1000, 500),
 )
 
 
@@ -414,6 +436,7 @@ class SemafoVAE(VariationalAutoencoder):
                encoder: SequentialNetwork,
                decoder: SequentialNetwork,
                labels: DistributionDense,
+               pretrain_steps: Optional[Sequence[int]] = None,
                coef_H_qy: float = 1.,
                gamma_py: float = None,
                gamma_uns: Optional[float] = None,
@@ -443,6 +466,9 @@ class SemafoVAE(VariationalAutoencoder):
     self.gamma_py = float(gamma_py)
     self.beta_uns = float(beta_uns)
     self.beta_sup = float(beta_sup)
+    if pretrain_steps is None:
+      pretrain_steps = DefaultPretrain[config.ds]
+    self.pretrain_steps = np.cumsum(as_tuple(pretrain_steps, t=int))
     # === 1. fixed utility layers
     self.flatten = Flatten()
     self.concat = Concatenate(-1)
@@ -450,7 +476,7 @@ class SemafoVAE(VariationalAutoencoder):
     # === 2. reparameterized q(y|z)
     ydim = int(np.prod(labels.event_shape))
     zdim = int(np.prod(self.latents.event_shape))
-    self.labels = reparameterize(labels)  # q(y|z0,z1,x)
+    self.labels = reparameterize(config.ds.lower())  # q(y|z0,z1,x)
     # === 3. second VAE for y and u
     self.encoder2 = dense_networks(ydim, 'Encoder2')
     self.latents2 = MVNDiagLatents(units=ydim, name='Latents2')
@@ -464,6 +490,14 @@ class SemafoVAE(VariationalAutoencoder):
       MVNDiagLatents(zdim)
     ], name=f'{self.latents.name}_prior')
     self.latents_prior.build([None] + self.latents2.event_shape)
+
+  def build(self, input_shape=None):
+    super(SemafoVAE, self).build(input_shape)
+    # vanilla VAE params
+    self.vae_params = (self.encoder.trainable_variables +
+                       self.decoder.trainable_variables +
+                       self.latents.trainable_variables +
+                       self.observation.trainable_variables)
 
   def encode(self, inputs, training=None, **kwargs):
     if isinstance(inputs, (tuple, list)):
@@ -530,7 +564,7 @@ class SemafoVAE(VariationalAutoencoder):
   def elbo_components(self, inputs, training=None, mask=None, **kwargs):
     llk, kl = super().elbo_components(inputs, training=training, mask=mask,
                                       **kwargs)
-    px, qz = self.last_outputs
+    (px, qy), qz = self.last_outputs
     # for hierarchical VAE
     if hasattr(px, 'kl_pairs'):
       for cfg, q, p in px.kl_pairs:
@@ -563,7 +597,7 @@ class SemafoVAE(VariationalAutoencoder):
         kl_qp = kl_divergence(q, p, analytic=self.analytic)
         if cfg.C is not None:
           kl_qp = tf.math.abs(kl_qp - cfg.C * np.prod(q.event_shape))
-        kl[f'kl_z{i + 1}'] = cfg.beta * kl_qp
+        kl[f'kl_z{i + 1}_sup'] = cfg.beta * kl_qp
 
     return to_elbo(self, llk, kl)
 
@@ -592,18 +626,18 @@ class SemafoVAE(VariationalAutoencoder):
         kl_qp = kl_divergence(q, p, analytic=self.analytic)
         if cfg.C is not None:
           kl_qp = tf.math.abs(kl_qp - cfg.C * np.prod(q.event_shape))
-        kl[f'kl_z{i + 1}'] = cfg.beta * kl_qp
+        kl[f'kl_z{i + 1}_uns'] = cfg.beta * kl_qp
 
     return to_elbo(self, llk, kl)
 
   def train_steps(self, inputs, training=None, **kwargs):
     x_u, x_s, y_s = inputs
 
-    # === 1. Supervised
-    def elbo_sup():
-      return self.elbo_sup(x_s, y_s, training)
+    def elbo_uns():
+      llk, kl = self.elbo_components(x_u, training=training)
+      return to_elbo(self, llk, kl)
 
-    yield TrainStep(parameters=self.trainable_variables, func=elbo_sup)
+    yield TrainStep(parameters=self.vae_params, func=elbo_uns)
 
   def train_steps1(self, inputs, training=None, **kwargs):
     x_u, x_s, y_s = inputs
@@ -614,19 +648,37 @@ class SemafoVAE(VariationalAutoencoder):
 
     yield TrainStep(parameters=self.trainable_variables, func=elbo_sup)
 
-    # === 2. Unsupervised
-    def elbo_uns():
-      return self.elbo_uns(x_u, training)
+  def train_steps2(self, inputs, training=None, **kwargs):
+    x_u, x_s, y_s = inputs
 
-    yield TrainStep(parameters=self.trainable_variables, func=elbo_uns)
+    def elbo():
+      loss_s, metr_s = self.elbo_sup(x_s, y_s, training)
+      loss_u, metr_u = self.elbo_uns(x_u, training)
+      return loss_s + loss_u, dict(**metr_s, **metr_u)
+
+    yield TrainStep(parameters=self.trainable_variables, func=elbo)
+
+    # # === 1. Supervised
+    # def elbo_sup():
+    #   return self.elbo_sup(x_s, y_s, training)
+    #
+    # yield TrainStep(parameters=self.trainable_variables, func=elbo_sup)
+    #
+    # # === 2. Unsupervised
+    # def elbo_uns():
+    #   return self.elbo_uns(x_u, training)
+    #
+    # yield TrainStep(parameters=self.trainable_variables, func=elbo_uns)
 
   def fit(self, *args, **kwargs):
     on_batch_end = kwargs.pop('on_batch_end', [])
 
     def switch_training():
       # priming q(y|z0,z1,x) so it generate some reasonable data
-      if self.step.numpy() > 800:
+      if self.step.numpy() > 10000 and self.training_stage == 0:
         self.set_training_stage(1)
+      if self.step.numpy() > 10800 and self.training_stage == 1:
+        self.set_training_stage(2)
 
     on_batch_end.append(switch_training)
     return super(SemafoVAE, self).fit(on_batch_end=on_batch_end, *args,
@@ -640,7 +692,7 @@ class SemafoHVAE(SemafoVAE):
 
   def __init__(self,
                hierarchy: Optional[Sequence[LatentConfig]] = None,
-               coef_deter: float = 0.,
+               coef_deter: float = 1.0,
                coef_pz_u: float = 0.,
                **kwargs):
     super().__init__(**kwargs)
@@ -648,7 +700,8 @@ class SemafoHVAE(SemafoVAE):
     self.coef_pz_u = float(coef_pz_u)
     self._is_sampling = False
     if hierarchy is None:
-      hierarchy = LatentConfig(**DefaultHierarchy[config.ds])
+      hierarchy = [LatentConfig(**cfg) for cfg in
+                   as_tuple(DefaultHierarchy[config.ds])]
     self.hierarchy = {
       cfg.decoder: cfg.initialize(self.decoder.layers[cfg.decoder])
       for cfg in as_tuple(hierarchy)}
@@ -860,12 +913,11 @@ def data_map(*args):
 def main(args: Arguments):
   # === 0. prepare dataset
   ds = get_dataset(args.ds)
+  train_data_map = None
+  valid_data_map = None
   if args.ds.lower() in ['dsprites', 'shapes3d']:
     train_data_map = data_map
     valid_data_map = data_map
-  else:
-    train_data_map = None
-    valid_data_map = None
   # === 1. create model
   model = None
   for k, v in globals().items():
@@ -873,7 +925,7 @@ def main(args: Arguments):
       model = v
       break
   if model is None:
-    model = get_vae(model)
+    model = get_vae(args.vae)
   is_semi = model.is_semi_supervised()
   # === 2. build the model
   networks = get_networks(args.ds, is_semi_supervised=is_semi)
@@ -881,14 +933,14 @@ def main(args: Arguments):
   if args.ds.lower() == 'dsprites':
     networks['labels'] = DistributionDense(
       event_shape=(dSpritesDistribution.output_dim,),
-      posterior=_create_dsprites,
+      posterior=dSpritesDistribution,
       units=dSpritesDistribution.input_dim,
       name='Shapes2D_py')
   # for shapes3d
   elif args.ds.lower() == 'shapes3d':
     networks['labels'] = DistributionDense(
       event_shape=(Shapes3DDistribution.output_dim,),
-      posterior=_create_shapes3D,
+      posterior=Shapes3DDistribution,
       units=Shapes3DDistribution.input_dim,
       name='Shapes3D_py')
   # create and build the model
@@ -898,8 +950,8 @@ def main(args: Arguments):
   if not args.eval:
     train(model, ds, args,
           label_percent=args.py if is_semi else 0.0,
-          on_batch_end=(),
-          on_valid_end=(),  # Callback.save_best_llk,
+          on_batch_end=[],
+          on_valid_end=[Callback.save_best_llk],
           oversample_ratio=args.ratio,
           train_data_map=train_data_map,
           valid_data_map=valid_data_map)
@@ -1015,7 +1067,8 @@ def main(args: Arguments):
 # Main
 # ===========================================================================
 if __name__ == '__main__':
-  set_cfg(root_path='/home/trung/exp/semafo')
-  args = get_args(dict(py=0.004, ratio=0.1, it=400000))
+  set_cfg(root_path='/home/trung/exp/semafo', n_valid_batches=30)
+  args = get_args(dict(py=0.004, ratio=0.1, it=300000, bs=100))
   config = args
+  args.py, args.ratio = DefaultSemi[args.ds]
   run_multi(main, args=args)

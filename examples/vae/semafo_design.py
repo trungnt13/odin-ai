@@ -1677,7 +1677,7 @@ def main(args: Arguments):
       model = v
       break
   if model is None:
-    model = get_vae(model)
+    model = get_vae(args.vae)
   is_semi = model.is_semi_supervised()
   # === 0. build the model
   model: VariationalAutoencoder = model(
