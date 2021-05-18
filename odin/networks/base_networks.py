@@ -631,7 +631,7 @@ class Networks(keras.Model, MD5object):
     last_stage = self._training_stage
     if last_stage != stage:
       self._training_stage = stage
-      if self._optimize_kwargs is not None:
+      if self.trainer is not None and len(self._optimize_kwargs) > 0:
         self.trainer.set_optimize_fn(
           partial(self.optimize, **self._optimize_kwargs),
           **self._compile_config)

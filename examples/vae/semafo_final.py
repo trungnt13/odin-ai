@@ -2,25 +2,35 @@ import dataclasses
 import os
 import shutil
 from functools import partial
-from typing import Optional, Union, Sequence
+from typing import Optional, Union, Sequence, List
 
 import numpy as np
 import tensorflow as tf
 from matplotlib import pyplot as plt
 from tensorflow.python.keras import Sequential, Input
-from tensorflow.python.keras.layers import Dense, Flatten, Concatenate, Conv2D, \
-  Conv2DTranspose, GlobalAvgPool2D, BatchNormalization, Activation, Reshape
-from tensorflow_probability.python.distributions import Normal, Independent, \
-  Blockwise, JointDistributionSequential, VonMises, Gamma, Categorical, \
-  Bernoulli, RelaxedBernoulli, Distribution, RelaxedOneHotCategorical, \
-  OneHotCategorical
+from tensorflow.python.keras.layers import (Dense, Flatten, Concatenate, Conv2D,
+                                            Conv2DTranspose, GlobalAvgPool2D,
+                                            BatchNormalization, Activation,
+                                            Reshape, Layer)
+from tensorflow_probability.python.distributions import (Normal, Independent,
+                                                         Blockwise,
+                                                         JointDistributionSequential,
+                                                         VonMises, Gamma,
+                                                         Categorical,
+                                                         Bernoulli,
+                                                         RelaxedBernoulli,
+                                                         Distribution,
+                                                         RelaxedOneHotCategorical,
+                                                         OneHotCategorical)
 from tensorflow_probability.python.internal.reparameterization import \
   FULLY_REPARAMETERIZED
 from tensorflow_probability.python.layers import DistributionLambda
 
 from odin import visual as vs
-from odin.bay import DistributionDense, MVNDiagLatents, kl_divergence, \
-  DisentanglementGym, VariationalAutoencoder, get_vae, BiConvLatents
+from odin.bay import (DistributionDense, MVNDiagLatents, kl_divergence,
+                      DisentanglementGym, VariationalAutoencoder, get_vae,
+                      BiConvLatents,
+                      HierarchicalVAE)
 from odin.bay.vi import traverse_dims
 from odin.fuel import get_dataset
 from odin.networks import get_networks, SequentialNetwork, TrainStep
@@ -37,20 +47,21 @@ config: Optional[Arguments] = None
 
 def dense_networks(input_dim: Union[None, int],
                    name: str,
+                   units: int = 512,
                    batchnorm: bool = False) -> Sequential:
   if batchnorm:
     layers = [
-      Dense(512, use_bias=False, name=f'{name}_1'),
+      Dense(units, use_bias=False, name=f'{name}_1'),
       BatchNormalization(),
       Activation('relu'),
-      Dense(512, use_bias=False, name=f'{name}_2'),
+      Dense(units, use_bias=False, name=f'{name}_2'),
       BatchNormalization(),
       Activation('relu'),
     ]
   else:
     layers = [
-      Dense(512, activation='relu', name=f'{name}_1'),
-      Dense(512, activation='relu', name=f'{name}_2'),
+      Dense(units, activation='relu', name=f'{name}_1'),
+      Dense(units, activation='relu', name=f'{name}_2'),
     ]
   if input_dim is not None:
     layers = [Input([input_dim])] + layers
@@ -118,12 +129,15 @@ class dSpritesDistribution(Distribution):
     parameters = dict(locals())
     tf.assert_equal(tf.shape(params)[-1], self.input_dim)
     self._params = params
-    self.orientation = VonMises(loc=0.,
-                                concentration=tf.math.softplus(params[..., 0]),
-                                name='Orientation')
-    self.scale = Gamma(concentration=tf.math.softplus(params[..., 1]),
-                       rate=tf.math.softplus(params[..., 2]),
-                       name='Scale')
+    eps = tf.cast(tf.exp(-7.), params.dtype)
+    self.orientation = VonMises(
+      loc=0.,
+      concentration=tf.math.softplus(params[..., 0]) + eps,
+      name='Orientation')
+    self.scale = Gamma(
+      concentration=tf.math.softplus(params[..., 1]) + eps,
+      rate=tf.math.softplus(params[..., 2]) + eps,
+      name='Scale')
     self.shape_type = RelaxedOneHotCategorical(temperature=temperature,
                                                logits=params[..., 3:6],
                                                name='Shape')
@@ -200,12 +214,15 @@ class Shapes3DDistribution(Distribution):
     parameters = dict(locals())
     tf.assert_equal(tf.shape(params)[-1], self.input_dim)
     self._params = params
-    self.orientation = VonMises(loc=0.,
-                                concentration=tf.math.softplus(params[..., 0]),
-                                name='Orientation')
-    self.scale = Gamma(concentration=tf.math.softplus(params[..., 1]),
-                       rate=tf.math.softplus(params[..., 2]),
-                       name='Scale')
+    eps = tf.cast(tf.exp(-7.), params.dtype)
+    self.orientation = VonMises(
+      loc=0.,
+      concentration=tf.math.softplus(params[..., 0]) + eps,
+      name='Orientation')
+    self.scale = Gamma(
+      concentration=tf.math.softplus(params[..., 1]) + eps,
+      rate=tf.math.softplus(params[..., 2]) + eps,
+      name='Scale')
     self.shape_type = RelaxedOneHotCategorical(temperature=temperature,
                                                logits=params[..., 3:7],
                                                name='Shape')
@@ -349,56 +366,66 @@ class LatentConfig:
   beta: float = 1.0
   C: Optional[float] = None
 
-  def initialize(self, decoder: Conv2D):
+  def initialize_latents(self, vae: VariationalAutoencoder):
     idx = self.decoder
+    decoder = vae.decoder.layers[idx]
     cnn_cfg = dict(filters=2 * self.filters,  # for mean and stddev
                    strides=self.strides,
                    kernel_size=self.kernel,
                    padding='same')
     if self.post is None:
-      self.post = Conv2D(**cnn_cfg, name=f'Posterior{idx}')
+      self.post = Conv2D(**cnn_cfg, name=f'PosteriorZ{idx}')
     if self.prior is None:
-      self.prior = Conv2D(**cnn_cfg, name=f'Prior{idx}')
+      self.prior = Conv2D(**cnn_cfg, name=f'PriorZ{idx}')
     if self.deter is None:
-      self.deter = Conv2D(**cnn_cfg, name=f'Deterministic{idx}')
+      cfg = dict(cnn_cfg)
+      cfg['filters'] = self.filters
+      self.deter = Conv2D(**cfg, name=f'DeterministicZ{idx}')
     if self.out is None:
-      self.out = Conv2DTranspose(filters=decoder.filters,
-                                 kernel_size=self.kernel,
-                                 strides=self.strides,
-                                 padding='same',
-                                 name=f'Output{idx}')
+      self.out = Conv2DTranspose(
+        filters=decoder.filters,
+        kernel_size=self.kernel,
+        strides=self.strides,
+        padding='same',
+        kernel_initializer=decoder.kernel_initializer,
+        bias_initializer=decoder.bias_initializer,
+        activation=decoder.activation,
+        name=f'OutputZ{idx}')
     if self.pz is None:
       self.pz = DistributionLambda(_create_normal, name=f'pz{idx}')
     if self.qz is None:
       self.qz = DistributionLambda(_create_normal, name=f'qz{idx}')
+    # remember to assign all these layer to VAE otherwise no parameters update
+    layers = []
+    for k in self.__annotations__.keys():
+      layer = getattr(self, k)
+      if isinstance(layer, Layer):
+        layers.append(layer)
+    setattr(vae, f'hierarchical_latents{idx}', layers)
     return self
 
 
 DefaultHierarchy = dict(
   ###
-  shapes3d=dict(encoder=3, decoder=2,
-                filters=32, kernel=8, strides=4),
+  shapes3d=dict(encoder=3, decoder=2, filters=32, kernel=8, strides=4),
   ###
-  dsprites=dict(encoder=3, decoder=2,
-                filters=32, kernel=8, strides=4),
+  dsprites=dict(encoder=3, decoder=2, filters=32, kernel=8, strides=4),
   ###
-  cifar10=[dict(encoder=3, decoder=3,
-                filters=32, kernel=8, strides=4),
-           dict(encoder=1, decoder=5,
-                filters=16, kernel=8, strides=4)],
+  cifar10=[
+    dict(encoder=3, decoder=3, filters=32, kernel=8, strides=4),
+    # dict(encoder=1, decoder=5, filters=16, kernel=8, strides=4)
+  ],
   ###
-  fashionmnist=dict(encoder=3, decoder=3,
-                    filters=16, kernel=14, strides=7),
+  fashionmnist=dict(encoder=3, decoder=3, filters=16, kernel=14, strides=7),
   ###
-  mnist=dict(encoder=3, decoder=3,
-             filters=16, kernel=14, strides=7),
+  mnist=dict(encoder=3, decoder=3, filters=16, kernel=14, strides=7),
 )
 
 DefaultGamma = dict(
   shapes3d=5.,
   dsprites=5.,
-  cifar10=10.,
-  fashionmnist=10.,
+  cifar10=5.,
+  fashionmnist=5.,
   mnist=5.,
 )
 
@@ -419,11 +446,11 @@ DefaultSemi = dict(
 )
 
 DefaultPretrain = dict(
-  shapes3d=(10000, 800),
-  dsprites=(10000, 800),
-  cifar10=(10000, 800),
-  fashionmnist=(1000, 500),
-  mnist=(1000, 500),
+  shapes3d=800,
+  dsprites=800,
+  cifar10=0,
+  fashionmnist=0,
+  mnist=0,
 )
 
 
@@ -436,7 +463,7 @@ class SemafoVAE(VariationalAutoencoder):
                encoder: SequentialNetwork,
                decoder: SequentialNetwork,
                labels: DistributionDense,
-               pretrain_steps: Optional[Sequence[int]] = None,
+               pretrain_steps: Optional[int] = None,
                coef_H_qy: float = 1.,
                gamma_py: float = None,
                gamma_uns: Optional[float] = None,
@@ -445,10 +472,11 @@ class SemafoVAE(VariationalAutoencoder):
                beta_sup: float = 1.,
                n_iw_y: int = 1,
                **kwargs):
-    decoder = SequentialNetwork(
-      [layer.layer if isinstance(layer, BiConvLatents) else layer for layer in
-       decoder.layers],
-      name=decoder.name)
+    if not isinstance(self, HierarchicalVAE):
+      decoder = SequentialNetwork(
+        [layer.layer if isinstance(layer, BiConvLatents) else layer for layer in
+         decoder.layers],
+        name=decoder.name)
     super().__init__(encoder=encoder, decoder=decoder, **kwargs)
     self.encoder.track_outputs = True
     if not self.decoder.built:
@@ -459,6 +487,9 @@ class SemafoVAE(VariationalAutoencoder):
       gamma_py = DefaultGammaPy[config.ds]
     if gamma_uns is None:
       gamma_uns = DefaultGamma[config.ds]
+    if pretrain_steps is None:
+      pretrain_steps = DefaultPretrain[config.ds]
+    self.pretrain_steps = int(pretrain_steps)
     self.n_iw_y = int(n_iw_y)
     self.coef_H_qy = float(coef_H_qy)
     self.gamma_uns = float(gamma_uns)
@@ -466,9 +497,6 @@ class SemafoVAE(VariationalAutoencoder):
     self.gamma_py = float(gamma_py)
     self.beta_uns = float(beta_uns)
     self.beta_sup = float(beta_sup)
-    if pretrain_steps is None:
-      pretrain_steps = DefaultPretrain[config.ds]
-    self.pretrain_steps = np.cumsum(as_tuple(pretrain_steps, t=int))
     # === 1. fixed utility layers
     self.flatten = Flatten()
     self.concat = Concatenate(-1)
@@ -486,18 +514,26 @@ class SemafoVAE(VariationalAutoencoder):
     self.observation2(self.decoder2.output)
     # === 4. p(z|u)
     self.latents_prior = SequentialNetwork([
-      dense_networks(ydim, 'Prior'),
+      dense_networks(ydim, units=256, name=f'{self.latents.name}Prior'),
       MVNDiagLatents(zdim)
-    ], name=f'{self.latents.name}_prior')
+    ], name=f'pZ0_given_U')
     self.latents_prior.build([None] + self.latents2.event_shape)
+    # === 5. others
+    self.semafo_params: List[tf.Variable] = []
+    self.vae_params: List[tf.Variable] = []
 
   def build(self, input_shape=None):
     super(SemafoVAE, self).build(input_shape)
     # vanilla VAE params
-    self.vae_params = (self.encoder.trainable_variables +
-                       self.decoder.trainable_variables +
-                       self.latents.trainable_variables +
-                       self.observation.trainable_variables)
+    self.semafo_params = (self.labels.trainable_variables +
+                          self.encoder2.trainable_variables +
+                          self.latents2.trainable_variables +
+                          self.decoder2.trainable_variables +
+                          self.observation2.trainable_variables +
+                          self.latents_prior.trainable_variables)
+    semafo_ids = set([id(p) for p in self.semafo_params])
+    self.vae_params = [v for v in self.trainable_variables
+                       if id(v) not in semafo_ids]
 
   def encode(self, inputs, training=None, **kwargs):
     if isinstance(inputs, (tuple, list)):
@@ -569,7 +605,7 @@ class SemafoVAE(VariationalAutoencoder):
     if hasattr(px, 'kl_pairs'):
       for cfg, q, p in px.kl_pairs:
         kl[f'kl_z{cfg.decoder}'] = cfg.beta * kl_divergence(
-          q, p, analytic=self.analytic)
+          q, p, analytic=self.analytic, free_bits=self.free_bits)
     return llk, kl
 
   def elbo_sup(self, x_s, y_s, training):
@@ -633,22 +669,18 @@ class SemafoVAE(VariationalAutoencoder):
   def train_steps(self, inputs, training=None, **kwargs):
     x_u, x_s, y_s = inputs
 
-    def elbo_uns():
-      llk, kl = self.elbo_components(x_u, training=training)
-      return to_elbo(self, llk, kl)
-
-    yield TrainStep(parameters=self.vae_params, func=elbo_uns)
-
-  def train_steps1(self, inputs, training=None, **kwargs):
-    x_u, x_s, y_s = inputs
-
     # === 1. Supervised
     def elbo_sup():
       return self.elbo_sup(x_s, y_s, training)
 
+    #   def elbo_uns():
+    #     llk, kl = self.elbo_components(x_u, training=training)
+    #     return to_elbo(self, llk, kl)
+    #
+    #   yield TrainStep(parameters=self.vae_params, func=elbo_uns)
     yield TrainStep(parameters=self.trainable_variables, func=elbo_sup)
 
-  def train_steps2(self, inputs, training=None, **kwargs):
+  def train_steps1(self, inputs, training=None, **kwargs):
     x_u, x_s, y_s = inputs
 
     def elbo():
@@ -672,15 +704,15 @@ class SemafoVAE(VariationalAutoencoder):
 
   def fit(self, *args, **kwargs):
     on_batch_end = kwargs.pop('on_batch_end', [])
+    if self.pretrain_steps == 0:
+      self.set_training_stage(1)
+    else:
+      def switch_training():
+        # priming q(y|z0,z1,x) so it generate some reasonable data
+        if self.step.numpy() >= self.pretrain_steps and self.training_stage == 0:
+          self.set_training_stage(1)
 
-    def switch_training():
-      # priming q(y|z0,z1,x) so it generate some reasonable data
-      if self.step.numpy() > 10000 and self.training_stage == 0:
-        self.set_training_stage(1)
-      if self.step.numpy() > 10800 and self.training_stage == 1:
-        self.set_training_stage(2)
-
-    on_batch_end.append(switch_training)
+      on_batch_end.append(switch_training)
     return super(SemafoVAE, self).fit(on_batch_end=on_batch_end, *args,
                                       **kwargs)
 
@@ -693,29 +725,34 @@ class SemafoHVAE(SemafoVAE):
   def __init__(self,
                hierarchy: Optional[Sequence[LatentConfig]] = None,
                coef_deter: float = 1.0,
-               coef_pz_u: float = 0.,
+               coef_residual: float = 1.0,
+               coef_pz_u: float = 1.0,
                **kwargs):
     super().__init__(**kwargs)
     self.coef_deter = float(coef_deter)
+    self.coef_residual = float(coef_residual)
     self.coef_pz_u = float(coef_pz_u)
     self._is_sampling = False
     if hierarchy is None:
       hierarchy = [LatentConfig(**cfg) for cfg in
                    as_tuple(DefaultHierarchy[config.ds])]
-    self.hierarchy = {
-      cfg.decoder: cfg.initialize(self.decoder.layers[cfg.decoder])
-      for cfg in as_tuple(hierarchy)}
+    self.hierarchy = {cfg.decoder: cfg.initialize_latents(self)
+                      for cfg in as_tuple(hierarchy)}
     # === 2. create connection p(z1|z0,u)
-    pz_u = dict()
+    pz_given_u = dict()
     if coef_pz_u > 0.:
       for idx, z_layers in self.hierarchy.items():
         shape = self.decoder.layers[idx].output_shape
         shape = z_layers.prior.compute_output_shape(shape)
         units = int(np.prod(shape[1:]))
-        net = Sequential([Dense(units), Reshape(shape[1:])], name=f'Prior{idx}')
         # somehow it requires string key here
-        pz_u[str(idx)] = net
-    self.pz_u = pz_u
+        pz_given_u[str(idx)] = Sequential([
+          Dense(256, activation='relu'),
+          Dense(256, activation='relu'),
+          Dense(units),
+          Reshape(shape[1:])
+        ], name=f'pZ{idx}_given_U')
+    self.pz_given_u = pz_given_u
 
   @classmethod
   def is_hierarchical(cls) -> bool:
@@ -736,7 +773,6 @@ class SemafoHVAE(SemafoVAE):
     z_org = tf.convert_to_tensor(latents)
     z = z_org
     kl_pairs = []
-    z_prev = [z_org]
     # === 1. q(y|z)
     qy_z = self.labels(z_org, training=training)
     labels = latents.labels if hasattr(latents, 'labels') else None
@@ -750,14 +786,11 @@ class SemafoHVAE(SemafoVAE):
         z_samples = priors.pop(0)
         if z_samples is None:
           # prior
+          h_prior = z_layers.prior(z, training=training)
           if self.coef_pz_u > 0.:
-            # TODO: better skip connection
             u = tf.convert_to_tensor(self.encode_aux(labels, training=training))
-            # somehow it requires string key here
-            h_prior = (z_layers.prior(z, training=training) + self.coef_pz_u *
-                       self.pz_u[str(idx)](u, training=training))
-          else:
-            h_prior = z_layers.prior(z, training=training)
+            u = self.pz_given_u[str(idx)](u, training=training)
+            h_prior = h_prior + self.coef_pz_u * u
           pz = z_layers.pz(h_prior, training=training)
           # posterior (inference mode)
           if not self._is_sampling:
@@ -773,12 +806,16 @@ class SemafoHVAE(SemafoVAE):
           # track the post and prior for KL
           kl_pairs.append((z_layers, qz, pz))
           z_samples = tf.convert_to_tensor(qz)
-        # output
-        z_prev.append(z_samples)
+        # deterministic connection
         if self.coef_deter > 0:
           h_deter = z_layers.deter(z, training=training)
           z_samples = self.concat([z_samples, self.coef_deter * h_deter])
-        z = z_layers.out(z_samples, training=training)
+        # residual connection
+        residual = 0.
+        if self.coef_residual > 0:
+          residual = self.coef_residual * z
+        # final output
+        z = z_layers.out(z_samples, training=training) + residual
     # === 3. p(x|z0,z1)
     px_z = self.observation(z, training=training)
     px_z.kl_pairs = kl_pairs
@@ -834,53 +871,11 @@ class SemafoHVAE(SemafoVAE):
     return self.decode(latents, training=training, mask=mask), top_latents
 
 
-# gamma_uns = 2
-class SemafoHVAEG2(SemafoHVAE):
+# coef_pz_u = 0
+class NoSkip(SemafoHVAE):
 
   def __init__(self, **kwargs):
-    super().__init__(gamma_uns=2., coef_deter=0.0, **kwargs)
-
-
-# gamma_uns = 3
-class SemafoHVAEG3(SemafoHVAE):
-
-  def __init__(self, **kwargs):
-    super().__init__(gamma_uns=3., coef_deter=0.0, **kwargs)
-
-
-# gamma_uns = 10
-class SemafoHVAEG10(SemafoHVAE):
-
-  def __init__(self, **kwargs):
-    super().__init__(gamma_uns=10., coef_deter=0.0, **kwargs)
-
-
-# coef_deter = 0.1
-class SemafoHVAEdeter01(SemafoHVAE):
-
-  def __init__(self, **kwargs):
-    super().__init__(coef_deter=0.1, **kwargs)
-
-
-# coef_deter = 0.5
-class SemafoHVAEdeter(SemafoHVAE):
-
-  def __init__(self, **kwargs):
-    super().__init__(coef_deter=0.5, **kwargs)
-
-
-# coef_deter = 1.0
-class SemafoHVAEdeter1(SemafoHVAE):
-
-  def __init__(self, **kwargs):
-    super().__init__(coef_deter=1.0, **kwargs)
-
-
-class SemafoHVAEskip(SemafoHVAE):
-
-  def __init__(self, **kwargs):
-    super(SemafoHVAEskip, self).__init__(coef_deter=0.0, coef_pz_u=1.0,
-                                         **kwargs)
+    super(NoSkip, self).__init__(coef_pz_u=0.0, **kwargs)
 
 
 # ===========================================================================
@@ -1068,7 +1063,7 @@ def main(args: Arguments):
 # ===========================================================================
 if __name__ == '__main__':
   set_cfg(root_path='/home/trung/exp/semafo', n_valid_batches=30)
-  args = get_args(dict(py=0.004, ratio=0.1, it=300000, bs=100))
+  args = get_args(dict(py=0.004, ratio=0.1, it=250000, bs=100))
   config = args
   args.py, args.ratio = DefaultSemi[args.ds]
   run_multi(main, args=args)
