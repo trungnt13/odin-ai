@@ -195,7 +195,7 @@ def set_cfg(root_path: Optional[str] = None,
 def get_output_dir(args: Arguments) -> str:
   if not os.path.exists(_root_path):
     os.makedirs(_root_path)
-  path = f'{_root_path}/{args.ds}/{args.vae}_z{args.zdim}_i{args.it}'
+  path = f'{_root_path}/{args.ds}/{args.vae.lower()}_z{args.zdim}_i{args.it}'
   if len(_extra_kw) > 0:
     for kw in _extra_kw:
       path += f'_{kw[0]}{getattr(args, kw)}'
@@ -264,6 +264,8 @@ def get_args(defaults: Optional[Dict[str, Any]] = None) -> Arguments:
     if '_' == k[0]:
       continue
     setattr(final_args, k, getattr(args, k))
+  final_args.ds = final_args.ds.lower()
+  final_args.vae = final_args.vae.lower()
   return final_args
 
 

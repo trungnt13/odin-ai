@@ -405,15 +405,15 @@ def _dsprites_distribution(x: tf.Tensor) -> Blockwise:
   # more unstable training in semi-supervised learning.
   dtype = x.dtype
   py = JointDistributionSequential([
-    VonMises(loc=0.,
-             concentration=tf.math.softplus(x[..., 0]),
+    VonMises(loc=x[..., 0],
+             concentration=tf.math.softplus(x[..., 1]),
              name='orientation'),
-    Gamma(concentration=tf.math.softplus(x[..., 1]),
-          rate=tf.math.softplus(x[..., 2]),
+    Gamma(concentration=tf.math.softplus(x[..., 2]),
+          rate=tf.math.softplus(x[..., 3]),
           name='scale'),
-    Categorical(logits=x[..., 3:6], dtype=dtype, name='shape'),
-    Bernoulli(logits=x[..., 6], dtype=dtype, name='x_position'),
-    Bernoulli(logits=x[..., 7], dtype=dtype, name='y_position'),
+    Categorical(logits=x[..., 4:7], dtype=dtype, name='shape'),
+    Bernoulli(logits=x[..., 7], dtype=dtype, name='x_position'),
+    Bernoulli(logits=x[..., 8], dtype=dtype, name='y_position'),
   ])
   return Blockwise(py, name='shapes2d')
 
@@ -490,7 +490,7 @@ def dsprites_networks(
     from odin.bay.layers.dense_distribution import DistributionDense
     networks['labels'] = DistributionDense(event_shape=(5,),
                                            posterior=_dsprites_distribution,
-                                           units=8,
+                                           units=9,
                                            name='geometry2d')
   return networks
 
@@ -501,16 +501,16 @@ def dsprites_networks(
 def _shapes3d_distribution(x: tf.Tensor) -> Blockwise:
   dtype = x.dtype
   py = JointDistributionSequential([
-    VonMises(loc=0.,
-             concentration=tf.math.softplus(x[..., 0]),
+    VonMises(loc=x[..., 0],
+             concentration=tf.math.softplus(x[..., 1]),
              name='orientation'),
-    Gamma(concentration=tf.math.softplus(x[..., 1]),
-          rate=tf.math.softplus(x[..., 2]),
+    Gamma(concentration=tf.math.softplus(x[..., 2]),
+          rate=tf.math.softplus(x[..., 3]),
           name='scale'),
-    Categorical(logits=x[..., 3:7], dtype=dtype, name='shape'),
-    ContinuousBernoulli(logits=x[..., 7], name='floor_hue'),
-    ContinuousBernoulli(logits=x[..., 8], name='wall_hue'),
-    ContinuousBernoulli(logits=x[..., 9], name='object_hue'),
+    Categorical(logits=x[..., 4:8], dtype=dtype, name='shape'),
+    ContinuousBernoulli(logits=x[..., 8], name='floor_hue'),
+    ContinuousBernoulli(logits=x[..., 9], name='wall_hue'),
+    ContinuousBernoulli(logits=x[..., 10], name='object_hue'),
   ])
   return Blockwise(py, name='shapes3d')
 
@@ -546,7 +546,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
     from odin.bay.layers import DistributionDense
     networks['labels'] = DistributionDense(event_shape=(6,),
                                            posterior=_shapes3d_distribution,
-                                           units=10,
+                                           units=11,
                                            name='geometry3d')
   return networks
 

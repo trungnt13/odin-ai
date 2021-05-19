@@ -1681,7 +1681,7 @@ def main(args: Arguments):
   is_semi = model.is_semi_supervised()
   # === 0. build the model
   model: VariationalAutoencoder = model(
-    **get_networks(args.ds, is_semi_supervised=is_semi))
+    **get_networks(args.ds, zdim=args.zdim, is_semi_supervised=is_semi))
   model.build((None,) + INPUT_SHAPE)
   # === 1. training
   if not args.eval:

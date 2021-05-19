@@ -1,4 +1,5 @@
 import dataclasses
+import itertools
 import os
 import shutil
 from functools import partial
@@ -21,12 +22,17 @@ from tensorflow_probability.python.distributions import (Normal, Independent,
                                                          RelaxedBernoulli,
                                                          Distribution,
                                                          RelaxedOneHotCategorical,
-                                                         OneHotCategorical)
+                                                         OneHotCategorical,
+                                                         Uniform,
+                                                         ContinuousBernoulli,
+                                                         Beta)
+from tensorflow_probability.python.math import clip_by_value_preserve_gradient
 from tensorflow_probability.python.internal.reparameterization import \
   FULLY_REPARAMETERIZED
 from tensorflow_probability.python.layers import DistributionLambda
 
 from odin import visual as vs
+from odin.backend import one_hot
 from odin.bay import (DistributionDense, MVNDiagLatents, kl_divergence,
                       DisentanglementGym, VariationalAutoencoder, get_vae,
                       BiConvLatents,
@@ -43,6 +49,7 @@ from tensorflow.python.training.tracking import base as trackable
 # Const and helper
 # ===========================================================================
 config: Optional[Arguments] = None
+CURRENT_MODEL: Optional[VariationalAutoencoder] = None
 
 
 def dense_networks(input_dim: Union[None, int],
@@ -117,36 +124,31 @@ def _create_shapes3D(p: tf.Tensor) -> Blockwise:
 
 
 class dSpritesDistribution(Distribution):
-  input_dim: int = 8
-  output_dim: int = 7
+  input_dim: int = 40 + 6 + 3 + 32 + 32
+  output_dim: int = 40 + 6 + 3 + 32 + 32
 
   def __init__(self,
                params: tf.Tensor,
                temperature=0.5,
                validate_args=False,
                allow_nan_stats=True,
+               reparams=True,
                name='dSpritesDistribution'):
     parameters = dict(locals())
     tf.assert_equal(tf.shape(params)[-1], self.input_dim)
     self._params = params
-    eps = tf.cast(tf.exp(-7.), params.dtype)
-    self.orientation = VonMises(
-      loc=0.,
-      concentration=tf.math.softplus(params[..., 0]) + eps,
-      name='Orientation')
-    self.scale = Gamma(
-      concentration=tf.math.softplus(params[..., 1]) + eps,
-      rate=tf.math.softplus(params[..., 2]) + eps,
-      name='Scale')
-    self.shape_type = RelaxedOneHotCategorical(temperature=temperature,
-                                               logits=params[..., 3:6],
-                                               name='Shape')
-    self.x_pos = RelaxedBernoulli(temperature=temperature,
-                                  logits=params[..., 6],
-                                  name='X_position')
-    self.y_pos = RelaxedBernoulli(temperature=temperature,
-                                  logits=params[..., 7],
-                                  name='Y_position')
+    self.reparams = bool(reparams)
+    # create distributions
+    if reparams:
+      Dist = partial(RelaxedOneHotCategorical, temperature=temperature)
+    else:
+      Dist = partial(OneHotCategorical, dtype=params.dtype)
+    self.orientation = Dist(logits=params[..., 0:40], name='Orientation')
+    self.scale = Dist(logits=params[..., 40:46], name='Scale')
+    self.shape_type = Dist(logits=params[..., 46:49], name='Shape')
+    self.x_pos = Dist(logits=params[..., 49:(49 + 32)], name='X_position')
+    self.y_pos = Dist(logits=params[..., (49 + 32):(49 + 64)],
+                      name='Y_position')
     super(dSpritesDistribution, self).__init__(
       dtype=params.dtype,
       validate_args=validate_args,
@@ -169,72 +171,60 @@ class dSpritesDistribution(Distribution):
 
   def _sample_n(self, n, seed=None, **kwargs):
     return tf.concat([
-      tf.expand_dims(self.orientation.sample(n, seed), -1),
-      tf.expand_dims(self.scale.sample(n, seed), -1),
+      self.orientation.sample(n, seed),
+      self.scale.sample(n, seed),
       self.shape_type.sample(n, seed),
-      tf.expand_dims(self.x_pos.sample(n, seed), -1),
-      tf.expand_dims(self.y_pos.sample(n, seed), -1),
+      self.x_pos.sample(n, seed),
+      self.y_pos.sample(n, seed),
     ], axis=-1)
 
   def _log_prob(self, y, **kwargs):
-    eps = 1e-6
-    llk_orientation = self.orientation.log_prob(y[..., 0])
-    llk_scale = self.scale.log_prob(y[..., 1])
-
-    shapes = tf.one_hot(tf.cast(y[..., 2], tf.int32), 3)
-    llk_shape = self.shape_type.log_prob(
-      tf.clip_by_value(shapes, eps, 1. - eps))
-
-    llk_x = self.x_pos.log_prob(tf.clip_by_value(y[..., 3], eps, 1. - eps))
-    llk_y = self.y_pos.log_prob(tf.clip_by_value(y[..., 4], eps, 1. - eps))
-
+    if self.reparams:
+      y = clip_by_value_preserve_gradient(y, 1e-6, 1. - 1e-6)
+    llk_orientation = self.orientation.log_prob(y[..., 0:40])
+    llk_scale = self.scale.log_prob(y[..., 40:46])
+    llk_shape = self.shape_type.log_prob(y[..., 46:49])
+    llk_x = self.x_pos.log_prob(y[..., 49:(49 + 32)])
+    llk_y = self.y_pos.log_prob(y[..., (49 + 32):(49 + 64)])
     llk = llk_orientation + llk_scale + llk_shape + llk_x + llk_y
     return llk
 
   def _mean(self, **kwargs):
     return tf.concat([
-      tf.expand_dims(self.orientation.mean(), -1),
-      tf.expand_dims(self.scale.mean(), -1),
+      self.orientation.probs_parameter(),
+      self.scale.probs_parameter(),
       self.shape_type.probs_parameter(),
-      tf.expand_dims(self.x_pos.probs_parameter(), -1),
-      tf.expand_dims(self.y_pos.probs_parameter(), -1),
+      self.x_pos.probs_parameter(),
+      self.y_pos.probs_parameter(),
     ], axis=-1)
 
 
 class Shapes3DDistribution(Distribution):
-  input_dim: int = 10
-  output_dim: int = 9
+  input_dim: int = 15 + 8 + 4 + 10 + 10 + 10
+  output_dim: int = 15 + 8 + 4 + 10 + 10 + 10
 
   def __init__(self,
                params: tf.Tensor,
                temperature=0.5,
                validate_args=False,
                allow_nan_stats=True,
+               reparams: bool = True,
                name='Shapes3DDistribution'):
     parameters = dict(locals())
     tf.assert_equal(tf.shape(params)[-1], self.input_dim)
+    self.reparams = bool(reparams)
     self._params = params
-    eps = tf.cast(tf.exp(-7.), params.dtype)
-    self.orientation = VonMises(
-      loc=0.,
-      concentration=tf.math.softplus(params[..., 0]) + eps,
-      name='Orientation')
-    self.scale = Gamma(
-      concentration=tf.math.softplus(params[..., 1]) + eps,
-      rate=tf.math.softplus(params[..., 2]) + eps,
-      name='Scale')
-    self.shape_type = RelaxedOneHotCategorical(temperature=temperature,
-                                               logits=params[..., 3:7],
-                                               name='Shape')
-    self.floor = RelaxedBernoulli(temperature=temperature,
-                                  logits=params[..., 7],
-                                  name='FloorHue')
-    self.wall = RelaxedBernoulli(temperature=temperature,
-                                 logits=params[..., 8],
-                                 name='WallHue')
-    self.obj = RelaxedBernoulli(temperature=temperature,
-                                logits=params[..., 9],
-                                name='ObjectHue')
+    # create distributions
+    if reparams:
+      Dist = partial(RelaxedOneHotCategorical, temperature=temperature)
+    else:
+      Dist = partial(OneHotCategorical, dtype=params.dtype)
+    self.orientation = Dist(logits=params[..., 0:15], name='Orientation')
+    self.scale = Dist(logits=params[..., 15:23], name='Scale')
+    self.shape_type = Dist(logits=params[..., 23:27], name='Shape')
+    self.floor = Dist(logits=params[..., 27:37], name='FloorHue')
+    self.wall = Dist(logits=params[..., 37:47], name='WallHue')
+    self.obj = Dist(logits=params[..., 47:57], name='ObjectHue')
     super(Shapes3DDistribution, self).__init__(
       dtype=params.dtype,
       validate_args=validate_args,
@@ -257,39 +247,35 @@ class Shapes3DDistribution(Distribution):
 
   def _sample_n(self, n, seed=None, **kwargs):
     return tf.concat([
-      tf.expand_dims(self.orientation.sample(n, seed), -1),
-      tf.expand_dims(self.scale.sample(n, seed), -1),
+      self.orientation.sample(n, seed),
+      self.scale.sample(n, seed),
       self.shape_type.sample(n, seed),
-      tf.expand_dims(self.floor.sample(n, seed), -1),
-      tf.expand_dims(self.wall.sample(n, seed), -1),
-      tf.expand_dims(self.obj.sample(n, seed), -1),
+      self.floor.sample(n, seed),
+      self.wall.sample(n, seed),
+      self.obj.sample(n, seed),
     ], axis=-1)
 
   def _log_prob(self, y, **kwargs):
-    eps = 1e-6
-    llk_orientation = self.orientation.log_prob(y[..., 0])
-    llk_scale = self.scale.log_prob(y[..., 1])
-
-    shapes = tf.one_hot(tf.cast(y[..., 2], tf.int32), 4)
-    llk_shape = self.shape_type.log_prob(
-      tf.clip_by_value(shapes, eps, 1. - eps))
-
-    llk_floor = self.floor.log_prob(tf.clip_by_value(y[..., 3], eps, 1. - eps))
-    llk_wall = self.wall.log_prob(tf.clip_by_value(y[..., 4], eps, 1. - eps))
-    llk_obj = self.obj.log_prob(tf.clip_by_value(y[..., 5], eps, 1. - eps))
-
+    if self.reparams:
+      y = clip_by_value_preserve_gradient(y, 1e-6, 1. - 1e-6)
+    llk_orientation = self.orientation.log_prob(y[..., 0:15])
+    llk_scale = self.scale.log_prob(y[..., 15:23])
+    llk_shape = self.shape_type.log_prob(y[..., 23:27])
+    llk_floor = self.x_pos.log_prob(y[..., 27:37])
+    llk_wall = self.y_pos.log_prob(y[..., 37:47])
+    llk_obj = self.y_pos.log_prob(y[..., 47:57])
     llk = (llk_orientation + llk_scale + llk_shape +
            llk_floor + llk_wall + llk_obj)
     return llk
 
   def _mean(self, **kwargs):
     return tf.concat([
-      tf.expand_dims(self.orientation.mean(), -1),
-      tf.expand_dims(self.scale.mean(), -1),
+      self.orientation.probs_parameter(),
+      self.scale.probs_parameter(),
       self.shape_type.probs_parameter(),
-      tf.expand_dims(self.floor.probs_parameter(), -1),
-      tf.expand_dims(self.wall.probs_parameter(), -1),
-      tf.expand_dims(self.obj.probs_parameter(), -1),
+      self.floor.probs_parameter(),
+      self.wall.probs_parameter(),
+      self.obj.probs_parameter(),
     ], axis=-1)
 
 
@@ -311,7 +297,7 @@ class DigitsDistribution(RelaxedOneHotCategorical):
                                              name=name)
 
   def _log_prob(self, y, **kwargs):
-    y = tf.clip_by_value(y, 1e-6, 1. - 1e-6)
+    y = clip_by_value_preserve_gradient(y, 1e-6, 1. - 1e-6)
     return super(DigitsDistribution, self)._log_prob(y, **kwargs)
 
   def _mean(self, **kwargs):
@@ -332,7 +318,7 @@ def reparameterize(dsname: str) -> SequentialNetwork:
     return SequentialNetwork([
       DistributionDense(event_shape=[dSpritesDistribution.output_dim],
                         projection=True,
-                        posterior=dSpritesDistribution,
+                        posterior=partial(dSpritesDistribution, reparams=True),
                         units=dSpritesDistribution.input_dim,
                         name='Shapes2D_qy')],
       name='qy_z')
@@ -340,7 +326,7 @@ def reparameterize(dsname: str) -> SequentialNetwork:
     return SequentialNetwork([
       DistributionDense(event_shape=[Shapes3DDistribution.output_dim],
                         projection=True,
-                        posterior=Shapes3DDistribution,
+                        posterior=partial(Shapes3DDistribution, reparams=True),
                         units=Shapes3DDistribution.input_dim,
                         name='Shapes3D_qy')],
       name='qy_z')
@@ -430,17 +416,17 @@ DefaultGamma = dict(
 )
 
 DefaultGammaPy = dict(
-  shapes3d=10.,
-  dsprites=10.,
-  cifar10=10.,
-  fashionmnist=10.,
-  mnist=10.,
+  shapes3d=20.,
+  dsprites=20.,
+  cifar10=20.,
+  fashionmnist=20.,
+  mnist=20.,
 )
 
 DefaultSemi = dict(
   shapes3d=(0.1, 0.1),
   dsprites=(0.1, 0.1),
-  cifar10=(0.1, 0.1),
+  cifar10=(1000, 0.1),
   fashionmnist=(0.01, 0.1),
   mnist=(0.004, 0.1),
 )
@@ -514,7 +500,7 @@ class SemafoVAE(VariationalAutoencoder):
     self.observation2(self.decoder2.output)
     # === 4. p(z|u)
     self.latents_prior = SequentialNetwork([
-      dense_networks(ydim, units=256, name=f'{self.latents.name}Prior'),
+      Dense(256, activation='relu'),
       MVNDiagLatents(zdim)
     ], name=f'pZ0_given_U')
     self.latents_prior.build([None] + self.latents2.event_shape)
@@ -567,15 +553,58 @@ class SemafoVAE(VariationalAutoencoder):
     py = self.decode_aux(qu, training=training)
     return py, qu
 
-  def sample_prior(self, n=1, seed=1, return_distribution=False, **kwargs):
-    y = np.diag([1.] * 10)
-    y = np.tile(y, [int(np.ceil(n / 10)), 1])[:n]
+  def sample_prior(self,
+                   n=1,
+                   seed=1,
+                   return_distribution=False,
+                   return_labels=False,
+                   **kwargs):
+    dsname = config.ds.lower()
+    # === 0. mnist
+    if dsname in ('mnist', 'fashionmnist', 'cifar10'):
+      y = np.diag([1.] * 10)
+      y = np.tile(y, [int(np.ceil(n / 10)), 1])[:n]
+    # === 1. shapes
+    elif dsname in ('dsprites', 'shapes3d'):
+      is_2d = dsname == 'dsprites'
+      if is_2d:
+        # orientation, scale, shape, x, y
+        combinations = [40, 6, 3, 32, 32]
+      else:
+        # orientation, scale, shape, floor, wall, object
+        combinations = [15, 8, 4, 10, 10, 10]
+      per_class = int(np.ceil(n / combinations[2]))
+      cls_to_labels = dict()
+      rand = np.random.RandomState(seed)
+      for cls in range(combinations[2]):
+        y2 = [0] * combinations[2]
+        y2[cls] = 1
+        y = [
+          np.array([y2]) if idx == 2 else
+          one_hot(
+            np.linspace(0, n_cls, per_class, endpoint=False, dtype=np.int32),
+            num_classes=n_cls)
+          for idx, n_cls in enumerate(combinations)]
+        y = np.array([np.concatenate(i, -1) for i in itertools.product(*y)])
+        # rand.shuffle(y) # no need shuffle yet
+        cls_to_labels[cls] = y
+      y = np.concatenate([x[:per_class] for x in cls_to_labels.values()], 0)
+      y = y[:n].astype(np.float32)
+    # === 2. no idea
+    else:
+      raise NotImplementedError
+    # === 3. sample the prior p(z|u)
     qu_y = self.encode_aux(y, training=False)
     u = qu_y.sample(seed=seed)
     pz_u = self.latents_prior(u, training=False)
     if return_distribution:
-      return pz_u
-    return pz_u.mean()
+      ret = pz_u
+    else:
+      ret = pz_u.mean()
+    ret.labels = y
+    if return_labels:
+      return ret, y
+    return ret
 
   @classmethod
   def is_semi_supervised(cls) -> bool:
@@ -717,6 +746,26 @@ class SemafoVAE(VariationalAutoencoder):
                                       **kwargs)
 
 
+class G10(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(G10, self).__init__(gamma_uns=10, **kwargs)
+
+
+class G20(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(G20, self).__init__(gamma_uns=20, **kwargs)
+
+
+class G40(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(G40, self).__init__(gamma_uns=40, **kwargs)
+
+
+class G80(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(G80, self).__init__(gamma_uns=80, **kwargs)
+
+
 # ===========================================================================
 # Hierarchical
 # ===========================================================================
@@ -747,7 +796,6 @@ class SemafoHVAE(SemafoVAE):
         units = int(np.prod(shape[1:]))
         # somehow it requires string key here
         pz_given_u[str(idx)] = Sequential([
-          Dense(256, activation='relu'),
           Dense(256, activation='relu'),
           Dense(units),
           Reshape(shape[1:])
@@ -875,7 +923,42 @@ class SemafoHVAE(SemafoVAE):
 class NoSkip(SemafoHVAE):
 
   def __init__(self, **kwargs):
-    super(NoSkip, self).__init__(coef_pz_u=0.0, **kwargs)
+    super(NoSkip, self).__init__(coef_deter=1.0,
+                                 coef_residual=1.0,
+                                 coef_pz_u=0.0,
+                                 **kwargs)
+
+
+class NoResidual(SemafoHVAE):
+
+  def __init__(self, **kwargs):
+    super(NoResidual, self).__init__(coef_deter=1.0,
+                                     coef_residual=0.0,
+                                     coef_pz_u=1.0,
+                                     **kwargs)
+
+
+class NoAll(SemafoHVAE):
+
+  def __init__(self, **kwargs):
+    super(NoAll, self).__init__(coef_deter=0.0,
+                                coef_residual=0.0,
+                                coef_pz_u=0.0,
+                                **kwargs)
+
+
+class NoResDeter(SemafoHVAE):
+
+  def __init__(self, **kwargs):
+    super(NoResDeter, self).__init__(coef_deter=0.0,
+                                     coef_residual=0.0,
+                                     coef_pz_u=1.0,
+                                     **kwargs)
+
+
+class HG40(SemafoHVAE):
+  def __init__(self, **kwargs):
+    super(HG40, self).__init__(gamma_uns=40, **kwargs)
 
 
 # ===========================================================================
@@ -886,61 +969,43 @@ def _mean(dists, idx):
   return tf.reshape(m, (m.shape[0], -1))
 
 
-def data_map(*args):
-  if len(args) == 2:
-    x_s, y = args
-    x_u = None
-  elif len(args) == 3:
-    x_u, x_s, y = args
-  else:
-    raise NotImplementedError
-  y1 = y[..., :2]
-  y2 = tf.one_hot(tf.cast(y[..., 2], tf.int32),
-                  depth=3 if y.shape[-1] == 5 else 4,
-                  dtype=y.dtype)
-  y3 = y[..., 3:]
-  y = tf.concat([y1, y2, y3], -1)
-  if x_u is None:
-    return x_s, y
-  return x_u, x_s, y
-
-
 def main(args: Arguments):
   # === 0. prepare dataset
   ds = get_dataset(args.ds)
   train_data_map = None
   valid_data_map = None
-  if args.ds.lower() in ['dsprites', 'shapes3d']:
-    train_data_map = data_map
-    valid_data_map = data_map
   # === 1. create model
   model = None
   for k, v in globals().items():
-    if k.lower() == args.vae and callable(v):
+    if k.lower().strip() == args.vae.lower().strip() and callable(v):
       model = v
       break
   if model is None:
     model = get_vae(args.vae)
   is_semi = model.is_semi_supervised()
   # === 2. build the model
-  networks = get_networks(args.ds, is_semi_supervised=is_semi)
+  networks = get_networks(args.ds,
+                          zdim=args.zdim,
+                          is_semi_supervised=is_semi)
   # for dsprites
   if args.ds.lower() == 'dsprites':
     networks['labels'] = DistributionDense(
       event_shape=(dSpritesDistribution.output_dim,),
-      posterior=dSpritesDistribution,
+      posterior=partial(dSpritesDistribution, reparams=False),
       units=dSpritesDistribution.input_dim,
       name='Shapes2D_py')
   # for shapes3d
   elif args.ds.lower() == 'shapes3d':
     networks['labels'] = DistributionDense(
       event_shape=(Shapes3DDistribution.output_dim,),
-      posterior=Shapes3DDistribution,
+      posterior=partial(Shapes3DDistribution, reparams=False),
       units=Shapes3DDistribution.input_dim,
       name='Shapes3D_py')
   # create and build the model
-  model: VariationalAutoencoder = model(**networks)
+  model: Union[VariationalAutoencoder, SemafoVAE] = model(**networks)
   model.build((None,) + ds.shape)
+  global CURRENT_MODEL
+  CURRENT_MODEL = model
   # === 3. training
   if not args.eval:
     train(model, ds, args,
@@ -962,23 +1027,40 @@ def main(args: Arguments):
       os.makedirs(path)
     ### load model weights
     model.load_weights(get_model_path(args), raise_notfound=True, verbose=True)
-    gym = DisentanglementGym(model=model,
-                             dataset=args.ds,
-                             batch_size=args.bs,
-                             dpi=args.dpi,
-                             seed=args.seed)
 
-    ### special case for SemafoVAE
+    ### [Posterior Traverse] special case for SemafoVAE
+    model.sample_prior(3)
+    # if isinstance(model, SemafoVAE):
+    #   for x, y in ds.create_dataset('test', label_percent=1.0,
+    #                                 batch_size=36).map(data_map).take(1):
+    #     pass
+    #   (px, qy), qz = model([x, y], training=False)
+    #   for i, j in zip(qy.mean(), y):
+    #     print(i.numpy())
+    #     print(j.numpy())
+
+    ### [Prior Traverse] special case for SemafoVAE
     if isinstance(model, SemafoVAE):
-      pz = model.sample_prior(n=10, return_distribution=True)
+      kw = dict(return_distribution=True, return_labels=True)
+      if args.ds in ('mnist', 'fashionmnist', 'cifar10'):
+        pz, labels = model.sample_prior(n=10, **kw)
+        n_classes = 10
+      elif args.ds == 'dsprites':
+        pz, labels = model.sample_prior(n=3, **kw)
+        n_classes = 3
+      elif args.ds == 'shapes3d':
+        pz, labels = model.sample_prior(n=4, **kw)
+        n_classes = 4
+      else:
+        raise NotImplementedError(args.ds)
       mean = pz.mean()
       stddev = pz.stddev()
       n_points = 41
-      n_latents = 15
+      n_latents = min(15, mean.shape[1])
       max_std = 4.
       if model.is_hierarchical():
         model.set_sampling(True)
-      for i in range(10):
+      for i in range(n_classes):
         m = mean[i:i + 1]
         s = stddev[i].numpy()
         ids = np.argsort(s)[::-1][:n_latents]  # higher is better
@@ -997,7 +1079,7 @@ def main(args: Arguments):
       # special case for hierarchical model
       if model.is_hierarchical():
         model.set_sampling(True)
-        for i in range(10):
+        for i in range(n_classes):
           z0 = mean[i:i + 1]
           img, _ = model.decode(z0)
           # traverse the second latents prior
@@ -1025,7 +1107,13 @@ def main(args: Arguments):
     if isinstance(model, SemafoHVAE):
       model.set_sampling(False)
 
-    ### run the prediction for test set
+    ### run the disentanglement gym
+    gym = DisentanglementGym(model=model,
+                             dataset=args.ds,
+                             batch_size=32,
+                             dpi=args.dpi,
+                             seed=args.seed)
+
     with gym.run_model(n_samples=1800 if args.debug else -1,
                        partition='test'):
       gym.write_report(os.path.join(path, 'scores.txt'), verbose=True)
@@ -1063,7 +1151,7 @@ def main(args: Arguments):
 # ===========================================================================
 if __name__ == '__main__':
   set_cfg(root_path='/home/trung/exp/semafo', n_valid_batches=30)
-  args = get_args(dict(py=0.004, ratio=0.1, it=250000, bs=100))
-  config = args
-  args.py, args.ratio = DefaultSemi[args.ds]
-  run_multi(main, args=args)
+  parsed_args = get_args(dict(py=0.004, ratio=0.1, it=200000, bs=64))
+  config = parsed_args
+  parsed_args.py, parsed_args.ratio = DefaultSemi[parsed_args.ds]
+  run_multi(main, args=parsed_args)

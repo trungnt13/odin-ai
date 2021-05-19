@@ -1,4 +1,4 @@
-from typing import Optional, Union
+from typing import Optional, Union, List
 
 import numpy as np
 import tensorflow as tf
@@ -10,10 +10,10 @@ from odin.fuel.dataset_base import get_partition
 from odin.fuel.image_data._base import ImageDataset
 
 __all__ = [
-    'Shapes3D',
-    'Shapes3DSmall',
-    'dSprites',
-    'dSpritesSmall',
+  'Shapes3D',
+  'Shapes3DSmall',
+  'dSprites',
+  'dSpritesSmall',
 ]
 
 
@@ -26,16 +26,17 @@ class _ShapeDataset(ImageDataset):
   def __init__(self,
                name: Literal['dsprites', 'shapes3d'],
                image_size: int = 64,
-               continuous: bool = True,
+               continuous: bool = False,
+               onehot: bool = True,
                seed: int = 1):
     super().__init__()
     try:
       self.train, self.valid, self.test = tfds.load(
-          name,
-          split=["train[:90%]", "train[90%:95%]", "train[95%:]"],
-          read_config=tfds.ReadConfig(shuffle_seed=seed,
-                                      shuffle_reshuffle_each_iteration=True),
-          shuffle_files=True)
+        name,
+        split=["train[:90%]", "train[90%:95%]", "train[95%:]"],
+        read_config=tfds.ReadConfig(shuffle_seed=seed,
+                                    shuffle_reshuffle_each_iteration=True),
+        shuffle_files=True)
     except Exception as e:
       import traceback
       traceback.print_exc()
@@ -43,6 +44,7 @@ class _ShapeDataset(ImageDataset):
       exit()
     self.image_size = image_size
     self.dsname = name
+    self.onehot = bool(onehot)
     if continuous:
       self._prefix = 'value_'
       self._continuous_labels = True
@@ -51,11 +53,11 @@ class _ShapeDataset(ImageDataset):
       self._continuous_labels = False
     if name == 'dsprites':
       self._factors = np.array(
-          ['orientation', 'scale', 'shape', 'x_position', 'y_position'])
+        ['orientation', 'scale', 'shape', 'x_position', 'y_position'])
       self.n_channels = 1
     else:
       self._factors = np.array([
-          'orientation', 'scale', 'shape', 'floor_hue', 'wall_hue', 'object_hue'
+        'orientation', 'scale', 'shape', 'floor_hue', 'wall_hue', 'object_hue'
       ])
       self.n_channels = 3
 
@@ -89,12 +91,29 @@ class _ShapeDataset(ImageDataset):
             if 'orientation' in name:  # orientation
               fi = fi / 30. * np.pi
         label.append(fi)
-      label = tf.convert_to_tensor(label, dtype=tf.float32)
+      if not self._continuous_labels:
+        if self.onehot:
+          label = tf.concat([tf.one_hot(i, n_classes, dtype=tf.float32)
+                             for n_classes, i in zip(self.n_categories, label)],
+                            axis=-1)
+        else:
+          label = tf.convert_to_tensor(label, dtype=tf.float32)
+      else:
+        label = tf.convert_to_tensor(label, dtype=tf.float32)
       return image, label
 
     self.train = self.train.map(process, num_parallel_calls=tf.data.AUTOTUNE)
     self.valid = self.valid.map(process, num_parallel_calls=tf.data.AUTOTUNE)
     self.test = self.test.map(process, num_parallel_calls=tf.data.AUTOTUNE)
+
+  @property
+  def n_categories(self) -> List[int]:
+    if self.dsname == 'dsprites':
+      return [40, 6, 3, 32, 32]
+    elif self.dsname == 'shapes3d':
+      return [15, 8, 4, 10, 10, 10]
+    else:
+      raise NotImplementedError
 
   @property
   def labels(self):
@@ -122,12 +141,13 @@ class Shapes3D(_ShapeDataset):
       ['orientation', 'scale', 'shape', 'floor_hue', 'wall_hue', 'object_hue']
 
   Values per factor:
-    'orientation': 15
-    'scale': 8
-    'shape': 4
-    'floor_hue': 10
-    'wall_hue': 10
-    'object_hue': 10
+    'orientation': 15 values range `[-pi, pi]`
+    'scale': 8 values range `[0.75, 1.25]`
+    'shape': 4 `['cube', 'cylinder', 'sphere', 'round']` `[0, 1, 2, 3]`
+    'floor_hue': 10 values range `[0., 0.9]`
+    'wall_hue': 10 values range `[0., 0.9]`
+    'object_hue': 10 values range `[0., 0.9]`
+
   Pixel range [0, 255]
 
   Parameters
@@ -144,19 +164,25 @@ class Shapes3D(_ShapeDataset):
 
   def __init__(self,
                image_size: int = 64,
-               continuous: bool = True,
+               continuous: bool = False,
+               onehot: bool = True,
                seed: int = 1):
     super().__init__(name='shapes3d',
                      image_size=image_size,
                      continuous=continuous,
+                     onehot=onehot,
                      seed=seed)
 
 
 class Shapes3DSmall(Shapes3D):
   """Shapes3D dataset with downsampled image (32, 32, 3) """
 
-  def __init__(self, continuous: bool = True, seed: int = 1):
-    super().__init__(image_size=32, continuous=continuous, seed=seed)
+  def __init__(self,
+               continuous: bool = True,
+               onehot: bool = True,
+               seed: int = 1):
+    super().__init__(image_size=32, continuous=continuous, onehot=onehot,
+                     seed=seed)
 
 
 # ===========================================================================
@@ -181,23 +207,29 @@ class dSprites(_ShapeDataset):
   Continuous attributes
     value_orientation: 40 values in [-pi, pi]
     value_scale:  6 values linearly spaced in [0.5, 1]
-    value_shape: square, ellipse, heart
+    value_shape: 3 values [square, ellipse, heart]
     value_x_position:  32 values in [0, 1]
     value_y_position:  32 values in [0, 1]
   """
 
   def __init__(self,
                image_size: int = 64,
-               continuous: bool = True,
+               continuous: bool = False,
+               onehot: bool = True,
                seed: int = 1):
     super().__init__(name='dsprites',
                      image_size=image_size,
                      continuous=continuous,
+                     onehot=onehot,
                      seed=seed)
 
 
 class dSpritesSmall(dSprites):
   """dSprites dataset with downsampled image (28, 28, 1) """
 
-  def __init__(self, continuous: bool = True, seed: int = 1):
-    super().__init__(image_size=28, continuous=continuous, seed=seed)
+  def __init__(self,
+               continuous: bool = False,
+               onehot: bool = True,
+               seed: int = 1):
+    super().__init__(image_size=28, continuous=continuous, onehot=onehot,
+                     seed=seed)
