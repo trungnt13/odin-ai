@@ -2,8 +2,9 @@ import dataclasses
 import itertools
 import os
 import shutil
+from collections import defaultdict
 from functools import partial
-from typing import Optional, Union, Sequence, List
+from typing import Optional, Union, Sequence, List, Any, Dict
 
 import numpy as np
 import tensorflow as tf
@@ -30,6 +31,7 @@ from tensorflow_probability.python.math import clip_by_value_preserve_gradient
 from tensorflow_probability.python.internal.reparameterization import \
   FULLY_REPARAMETERIZED
 from tensorflow_probability.python.layers import DistributionLambda
+from tqdm import tqdm
 
 from odin import visual as vs
 from odin.backend import one_hot
@@ -79,6 +81,44 @@ def to_elbo(semafo, llk, kl):
   elbo = semafo.elbo(llk, kl)
   return tf.reduce_mean(-elbo), \
          {k: tf.reduce_mean(v) for k, v in dict(**llk, **kl).items()}
+
+
+def plot_images(images: Union[np.ndarray, tf.Tensor, Distribution],
+                n_row: int,
+                n_col: int,
+                title: Optional[str] = None,
+                dpi: int = 200) -> plt.Figure:
+  if isinstance(images, Distribution):
+    images = images.mean()
+  images = prepare_images(images, normalize=True)
+  from PIL import Image
+  all_images = defaultdict(list)
+  for i, img in enumerate(images):
+    all_images[int(i / n_col)].append(Image.fromarray(img))
+  # concat horizontally
+  for i, imgs in list(all_images.items()):
+    imgs: List[Image]
+    n = len(imgs)
+    w, h = imgs[0].size
+    pad = int(np.ceil(0.01 * w))
+    new_img = Image.new(imgs[0].mode, (w * n + pad * (n - 1), h), color=1.)
+    for j, x in enumerate(imgs):
+      new_img.paste(x, ((w + pad) * j, 0))
+    all_images[i] = new_img
+  # show images
+  fig = plt.figure(figsize=(n_col * 1.2, n_row), dpi=dpi)
+  for i, imgs in all_images.items():
+    plt.subplot(n_row, 1, i + 1)
+    plt.imshow(np.asarray(imgs),
+               cmap='Greys_r' if images[0].ndim == 2 else None)
+    plt.axis('off')
+    plt.grid(False)
+  if title is not None:
+    plt.suptitle(title, fontsize=20)
+    plt.tight_layout(pad=1, h_pad=0.3, w_pad=0., rect=[0., 0.01, 1.0, 0.99])
+  else:
+    plt.tight_layout(pad=1, h_pad=0.3, w_pad=0.)
+  return fig
 
 
 # ===========================================================================
@@ -261,9 +301,9 @@ class Shapes3DDistribution(Distribution):
     llk_orientation = self.orientation.log_prob(y[..., 0:15])
     llk_scale = self.scale.log_prob(y[..., 15:23])
     llk_shape = self.shape_type.log_prob(y[..., 23:27])
-    llk_floor = self.x_pos.log_prob(y[..., 27:37])
-    llk_wall = self.y_pos.log_prob(y[..., 37:47])
-    llk_obj = self.y_pos.log_prob(y[..., 47:57])
+    llk_floor = self.floor.log_prob(y[..., 27:37])
+    llk_wall = self.wall.log_prob(y[..., 37:47])
+    llk_obj = self.obj.log_prob(y[..., 47:57])
     llk = (llk_orientation + llk_scale + llk_shape +
            llk_floor + llk_wall + llk_obj)
     return llk
@@ -1029,7 +1069,7 @@ def main(args: Arguments):
     model.load_weights(get_model_path(args), raise_notfound=True, verbose=True)
 
     ### [Posterior Traverse] special case for SemafoVAE
-    model.sample_prior(3)
+    # model.sample_prior(3)
     # if isinstance(model, SemafoVAE):
     #   for x, y in ds.create_dataset('test', label_percent=1.0,
     #                                 batch_size=36).map(data_map).take(1):
@@ -1045,12 +1085,22 @@ def main(args: Arguments):
       if args.ds in ('mnist', 'fashionmnist', 'cifar10'):
         pz, labels = model.sample_prior(n=10, **kw)
         n_classes = 10
+        if args.ds == 'mnist':
+          classes = [f'#{i}' for i in range(10)]
+        elif args.ds == 'fashionmnist':
+          classes = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
+                     'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
+        else:
+          classes = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog',
+                     'frog', 'horse', 'ship', 'truck']
       elif args.ds == 'dsprites':
         pz, labels = model.sample_prior(n=3, **kw)
         n_classes = 3
+        classes = ['square', 'ellipse', 'heart']
       elif args.ds == 'shapes3d':
         pz, labels = model.sample_prior(n=4, **kw)
         n_classes = 4
+        classes = ['cube', 'cylinder', 'sphere', 'round']
       else:
         raise NotImplementedError(args.ds)
       mean = pz.mean()
@@ -1071,10 +1121,8 @@ def main(args: Arguments):
                           n_traverse_points=n_points)
         img, _ = model.decode(m)
         # plotting
-        plt.figure(figsize=(1.5 * 11, 1.5 * n_latents))
-        vs.plot_images(prepare_images(img.mean(), normalize=True),
-                       grids=(n_latents, n_points),
-                       ax=plt.gca())
+        plot_images(img, n_row=n_latents, n_col=n_points,
+                    title=f'Class={classes[i]}')
       vs.plot_save(os.path.join(path, 'prior_traverse.pdf'), verbose=True)
       # special case for hierarchical model
       if model.is_hierarchical():
@@ -1097,10 +1145,8 @@ def main(args: Arguments):
           z1 = np.reshape(z1, [-1] + shape)
           img, _ = model.decode([z0, z1])
           # plotting
-          plt.figure(figsize=(1.5 * 11, 1.5 * n_latents))
-          vs.plot_images(prepare_images(img.mean(), normalize=True),
-                         grids=(n_latents, n_points),
-                         ax=plt.gca())
+          plot_images(img, n_row=n_latents, n_col=n_points,
+                      title=f'Class={classes[i]}')
         vs.plot_save(os.path.join(path, 'prior1_traverse.pdf'), verbose=True)
 
     # important, otherwise, all evaluation is wrong
@@ -1113,7 +1159,6 @@ def main(args: Arguments):
                              batch_size=32,
                              dpi=args.dpi,
                              seed=args.seed)
-
     with gym.run_model(n_samples=1800 if args.debug else -1,
                        partition='test'):
       gym.write_report(os.path.join(path, 'scores.txt'), verbose=True)

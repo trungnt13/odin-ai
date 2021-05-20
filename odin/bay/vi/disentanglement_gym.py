@@ -638,11 +638,30 @@ class DisentanglementGym(vs.Visualizer):
   @property
   def y_true(self) -> np.ndarray:
     self._assert_sampled()
-    return self._y_true
+    y = self._y_true
+    if self.dsname in ['shapes3d', 'shapes3dsmall']:
+      y = np.concatenate([
+        np.expand_dims(np.argmax(y[:, 0:15], -1), -1),
+        np.expand_dims(np.argmax(y[:, 15:23], -1), -1),
+        np.expand_dims(np.argmax(y[:, 23:27], -1), -1),
+        np.expand_dims(np.argmax(y[:, 27:37], -1), -1),
+        np.expand_dims(np.argmax(y[:, 37:47], -1), -1),
+        np.expand_dims(np.argmax(y[:, 47:57], -1), -1),
+      ], -1)
+    elif self.dsname in ['dsprites', 'dspritessmall']:
+      y = np.concatenate([
+        np.expand_dims(np.argmax(y[:, 0:40], -1), -1),
+        np.expand_dims(np.argmax(y[:, 40:46], -1), -1),
+        np.expand_dims(np.argmax(y[:, 46:49], -1), -1),
+        np.expand_dims(np.argmax(y[:, 49:(49 + 32)], -1), -1),
+        np.expand_dims(np.argmax(y[:, (49 + 32):(49 + 64)], -1), -1),
+      ], -1)
+    return y
 
   @property
   def groundtruth(self) -> GroundTruth:
     self._assert_sampled()
+    y_true = self.y_true
     if self._groundtruth is None:
       n_bins = None
       factor_names = self.labels_name
@@ -652,17 +671,17 @@ class DisentanglementGym(vs.Visualizer):
         categorical = True
         factor_names = 'classes'
       elif self.dsname in ['shapes3d', 'shapes3dsmall']:
-        categorical = [False, False, True, False, False, False]
+        categorical = [True, True, True, True, True, True]
         n_bins = [15, 8, 4, 10, 10, 10]
       elif self.dsname in ['dsprites', 'dspritessmall']:
-        categorical = [False, False, True, False, False]
-        n_bins = [10, 6, 3, 8, 8]
+        categorical = [True, True, True, True, True]
+        n_bins = [40, 6, 3, 32, 32]
       elif self.dsname == 'halfmoons':
         categorical = [False, False, False, True]
         n_bins = [10, 10, 10, 4]
       else:
         raise NotImplementedError
-      self._groundtruth = GroundTruth(self.y_true,
+      self._groundtruth = GroundTruth(y_true,
                                       factor_names=factor_names,
                                       categorical=categorical,
                                       n_bins=n_bins,
@@ -1562,7 +1581,9 @@ class DisentanglementGym(vs.Visualizer):
     with tf.device('/CPU:0'):
       if 'llk' not in _CACHE[self._cache_key]:
         llk = []
-        for i, (p, x) in enumerate(zip(self.px_z, [self.x_true, self.y_true])):
+        # should use _y_true to keep original data shape without preprocessing
+        for i, (p, x) in enumerate(
+            zip(self.px_z, [self._x_true, self._y_true])):
           x = tf.convert_to_tensor(x)
           llk.append(np.mean(p.log_prob(x)))
         _CACHE[self._cache_key]['llk'] = tuple(llk)
@@ -1575,7 +1596,7 @@ class DisentanglementGym(vs.Visualizer):
     with tf.device('/CPU:0'):
       if 'acc' not in _CACHE[self._cache_key]:
         acc = []
-        for i, (p, x) in enumerate(zip(self.px_z, [self.x_true, self.y_true])):
+        for i, (p, x) in enumerate(zip(self.px_z, [self._x_true, self._y_true])):
           true = np.asarray(x)
           if 'Relaxed' in str(type(p.distributions[0])):
             pred = np.concatenate(
