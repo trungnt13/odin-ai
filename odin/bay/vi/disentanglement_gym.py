@@ -814,6 +814,8 @@ class DisentanglementGym(vs.Visualizer):
                 *,
                 n_samples: int = -1,
                 partition: DataPartition = 'test',
+                device: Literal['gpu', 'cpu'] = 'cpu',
+                gpu_id: int = 0,
                 verbose: bool = True) -> 'DisentanglementGym':
     # === 0. setup
     tf.random.set_seed(self.seed)
@@ -845,17 +847,18 @@ class DisentanglementGym(vs.Visualizer):
     P_xs = []
     Q_zs = []
     P_zs = []
-    for x, y in progress:
-      P, Q = self.model(x, training=False)
-      Q, Q_prior = self.model.get_latents(return_prior=True)
-      P = as_tuple(P)
-      Q = as_tuple(Q)
-      Q_prior = as_tuple(Q_prior)
-      x_true.append(x)
-      y_true.append(y)
-      P_xs.append(_dist(P))
-      Q_zs.append(_dist(Q))
-      P_zs.append(_dist(Q_prior))
+    with tf.device("/CPU:0" if device == 'cpu' else f"/GPU:{gpu_id}"):
+      for x, y in progress:
+        P, Q = self.model(x, training=False)
+        Q, Q_prior = self.model.get_latents(return_prior=True)
+        P = as_tuple(P)
+        Q = as_tuple(Q)
+        Q_prior = as_tuple(Q_prior)
+        x_true.append(x)
+        y_true.append(y)
+        P_xs.append(_dist(P))
+        Q_zs.append(_dist(Q))
+        P_zs.append(_dist(Q_prior))
     # for the reconstruction
     n_reconstruction = len(P_xs[0])
     all_px = [Batchwise([x[i] for x in P_xs]) for i in range(n_reconstruction)]
@@ -1600,7 +1603,8 @@ class DisentanglementGym(vs.Visualizer):
     with tf.device('/CPU:0'):
       if 'acc' not in _CACHE[self._cache_key]:
         acc = []
-        for i, (p, x) in enumerate(zip(self.px_z, [self._x_true, self._y_true])):
+        for i, (p, x) in enumerate(
+            zip(self.px_z, [self._x_true, self._y_true])):
           true = np.asarray(x)
           if 'Relaxed' in str(type(p.distributions[0])):
             pred = np.concatenate(

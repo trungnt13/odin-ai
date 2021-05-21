@@ -36,6 +36,7 @@ from tqdm import tqdm
 
 from odin import visual as vs
 from odin.backend import one_hot
+from odin.backend.keras_helpers import layer2text
 from odin.bay import (DistributionDense, MVNDiagLatents, kl_divergence,
                       DisentanglementGym, VariationalAutoencoder, get_vae,
                       BiConvLatents,
@@ -370,7 +371,8 @@ class DigitsDistribution(Distribution):
       self._distribution = RelaxedOneHotCategorical(temperature=temperature,
                                                     logits=logits)
     else:
-      self._distribution = OneHotCategorical(logits=logits)
+      self._distribution = OneHotCategorical(logits=logits,
+                                             dtype=logits.dtype)
     super(DigitsDistribution, self).__init__(
       dtype=logits.dtype,
       parameters=parameters,
@@ -394,13 +396,13 @@ class DigitsDistribution(Distribution):
 
   def probs_parameter(self, name=None):
     return self._distribution.probs_parameter(name=name)
-  
+
   def _sample_n(self, n, seed=None, **kwargs):
-    return self._distribution._sample_n(n, seed, **kwargs)
+    return self._distribution.sample(n, seed)
 
   def _log_prob(self, y, **kwargs):
     y = clip_by_value_preserve_gradient(y, 1e-6, 1. - 1e-6)
-    return self._distribution._log_prob(y, **kwargs)
+    return self._distribution.log_prob(y, **kwargs)
 
   def _mean(self, **kwargs):
     return self._distribution.probs_parameter()
@@ -410,14 +412,19 @@ class DigitsDistribution(Distribution):
     return tf.expand_dims(tf.argmax(probs, -1), -1)
 
 
-def reparameterize(dsname: str, reparams: bool = True) -> SequentialNetwork:
+def reparameterize(dsname: str,
+                   temperature: float = 0.5,
+                   reparams: bool = True) -> SequentialNetwork:
+  dsname = dsname.lower()
+  kw = dict(reparams=reparams, temperature=temperature)
+  print(f' * Reparams:{reparams}  Temperature:{temperature}')
   if dsname in ('mnist', 'fashionmnist', 'cifar10'):
     return SequentialNetwork([
       # networks(None, 'EncoderY', batchnorm=True),
       DistributionDense(
         event_shape=[DigitsDistribution.output_dim],
         projection=True,
-        posterior=partial(DigitsDistribution, reparams=reparams),
+        posterior=partial(DigitsDistribution, **kw),
         units=DigitsDistribution.input_dim,
         name='Digits_qy')],
       name='qy_z')
@@ -426,7 +433,7 @@ def reparameterize(dsname: str, reparams: bool = True) -> SequentialNetwork:
       DistributionDense(
         event_shape=[dSpritesDistribution.output_dim],
         projection=True,
-        posterior=partial(dSpritesDistribution, reparams=reparams),
+        posterior=partial(dSpritesDistribution, **kw),
         units=dSpritesDistribution.input_dim,
         name='Shapes2D_qy')],
       name='qy_z')
@@ -435,7 +442,7 @@ def reparameterize(dsname: str, reparams: bool = True) -> SequentialNetwork:
       DistributionDense(
         event_shape=[Shapes3DDistribution.output_dim],
         projection=True,
-        posterior=partial(Shapes3DDistribution, reparams=reparams),
+        posterior=partial(Shapes3DDistribution, **kw),
         units=Shapes3DDistribution.input_dim,
         name='Shapes3D_qy')],
       name='qy_z')
@@ -517,11 +524,11 @@ DefaultHierarchy = dict(
 )
 
 DefaultGamma = dict(
-  shapes3d=5.,
-  dsprites=5.,
-  cifar10=5.,
-  fashionmnist=5.,
-  mnist=5.,
+  shapes3d=10.,
+  dsprites=10.,
+  cifar10=10.,
+  fashionmnist=10.,
+  mnist=10.,
 )
 
 DefaultGammaPy = dict(
@@ -566,6 +573,7 @@ class SemafoVAE(VariationalAutoencoder):
                beta_uns: float = 1.,
                beta_sup: float = 1.,
                reparams: bool = True,
+               temperature: float = 0.5,
                n_iw_y: int = 1,
                **kwargs):
     if not isinstance(self, HierarchicalVAE):
@@ -593,6 +601,7 @@ class SemafoVAE(VariationalAutoencoder):
     self.gamma_py = float(gamma_py)
     self.beta_uns = float(beta_uns)
     self.beta_sup = float(beta_sup)
+    self.reparams = bool(reparams)
     # === 1. fixed utility layers
     self.flatten = Flatten()
     self.concat = Concatenate(-1)
@@ -601,7 +610,9 @@ class SemafoVAE(VariationalAutoencoder):
     ydim = int(np.prod(labels.event_shape))
     zdim = int(np.prod(self.latents.event_shape))
     # q(y|z0,z1,x)
-    self.labels = reparameterize(config.ds.lower(), reparams=reparams)
+    self.labels = reparameterize(config.ds.lower(),
+                                 temperature=temperature,
+                                 reparams=reparams)
     # === 3. second VAE for y and u
     self.encoder2 = dense_networks(ydim, 'Encoder2')
     self.latents2 = MVNDiagLatents(units=ydim, name='Latents2')
@@ -780,6 +791,8 @@ class SemafoVAE(VariationalAutoencoder):
   def elbo_uns(self, x_u, training):
     (px_z, qy_z), qz_x = self(x_u, training=training)
     y_u = tf.convert_to_tensor(qy_z, dtype=self.dtype)
+    if not self.reparams:
+      y_u = tf.stop_gradient(y_u)
     py_u, qu_y = self.call_aux(y_u, training=training)
     pz_u = self.latents_prior(qu_y, training=training)
 
@@ -856,7 +869,17 @@ class SemafoVAE(VariationalAutoencoder):
     return super(SemafoVAE, self).fit(on_batch_end=on_batch_end, *args,
                                       **kwargs)
 
+  def __str__(self):
+    text = super(SemafoVAE, self).__str__()
+    text += f"\n q(y|z):\n{layer2text(self.labels, padding='  ')}"
+    text += f"\n p(y|u):\n{layer2text(self.observation2, padding='  ')}"
+    text += f"\n Encoder-aux:\n{layer2text(self.encoder2, padding='  ')}"
+    text += f"\n Decoder-aux:\n{layer2text(self.decoder2, padding='  ')}"
+    text += f"\n {self.latents2}"
+    return text
 
+
+########### Higher Gamma values
 class G10(SemafoVAE):
   def __init__(self, **kwargs):
     super(G10, self).__init__(gamma_uns=10, **kwargs)
@@ -875,6 +898,44 @@ class G40(SemafoVAE):
 class G80(SemafoVAE):
   def __init__(self, **kwargs):
     super(G80, self).__init__(gamma_uns=80, **kwargs)
+
+
+########### No reparameterization for q(y|z)
+class NoReparams(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(NoReparams, self).__init__(reparams=False, **kwargs)
+
+
+class NoReparamsH10(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(NoReparamsH10, self).__init__(reparams=False,
+                                        coef_H_qy=10.,
+                                        **kwargs)
+
+
+class NoReparamsH20(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(NoReparamsH20, self).__init__(reparams=False,
+                                        coef_H_qy=20.,
+                                        **kwargs)
+
+
+class NoReparamsH40(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(NoReparamsH40, self).__init__(reparams=False,
+                                        coef_H_qy=40.,
+                                        **kwargs)
+
+
+class T01(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(T01, self).__init__(reparams=True, temperature=0.1, **kwargs)
+
+
+class T01H40(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(T01H40, self).__init__(reparams=True, temperature=0.1, coef_H_qy=40,
+                                 **kwargs)
 
 
 # ===========================================================================
@@ -1072,6 +1133,13 @@ class HG40(SemafoHVAE):
     super(HG40, self).__init__(gamma_uns=40, **kwargs)
 
 
+class HNoReparamsH40(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(HNoReparamsH40, self).__init__(reparams=False,
+                                         coef_H_qy=40.,
+                                         **kwargs)
+
+
 # ===========================================================================
 # Training
 # ===========================================================================
@@ -1101,29 +1169,30 @@ def semafo_latents(ds: ImageDataset,
     print(f'#{i} acc_q:{accuracy_score(true, pred):.2f} '
           f'acc_p:{accuracy_score(true, pred_p):.2f}')
   # === 1. latents Traverse
-  traverse_path = os.path.join(path, 'traverses')
-  if not os.path.exists(traverse_path):
-    os.makedirs(traverse_path)
-  if ds.name == 'dsprites':
-    conditions = [{2: 0}, {2: 1}, {2: 2}]
-  elif ds.name == 'shapes3d':
-    conditions = [{2: 0}, {2: 1}, {2: 2}, {2: 3}]
-  else:  # mnist, fashionmnist, cifar10
-    conditions = [{0: i} for i in range(10)]
-  for cond in conditions:
-    name = class_names[list(cond.values())[0]].lower()
-    factors, ids = gym.groundtruth.sample_factors({2: 0}, n_per_factor=3)
-    (px_z, qy_z), qz_x = model(gym.x_true[ids])
-    pz_u = model.latents_prior(model.encode_aux(tf.convert_to_tensor(qy_z)))
-    # TODO
+  # traverse_path = os.path.join(path, 'traverses')
+  # if not os.path.exists(traverse_path):
+  #   os.makedirs(traverse_path)
+  # if ds.name == 'dsprites':
+  #   conditions = [{2: 0}, {2: 1}, {2: 2}]
+  # elif ds.name == 'shapes3d':
+  #   conditions = [{2: 0}, {2: 1}, {2: 2}, {2: 3}]
+  # else:  # mnist, fashionmnist, cifar10
+  #   conditions = [{0: i} for i in range(10)]
+  # for cond in conditions:
+  #   name = class_names[list(cond.values())[0]].lower()
+  #   factors, ids = gym.groundtruth.sample_factors(cond, n_per_factor=3)
+  #   (px_z, qy_z), qz_x = model(gym.x_true[ids])
+  #   pz_u = model.latents_prior(model.encode_aux(tf.convert_to_tensor(qy_z)))
+  # TODO
   # === 2. latents stats
+  flatten = lambda arr: np.reshape(arr, (arr.shape[0], -1))
   for idx, (qz, pz) in enumerate(zip(gym.qz_x, gym.pz)):
-    q_m = np.mean(qz.mean(), 0)
-    p_m = np.mean(pz.mean(), 0)
-    q_s = qz.stddev()
-    p_s = pz.stddev()
+    q_m = np.ravel(np.mean(qz.mean(), 0))
+    p_m = np.ravel(np.mean(pz.mean(), 0))
+    q_s = flatten(qz.stddev())
+    p_s = flatten(pz.stddev())
     ids = np.argsort(np.mean(p_s, axis=0))
-    plt.figure(figsize=(9, 4))
+    plt.figure(figsize=(10 if len(q_m) < 80 else 18, 4))
     #
     plt.subplot(1, 2, 1)
     plt.plot(q_m[ids], color='r', label=r'$Q_{mean}$')
@@ -1154,8 +1223,8 @@ def semafo_latents(ds: ImageDataset,
   for idx, (qz, pz) in enumerate(zip(gym.qz_x, gym.pz)):
     n_points = 2000
     y = y_true[:n_points]
-    qz = qz.mean().numpy()[:n_points]
-    pz = pz.mean().numpy()[:n_points]
+    qz = flatten(qz.mean().numpy()[:n_points])
+    pz = flatten(pz.mean().numpy()[:n_points])
     py_u, qu_y = model.call_aux(gym.y_true_original[:n_points])
     pz_uy = model.latents_prior(qu_y)
     z = np.concatenate([qz, pz], -1)
@@ -1164,12 +1233,12 @@ def semafo_latents(ds: ImageDataset,
     pz = DimReduce.TSNE(pz, framework='sklearn')
     z = DimReduce.TSNE(z, framework='sklearn')
     u = DimReduce.TSNE(qu_y.mean().numpy(), framework='sklearn')
-    zu = DimReduce.TSNE(pz_uy.mean().numpy(), framework='sklearn')
+    zu = DimReduce.TSNE(flatten(pz_uy.mean().numpy()), framework='sklearn')
     for name, i in zip(y_names, y.T):
       plt.figure(figsize=(12, 3))
       vs.plot_scatter(qz, val=i, size=12, ax=(1, 5, 1), title='q(z|x)')
-      vs.plot_scatter(pz, val=i, size=12, ax=(1, 5, 2), title='p(z|x)')
-      vs.plot_scatter(z, val=i, size=12, ax=(1, 5, 3), title='qz-pz|x')
+      vs.plot_scatter(pz, val=i, size=12, ax=(1, 5, 2), title='p(z|u)')
+      vs.plot_scatter(z, val=i, size=12, ax=(1, 5, 3), title='qz*pz')
       vs.plot_scatter(u, val=i, size=12, ax=(1, 5, 4), title='q(u|y)')
       vs.plot_scatter(zu, val=i, size=12, ax=(1, 5, 5), title='p(z|u,y)')
       plt.suptitle(name, fontsize=12)
@@ -1259,19 +1328,28 @@ def main(args: Arguments):
                           zdim=args.zdim,
                           is_semi_supervised=is_semi)
   # for dsprites
-  if args.ds.lower() == 'dsprites':
+  if args.ds == 'dsprites':
     networks['labels'] = DistributionDense(
       event_shape=(dSpritesDistribution.output_dim,),
       posterior=partial(dSpritesDistribution, reparams=False),
       units=dSpritesDistribution.input_dim,
       name='Shapes2D_py')
   # for shapes3d
-  elif args.ds.lower() == 'shapes3d':
+  elif args.ds == 'shapes3d':
     networks['labels'] = DistributionDense(
       event_shape=(Shapes3DDistribution.output_dim,),
       posterior=partial(Shapes3DDistribution, reparams=False),
       units=Shapes3DDistribution.input_dim,
       name='Shapes3D_py')
+  # for others
+  elif args.ds in ('mnist', 'fashionmnist', 'cifar10'):
+    networks['labels'] = DistributionDense(
+      event_shape=(DigitsDistribution.output_dim,),
+      posterior=partial(DigitsDistribution, reparams=False),
+      units=DigitsDistribution.input_dim,
+      name='Digits_py')
+  else:
+    raise NotImplementedError(f'No support for dataset {args.ds}')
   # create and build the model
   model: Union[VariationalAutoencoder, SemafoVAE] = model(**networks)
   model.build((None,) + ds.shape)
@@ -1306,7 +1384,8 @@ def main(args: Arguments):
                              batch_size=32,
                              dpi=args.dpi,
                              seed=args.seed)
-    with gym.run_model(n_samples=1000 if args.debug else 30000,
+    with gym.run_model(n_samples=1000 if args.debug else 20000,
+                       device='cpu',
                        partition='test'):
       gym.write_report(os.path.join(path, 'scores.txt'), verbose=True)
       ## special case for SemafoVAE

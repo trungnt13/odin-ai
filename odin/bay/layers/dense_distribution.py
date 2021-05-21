@@ -245,6 +245,9 @@ class DistributionDense(Layer):
     self._dense.build(input_shape)
     return self
 
+  def compute_output_shape(self, input_shape):
+    return tuple(input_shape[:-1]) + as_tuple(self.event_shape)
+
   @property
   def params_size(self) -> int:
     return self._params_size
