@@ -659,6 +659,10 @@ class DisentanglementGym(vs.Visualizer):
     return y
 
   @property
+  def y_true_original(self) -> np.ndarray:
+    return self._y_true
+
+  @property
   def groundtruth(self) -> GroundTruth:
     self._assert_sampled()
     y_true = self.y_true

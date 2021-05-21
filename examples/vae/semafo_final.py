@@ -9,6 +9,7 @@ from typing import Optional, Union, Sequence, List, Any, Dict
 import numpy as np
 import tensorflow as tf
 from matplotlib import pyplot as plt
+from sklearn.metrics import accuracy_score
 from tensorflow.python.keras import Sequential, Input
 from tensorflow.python.keras.layers import (Dense, Flatten, Concatenate, Conv2D,
                                             Conv2DTranspose, GlobalAvgPool2D,
@@ -29,7 +30,7 @@ from tensorflow_probability.python.distributions import (Normal, Independent,
                                                          Beta)
 from tensorflow_probability.python.math import clip_by_value_preserve_gradient
 from tensorflow_probability.python.internal.reparameterization import \
-  FULLY_REPARAMETERIZED
+  FULLY_REPARAMETERIZED, NOT_REPARAMETERIZED
 from tensorflow_probability.python.layers import DistributionLambda
 from tqdm import tqdm
 
@@ -40,7 +41,8 @@ from odin.bay import (DistributionDense, MVNDiagLatents, kl_divergence,
                       BiConvLatents,
                       HierarchicalVAE)
 from odin.bay.vi import traverse_dims
-from odin.fuel import get_dataset
+from odin.fuel import get_dataset, ImageDataset
+from odin.ml import DimReduce
 from odin.networks import get_networks, SequentialNetwork, TrainStep
 from odin.utils import as_tuple
 from utils import get_args, train, run_multi, set_cfg, Arguments, \
@@ -52,6 +54,15 @@ from tensorflow.python.training.tracking import base as trackable
 # ===========================================================================
 config: Optional[Arguments] = None
 CURRENT_MODEL: Optional[VariationalAutoencoder] = None
+DS_TO_LABELS = dict(
+  mnist=[f'#{i}' for i in range(10)],
+  fashionmnist=['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
+                'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot'],
+  cifar10=['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog',
+           'frog', 'horse', 'ship', 'truck'],
+  dsprites=['square', 'ellipse', 'heart'],
+  shapes3d=['cube', 'cylinder', 'sphere', 'round']
+)
 
 
 def dense_networks(input_dim: Union[None, int],
@@ -193,7 +204,8 @@ class dSpritesDistribution(Distribution):
       dtype=params.dtype,
       validate_args=validate_args,
       allow_nan_stats=allow_nan_stats,
-      reparameterization_type=FULLY_REPARAMETERIZED,
+      reparameterization_type=(FULLY_REPARAMETERIZED if reparams else
+                               NOT_REPARAMETERIZED),
       parameters=parameters,
       name=name)
 
@@ -238,6 +250,15 @@ class dSpritesDistribution(Distribution):
       self.y_pos.probs_parameter(),
     ], axis=-1)
 
+  def _mode(self, **kwargs):
+    return tf.concat([
+      tf.expand_dims(tf.argmax(self.orientation.probs_parameter(), -1), -1),
+      tf.expand_dims(tf.argmax(self.scale.probs_parameter(), -1), -1),
+      tf.expand_dims(tf.argmax(self.shape_type.probs_parameter(), -1), -1),
+      tf.expand_dims(tf.argmax(self.x_pos.probs_parameter(), -1), -1),
+      tf.expand_dims(tf.argmax(self.y_pos.probs_parameter(), -1), -1),
+    ], axis=-1)
+
 
 class Shapes3DDistribution(Distribution):
   input_dim: int = 15 + 8 + 4 + 10 + 10 + 10
@@ -269,7 +290,8 @@ class Shapes3DDistribution(Distribution):
       dtype=params.dtype,
       validate_args=validate_args,
       allow_nan_stats=allow_nan_stats,
-      reparameterization_type=FULLY_REPARAMETERIZED,
+      reparameterization_type=(FULLY_REPARAMETERIZED if reparams else
+                               NOT_REPARAMETERIZED),
       parameters=parameters,
       name=name)
 
@@ -318,57 +340,104 @@ class Shapes3DDistribution(Distribution):
       self.obj.probs_parameter(),
     ], axis=-1)
 
+  def _mode(self, **kwargs):
+    return tf.concat([
+      tf.expand_dims(tf.argmax(self.orientation.probs_parameter(), -1), -1),
+      tf.expand_dims(tf.argmax(self.scale.probs_parameter(), -1), -1),
+      tf.expand_dims(tf.argmax(self.shape_type.probs_parameter(), -1), -1),
+      tf.expand_dims(tf.argmax(self.floor.probs_parameter(), -1), -1),
+      tf.expand_dims(tf.argmax(self.wall.probs_parameter(), -1), -1),
+      tf.expand_dims(tf.argmax(self.obj.probs_parameter(), -1), -1),
+    ], axis=-1)
 
-class DigitsDistribution(RelaxedOneHotCategorical):
+
+class DigitsDistribution(Distribution):
   input_dim: int = 10
   output_dim: int = 10
 
   def __init__(self,
-               logits=None,
+               logits,
                temperature=0.5,
                validate_args=False,
                allow_nan_stats=True,
+               reparams=True,
                name='DigitsDistribution'):
-    super(DigitsDistribution, self).__init__(temperature=temperature,
-                                             logits=logits,
-                                             probs=None,
-                                             validate_args=validate_args,
-                                             allow_nan_stats=allow_nan_stats,
-                                             name=name)
+    parameters = dict(locals())
+    tf.assert_equal(tf.shape(logits)[-1], self.input_dim)
+    self._params = logits
+    self.reparams = bool(reparams)
+    if reparams:
+      self._distribution = RelaxedOneHotCategorical(temperature=temperature,
+                                                    logits=logits)
+    else:
+      self._distribution = OneHotCategorical(logits=logits)
+    super(DigitsDistribution, self).__init__(
+      dtype=logits.dtype,
+      parameters=parameters,
+      reparameterization_type=(FULLY_REPARAMETERIZED if reparams else
+                               NOT_REPARAMETERIZED),
+      validate_args=validate_args,
+      allow_nan_stats=allow_nan_stats,
+      name=name)
+
+  def _event_shape_tensor(self):
+    return self._distribution.event_shape_tensor()
+
+  def _event_shape(self):
+    return self._distribution.event_shape
+
+  def _batch_shape_tensor(self):
+    return self._distribution.batch_shape_tensor()
+
+  def _batch_shape(self):
+    return self._distribution.batch_shape
+
+  def probs_parameter(self, name=None):
+    return self._distribution.probs_parameter(name=name)
+  
+  def _sample_n(self, n, seed=None, **kwargs):
+    return self._distribution._sample_n(n, seed, **kwargs)
 
   def _log_prob(self, y, **kwargs):
     y = clip_by_value_preserve_gradient(y, 1e-6, 1. - 1e-6)
-    return super(DigitsDistribution, self)._log_prob(y, **kwargs)
+    return self._distribution._log_prob(y, **kwargs)
 
   def _mean(self, **kwargs):
-    return super(DigitsDistribution, self).probs_parameter()
+    return self._distribution.probs_parameter()
+
+  def _mode(self, **kwargs):
+    probs = self._distribution.probs_parameter()
+    return tf.expand_dims(tf.argmax(probs, -1), -1)
 
 
-def reparameterize(dsname: str) -> SequentialNetwork:
+def reparameterize(dsname: str, reparams: bool = True) -> SequentialNetwork:
   if dsname in ('mnist', 'fashionmnist', 'cifar10'):
     return SequentialNetwork([
       # networks(None, 'EncoderY', batchnorm=True),
-      DistributionDense(event_shape=[DigitsDistribution.output_dim],
-                        projection=True,
-                        posterior=DigitsDistribution,
-                        units=DigitsDistribution.input_dim,
-                        name='Digits_qy')],
+      DistributionDense(
+        event_shape=[DigitsDistribution.output_dim],
+        projection=True,
+        posterior=partial(DigitsDistribution, reparams=reparams),
+        units=DigitsDistribution.input_dim,
+        name='Digits_qy')],
       name='qy_z')
   elif dsname == 'dsprites':
     return SequentialNetwork([
-      DistributionDense(event_shape=[dSpritesDistribution.output_dim],
-                        projection=True,
-                        posterior=partial(dSpritesDistribution, reparams=True),
-                        units=dSpritesDistribution.input_dim,
-                        name='Shapes2D_qy')],
+      DistributionDense(
+        event_shape=[dSpritesDistribution.output_dim],
+        projection=True,
+        posterior=partial(dSpritesDistribution, reparams=reparams),
+        units=dSpritesDistribution.input_dim,
+        name='Shapes2D_qy')],
       name='qy_z')
   elif dsname == 'shapes3d':
     return SequentialNetwork([
-      DistributionDense(event_shape=[Shapes3DDistribution.output_dim],
-                        projection=True,
-                        posterior=partial(Shapes3DDistribution, reparams=True),
-                        units=Shapes3DDistribution.input_dim,
-                        name='Shapes3D_qy')],
+      DistributionDense(
+        event_shape=[Shapes3DDistribution.output_dim],
+        projection=True,
+        posterior=partial(Shapes3DDistribution, reparams=reparams),
+        units=Shapes3DDistribution.input_dim,
+        name='Shapes3D_qy')],
       name='qy_z')
   raise NotImplementedError(f'No support for {dsname}.')
 
@@ -496,6 +565,7 @@ class SemafoVAE(VariationalAutoencoder):
                gamma_sup: float = 1.,
                beta_uns: float = 1.,
                beta_sup: float = 1.,
+               reparams: bool = True,
                n_iw_y: int = 1,
                **kwargs):
     if not isinstance(self, HierarchicalVAE):
@@ -530,7 +600,8 @@ class SemafoVAE(VariationalAutoencoder):
     # === 2. reparameterized q(y|z)
     ydim = int(np.prod(labels.event_shape))
     zdim = int(np.prod(self.latents.event_shape))
-    self.labels = reparameterize(config.ds.lower())  # q(y|z0,z1,x)
+    # q(y|z0,z1,x)
+    self.labels = reparameterize(config.ds.lower(), reparams=reparams)
     # === 3. second VAE for y and u
     self.encoder2 = dense_networks(ydim, 'Encoder2')
     self.latents2 = MVNDiagLatents(units=ydim, name='Latents2')
@@ -1009,6 +1080,166 @@ def _mean(dists, idx):
   return tf.reshape(m, (m.shape[0], -1))
 
 
+def semafo_latents(ds: ImageDataset,
+                   model: SemafoVAE,
+                   gym: DisentanglementGym,
+                   path: str):
+  if not isinstance(model, SemafoVAE):
+    return
+  qy = gym.px_z[1]
+  py = model.call_aux(qy.mean())[0]
+  y_true = gym.y_true
+  y_names = ds.labels
+  class_names = DS_TO_LABELS[ds.name]
+  # accuracy of the prediction
+  if ds.name not in ('dsprites', 'shapes3d'):
+    y_true = np.expand_dims(np.argmax(y_true, -1), -1)
+    y_names = ['Digits']
+  for i, (pred, pred_p, true) in enumerate(zip(qy.mode().numpy().T,
+                                               py.mode().numpy().T,
+                                               y_true.T)):
+    print(f'#{i} acc_q:{accuracy_score(true, pred):.2f} '
+          f'acc_p:{accuracy_score(true, pred_p):.2f}')
+  # === 1. latents Traverse
+  traverse_path = os.path.join(path, 'traverses')
+  if not os.path.exists(traverse_path):
+    os.makedirs(traverse_path)
+  if ds.name == 'dsprites':
+    conditions = [{2: 0}, {2: 1}, {2: 2}]
+  elif ds.name == 'shapes3d':
+    conditions = [{2: 0}, {2: 1}, {2: 2}, {2: 3}]
+  else:  # mnist, fashionmnist, cifar10
+    conditions = [{0: i} for i in range(10)]
+  for cond in conditions:
+    name = class_names[list(cond.values())[0]].lower()
+    factors, ids = gym.groundtruth.sample_factors({2: 0}, n_per_factor=3)
+    (px_z, qy_z), qz_x = model(gym.x_true[ids])
+    pz_u = model.latents_prior(model.encode_aux(tf.convert_to_tensor(qy_z)))
+    # TODO
+  # === 2. latents stats
+  for idx, (qz, pz) in enumerate(zip(gym.qz_x, gym.pz)):
+    q_m = np.mean(qz.mean(), 0)
+    p_m = np.mean(pz.mean(), 0)
+    q_s = qz.stddev()
+    p_s = pz.stddev()
+    ids = np.argsort(np.mean(p_s, axis=0))
+    plt.figure(figsize=(9, 4))
+    #
+    plt.subplot(1, 2, 1)
+    plt.plot(q_m[ids], color='r', label=r'$Q_{mean}$')
+    plt.plot(np.mean(q_s, 0)[ids], color='b', linestyle='--',
+             label=r'mean($Q_{std})$')
+    plt.plot(np.max(q_s, 0)[ids], color='g', linestyle='--',
+             label=r'max($Q_{std})$')
+    plt.plot(np.min(q_s, 0)[ids], color='g', linestyle='--',
+             label=r'min($Q_{std})$')
+    plt.title('Posterior')
+    plt.legend()
+    #
+    plt.subplot(1, 2, 2)
+    plt.plot(p_m[ids], color='r', label=r'$P_{mean}$')
+    plt.plot(np.mean(p_s, 0)[ids], color='b', linestyle='--',
+             label=r'mean($P_{std})$')
+    plt.plot(np.max(p_s, 0)[ids], color='g', linestyle='--',
+             label=r'max($P_{std})$')
+    plt.plot(np.min(p_s, 0)[ids], color='g', linestyle='--',
+             label=r'min($P_{std})$')
+    plt.title('Prior')
+    plt.legend()
+    #
+    plt.suptitle(f'Latents #{idx}')
+    plt.tight_layout(rect=[0, 0, 1, 1.1])
+  vs.plot_save(os.path.join(path, 'semafo_latents_stats.pdf'), verbose=True)
+  # === 4. latents t-SNE
+  for idx, (qz, pz) in enumerate(zip(gym.qz_x, gym.pz)):
+    n_points = 2000
+    y = y_true[:n_points]
+    qz = qz.mean().numpy()[:n_points]
+    pz = pz.mean().numpy()[:n_points]
+    py_u, qu_y = model.call_aux(gym.y_true_original[:n_points])
+    pz_uy = model.latents_prior(qu_y)
+    z = np.concatenate([qz, pz], -1)
+    # applying t-SNE
+    qz = DimReduce.TSNE(qz, framework='sklearn')
+    pz = DimReduce.TSNE(pz, framework='sklearn')
+    z = DimReduce.TSNE(z, framework='sklearn')
+    u = DimReduce.TSNE(qu_y.mean().numpy(), framework='sklearn')
+    zu = DimReduce.TSNE(pz_uy.mean().numpy(), framework='sklearn')
+    for name, i in zip(y_names, y.T):
+      plt.figure(figsize=(12, 3))
+      vs.plot_scatter(qz, val=i, size=12, ax=(1, 5, 1), title='q(z|x)')
+      vs.plot_scatter(pz, val=i, size=12, ax=(1, 5, 2), title='p(z|x)')
+      vs.plot_scatter(z, val=i, size=12, ax=(1, 5, 3), title='qz-pz|x')
+      vs.plot_scatter(u, val=i, size=12, ax=(1, 5, 4), title='q(u|y)')
+      vs.plot_scatter(zu, val=i, size=12, ax=(1, 5, 5), title='p(z|u,y)')
+      plt.suptitle(name, fontsize=12)
+      plt.tight_layout(rect=[0, 0, 1, 1.1])
+    vs.plot_save(os.path.join(path, f'qz_pz_y_{idx}.pdf'), verbose=True)
+
+
+def semafo_prior_traverse(model: SemafoVAE, dsname: str, path: str):
+  if not isinstance(model, SemafoVAE):
+    return
+  kw = dict(return_distribution=True, return_labels=True)
+  classes = DS_TO_LABELS[dsname]
+  n_classes = len(classes)
+  if dsname in ('mnist', 'fashionmnist', 'cifar10'):
+    pz, labels = model.sample_prior(n=10, **kw)
+  elif dsname == 'dsprites':
+    pz, labels = model.sample_prior(n=3, **kw)
+  elif dsname == 'shapes3d':
+    pz, labels = model.sample_prior(n=4, **kw)
+  else:
+    raise NotImplementedError(dsname)
+  mean = pz.mean()
+  stddev = pz.stddev()
+  n_points = 41
+  n_latents = min(15, mean.shape[1])
+  max_std = 4.
+  if model.is_hierarchical():
+    model.set_sampling(True)
+  # first latents
+  for i in range(n_classes):
+    m = mean[i:i + 1]
+    s = stddev[i].numpy()
+    ids = np.argsort(s)[::-1][:n_latents]  # higher is better
+    m = traverse_dims(m,
+                      feature_indices=ids,
+                      min_val=-max_std * s,
+                      max_val=max_std * s,
+                      n_traverse_points=n_points)
+    img, _ = model.decode(m)
+    plot_images(img, n_row=n_latents, n_col=n_points,
+                title=f'Class={classes[i]}')
+  vs.plot_save(os.path.join(path, 'prior_traverse.pdf'), verbose=True)
+  # special case for hierarchical model
+  if model.is_hierarchical():
+    model.set_sampling(True)
+    for i in range(n_classes):
+      z0 = mean[i:i + 1]
+      img, _ = model.decode(z0)
+      # traverse the second latents prior
+      pz1 = img.kl_pairs[0][2]
+      shape = list(pz1.event_shape)
+      s1 = np.ravel(pz1.stddev().numpy()[0])
+      ids = np.argsort(s1)[::-1][:n_latents]  # higher is better
+      z1 = np.reshape(pz1.mean(), (1, -1))
+      z1 = traverse_dims(z1,
+                         feature_indices=ids,
+                         min_val=-max_std * s1,
+                         max_val=max_std * s1,
+                         n_traverse_points=n_points)
+      z0 = tf.tile(z0, [z1.shape[0], 1])
+      z1 = np.reshape(z1, [-1] + shape)
+      img, _ = model.decode([z0, z1])
+      plot_images(img, n_row=n_latents, n_col=n_points,
+                  title=f'Class={classes[i]}')
+    vs.plot_save(os.path.join(path, 'prior1_traverse.pdf'), verbose=True)
+  # important, otherwise, all evaluation is wrong
+  if isinstance(model, SemafoHVAE):
+    model.set_sampling(False)
+
+
 def main(args: Arguments):
   # === 0. prepare dataset
   ds = get_dataset(args.ds)
@@ -1068,111 +1299,29 @@ def main(args: Arguments):
     ### load model weights
     model.load_weights(get_model_path(args), raise_notfound=True, verbose=True)
 
-    ### [Posterior Traverse] special case for SemafoVAE
-    # model.sample_prior(3)
-    # if isinstance(model, SemafoVAE):
-    #   for x, y in ds.create_dataset('test', label_percent=1.0,
-    #                                 batch_size=36).map(data_map).take(1):
-    #     pass
-    #   (px, qy), qz = model([x, y], training=False)
-    #   for i, j in zip(qy.mean(), y):
-    #     print(i.numpy())
-    #     print(j.numpy())
-
-    ### [Prior Traverse] special case for SemafoVAE
-    if isinstance(model, SemafoVAE):
-      kw = dict(return_distribution=True, return_labels=True)
-      if args.ds in ('mnist', 'fashionmnist', 'cifar10'):
-        pz, labels = model.sample_prior(n=10, **kw)
-        n_classes = 10
-        if args.ds == 'mnist':
-          classes = [f'#{i}' for i in range(10)]
-        elif args.ds == 'fashionmnist':
-          classes = ['T-shirt/top', 'Trouser', 'Pullover', 'Dress', 'Coat',
-                     'Sandal', 'Shirt', 'Sneaker', 'Bag', 'Ankle boot']
-        else:
-          classes = ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog',
-                     'frog', 'horse', 'ship', 'truck']
-      elif args.ds == 'dsprites':
-        pz, labels = model.sample_prior(n=3, **kw)
-        n_classes = 3
-        classes = ['square', 'ellipse', 'heart']
-      elif args.ds == 'shapes3d':
-        pz, labels = model.sample_prior(n=4, **kw)
-        n_classes = 4
-        classes = ['cube', 'cylinder', 'sphere', 'round']
-      else:
-        raise NotImplementedError(args.ds)
-      mean = pz.mean()
-      stddev = pz.stddev()
-      n_points = 41
-      n_latents = min(15, mean.shape[1])
-      max_std = 4.
-      if model.is_hierarchical():
-        model.set_sampling(True)
-      for i in range(n_classes):
-        m = mean[i:i + 1]
-        s = stddev[i].numpy()
-        ids = np.argsort(s)[::-1][:n_latents]  # higher is better
-        m = traverse_dims(m,
-                          feature_indices=ids,
-                          min_val=-max_std * s,
-                          max_val=max_std * s,
-                          n_traverse_points=n_points)
-        img, _ = model.decode(m)
-        # plotting
-        plot_images(img, n_row=n_latents, n_col=n_points,
-                    title=f'Class={classes[i]}')
-      vs.plot_save(os.path.join(path, 'prior_traverse.pdf'), verbose=True)
-      # special case for hierarchical model
-      if model.is_hierarchical():
-        model.set_sampling(True)
-        for i in range(n_classes):
-          z0 = mean[i:i + 1]
-          img, _ = model.decode(z0)
-          # traverse the second latents prior
-          pz1 = img.kl_pairs[0][2]
-          shape = list(pz1.event_shape)
-          s1 = np.ravel(pz1.stddev().numpy()[0])
-          ids = np.argsort(s1)[::-1][:n_latents]  # higher is better
-          z1 = np.reshape(pz1.mean(), (1, -1))
-          z1 = traverse_dims(z1,
-                             feature_indices=ids,
-                             min_val=-max_std * s1,
-                             max_val=max_std * s1,
-                             n_traverse_points=n_points)
-          z0 = tf.tile(z0, [z1.shape[0], 1])
-          z1 = np.reshape(z1, [-1] + shape)
-          img, _ = model.decode([z0, z1])
-          # plotting
-          plot_images(img, n_row=n_latents, n_col=n_points,
-                      title=f'Class={classes[i]}')
-        vs.plot_save(os.path.join(path, 'prior1_traverse.pdf'), verbose=True)
-
-    # important, otherwise, all evaluation is wrong
-    if isinstance(model, SemafoHVAE):
-      model.set_sampling(False)
-
+    semafo_prior_traverse(model, args.ds, path)
     ### run the disentanglement gym
     gym = DisentanglementGym(model=model,
                              dataset=args.ds,
                              batch_size=32,
                              dpi=args.dpi,
                              seed=args.seed)
-    with gym.run_model(n_samples=1800 if args.debug else -1,
+    with gym.run_model(n_samples=1000 if args.debug else 30000,
                        partition='test'):
       gym.write_report(os.path.join(path, 'scores.txt'), verbose=True)
-      # latents t-SNE
+      ## special case for SemafoVAE
+      semafo_latents(ds, model, gym, path)
+      ## latents t-SNE
       gym.plot_latents_tsne()
       if gym.n_latent_vars > 1:
         for i in range(gym.n_latent_vars):
           gym.plot_latents_tsne(convert_fn=partial(_mean, idx=i),
                                 title=f'_z{i}')
-      # prior sampling
+      ## prior sampling
       if model.is_hierarchical():
         model.set_sampling(True)
       gym.plot_latents_sampling()
-      # traverse
+      ## traverse
       if model.is_hierarchical():
         model.set_sampling(True)
         gym.plot_latents_traverse(title='_prior')
@@ -1180,7 +1329,7 @@ def main(args: Arguments):
         gym.plot_latents_traverse(title='_post')
       else:
         gym.plot_latents_traverse()
-      # inference
+      ## inference
       for i in range(gym.n_latent_vars):
         gym.plot_latents_stats(latent_idx=i)
         gym.plot_latents_factors(
