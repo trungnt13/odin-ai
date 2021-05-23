@@ -488,11 +488,15 @@ def dsprites_networks(
                   latents=latents)
   if is_semi_supervised:
     from odin.bay.layers.dense_distribution import DistributionDense
+    # TODO: update
     networks['labels'] = DistributionDense(event_shape=(5,),
                                            posterior=_dsprites_distribution,
                                            units=9,
                                            name='geometry2d')
   return networks
+
+
+dsprites0_networks = dsprites_networks
 
 
 # ===========================================================================
@@ -544,6 +548,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
                                  n_channels=3)
   if is_semi_supervised:
     from odin.bay.layers import DistributionDense
+    # TODO: update
     networks['labels'] = DistributionDense(event_shape=(6,),
                                            posterior=_shapes3d_distribution,
                                            units=11,
@@ -552,6 +557,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
 
 
 shapes3dsmall_networks = partial(shapes3d_networks, small=True)
+shapes3d0_networks = shapes3d_networks
 
 
 # ===========================================================================

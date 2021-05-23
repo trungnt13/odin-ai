@@ -217,6 +217,11 @@ def get_results_path(args: Arguments) -> str:
   return path
 
 
+def get_scores_path(args: Arguments) -> str:
+  path = get_results_path(args)
+  return os.path.join(path, 'scores.txt')
+
+
 def get_model(args: Arguments,
               return_dataset: bool = True,
               encoder: Any = None,

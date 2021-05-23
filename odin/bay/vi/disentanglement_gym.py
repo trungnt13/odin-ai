@@ -50,8 +50,8 @@ FactorFilter = Union[Callable[[Any], bool],
                      Dict[Union[str, int], int],
                      float, int, str,
                      None]
-DatasetNames = Literal['shapes3d', 'shapes3dsmall',
-                       'dsprites', 'dspritessmall',
+DatasetNames = Literal['shapes3d', 'shapes3dsmall', 'shapes3d0',
+                       'dsprites', 'dspritessmall', 'dsprites0',
                        'celeba', 'celebasmall',
                        'fashionmnist', 'mnist',
                        'cifar10', 'cifar100', 'svhn',
@@ -120,8 +120,14 @@ def _prepare_categorical(y: np.ndarray, ds: ImageDataset,
   elif 'shapes3d' in dsname:
     y_categorical = y[:, 2]
     names = ['cube', 'cylinder', 'sphere', 'round']
+  elif 'shapes3d0' in dsname:
+    y_categorical = tf.argmax(y, -1)
+    names = ['cube', 'cylinder', 'sphere', 'round']
   elif 'dsprites' in dsname:
     y_categorical = y[:, 2]
+    names = ['square', 'ellipse', 'heart']
+  elif 'dsprites0' in dsname:
+    y_categorical = tf.argmax(y, -1)
     names = ['square', 'ellipse', 'heart']
   elif 'halfmoons' in dsname:
     y_categorical = y[:, -1]
@@ -671,7 +677,8 @@ class DisentanglementGym(vs.Visualizer):
       factor_names = self.labels_name
       if self.dsname in ['fashionmnist', 'mnist',
                          'cifar10', 'cifar100', 'svhn',
-                         'cortex', 'pbmc']:
+                         'cortex', 'pbmc',
+                         'dsprites0', 'shapes3d0']:
         categorical = True
         factor_names = 'classes'
       elif self.dsname in ['shapes3d', 'shapes3dsmall']:

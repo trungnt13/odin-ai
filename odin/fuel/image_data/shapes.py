@@ -1,12 +1,11 @@
-from typing import Optional, Union, List
+from typing import List
 
 import numpy as np
 import tensorflow as tf
+import tensorflow_datasets as tfds
 from typeguard import typechecked
 from typing_extensions import Literal
 
-import tensorflow_datasets as tfds
-from odin.fuel.dataset_base import get_partition
 from odin.fuel.image_data._base import ImageDataset
 
 __all__ = [
@@ -14,6 +13,8 @@ __all__ = [
   'Shapes3DSmall',
   'dSprites',
   'dSpritesSmall',
+  'dSprites0',
+  'Shapes3D0'
 ]
 
 
@@ -207,7 +208,7 @@ class dSprites(_ShapeDataset):
   Continuous attributes
     value_orientation: 40 values in [-pi, pi]
     value_scale:  6 values linearly spaced in [0.5, 1]
-    value_shape: 3 values [square, ellipse, heart]
+    value_shape: 3 values ['square', 'ellipse', 'heart']
     value_x_position:  32 values in [0, 1]
     value_y_position:  32 values in [0, 1]
   """
@@ -233,3 +234,59 @@ class dSpritesSmall(dSprites):
                seed: int = 1):
     super().__init__(image_size=28, continuous=continuous, onehot=onehot,
                      seed=seed)
+
+
+# ===========================================================================
+# Datasets with only the shapes labels
+# ===========================================================================
+def only_shape(*args):
+  if len(args) == 1:
+    return args[0]
+  elif len(args) == 2:
+    x, y = args
+    if y.shape[-1] == 113:
+      y = y[:, 46:49]
+    else:
+      y = y[:, 23:27]
+    return x, y
+  else:
+    x_u, x_s, y_s = args
+    if y_s.shape[-1] == 113:
+      y_s = y_s[:, 46:49]
+    else:
+      y_s = y_s[:, 23:27]
+    return x_u, x_s, y_s
+
+
+class dSprites0(dSprites):
+
+  def __init__(self, all_labels: bool = False, seed: int = 1):
+    super(dSprites0, self).__init__(continuous=False, onehot=True, seed=seed)
+    self.all_labels = bool(all_labels)
+
+  @property
+  def labels(self):
+    return ['square', 'ellipse', 'heart']
+
+  def create_dataset(self, *args, **kwargs) -> tf.data.Dataset:
+    ds = super(dSprites0, self).create_dataset(*args, **kwargs)
+    if not self.all_labels:
+      ds = ds.map(only_shape)
+    return ds
+
+
+class Shapes3D0(Shapes3D):
+
+  def __init__(self, all_labels: bool = False, seed: int = 1):
+    super(Shapes3D0, self).__init__(continuous=False, onehot=True, seed=seed)
+    self.all_labels = bool(all_labels)
+
+  @property
+  def labels(self):
+    return ['cube', 'cylinder', 'sphere', 'round']
+
+  def create_dataset(self, *args, **kwargs) -> tf.data.Dataset:
+    ds = super(Shapes3D0, self).create_dataset(*args, **kwargs)
+    if not self.all_labels:
+      ds = ds.map(only_shape)
+    return ds
