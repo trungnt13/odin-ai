@@ -814,9 +814,9 @@ def plot_spectrogram(x,
 
 
 def plot_images(X: np.ndarray,
-                grids: Optional[Tuple[int, int]] = None,
-                image_shape: Optional[Tuple[int, int]] = None,
-                image_spacing: Optional[Tuple[int, int]] = None,
+                images_per_row: Optional[int] = None,
+                v_pad: float = 0.01,
+                h_pad: float = 0.01,
                 ax: Optional['Axes'] = None,
                 fontsize: int = 12,
                 title: Optional[str] = None):
@@ -827,23 +827,19 @@ def plot_images(X: np.ndarray,
   X : np.ndarray
       2D-gray images with shape `[batch_dim, height, width]`
       or 3D-color images `[batch_dim, color, height, width]`
-  grids : Optional[Tuple[int, int]], optional
-      number of rows and columns, by default None
-  image_shape : Optional[Tuple[int, int]], optional
-      resized shape of images, by default None
-  image_spacing : Optional[Tuple[int, int]], optional
-      space betwen rows and columns of images, by default None
+  images_per_row : int
+      number of images per row
+  v_pad : float
+      fraction of image height for vertical padding
+  h_pad : float
+      fraction of image width for horizontal padding
   """
-  if X.ndim == 3 or X.ndim == 2:
-    cmap = plt.cm.Greys_r
-  elif X.ndim == 4:
-    cmap = None
   X = tile_raster_images(X,
-                         grids=grids,
-                         image_shape=image_shape,
-                         image_spacing=image_spacing)
+                         images_per_row=images_per_row,
+                         v_pad=v_pad,
+                         h_pad=h_pad)
   ax = to_axis2D(ax)
-  ax.imshow(X, cmap=cmap)
+  ax.imshow(X, cmap=plt.cm.Greys_r if X.ndim == 2 else None)
   if title is not None:
     ax.set_title(str(title), fontsize=fontsize, fontweight='regular')
   ax.axis('off')

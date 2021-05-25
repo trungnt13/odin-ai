@@ -1,9 +1,9 @@
 from __future__ import absolute_import, division, print_function
 
 import colorsys
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from numbers import Number
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, List
 
 import numpy as np
 
@@ -12,8 +12,8 @@ line_styles = ['-', '--', '-.', ':']
 # this is shuffled by hand to make sure everything ordered
 # in the most intuitive way
 marker_styles = [
-    ".", "_", "|", "2", "s", "P", "+", "x", "^", "*", "h", "p", "d", "v", "H",
-    "<", "8", ">", "X", "1", "3", "4", "D", "o"
+  ".", "_", "|", "2", "s", "P", "+", "x", "^", "*", "h", "p", "d", "v", "H",
+  "<", "8", ">", "X", "1", "3", "4", "D", "o"
 ]
 
 
@@ -23,8 +23,8 @@ def get_all_named_colors(to_hsv=False):
   # Sort colors by hue, saturation, value and name.
   if to_hsv:
     by_hsv = sorted(
-        (tuple(mcolors.rgb_to_hsv(mcolors.to_rgba(color)[:3])), name)
-        for name, color in colors.items())
+      (tuple(mcolors.rgb_to_hsv(mcolors.to_rgba(color)[:3])), name)
+      for name, color in colors.items())
     colors = OrderedDict([(name, color) for color, name in by_hsv])
   return colors
 
@@ -44,8 +44,8 @@ def generate_palette_colors(n,
     rand.shuffle(colors)
   if return_hex:
     colors = [
-        "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255), int(rgb[1] * 255),
-                                     int(rgb[2] * 255)) for rgb in colors
+      "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255), int(rgb[1] * 255),
+                                   int(rgb[2] * 255)) for rgb in colors
     ]
   return colors
 
@@ -81,9 +81,9 @@ def generate_random_colormaps(n, seed=1234, bicolors=False):
   from matplotlib.colors import LinearSegmentedColormap
   color_maps = []
   interpolate_hsl = lambda h, s, l: \
-      [(h, l + 0.49, s),
-       (h, l, s),
-       (h, l - 0.1, min(s + 0.1, 1.))]
+    [(h, l + 0.49, s),
+     (h, l, s),
+     (h, l - 0.1, min(s + 0.1, 1.))]
   if bicolors:
     base_colors = generate_random_colors(n * 2,
                                          lightness_value=0.5,
@@ -99,17 +99,17 @@ def generate_random_colormaps(n, seed=1234, bicolors=False):
     if bicolors:
       cA, cB = c
       colors = [
-          colorsys.hls_to_rgb(*i)
-          for i in interpolate_hsl(*cB)[::-1] + interpolate_hsl(*cA)
+        colorsys.hls_to_rgb(*i)
+        for i in interpolate_hsl(*cB)[::-1] + interpolate_hsl(*cA)
       ]
     else:
       hue, saturation, lightness = c
       colors = [colorsys.hls_to_rgb(*i) for i in interpolate_hsl(*c)]
     color_maps.append(
-        LinearSegmentedColormap.from_list(name='Colormap%d' % i,
-                                          colors=colors,
-                                          N=256,
-                                          gamma=1))
+      LinearSegmentedColormap.from_list(name='Colormap%d' % i,
+                                        colors=colors,
+                                        N=256,
+                                        gamma=1))
   return color_maps
 
 
@@ -132,7 +132,7 @@ def to_axis(ax, is_3D=False):
     from mpl_toolkits.mplot3d import Axes3D
     if ax is not None:
       assert isinstance(ax, (Axes3D, Number, tuple, list)), \
-      'Axes3D must be used for 3D plot (z is given)'
+        'Axes3D must be used for 3D plot (z is given)'
       if isinstance(ax, Number):
         ax = plt.gcf().add_subplot(ax, projection='3d')
       elif isinstance(ax, (tuple, list)):
@@ -187,10 +187,9 @@ def resize_images(x, shape):
 
 
 def tile_raster_images(X: np.ndarray,
-                       grids: Optional[Tuple[int, int]] = None,
-                       image_shape: Optional[Tuple[int, int]] = None,
-                       image_spacing: Optional[Tuple[int, int]] = None,
-                       spacing_value=0.) -> np.ndarray:
+                       images_per_row: Optional[int] = None,
+                       v_pad: float = 0.01,
+                       h_pad: float = 0.01) -> np.ndarray:
   """This function create tile of images
   X : 3D-gray or 4D-color images
       for color images, the color channel must be the second dimension
@@ -200,14 +199,12 @@ def tile_raster_images(X: np.ndarray,
   X : np.ndarray
       2D-gray images with shape `[batch_dim, height, width]`
       or 3D-color images `[batch_dim, color, height, width]`
-  grids : Optional[Tuple[int, int]], optional
-      number of rows and columns, by default None
-  image_shape : Optional[Tuple[int, int]], optional
-      resized shape of images, by default None
-  image_spacing : Optional[Tuple[int, int]], optional
-      space betwen rows and columns of images, by default None
-  spacing_value : [type], optional
-      value used for spacing, by default 0.
+  images_per_row : int
+      number of images per row
+  v_pad : float
+      fraction of image height for vertical padding
+  h_pad : float
+      fraction of image width for horizontal padding
 
   Returns
   -------
@@ -219,34 +216,34 @@ def tile_raster_images(X: np.ndarray,
   ValueError
       Invalid number of dimension for input image
   """
+  if X.shape[-1] == 1:
+    X = np.squeeze(X, -1)
   ## prepare the images
+  is_255 = np.max(X) > 1
   if X.ndim == 2:
     X = np.expand_dims(X, axis=0)
-  if X.ndim == 3:
-    shape = X.shape[1:]
-  elif X.ndim == 4:
-    shape = X.shape[2:]
+  if X.ndim == 3:  # Greys scale
+    image_shape = X.shape[1:]
+    spacing_value = 255. if is_255 else 1.
+  elif X.ndim == 4:  # RGB
+    image_shape = X.shape[2:]
+    spacing_value = 0.
   else:
     raise ValueError(f'No support for images with shape {X.shape}')
   ## prepare the image shape
-  if image_shape is None:
-    image_shape = shape
-  if image_spacing is None:
-    image_spacing = (2, 2)
+  h, w = image_shape
+  image_spacing = (int(np.ceil(h_pad * h)), int(np.ceil(v_pad * w)))
   ## resize images
-  if shape != image_shape:
-    X = resize_images(X, image_shape)
-  else:
-    X = [np.swapaxes(x.T, 0, 1) for x in X]
+  X = [np.swapaxes(x.T, 0, 1) for x in X]
   ## prepare the grids
-  if grids is None:
-    n = int(np.ceil(np.sqrt(len(X))))
-    grids = (n, n)
+  if images_per_row is None:
+    images_per_row = int(np.ceil(np.sqrt(len(X))))
+  grids = (int(np.ceil(len(X) / images_per_row)), images_per_row)
   ## create spacing
   rows_spacing = np.zeros_like(X[0])[:image_spacing[0], :] + spacing_value
   empty_image = np.vstack((np.zeros_like(X[0]), rows_spacing))
   cols_spacing = np.zeros_like(
-      empty_image)[:, :image_spacing[1]] + spacing_value
+    empty_image)[:, :image_spacing[1]] + spacing_value
   # ====== Append columns ====== #
   rows = []
   nrows, ncols = grids

@@ -266,7 +266,7 @@ class dSprites0(dSprites):
 
   @property
   def labels(self):
-    return ['square', 'ellipse', 'heart']
+    return np.array(['square', 'ellipse', 'heart'])
 
   def create_dataset(self, *args, **kwargs) -> tf.data.Dataset:
     ds = super(dSprites0, self).create_dataset(*args, **kwargs)
@@ -283,7 +283,7 @@ class Shapes3D0(Shapes3D):
 
   @property
   def labels(self):
-    return ['cube', 'cylinder', 'sphere', 'round']
+    return np.array(['cube', 'cylinder', 'sphere', 'round'])
 
   def create_dataset(self, *args, **kwargs) -> tf.data.Dataset:
     ds = super(Shapes3D0, self).create_dataset(*args, **kwargs)

@@ -269,13 +269,13 @@ def permute_dims(z):
                       perm=tf.concat([tf.range(1, tf.rank(z)), (0,)], axis=0))
 
 
-def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
-                  feature_indices: Optional[Sequence[int]] = None,
-                  min_val: Union[float, np.ndarray] = -2.0,
-                  max_val: Union[float, np.ndarray] = 2.0,
-                  n_traverse_points: int = 11,
-                  mode: Literal['linear', 'quantile', 'gaussian'] = 'linear'
-                  ) -> np.ndarray:
+def traverse_dims(
+    x: Union[np.ndarray, tf.Tensor, Distribution],
+    feature_indices: Optional[Sequence[int]] = None,
+    min_val: Union[float, np.ndarray] = -2.0,
+    max_val: Union[float, np.ndarray] = 2.0,
+    n_traverse_points: int = 11,
+    mode: Literal['linear', 'quantile', 'gaussian'] = 'linear') -> np.ndarray:
   """Traversing a dimension of a matrix between given range
 
   Parameters
@@ -292,7 +292,8 @@ def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
   n_traverse_points : int, optional
       number of points in the traverse, must be odd number, by default 11
   mode : {'linear', 'quantile', 'gaussian'}, optional
-      'linear' mode take linear interpolation between the `min_val` and `max_val`.
+      'linear' mode take linear interpolation between the `min_val` and
+      `max_val`.
       'quantile' mode return `num` quantiles based on min and max values inferred
       from the data. 'gaussian' mode takes `num` Gaussian quantiles,
       by default 'linear'
@@ -393,5 +394,6 @@ def traverse_dims(x: Union[np.ndarray, tf.Tensor, Distribution],
   for i in range(x.shape[0]):
     s = i * len(x_range)
     e = (i + 1) * len(x_range)
-    X[s:e, feature_indices] = x_range
+    # note, this should be added not simple assignment
+    X[s:e, feature_indices] += x_range.astype(X.dtype)
   return X

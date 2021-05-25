@@ -1,5 +1,6 @@
 import contextlib
 import random
+import warnings
 from collections import OrderedDict, defaultdict
 from typing import Dict, List, Optional, Tuple, Union, Sequence, Callable, Any, \
   Iterator, Text
@@ -908,9 +909,9 @@ class DisentanglementGym(vs.Visualizer):
     org = _prepare_images(self.x_true[ids])
     rec = _prepare_images(self.px_z[0].mean().numpy()[ids], normalize=True)
     fig = plt.figure(figsize=(12, 7), dpi=self.dpi)
-    vs.plot_images(org, grids=(n_rows, n_rows), ax=(1, 2, 1),
+    vs.plot_images(org, images_per_row=n_rows, ax=(1, 2, 1),
                    title=f'{title} Original')
-    vs.plot_images(rec, grids=(n_rows, n_rows), ax=(1, 2, 2),
+    vs.plot_images(rec, images_per_row=n_rows, ax=(1, 2, 2),
                    title=f'{title} Reconstructed '
                          f'(llk:{self.log_likelihood()[0]:.2f})')
     plt.tight_layout()
@@ -1171,21 +1172,35 @@ class DisentanglementGym(vs.Visualizer):
   def plot_latents_traverse(
       self,
       factors: FactorFilter = None,
-      n_traverse_points: int = 31,
-      n_top_latents: int = 10,
+      n_traverse_points: int = 41,
+      n_top_latents: int = 15,
       min_val: Optional[float] = -3,
       max_val: Optional[float] = 3,
-      mode: Literal['linear', 'quantile', 'gaussian'] = 'linear',
+      value_type: Literal['fixed', 'post', 'prior', 'both'] = 'both',
       seed: int = 1,
       title: str = '') -> plt.Figure:
     self._assert_sampled()
-    if min_val is None or max_val is None:
-      # should be max here
-      stddev = np.max(self.qz_x[0].stddev(), 0)
-      if max_val is None:
-        max_val = 3 * stddev
-      if min_val is None:
-        min_val = -3 * stddev
+
+    def summary(arr):
+      return np.min(arr, 0), np.mean(arr, 0), np.max(arr, 0)
+
+    # min, mean, max
+    q_std = summary(self.qz_x[0].stddev())
+    p_std = summary(self.pz[0].stddev())
+
+    if value_type == 'post':
+      std = q_std[2]
+    elif value_type == 'prior':
+      std = p_std[2]
+    elif value_type == 'both':
+      std = np.maximum(q_std[2], p_std[2])
+    elif value_type == 'fixed':
+      std = np.ones_like(q_std[0])
+    else:
+      raise ValueError(value_type)
+    min_val = min_val * std
+    max_val = max_val * std
+    # === 0. right value types
     n_top_latents = min(self.latents_dim, n_top_latents)
     factors, idx = self.groundtruth.sample_factors(
       factor_filter=factors,
@@ -1199,18 +1214,18 @@ class DisentanglementGym(vs.Visualizer):
       max_val=max_val,
       n_best_latents=n_top_latents,
       n_traverse_points=n_traverse_points,
-      mode=mode)
+      mode='linear')
     images = as_tuple(images)[0]
     images = _prepare_images(images.mean().numpy(), normalize=True)
     ## plotting
     fig = plt.figure(figsize=(1.5 * n_traverse_points, 1.5 * n_top_latents),
                      dpi=self.dpi)
-    vs.plot_images(images, grids=(n_top_latents, n_traverse_points),
-                   ax=plt.gca())
+    vs.plot_images(images, images_per_row=n_traverse_points, ax=plt.gca())
     plt.tight_layout()
-    plt.title(f'{title} Mode={mode} Factors={factors} Latents={top_latents}',
+    plt.title(f'{title} Mode={value_type} Factors={factors} '
+              f'Latents={top_latents}',
               fontsize=12)
-    self.add_figure(f'traverse_{mode}{title}', fig)
+    self.add_figure(f'traverse_{value_type}{title}', fig)
     return fig
 
   def plot_latents_sampling(self,
@@ -1221,7 +1236,7 @@ class DisentanglementGym(vs.Visualizer):
     images = as_tuple(images)[0]
     images = _prepare_images(images.mean().numpy(), normalize=True)
     fig = plt.figure(figsize=(5, 5), dpi=self.dpi)
-    vs.plot_images(images, grids=(n_rows, n_rows), title='Sampled')
+    vs.plot_images(images, images_per_row=n_rows, title='Sampled')
     if len(title) > 0:
       plt.suptitle(f"{title}")
       plt.tight_layout(rect=[0.0, 0.03, 1.0, 0.97])
@@ -1234,7 +1249,7 @@ class DisentanglementGym(vs.Visualizer):
       method: CorrelationMethod = 'spearman',
       n_top_latents: Optional[int] = None,
       sorting: Literal['match', 'stddev', 'total'] = 'match',
-      title: str = '') -> plt.Figure:
+      title: str = '') -> Optional[plt.Figure]:
     """Plot correlation matrix between latents and factors"""
     if n_top_latents is None:
       n_top_latents = self.factors_dim
@@ -1249,6 +1264,9 @@ class DisentanglementGym(vs.Visualizer):
     mat = (mat - vmin) / (vmax - vmin)
     # [n_factors, n_latents]
     mat = mat.T
+    if np.any(np.isnan(mat)):
+      warnings.warn('NaNs correlation matrix, skip plot_correlation')
+      return None
     # sorting top latents
     if sorting == 'match':
       latent_ids = diagonal_linear_assignment(mat)[:n_top_latents]

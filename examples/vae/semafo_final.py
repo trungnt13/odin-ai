@@ -62,7 +62,9 @@ DS_TO_LABELS = dict(
   cifar10=['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog',
            'frog', 'horse', 'ship', 'truck'],
   dsprites=['square', 'ellipse', 'heart'],
-  shapes3d=['cube', 'cylinder', 'sphere', 'round']
+  dsprites0=['square', 'ellipse', 'heart'],
+  shapes3d=['cube', 'cylinder', 'sphere', 'round'],
+  shapes3d0=['cube', 'cylinder', 'sphere', 'round'],
 )
 
 
@@ -93,44 +95,6 @@ def to_elbo(semafo, llk, kl):
   elbo = semafo.elbo(llk, kl)
   return tf.reduce_mean(-elbo), \
          {k: tf.reduce_mean(v) for k, v in dict(**llk, **kl).items()}
-
-
-def plot_images(images: Union[np.ndarray, tf.Tensor, Distribution],
-                n_row: int,
-                n_col: int,
-                title: Optional[str] = None,
-                dpi: int = 200) -> plt.Figure:
-  if isinstance(images, Distribution):
-    images = images.mean()
-  images = prepare_images(images, normalize=True)
-  from PIL import Image
-  all_images = defaultdict(list)
-  for i, img in enumerate(images):
-    all_images[int(i / n_col)].append(Image.fromarray(img))
-  # concat horizontally
-  for i, imgs in list(all_images.items()):
-    imgs: List[Image]
-    n = len(imgs)
-    w, h = imgs[0].size
-    pad = int(np.ceil(0.01 * w))
-    new_img = Image.new(imgs[0].mode, (w * n + pad * (n - 1), h), color=1.)
-    for j, x in enumerate(imgs):
-      new_img.paste(x, ((w + pad) * j, 0))
-    all_images[i] = new_img
-  # show images
-  fig = plt.figure(figsize=(n_col * 1.2, n_row), dpi=dpi)
-  for i, imgs in all_images.items():
-    plt.subplot(n_row, 1, i + 1)
-    plt.imshow(np.asarray(imgs),
-               cmap='Greys_r' if images[0].ndim == 2 else None)
-    plt.axis('off')
-    plt.grid(False)
-  if title is not None:
-    plt.suptitle(title, fontsize=20)
-    plt.tight_layout(pad=1, h_pad=0.3, w_pad=0., rect=[0., 0.01, 1.0, 0.99])
-  else:
-    plt.tight_layout(pad=1, h_pad=0.3, w_pad=0.)
-  return fig
 
 
 # ===========================================================================
@@ -351,13 +315,13 @@ DefaultGamma = dict(
 )
 
 DefaultGammaPy = dict(
-  shapes3d=20.,
-  dsprites=20.,
-  shapes3d0=20.,
-  dsprites0=20.,
-  cifar10=20.,
-  fashionmnist=20.,
-  mnist=20.,
+  shapes3d=10.,
+  dsprites=10.,
+  shapes3d0=10.,
+  dsprites0=10.,
+  cifar10=10.,
+  fashionmnist=10.,
+  mnist=10.,
 )
 
 DefaultSemi = dict(
@@ -365,7 +329,7 @@ DefaultSemi = dict(
   dsprites=(0.1, 0.1),
   shapes3d0=(0.1, 0.1),
   dsprites0=(0.1, 0.1),
-  cifar10=(1000, 0.1),
+  cifar10=(4000, 0.1),
   fashionmnist=(0.01, 0.1),
   mnist=(0.004, 0.1),
 )
@@ -400,6 +364,7 @@ class SemafoVAE(VariationalAutoencoder):
                reparams: bool = True,
                temperature: float = 0.5,
                nonlinear_qy_z: bool = False,
+               deep_prior: bool = False,
                n_iw_y: int = 1,
                **kwargs):
     if not isinstance(self, HierarchicalVAE):
@@ -429,6 +394,7 @@ class SemafoVAE(VariationalAutoencoder):
     self.beta_sup = float(beta_sup)
     self.reparams = bool(reparams)
     self.nonlinear_qy_z = bool(nonlinear_qy_z)
+    self.deep_prior = deep_prior
     # === 1. fixed utility layers
     self.flatten = Flatten()
     self.concat = Concatenate(-1)
@@ -449,10 +415,14 @@ class SemafoVAE(VariationalAutoencoder):
     self.observation2 = labels
     self.observation2(self.decoder2.output)
     # === 4. p(z|u)
-    self.latents_prior = SequentialNetwork([
-      Dense(256, activation='relu'),
-      MVNDiagLatents(zdim)
-    ], name=f'pZ0_given_U')
+    if deep_prior:
+      layers = [Dense(256, activation='relu'),
+                Dense(256, activation='relu'),
+                Dense(256, activation='relu'),
+                MVNDiagLatents(zdim)]
+    else:
+      layers = [Dense(256, activation='relu'), MVNDiagLatents(zdim)]
+    self.latents_prior = SequentialNetwork(layers, name=f'pZ0_given_U')
     self.latents_prior.build([None] + self.latents2.event_shape)
     # === 5. others
     self.semafo_params: List[tf.Variable] = []
@@ -510,13 +480,18 @@ class SemafoVAE(VariationalAutoencoder):
                    return_labels=False,
                    **kwargs):
     dsname = config.ds.lower()
+    is_2d = 'dsprites' in dsname
     # === 0. mnist
     if dsname in ('mnist', 'fashionmnist', 'cifar10'):
       y = np.diag([1.] * 10)
       y = np.tile(y, [int(np.ceil(n / 10)), 1])[:n]
-    # === 1. shapes
+    # === 1. shapes with only shapes label
+    elif dsname in ('dsprites0', 'shapes3d0'):
+      n_classes = 3 if is_2d else 4
+      y = np.diag([1.] * n_classes)
+      y = np.tile(y, [int(np.ceil(n / n_classes)), 1])[:n]
+    # === 2. shapes
     elif dsname in ('dsprites', 'shapes3d'):
-      is_2d = dsname == 'dsprites'
       if is_2d:
         # orientation, scale, shape, x, y
         combinations = [40, 6, 3, 32, 32]
@@ -540,10 +515,10 @@ class SemafoVAE(VariationalAutoencoder):
         cls_to_labels[cls] = y
       y = np.concatenate([x[:per_class] for x in cls_to_labels.values()], 0)
       y = y[:n].astype(np.float32)
-    # === 2. no idea
+    # === 3. no idea
     else:
-      raise NotImplementedError
-    # === 3. sample the prior p(z|u)
+      raise NotImplementedError(f'No sample_prior support for dataset {dsname}')
+    # === 4. sample the prior p(z|u)
     qu_y = self.encode_aux(y, training=False)
     u = qu_y.sample(seed=seed)
     pz_u = self.latents_prior(u, training=False)
@@ -833,8 +808,13 @@ class SemafoHVAE(SemafoVAE):
         shape = z_layers.prior.compute_output_shape(shape)
         units = int(np.prod(shape[1:]))
         # somehow it requires string key here
-        pz_given_u[str(idx)] = Sequential([
-          Dense(256, activation='relu'),
+        if self.deep_prior:
+          layers = [Dense(256, activation='relu'),
+                    Dense(256, activation='relu'),
+                    Dense(256, activation='relu')]
+        else:
+          layers = [Dense(256, activation='relu')]
+        pz_given_u[str(idx)] = Sequential(layers + [
           Dense(units),
           Reshape(shape[1:])
         ], name=f'pZ{idx}_given_U')
@@ -1006,6 +986,16 @@ class HNoReparamsH40(SemafoVAE):
                                          **kwargs)
 
 
+class DeepPrior(SemafoVAE):
+  def __init__(self, **kwargs):
+    super(DeepPrior, self).__init__(deep_prior=True, **kwargs)
+
+
+class DeepPriorH(SemafoHVAE):
+  def __init__(self, **kwargs):
+    super(DeepPriorH, self).__init__(deep_prior=True, **kwargs)
+
+
 # ===========================================================================
 # Training
 # ===========================================================================
@@ -1124,9 +1114,9 @@ def semafo_prior_traverse(model: SemafoVAE, dsname: str, path: str):
   n_classes = len(classes)
   if dsname in ('mnist', 'fashionmnist', 'cifar10'):
     pz, labels = model.sample_prior(n=10, **kw)
-  elif dsname == 'dsprites':
+  elif dsname in ('dsprites', 'dsprites0'):
     pz, labels = model.sample_prior(n=3, **kw)
-  elif dsname == 'shapes3d':
+  elif dsname in ('shapes3d', 'shapes3d0'):
     pz, labels = model.sample_prior(n=4, **kw)
   else:
     raise NotImplementedError(dsname)
@@ -1148,8 +1138,9 @@ def semafo_prior_traverse(model: SemafoVAE, dsname: str, path: str):
                       max_val=max_std * s,
                       n_traverse_points=n_points)
     img, _ = model.decode(m)
-    plot_images(img, n_row=n_latents, n_col=n_points,
-                title=f'Class={classes[i]}')
+    img = prepare_images(img.mean(), True)
+    plt.figure(figsize=(1.5 * n_points, 1.5 * n_latents), dpi=200)
+    vs.plot_images(img, images_per_row=n_points, title=f'Class={classes[i]}')
   vs.plot_save(os.path.join(path, 'prior_traverse.pdf'), verbose=True)
   # special case for hierarchical model
   if model.is_hierarchical():
@@ -1171,8 +1162,9 @@ def semafo_prior_traverse(model: SemafoVAE, dsname: str, path: str):
       z0 = tf.tile(z0, [z1.shape[0], 1])
       z1 = np.reshape(z1, [-1] + shape)
       img, _ = model.decode([z0, z1])
-      plot_images(img, n_row=n_latents, n_col=n_points,
-                  title=f'Class={classes[i]}')
+      img = prepare_images(img.mean(), True)
+      plt.figure(figsize=(1.5 * n_points, 1.5 * n_latents), dpi=200)
+      vs.plot_images(img, images_per_row=n_points, title=f'Class={classes[i]}')
     vs.plot_save(os.path.join(path, 'prior1_traverse.pdf'), verbose=True)
   # important, otherwise, all evaluation is wrong
   if isinstance(model, SemafoHVAE):
@@ -1203,6 +1195,8 @@ def main(args: Arguments):
     posterior=partial(FactorDistribution, reparams=False, dsname=args.ds),
     units=event_dim,
     name=f'{args.ds}_py')
+  if not model.is_semi_supervised():
+    del networks['labels']
   # create and build the model
   model: Union[VariationalAutoencoder, SemafoVAE] = model(**networks)
   model.build((None,) + ds.shape)
@@ -1229,19 +1223,19 @@ def main(args: Arguments):
       os.makedirs(path)
     ### load model weights
     model.load_weights(get_model_path(args), raise_notfound=True, verbose=True)
-
-    semafo_prior_traverse(model, args.ds, path)
+    print('Trained steps:', model.step.numpy())
     ### run the disentanglement gym
     gym = DisentanglementGym(model=model,
                              dataset=args.ds,
                              batch_size=32,
                              dpi=args.dpi,
                              seed=args.seed)
-    with gym.run_model(n_samples=1000 if args.debug else 20000,
+    with gym.run_model(n_samples=800 if args.debug else 20000,
                        device='cpu',
                        partition='test'):
       gym.write_report(get_scores_path(args), verbose=True)
       ## special case for SemafoVAE
+      semafo_prior_traverse(model, args.ds, path)
       semafo_latents(ds, model, gym, path, args)
       ## latents t-SNE
       gym.plot_latents_tsne()
@@ -1260,7 +1254,7 @@ def main(args: Arguments):
         model.set_sampling(False)
         gym.plot_latents_traverse(title='_post')
       else:
-        gym.plot_latents_traverse()
+        gym.plot_latents_traverse(min_val=-3, max_val=3)
       ## inference
       for i in range(gym.n_latent_vars):
         gym.plot_latents_stats(latent_idx=i)
