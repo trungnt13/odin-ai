@@ -48,7 +48,9 @@ def make_gaussian_out(p: tf.Tensor,
 class MultiCapacity(BetaVAE):
 
   def __init__(self, args: Arguments, **kwargs):
-    networks = get_networks(args.ds, zdim=args.zdim)
+    networks = get_networks(args.ds, zdim=args.zdim,
+                            is_hierarchical=False,
+                            is_semi_supervised=False)
     zdim = args.zdim
     prior = Normal(loc=tf.zeros([zdim]), scale=tf.ones([zdim]))
     latents = [
@@ -85,7 +87,8 @@ class MultiCapacity(BetaVAE):
 class Freebits(BetaVAE):
 
   def __init__(self, args: Arguments, free_bits=None, beta=1, **kwargs):
-    networks = get_networks(args.ds, zdim=args.zdim)
+    networks = get_networks(args.ds, zdim=args.zdim,
+                            is_hierarchical=False, is_semi_supervised=False)
     zdim = args.zdim
     prior = Normal(loc=tf.zeros([zdim]), scale=tf.ones([zdim]))
     networks['latents'] = DistributionDense(units=zdim * 2,
@@ -167,7 +170,8 @@ class EquilibriumVAE(BetaVAE):
 class GammaVAE(AnnealingVAE):
 
   def __init__(self, args: Arguments, **kwargs):
-    networks = get_networks(args.ds, zdim=args.zdim)
+    networks = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                            is_semi_supervised=False)
     zdim = args.zdim
     prior = Gamma(rate=tf.fill([zdim], 0.3),
                   concentration=tf.fill([zdim], 0.3))
@@ -186,7 +190,8 @@ class GammaVAE(AnnealingVAE):
 class Normal2VAE(Freebits):
 
   def __init__(self, args: Arguments, free_bits=None, beta=1, **kwargs):
-    networks = get_networks(args.ds, zdim=args.zdim)
+    networks = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                            is_semi_supervised=False)
     zdim = args.zdim
     prior = Normal(loc=tf.zeros([zdim]), scale=tf.fill([zdim], 2.))
     networks['latents'] = DistributionDense(units=zdim * 2,
@@ -199,7 +204,8 @@ class Normal2VAE(Freebits):
 class GaussianOut(BetaVAE):
 
   def __init__(self, args: Arguments, free_bits=None, beta=1., **kwargs):
-    networks = get_networks(args.ds, zdim=args.zdim)
+    networks = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                            is_semi_supervised=False)
     obs: DistributionDense = networks['observation']
     event_shape = obs.event_shape
     obs_new = DistributionDense(
@@ -258,27 +264,36 @@ class IWGammaVAE(VariationalAutoencoder):
 # ===========================================================================
 # === 1. VAE with free-bits
 def model_rvae(args: Arguments):
-  return VariationalAutoencoder(**get_networks(args.ds, zdim=args.zdim),
-                                reverse=True)
+  return VariationalAutoencoder(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    reverse=True)
 
 
 def model_vae1(args: Arguments):
-  return VariationalAutoencoder(**get_networks(args.ds, zdim=args.zdim),
-                                free_bits=0.5)
+  return VariationalAutoencoder(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    free_bits=0.5)
 
 
 def model_vae2(args: Arguments):
-  return VariationalAutoencoder(**get_networks(args.ds, zdim=args.zdim),
-                                free_bits=1.0)
+  return VariationalAutoencoder(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    free_bits=1.0)
 
 
 def model_vae3(args: Arguments):
-  return VariationalAutoencoder(**get_networks(args.ds, zdim=args.zdim),
-                                free_bits=1.5)
+  return VariationalAutoencoder(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    free_bits=1.5)
 
 
 def model_fullcov(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   zdims = int(np.prod(nets['latents'].event_shape))
   nets['latents'] = RVconf(
     event_shape=zdims,
@@ -290,7 +305,8 @@ def model_fullcov(args: Arguments):
 
 
 def model_gmmprior(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   latent_size = np.prod(nets['latents'].event_shape)
   n_components = 100
   loc = tf.compat.v1.get_variable(name="loc", shape=[n_components, latent_size])
@@ -308,7 +324,8 @@ def model_gmmprior(args: Arguments):
 
 
 def model_fullcovgmm(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   latent_size = int(np.prod(nets['latents'].event_shape))
   n_components = 100
   loc = tf.compat.v1.get_variable(name="loc", shape=[n_components, latent_size])
@@ -334,69 +351,81 @@ def model_fullcovgmm(args: Arguments):
 
 # beta=10 C=[0.01, 25]
 def model_bcvae1(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaCapacityVAE(**nets, c_min=0.01, c_max=25, gamma=10, n_steps=60000)
 
 
 # beta=5 C=[0.01, 25]
 def model_bcvae2(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaCapacityVAE(**nets, c_min=0.01, c_max=25, gamma=5, n_steps=60000)
 
 
 # beta = 0.05
 def model_bvae1(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaVAE(**nets, beta=0.05)
 
 
 # beta = 0.1
 def model_bvae2(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaVAE(**nets, beta=0.1)
 
 
 # beta = 0.5
 def model_bvae3(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaVAE(**nets, beta=0.5)
 
 
 # beta = 2
 def model_bvae4(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaVAE(**nets, beta=2)
 
 
 # gamma=2; beta = 1.0
 def model_gvae1(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaGammaVAE(**nets, beta=1.0, gamma=2.0)
 
 
 # gamma=5; beta = 1.0
 def model_gvae2(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaGammaVAE(**nets, beta=1.0, gamma=5.0)
 
 
 # gamma=2.0; beta=2.0
 def model_gvae3(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaGammaVAE(**nets, beta=2.0, gamma=2.0)
 
 
 # gamma=5.0; beta=2.0
 def model_gvae4(args: Arguments):
-  nets = get_networks(args.ds, zdim=args.zdim)
+  nets = get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                      is_semi_supervised=False)
   return BetaGammaVAE(**nets, beta=2.0, gamma=5.0)
 
 
 # === 2. equilibrium VAE
 # beta=1 C=0.5
 def model_equilibriumvae1(args: Arguments):
-  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
-                        C=0.5)
+  return EquilibriumVAE(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    C=0.5)
 
 
 # beta=1 C=1
@@ -407,50 +436,66 @@ def model_equilibriumvae2(args: Arguments):
 
 # beta=1 C=1.5
 def model_equilibriumvae3(args: Arguments):
-  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
-                        C=1.5)
+  return EquilibriumVAE(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    C=1.5)
 
 
 # beta=1 C=0.5, dropout=0.3
 def model_equilibriumvae4(args: Arguments):
-  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
-                        C=0.5, dropout=0.3)
+  return EquilibriumVAE(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    C=0.5, dropout=0.3)
 
 
 # beta=5 C=0.5, dropout=0.
 def model_equilibriumvae5(args: Arguments):
-  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
-                        C=0.5, dropout=0., beta=5)
+  return EquilibriumVAE(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    C=0.5, dropout=0., beta=5)
 
 
 # beta=1 R=-0.1 C=0., dropout=0.
 def model_equilibriumvae6(args: Arguments):
-  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
-                        R=-0.1, C=0., dropout=0., beta=1.)
+  return EquilibriumVAE(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    R=-0.1, C=0., dropout=0., beta=1.)
 
 
 # beta=1 R=-0.1 C=0.5, dropout=0.
 def model_equilibriumvae7(args: Arguments):
-  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
-                        R=-0.1, C=0.5, dropout=0., beta=1.)
+  return EquilibriumVAE(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    R=-0.1, C=0.5, dropout=0., beta=1.)
 
 
 # beta=1 C=1.0, random_capacity=True
 def model_equilibriumvae8(args: Arguments):
-  return EquilibriumVAE(**get_networks(args.ds, zdim=args.zdim),
-                        R=0.0, C=1.0, random_capacity=True, dropout=0.0,
-                        beta=1.)
+  return EquilibriumVAE(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    R=0.0, C=1.0, random_capacity=True, dropout=0.0,
+    beta=1.)
 
 
 # === 4. IWGamma
 # gamma=1.0, iw=10
 def model_iwgamma1(args: Arguments):
-  return IWGammaVAE(gamma=1.0, n_iw=10, **get_networks(args.ds))
+  return IWGammaVAE(gamma=1.0, n_iw=10, **get_networks(args.ds, zdim=args.zdim,
+                                                       is_hierarchical=False,
+                                                       is_semi_supervised=False))
 
 
 # gamma=2.0, iw=10
 def model_iwgamma2(args: Arguments):
-  return IWGammaVAE(gamma=2.0, n_iw=10, **get_networks(args.ds))
+  return IWGammaVAE(gamma=2.0, n_iw=10, **get_networks(args.ds, zdim=args.zdim,
+                                                       is_hierarchical=False,
+                                                       is_semi_supervised=False))
 
 
 # === 5. others
@@ -487,12 +532,16 @@ def model_gaussianout(args: Arguments):
 
 # n_components = 10
 def model_gmmvae1(args: Arguments):
-  return GMMVAE(n_components=10, **get_networks(args.ds, zdim=args.zdim))
+  return GMMVAE(n_components=10,
+                **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                               is_semi_supervised=False))
 
 
 # n_components = 50
 def model_gmmvae2(args: Arguments):
-  return GMMVAE(n_components=50, **get_networks(args.ds, zdim=args.zdim))
+  return GMMVAE(n_components=50,
+                **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                               is_semi_supervised=False))
 
 
 # n_components = 10, prior=N(0, 1)
@@ -500,7 +549,8 @@ def model_gmmvae3(args: Arguments):
   zdim = args.zdim
   prior = Independent(Normal(loc=tf.zeros([zdim]), scale=tf.ones([zdim])), 1)
   return GMMVAE(n_components=10, prior=prior, analytic=False,
-                **get_networks(args.ds, zdim=args.zdim))
+                **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                               is_semi_supervised=False))
 
 
 # ===========================================================================

@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 import tensorflow as tf
@@ -239,23 +239,12 @@ class dSpritesSmall(dSprites):
 # ===========================================================================
 # Datasets with only the shapes labels
 # ===========================================================================
-def only_shape(*args):
-  if len(args) == 1:
-    return args[0]
-  elif len(args) == 2:
-    x, y = args
-    if y.shape[-1] == 113:
-      y = y[:, 46:49]
-    else:
-      y = y[:, 23:27]
-    return x, y
+def only_shape(x: tf.Tensor, y: tf.Tensor) -> Tuple[tf.Tensor, tf.Tensor]:
+  if y.shape[-1] == 113:
+    y = y[46:49]
   else:
-    x_u, x_s, y_s = args
-    if y_s.shape[-1] == 113:
-      y_s = y_s[:, 46:49]
-    else:
-      y_s = y_s[:, 23:27]
-    return x_u, x_s, y_s
+    y = y[23:27]
+  return x, y
 
 
 class dSprites0(dSprites):
@@ -263,16 +252,14 @@ class dSprites0(dSprites):
   def __init__(self, all_labels: bool = False, seed: int = 1):
     super(dSprites0, self).__init__(continuous=False, onehot=True, seed=seed)
     self.all_labels = bool(all_labels)
+    if not all_labels:
+      self.train = self.train.map(only_shape)
+      self.valid = self.valid.map(only_shape)
+      self.test = self.test.map(only_shape)
 
   @property
   def labels(self):
     return np.array(['square', 'ellipse', 'heart'])
-
-  def create_dataset(self, *args, **kwargs) -> tf.data.Dataset:
-    ds = super(dSprites0, self).create_dataset(*args, **kwargs)
-    if not self.all_labels:
-      ds = ds.map(only_shape)
-    return ds
 
 
 class Shapes3D0(Shapes3D):
@@ -280,13 +267,11 @@ class Shapes3D0(Shapes3D):
   def __init__(self, all_labels: bool = False, seed: int = 1):
     super(Shapes3D0, self).__init__(continuous=False, onehot=True, seed=seed)
     self.all_labels = bool(all_labels)
+    if not all_labels:
+      self.train = self.train.map(only_shape)
+      self.valid = self.valid.map(only_shape)
+      self.test = self.test.map(only_shape)
 
   @property
   def labels(self):
     return np.array(['cube', 'cylinder', 'sphere', 'round'])
-
-  def create_dataset(self, *args, **kwargs) -> tf.data.Dataset:
-    ds = super(Shapes3D0, self).create_dataset(*args, **kwargs)
-    if not self.all_labels:
-      ds = ds.map(only_shape)
-    return ds

@@ -2,6 +2,7 @@ import dataclasses
 import itertools
 import os
 import shutil
+import warnings
 from collections import defaultdict
 from functools import partial
 from typing import Optional, Union, Sequence, List, Any, Dict
@@ -206,6 +207,11 @@ class FactorDistribution(Distribution):
     return tf.concat([tf.expand_dims(tf.argmax(d.probs_parameter(), -1), -1)
                       for d in self._distributions], axis=-1)
 
+  def probs_parameter(self, name=None):
+    """Probs vec computed from non-`None` input arg (`probs` or `logits`)."""
+    return tf.concat([d.probs_parameter() for d in self._distributions],
+                     axis=-1)
+
 
 def reparameterize(dsname: str,
                    temperature: float = 0.5,
@@ -327,8 +333,8 @@ DefaultGammaPy = dict(
 DefaultSemi = dict(
   shapes3d=(0.1, 0.1),
   dsprites=(0.1, 0.1),
-  shapes3d0=(0.1, 0.1),
-  dsprites0=(0.1, 0.1),
+  shapes3d0=(0.01, 0.1),
+  dsprites0=(0.01, 0.1),
   cifar10=(4000, 0.1),
   fashionmnist=(0.01, 0.1),
   mnist=(0.004, 0.1),
@@ -1106,7 +1112,9 @@ def semafo_latents(ds: ImageDataset,
     vs.plot_save(os.path.join(path, f'qz_pz_y_{idx}.pdf'), verbose=True)
 
 
-def semafo_prior_traverse(model: SemafoVAE, dsname: str, path: str):
+def semafo_prior_traverse(model: SemafoVAE,
+                          dsname: str,
+                          path: str):
   if not isinstance(model, SemafoVAE):
     return
   kw = dict(return_distribution=True, return_labels=True)
@@ -1188,7 +1196,8 @@ def main(args: Arguments):
   # === 2. build the model
   networks = get_networks(args.ds,
                           zdim=args.zdim,
-                          is_semi_supervised=is_semi)
+                          is_semi_supervised=model.is_semi_supervised(),
+                          is_hierarchical=model.is_hierarchical())
   event_dim = FactorDistribution.event_dim(args.ds)
   networks['labels'] = DistributionDense(
     event_shape=(event_dim,),
@@ -1225,15 +1234,21 @@ def main(args: Arguments):
     model.load_weights(get_model_path(args), raise_notfound=True, verbose=True)
     print('Trained steps:', model.step.numpy())
     ### run the disentanglement gym
+    score_path = get_scores_path(args)
     gym = DisentanglementGym(model=model,
                              dataset=args.ds,
                              batch_size=32,
                              dpi=args.dpi,
                              seed=args.seed)
-    with gym.run_model(n_samples=800 if args.debug else 20000,
+    with gym.run_model(n_samples=800 if args.debug else 30000,
                        device='cpu',
                        partition='test'):
-      gym.write_report(get_scores_path(args), verbose=True)
+      gym.write_report(score_path,
+                       scores=(gym.accuracy_score, gym.log_likelihood,
+                               gym.kl_divergence, gym.active_units,
+                               gym.mig_score, gym.dci_score, gym.sap_score,
+                               gym.clustering_score),
+                       verbose=True)
       ## special case for SemafoVAE
       semafo_prior_traverse(model, args.ds, path)
       semafo_latents(ds, model, gym, path, args)
@@ -1244,24 +1259,36 @@ def main(args: Arguments):
           gym.plot_latents_tsne(convert_fn=partial(_mean, idx=i),
                                 title=f'_z{i}')
       ## prior sampling
-      if model.is_hierarchical():
-        model.set_sampling(True)
-      gym.plot_latents_sampling()
+      try:
+        if model.is_hierarchical():
+          model.set_sampling(True)
+        gym.plot_latents_sampling()
+      except Exception as e:
+        warnings.warn(f'False plot_latents_sampling: {args}')
+        print(e)
       ## traverse
-      if model.is_hierarchical():
-        model.set_sampling(True)
-        gym.plot_latents_traverse(title='_prior')
-        model.set_sampling(False)
-        gym.plot_latents_traverse(title='_post')
-      else:
-        gym.plot_latents_traverse(min_val=-3, max_val=3)
+      try:
+        if model.is_hierarchical():
+          model.set_sampling(True)
+          gym.plot_latents_traverse(title='_prior')
+          model.set_sampling(False)
+          gym.plot_latents_traverse(title='_post')
+        else:
+          gym.plot_latents_traverse(min_val=-3, max_val=3)
+      except Exception as e:
+        warnings.warn(f'False plot_latents_traverse: {args}')
+        print(e)
       ## inference
       for i in range(gym.n_latent_vars):
         gym.plot_latents_stats(latent_idx=i)
-        gym.plot_latents_factors(
-          convert_fn=partial(_mean, idx=i), title=f'_z{i}')
-        gym.plot_correlation(
-          convert_fn=partial(_mean, idx=i), title=f'_z{i}')
+        try:
+          gym.plot_latents_factors(
+            convert_fn=partial(_mean, idx=i), title=f'_z{i}')
+          gym.plot_correlation(
+            convert_fn=partial(_mean, idx=i), title=f'_z{i}')
+        except Exception as e:
+          warnings.warn(f'False plot_latents_factors and correlation: {args}')
+          print(e)
       gym.plot_reconstruction()
     gym.save_figures(path, verbose=True)
 

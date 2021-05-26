@@ -224,12 +224,14 @@ def mnist_networks(
     zdim: Optional[int] = None,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
+    is_hierarchical: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
     **kwargs,
 ) -> Dict[str, Layer]:
   """Network for MNIST dataset image size (28, 28, 1)"""
   from odin.bay.random_variable import RVconf
+  from odin.bay.vi import BiConvLatents
   n_channels = int(kwargs.get('n_channels', 1))
   proj_dim = 196
   input_shape = (28, 28, n_channels)
@@ -255,13 +257,20 @@ def mnist_networks(
     keras.layers.Dense(proj_dim, activation='linear', name='decoder_proj'),
     keras.layers.Reshape((7, 7, proj_dim // 49)),  # 7, 7, 4
     deconv(64, 5, strides=2, name='decoder2'),  # 14, 14, 64
-    conv(64, 5, strides=1, name='decoder3'),  # 14, 14, 64
+    BiConvLatents(conv(64, 5, strides=1, name='decoder3'),  # 14, 14, 64
+                  encoder=encoder.layers[3],
+                  filters=16, kernel_size=14, strides=7,
+                  disable=True,
+                  name='latents2'),
     deconv(32, 5, strides=2, name='decoder4'),  # 28, 28, 32
     conv(32, 5, strides=1, name='decoder5'),  # 28, 28, 32
     conv(n_channels * n_params, 1, strides=1, activation='linear',
          name='decoder6'),
     last_layer
   ]
+  layers = [i.layer if isinstance(i, BiConvLatents) and not is_hierarchical
+            else i
+            for i in layers]
   if skip_generator:
     decoder = SkipSequential(layers=layers, name='SkipDecoder')
   else:
@@ -319,6 +328,7 @@ def cifar_networks(
     zdim: Optional[int] = None,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
+    is_hierarchical: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
     **kwargs,
@@ -371,6 +381,9 @@ def cifar_networks(
          name='decoder5'),
     last_layer
   ]
+  layers = [i.layer if isinstance(i, BiConvLatents) and not is_hierarchical
+            else i
+            for i in layers]
   if skip_generator:
     decoder = SkipSequential(layers=layers, name='SkipDecoder')
   else:
@@ -424,6 +437,7 @@ def dsprites_networks(
     zdim: Optional[int] = None,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
+    is_hierarchical: bool = False,
     centerize_image: bool = True,
     skip_generator: bool = False,
     **kwargs,
@@ -460,12 +474,10 @@ def dsprites_networks(
     BiConvLatents(deconv(64, 4, strides=2, name='decoder1'),
                   encoder=encoder.layers[3],
                   filters=32, kernel_size=8, strides=4,
-                  disable=True, name='latents1'),
+                  disable=True,
+                  name='latents2'),
     deconv(64, 4, strides=2, name='decoder2'),
-    BiConvLatents(deconv(32, 4, strides=2, name='decoder3'),
-                  encoder=encoder.layers[1],
-                  filters=16, kernel_size=8, strides=4,
-                  disable=True, name='latents2'),
+    deconv(32, 4, strides=2, name='decoder3'),
     deconv(32, 4, strides=2, name='decoder4'),
     # NOTE: this last projection layer with linear activation is crucial
     # otherwise the distribution parameterized by this layer won't converge
@@ -476,6 +488,9 @@ def dsprites_networks(
          name='decoder6'),
     last_layer
   ]
+  layers = [i.layer if isinstance(i, BiConvLatents) and not is_hierarchical
+            else i
+            for i in layers]
   if skip_generator:
     decoder = SkipSequential(layers=layers, name='SkipDecoder')
   else:
@@ -523,6 +538,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
                       zdim: Optional[int] = None,
                       activation: Union[Callable, str] = tf.nn.elu,
                       is_semi_supervised: bool = False,
+                      is_hierarchical: bool = False,
                       centerize_image: bool = True,
                       skip_generator: bool = False,
                       small: bool = False,
@@ -534,6 +550,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
                               zdim=zdim,
                               activation=activation,
                               is_semi_supervised=False,
+                              is_hierarchical=is_hierarchical,
                               centerize_image=centerize_image,
                               skip_generator=skip_generator,
                               distribution='bernoulli')
@@ -542,6 +559,7 @@ def shapes3d_networks(qz: str = 'mvndiag',
                                  zdim=zdim,
                                  activation=activation,
                                  is_semi_supervised=False,
+                                 is_hierarchical=is_hierarchical,
                                  centerize_image=centerize_image,
                                  skip_generator=skip_generator,
                                  distribution='bernoulli',
@@ -584,6 +602,7 @@ def halfmoons_networks(qz: str = 'mvndiag',
                        zdim: Optional[int] = None,
                        activation: Union[Callable, str] = tf.nn.elu,
                        is_semi_supervised: bool = False,
+                       is_hierarchical: bool = False,
                        centerize_image: bool = True,
                        skip_generator: bool = False,
                        **kwargs) -> Dict[str, Layer]:
@@ -593,6 +612,7 @@ def halfmoons_networks(qz: str = 'mvndiag',
                                zdim=zdim,
                                activation=activation,
                                is_semi_supervised=False,
+                               is_hierarchical=is_hierarchical,
                                centerize_image=centerize_image,
                                skip_generator=skip_generator,
                                distribution='bernoulli',
@@ -619,6 +639,7 @@ def celeba_networks(qz: str = 'mvndiag',
                     zdim: Optional[int] = None,
                     activation: Union[Callable, str] = tf.nn.elu,
                     is_semi_supervised: bool = False,
+                    is_hierarchical: bool = False,
                     centerize_image: bool = True,
                     skip_generator: bool = False,
                     n_labels: int = 18,
@@ -657,6 +678,10 @@ def celeba_networks(qz: str = 'mvndiag',
          activation='linear',
          name='decoder5'),
   ]
+  from odin.bay import BiConvLatents
+  layers = [i.layer if isinstance(i, BiConvLatents) and not is_hierarchical
+            else i
+            for i in layers]
   if skip_generator:
     decoder = SkipSequential(layers=layers, name='SkipDecoder')
   else:
@@ -686,6 +711,7 @@ def cortex_networks(
     zdim: Optional[int] = 10,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
+    is_hierarchical: bool = False,
     log_norm: bool = True,
     cnn: bool = False,
     units: Sequence[int] = (256, 256, 256),
@@ -768,6 +794,7 @@ def pbmc_networks(
     zdim: Optional[int] = 32,
     activation: Callable[[tf.Tensor], tf.Tensor] = tf.nn.elu,
     is_semi_supervised: bool = False,
+    is_hierarchical: bool = False,
     log_norm: bool = True,
     cnn: bool = True,
     units: Sequence[int] = (512, 512, 512),
@@ -856,9 +883,10 @@ _DSNAME_MAP = dict(
 
 def get_networks(dataset_name: str,
                  *,
+                 is_semi_supervised: bool,
+                 is_hierarchical: bool,
                  qz: str = 'mvndiag',
                  zdim: Optional[int] = None,
-                 is_semi_supervised: bool = False,
                  **kwargs) -> Dict[str, Layer]:
   """ Return dictionary of networks for encoder, decoder, observation, latents
   and labels (in case of semi-supervised learning) """
@@ -874,6 +902,7 @@ def get_networks(dataset_name: str,
         return fn(qz=qz,
                   zdim=zdim,
                   is_semi_supervised=is_semi_supervised,
+                  is_hierarchical=is_hierarchical,
                   **kwargs)
   raise ValueError('Cannot find pre-implemented network for '
                    f'dataset with name="{dataset_name}"')

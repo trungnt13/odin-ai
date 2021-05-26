@@ -73,6 +73,13 @@ class Beta10VAE(BetaVAE):
     super().__init__(beta=10.0, **kwargs)
 
 
+class Gamma10VAE(BetaGammaVAE):
+
+  def __init__(self, **kwargs):
+    kwargs.pop('gamm', None)
+    super().__init__(gamma=10.0, **kwargs)
+
+
 class AnnealingVAE(BetaVAE):
   """ KL-annealing VAE, cyclical annealing could be achieved by setting
   `cyclical=True` when creating `Interpolation`

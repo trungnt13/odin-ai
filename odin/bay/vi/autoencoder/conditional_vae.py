@@ -1,12 +1,13 @@
 from __future__ import absolute_import, division, print_function
 
-from typing import List
+from typing import List, Sequence, Union, Callable, Any
 import warnings
 
 import numpy as np
 import tensorflow as tf
 from tensorflow.python import keras
-from tensorflow.python.keras.layers import BatchNormalization, Dense, Dropout
+from tensorflow.python.keras.layers import BatchNormalization, Dense, Dropout, \
+  Concatenate, Flatten
 from tensorflow_probability.python.distributions import (Distribution, Normal,
                                                          OneHotCategorical)
 from tensorflow_probability.python.layers import IndependentNormal
@@ -16,7 +17,7 @@ from tensorflow_probability.python.internal import prefer_static as ps
 from odin import backend as bk
 from odin.backend import TensorType
 from odin.bay.random_variable import RVconf
-from odin.bay.vi.autoencoder.beta_vae import BetaVAE
+from odin.bay.vi.autoencoder.beta_vae import BetaVAE, BetaGammaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import (LayerCreator,
                                                              _parse_layers)
 from odin.bay.vi.utils import (marginalize_categorical_labels,
@@ -25,9 +26,12 @@ from odin.networks import NetConf
 from odin.networks.conditional_embedding import get_embedding
 
 __all__ = [
+  'M2VAE',
   'ConditionalM2VAE',
-    'reparamsM3VAE',
+  'reparamsM3VAE',
 ]
+
+from odin.utils import as_tuple
 
 
 def _prepare_elbo(self, inputs, training=None, mask=None):
@@ -42,9 +46,9 @@ def _prepare_elbo(self, inputs, training=None, mask=None):
   # marginalize the unsupervised data
   if self.marginalize:
     X_u, y_u = marginalize_categorical_labels(
-        X=X_u,
-        n_classes=self.n_classes,
-        dtype=self.dtype,
+      X=X_u,
+      n_classes=self.n_classes,
+      dtype=self.dtype,
     )
   else:
     y_u = None
@@ -54,6 +58,158 @@ def _prepare_elbo(self, inputs, training=None, mask=None):
 # ===========================================================================
 # main classes
 # ===========================================================================
+class M2VAE(BetaGammaVAE):
+
+  def __init__(
+      self,
+      labels: RVconf = RVconf(10, 'relaxedonehot', name='digits'),
+      classifier: Sequence[int] = (1024, 1024, 1024, 1024),
+      activation: Union[str, Callable[[Any], tf.Tensor]] = 'relu',
+      alpha: float = 10.,
+      **kwargs,
+  ):
+    super().__init__(**kwargs)
+    self.alpha = float(alpha)
+    ## the networks
+    self.labels = labels
+    self.classifier = NetConf(classifier,
+                              flatten_inputs=True,
+                              activation=activation,
+                              name='Classifier').create_network()
+    self.xy_to_qz_net = NetConf([128, 128], activation=activation,
+                                name='xy_to_qz').create_network()
+    self.zy_to_px_net = NetConf([128, 128], activation=activation,
+                                name='zy_to_px').create_network()
+    ## check the labels distribution
+    self.n_classes = int(np.prod(labels.event_shape))
+    # q(z|xy)
+    self.y_to_qz = Dense(128, activation='linear', name='y_to_qz')
+    self.x_to_qz = Dense(128, activation='linear', name='x_to_qz')
+    # p(x|zy)
+    self.y_to_px = Dense(128, activation='linear', name='z_to_px')
+    self.z_to_px = Dense(128, activation='linear', name='z_to_px')
+    self.concat = Concatenate(axis=-1)
+    self.flatten = Flatten()
+
+  def classify(self,
+               inputs: TensorType,
+               training: bool = False) -> Distribution:
+    """Return the prediction of labels"""
+    if isinstance(inputs, (tuple, list)) and len(inputs) == 1:
+      inputs = inputs[0]
+    h = self.classifier(inputs, training=training)
+    return self.labels(h, training=training)
+
+  def sample_labels(self,
+                    sample_shape: List[int] = (),
+                    seed: int = 1) -> tf.Tensor:
+    """Sample labels from prior of the labels distribution"""
+    return bk.atleast_2d(
+      self.labels.prior.sample(sample_shape=sample_shape, seed=seed))
+
+  def sample_prior(self, n: int = 1, seed: int = 1, **kwargs) -> tf.Tensor:
+    # TODO
+    raise NotImplementedError
+
+  def encode(self, inputs, training=None, mask=None, **kwargs):
+    X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
+    X = X[0]  # only accept single inputs now
+    # prepare the label embedding
+    qy_x = self.classify(X, training=training)
+    h_y = self.y_to_qz(qy_x, training=training)
+    # encode normally
+    h_x = self.encoder(X, training=training, mask=mask)
+    h_x = self.flatten(h_x)
+    h_x = self.x_to_qz(h_x, training=training)
+    # combine into q(z|xy)
+    h_xy = self.concat([h_x, h_y])
+    # conditional embedding y
+    h_xy = self.xy_to_qz_net(h_xy, training=training, mask=mask)
+    qz_xy = self.latents(h_xy, training=training, mask=mask)
+    qz_xy.qy_x = qy_x
+    return qz_xy
+
+  def decode(self, latents, training=None, mask=None, **kwargs):
+    qz_xy = latents
+    qy_x = qz_xy.qy_x
+    h_z = self.z_to_px(qz_xy, training=training)
+    h_y = self.y_to_px(qy_x, training=training)
+    h_zy = self.concat([h_z, h_y])
+    h_zy = self.zy_to_px_net(h_zy, training=training, mask=mask)
+    px_z = super().decode(h_zy, training=training, mask=mask)
+    return as_tuple(px_z) + (qy_x,)
+
+  ##################### Helper methods for ELBO
+  def _unlabelled_loss(self, x_u, training):
+    llk_u, kl_u = super().elbo_components(inputs=x_u, training=training)
+    (px, qy), qz = self.last_outputs
+    # Note: qy_x is always expected to be the last value
+    probs = qy.probs_parameter()
+    # weighed the loss by qy_x
+    llk_u = {
+      k + '_u': tf.reduce_sum(probs * tf.expand_dims(v, axis=-1), axis=-1)
+      for k, v in llk_u.items()
+    }
+    kl_u = {
+      k + '_u': tf.reduce_sum(tf.expand_dims(probs, axis=0) *
+                              tf.expand_dims(v, axis=-1),
+                              axis=-1) for k, v in kl_u.items()
+    }
+    # the entropy
+    entropy = -tf.reduce_sum(
+      tf.math.multiply_no_nan(tf.math.log(probs + 1e-6), probs),
+      axis=-1)
+    llk_u['H_qy'] = entropy
+    return llk_u, kl_u
+
+  def _labelled_loss(self, x_l, y_l, training):
+    llk_l, kl_l = super().elbo_components(inputs=x_l, training=training)
+    (px, qy), qz = self.last_outputs
+    # we need this condition since NaNs are returned if y_l.shape[0] == 0
+    llk_l = {k + '_l': v for k, v in llk_l.items()}
+    kl_l = {k + '_l': v for k, v in kl_l.items()}
+    llk_l['llk_qy'] = self.alpha * qy.log_prob(y_l)
+    return llk_l, kl_l
+
+  def elbo_components(self, inputs, training=None, mask=None):
+    inputs = as_tuple(inputs)
+    x_u, x_s, y_s = None, None, None
+    if len(inputs) == 1:
+      x_u = inputs
+    elif len(inputs) == 2:
+      x_s, y_s = inputs
+    else:
+      x_u, x_s, y_s = inputs
+    ### for unlabelled data (assumed always available)
+    llk_u, kl_u = {}, {}
+    if x_u is not None:
+      llk_u, kl_u = self._unlabelled_loss(x_u, training)
+    ### for labelled data, add the discriminative objective
+    llk_s, kl_s = {}, {}
+    if x_s is not None:
+      llk_s, kl_s = self._labelled_loss(x_s, y_s, training)
+    ### merge everything
+    llk = {k: tf.reduce_mean(v) for k, v in dict(**llk_u, **llk_s).items()}
+    kl = {k: tf.reduce_mean(v) for k, v in dict(**kl_u, **kl_s).items()}
+    return llk, kl
+
+  @classmethod
+  def is_semi_supervised(cls) -> bool:
+    return True
+
+  def __str__(self):
+    text = super().__str__()
+    text += f"\nEmbedding:"
+    text += "\nClassifier:\n "
+    text += '\n '.join(str(self.classifier).split('\n'))
+    text += f"\n {self.labels}"
+    text += "\nq(z|xy) network:\n "
+    text += '\n '.join(str(self.xy_to_qz_net).split('\n'))
+    text += "\np(x|zy) network:\n "
+    text += '\n '.join(str(self.zy_to_px_net).split('\n'))
+    return text
+
+
 class ConditionalM2VAE(BetaVAE):
   """Implementation of M2 model (Kingma et al. 2014). The default
   configuration of this layer is optimized for MNIST.
@@ -178,8 +334,8 @@ class ConditionalM2VAE(BetaVAE):
       posterior_name = str(labels.posterior_layer).lower()
     if 'onehot' not in posterior_name:
       warnings.warn(
-          'Conditional VAE only support one-hot or relaxed one-hot distribution, '
-          f'but given: {labels}')
+        'Conditional VAE only support one-hot or relaxed one-hot distribution, '
+        f'but given: {labels}')
     self.n_classes = int(np.prod(labels.event_shape))
     self.marginalize = bool(marginalize)
     # labels distribution
@@ -197,7 +353,7 @@ class ConditionalM2VAE(BetaVAE):
                          posterior,
                          projection=True,
                          prior=OneHotCategorical(probs=[1. / self.n_classes] *
-                                                 self.n_classes),
+                                                       self.n_classes),
                          name=labels.name,
                          kwargs=dist_kw).create_posterior()
     # create embedder
@@ -234,7 +390,7 @@ class ConditionalM2VAE(BetaVAE):
                     seed: int = 1) -> tf.Tensor:
     """Sample labels from prior of the labels distribution"""
     return bk.atleast_2d(
-        self.labels.prior.sample(sample_shape=sample_shape, seed=seed))
+      self.labels.prior.sample(sample_shape=sample_shape, seed=seed))
 
   def encode(self, inputs, training=None, mask=None, **kwargs):
     X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
@@ -278,13 +434,13 @@ class ConditionalM2VAE(BetaVAE):
     probs = qy_x_u.probs_parameter()
     # weighed the loss by qy_x
     llk_u = {
-        k + '_u': tf.reduce_sum(probs * tf.expand_dims(v, axis=-1), axis=-1)
-        for k, v in llk_u.items()
+      k + '_u': tf.reduce_sum(probs * tf.expand_dims(v, axis=-1), axis=-1)
+      for k, v in llk_u.items()
     }
     kl_u = {
-        k + '_u': tf.reduce_sum(tf.expand_dims(probs, axis=0) *
-                                tf.expand_dims(v, axis=-1),
-                                axis=-1) for k, v in kl_u.items()
+      k + '_u': tf.reduce_sum(tf.expand_dims(probs, axis=0) *
+                              tf.expand_dims(v, axis=-1),
+                              axis=-1) for k, v in kl_u.items()
     }
     # the entropy
     entropy = -tf.reduce_sum(tf.math.multiply_no_nan(tf.math.log(probs), probs),
@@ -300,18 +456,18 @@ class ConditionalM2VAE(BetaVAE):
       # we need this condition since NaNs are returned if y_l.shape[0] == 0
       is_ss = tf.shape(y_l)[0] > 0
       llk_l = {
-          k + '_l': tf.cond(is_ss, lambda: v, lambda: 0.)
-          for k, v in llk_l.items()
+        k + '_l': tf.cond(is_ss, lambda: v, lambda: 0.)
+        for k, v in llk_l.items()
       }
       kl_l = {
-          k + '_l': tf.cond(is_ss, lambda: v, lambda: 0.)
-          for k, v in kl_l.items()
+        k + '_l': tf.cond(is_ss, lambda: v, lambda: 0.)
+        for k, v in kl_l.items()
       }
       qy_x_l = Q_l[-1]
       if self.relaxed:
         y_l = tf.clip_by_value(y_l, 1e-8, 1. - 1e-8)
       llk_l['llk_qy'] = self.alpha * tf.cond(
-          is_ss, lambda: qy_x_l.log_prob(y_l), lambda: 0.)
+        is_ss, lambda: qy_x_l.log_prob(y_l), lambda: 0.)
     else:
       P_l = None
       Q_l = None
@@ -426,12 +582,12 @@ class reparamsM3VAE(BetaVAE):
     self.n_resamples = int(n_resamples)
     self.regressor = PriorRegressor(self.n_classes)
     self.labels = RVconf(
-        self.n_classes,
-        posterior='relaxedonehot',
-        projection=True,
-        prior=OneHotCategorical(probs=[1. / self.n_classes] * self.n_classes),
-        name=labels.name,
-        kwargs=dict(temperature=temperature)).create_posterior()
+      self.n_classes,
+      posterior='relaxedonehot',
+      projection=True,
+      prior=OneHotCategorical(probs=[1. / self.n_classes] * self.n_classes),
+      name=labels.name,
+      kwargs=dict(temperature=temperature)).create_posterior()
     self.denotations = RVconf(event_shape=(self.n_classes,),
                               posterior='normal',
                               projection=True,
@@ -478,11 +634,11 @@ class reparamsM3VAE(BetaVAE):
     px_z_u, (qz_x_u, qzc_x_u, qy_zx_u) = self(X_u, training=training)
     px_z_l, (qz_x_l, qzc_x_l, qy_zx_l) = self(X_l, training=training)
     z_exc = tf.concat(
-        [tf.convert_to_tensor(qz_x_u),
-         tf.convert_to_tensor(qz_x_l)], axis=0)
+      [tf.convert_to_tensor(qz_x_u),
+       tf.convert_to_tensor(qz_x_l)], axis=0)
     z_c = tf.concat(
-        [tf.convert_to_tensor(qzc_x_u),
-         tf.convert_to_tensor(qzc_x_l)], axis=0)
+      [tf.convert_to_tensor(qzc_x_u),
+       tf.convert_to_tensor(qzc_x_l)], axis=0)
     # Convert y to one-hot vector and Sample y for those without labels
     y_sup = y_l
     y_uns = tf.convert_to_tensor(qy_zx_u)
@@ -512,8 +668,8 @@ class reparamsM3VAE(BetaVAE):
                           qz_x_l.log_prob(qz_x_l)],
                          axis=0)
     log_qzc_x = tf.concat(
-        [qzc_x_u.log_prob(qzc_x_u),
-         qzc_x_l.log_prob(qzc_x_l)], axis=0)
+      [qzc_x_u.log_prob(qzc_x_u),
+       qzc_x_l.log_prob(qzc_x_l)], axis=0)
     log_q_z_x = log_qz_x + log_qzc_x
     # Calculate the lower bound
     n_uns = ps.shape(X_u)[0]

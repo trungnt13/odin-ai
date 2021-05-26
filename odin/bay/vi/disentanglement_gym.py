@@ -2,6 +2,7 @@ import contextlib
 import random
 import warnings
 from collections import OrderedDict, defaultdict
+from inspect import ismethod
 from typing import Dict, List, Optional, Tuple, Union, Sequence, Callable, Any, \
   Iterator, Text
 
@@ -1676,11 +1677,25 @@ class DisentanglementGym(vs.Visualizer):
         au.append(int(np.sum(np.abs(q_std - p_std) >= tolerant * p_std)))
       return tuple(au)
 
-  def write_report(self, path_txt: str, verbose: bool = True):
+  def write_report(
+      self,
+      path_txt: str,
+      scores: Sequence[Union[str, Callable]] = (
+          'accuracy_score', 'log_likelihood',
+          'kl_divergence', 'active_units'),
+      verbose: bool = True):
     with open(path_txt, 'w') as f:
-      for name in ['accuracy_score', 'log_likelihood', 'kl_divergence',
-                   'active_units']:
-        method = getattr(self, name)
+      for name in scores:
+        if ismethod(name):
+          method = name
+          name = method.__name__
+        elif isinstance(name, string_types):
+          if not hasattr(self, name):
+            warnings.warn(f'No scoring method with name "{name}"')
+            continue
+          method = getattr(self, name)
+        else:
+          raise ValueError(f'No support for score type {name}')
         scores = method()
         text = f'{name.capitalize():20s}: {scores}'
         if verbose:
