@@ -325,9 +325,8 @@ class DistributionDense(Layer):
     i.e. the result from the last `call` """
     return self._most_recently_built_distribution
 
-  @tf.function
   def sample(self, sample_shape=(), seed=None):
-    r""" Sample from prior distribution """
+    """ Sample from prior distribution """
     if self._prior is None:
       raise RuntimeError("prior hasn't been provided for the %s" %
                          self.__class__.__name__)

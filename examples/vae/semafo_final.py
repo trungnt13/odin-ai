@@ -530,8 +530,8 @@ class SemafoVAE(VariationalAutoencoder):
     pz_u = self.latents_prior(u, training=False)
     if return_distribution:
       ret = pz_u
-    else:
-      ret = pz_u.mean()
+    else: # NOTE: sample or mean?
+      ret = pz_u.sample()
     ret.labels = y
     if return_labels:
       return ret, y
@@ -1243,8 +1243,11 @@ def main(args: Arguments):
     with gym.run_model(n_samples=800 if args.debug else 30000,
                        device='cpu',
                        partition='test'):
+      print(gym.frechet_inception_distance())
+      exit()
       gym.write_report(score_path,
                        scores=(gym.accuracy_score, gym.log_likelihood,
+                               gym.frechet_inception_distance,
                                gym.kl_divergence, gym.active_units,
                                gym.mig_score, gym.dci_score, gym.sap_score,
                                gym.clustering_score),

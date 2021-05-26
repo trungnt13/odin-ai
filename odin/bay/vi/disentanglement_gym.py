@@ -1677,6 +1677,65 @@ class DisentanglementGym(vs.Visualizer):
         au.append(int(np.sum(np.abs(q_std - p_std) >= tolerant * p_std)))
       return tuple(au)
 
+  def frechet_inception_distance(self,
+                                 gpu: bool = True,
+                                 image_size: int = 299,
+                                 n_samples: int = 500,
+                                 batch_size: int = 10,
+                                 verbose: bool = True) -> Tuple[float, float]:
+    """Return the FID distance for reconstruction and random sampling"""
+    self._assert_sampled()
+    import tensorflow_gan as tfgan
+    from odin.utils import minibatch
+    preprocess = tf.keras.applications.inception_v3.preprocess_input
+    inception = tf.keras.applications.InceptionV3(
+      include_top=False, weights='imagenet', input_tensor=None,
+      input_shape=None, pooling='avg', classes=1000,
+      classifier_activation='softmax')
+
+    def normalize(img):
+      img = as_tuple(img)[0]
+      if isinstance(img, Distribution):
+        img = img.mean()
+      img = tf.convert_to_tensor(img) * (255. if np.max(img) <= 1. else 1.)
+      img = tf.image.grayscale_to_rgb(img) if img.shape[-1] == 1 else img
+      img = tf.image.resize(img, (image_size, image_size), antialias=True)
+      img = preprocess(img)
+      return img
+
+    rand = np.random.RandomState(seed=self.seed)
+    with tf.device(f'/{"GPU" if gpu else "CPU"}:0'):
+      x_true = self.x_true
+      x_pred = self.px_z[0].mean().numpy()
+      a_true = []
+      a_pred = []
+      a_rand = []
+      count = 0
+      prog = tqdm(desc='FID score', total=n_samples, disable=not verbose)
+      for s, e in minibatch(batch_size, n=self.x_true.shape[0], seed=self.seed):
+        x1 = normalize(x_true[s:e])
+        x2 = normalize(x_pred[s:e])
+        x3 = normalize(
+          self.model.sample_observation(x1.shape[0], seed=rand.randint(10e8)))
+        a_true.append(inception(x1))
+        a_pred.append(inception(x2))
+        a_rand.append(inception(x3))
+        count += x1.shape[0]
+        prog.update(x1.shape[0])
+        if count >= n_samples:
+          break
+      prog.close()
+      prog.clear()
+      # final score
+      a_true = tf.concat(a_true, 0)
+      a_pred = tf.concat(a_pred, 0)
+      a_rand = tf.concat(a_rand, 0)
+      fid_rec = tfgan.eval.frechet_classifier_distance_from_activations(
+        a_true, a_pred).numpy()
+      fid_samp = tfgan.eval.frechet_classifier_distance_from_activations(
+        a_true, a_rand).numpy()
+      return fid_rec, fid_samp
+
   def write_report(
       self,
       path_txt: str,
