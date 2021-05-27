@@ -1681,7 +1681,7 @@ class DisentanglementGym(vs.Visualizer):
                                  gpu: bool = True,
                                  image_size: int = 299,
                                  n_samples: int = 500,
-                                 batch_size: int = 10,
+                                 batch_size: int = 5,
                                  verbose: bool = True) -> Tuple[float, float]:
     """Return the FID distance for reconstruction and random sampling"""
     self._assert_sampled()
@@ -1744,6 +1744,9 @@ class DisentanglementGym(vs.Visualizer):
           'kl_divergence', 'active_units'),
       verbose: bool = True):
     with open(path_txt, 'w') as f:
+      text = f'Training steps: {int(self.model.step)}'
+      print(text)
+      f.write(text + '\n')
       for name in scores:
         if ismethod(name):
           method = name

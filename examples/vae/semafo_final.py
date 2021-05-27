@@ -5,7 +5,7 @@ import shutil
 import warnings
 from collections import defaultdict
 from functools import partial
-from typing import Optional, Union, Sequence, List, Any, Dict
+from typing import Optional, Union, Sequence, List, Any, Dict, Callable
 
 import numpy as np
 import tensorflow as tf
@@ -16,6 +16,7 @@ from tensorflow.python.keras.layers import (Dense, Flatten, Concatenate, Conv2D,
                                             Conv2DTranspose, GlobalAvgPool2D,
                                             BatchNormalization, Activation,
                                             Reshape, Layer)
+from tensorflow_probability.python.layers import IndependentNormal
 from tensorflow_probability.python.distributions import (Normal, Independent,
                                                          Blockwise,
                                                          JointDistributionSequential,
@@ -32,7 +33,8 @@ from tensorflow_probability.python.distributions import (Normal, Independent,
 from tensorflow_probability.python.math import clip_by_value_preserve_gradient
 from tensorflow_probability.python.internal.reparameterization import \
   FULLY_REPARAMETERIZED, NOT_REPARAMETERIZED
-from tensorflow_probability.python.layers import DistributionLambda
+from tensorflow_probability.python.layers import DistributionLambda, \
+  IndependentNormal
 from tqdm import tqdm
 
 from odin import visual as vs
@@ -41,11 +43,11 @@ from odin.backend.keras_helpers import layer2text
 from odin.bay import (DistributionDense, MVNDiagLatents, kl_divergence,
                       DisentanglementGym, VariationalAutoencoder, get_vae,
                       BiConvLatents,
-                      HierarchicalVAE)
+                      HierarchicalVAE, BetaGammaVAE, RVconf, M2VAE)
 from odin.bay.vi import traverse_dims
 from odin.fuel import get_dataset, ImageDataset
 from odin.ml import DimReduce
-from odin.networks import get_networks, SequentialNetwork, TrainStep
+from odin.networks import get_networks, SequentialNetwork, TrainStep, NetConf
 from odin.utils import as_tuple
 from utils import get_args, train, run_multi, set_cfg, Arguments, \
   get_model_path, get_results_path, Callback, prepare_images, get_scores_path
@@ -173,6 +175,10 @@ class FactorDistribution(Distribution):
     elif dsname in ('mnist', 'fashionmnist', 'cifar10'):
       return 10
     raise NotImplementedError(f'No support for dataset {dsname}')
+
+  @property
+  def distributions(self) -> Sequence[Distribution]:
+    return self._distributions
 
   def _event_shape_tensor(self):
     return tf.constant([self.event_dim], dtype=tf.int32)
@@ -484,6 +490,7 @@ class SemafoVAE(VariationalAutoencoder):
                    seed=1,
                    return_distribution=False,
                    return_labels=False,
+                   return_mean=False,
                    **kwargs):
     dsname = config.ds.lower()
     is_2d = 'dsprites' in dsname
@@ -530,8 +537,8 @@ class SemafoVAE(VariationalAutoencoder):
     pz_u = self.latents_prior(u, training=False)
     if return_distribution:
       ret = pz_u
-    else: # NOTE: sample or mean?
-      ret = pz_u.sample()
+    else:  # NOTE: sample or mean?
+      ret = pz_u.mean() if return_mean else pz_u.sample()
     ret.labels = y
     if return_labels:
       return ret, y
@@ -915,6 +922,15 @@ class SemafoHVAE(SemafoVAE):
       return posterior, prior
     return posterior
 
+  def sample_observation(self, n: int = 1, seed: int = 1,
+                         training: bool = False, **kwargs) -> Distribution:
+    sampling = self._is_sampling
+    self.set_sampling(True)
+    x = super(SemafoHVAE, self).sample_observation(n=n, seed=seed,
+                                                   training=training)
+    self.set_sampling(sampling)
+    return x
+
   def sample_traverse(self, inputs, n_traverse_points=11, n_best_latents=5,
                       min_val=-2.0, max_val=2.0, mode='linear',
                       smallest_stddev=True, training=False, mask=None):
@@ -936,6 +952,8 @@ class SemafoHVAE(SemafoVAE):
     latents = tf.convert_to_tensor(latents)
     if not self._is_sampling:
       n_tiles = n_traverse_points * len(top_latents)
+      # last_outputs = [tf.repeat(i[:0], latents.shape[0], 0)
+      #                 for i in last_outputs]
       last_outputs = [
         tf.tile(i, [n_tiles] + [1 for _ in range(i.shape.rank - 1)])
         for i in last_outputs]
@@ -1000,6 +1018,242 @@ class DeepPrior(SemafoVAE):
 class DeepPriorH(SemafoHVAE):
   def __init__(self, **kwargs):
     super(DeepPriorH, self).__init__(deep_prior=True, **kwargs)
+
+
+# ===========================================================================
+# Baseline: M3VAE
+# ===========================================================================
+class CondPrior(Layer):
+  def __init__(self, dim):
+    super(CondPrior, self).__init__()
+    self.dim = dim
+    self.diag_loc_true = tf.Variable(tf.ones([dim], dtype=self.dtype) * 2)
+    self.diag_loc_false = tf.Variable(tf.ones([dim], dtype=self.dtype) * -2)
+    self.diag_scale_true = tf.Variable(tf.ones([dim], dtype=self.dtype))
+    self.diag_scale_false = tf.Variable(tf.ones([dim], dtype=self.dtype))
+    self.dist = IndependentNormal(event_shape=[dim])
+
+  def call(self, x, **kwargs):
+    loc = x * self.diag_loc_true + (1. - x) * self.diag_loc_false
+    scale = x * self.diag_scale_true + (1. - x) * self.diag_scale_false
+    scale = tf.clip_by_value(tf.nn.softplus(scale), 1e-3, 1e12)
+    return self.dist(tf.concat([loc, scale], axis=-1))
+
+
+class Classifier(Layer):
+  def __init__(self, dim):
+    super(Classifier, self).__init__()
+    self.dim = dim
+    self.weight = tf.Variable(tf.ones([self.dim]))
+    self.bias = tf.Variable(tf.zeros([self.dim]))
+
+  def call(self, x, **kwargs):
+    return x * self.weight + self.bias
+
+
+def multiple_onehot(params: tf.Tensor, classes: List[int]):
+  dists = []
+  for s, e in zip(classes, classes[1:]):
+    p = params[..., s:e]
+    dists.append(OneHotCategorical(logits=p, dtype=params.dtype))
+  if len(dists) == 1:
+    return dists[0]
+  return Blockwise(distributions=dists)
+
+
+class M3VAE(BetaGammaVAE):
+  """Credit: https://github.com/thwjoy/ccvae"""
+
+  def __init__(
+      self,
+      labels: DistributionDense,
+      n_resamples: int = 100,
+      alpha: float = 10.,
+      **kwargs,
+  ):
+    super().__init__(**kwargs)
+    self.alpha = float(alpha)
+    self.n_classes = int(np.prod(labels.event_shape))
+    self.n_resamples = int(n_resamples)
+    self.labels = labels
+    ## prepare the classes
+    if self.n_classes in (10, 3, 4):
+      self.classes = [self.n_classes]
+    elif self.n_classes == (15 + 8 + 4 + 30):
+      self.classes = [15, 8, 4, 10, 10, 10]
+    elif self.n_classes == (40 + 6 + 3 + 32 + 32):
+      self.classes = [40, 6, 3, 32, 32]
+    else:
+      raise NotImplementedError()
+    self.prior = tf.concat([
+      tf.expand_dims(tf.convert_to_tensor([tf.math.log(1. / i)] * i), 0)
+      for i in self.classes], axis=-1)
+    self.concat = Concatenate(-1)
+    self._y_prior = DistributionLambda(
+      partial(multiple_onehot, classes=np.cumsum([0] + self.classes)))
+    ## initialize CCVAE
+    self.classifier = Classifier(self.n_classes)
+    self.cond_prior = CondPrior(self.n_classes)
+    self.z_dim = int(np.prod(self.latents.event_shape))
+    self.z_classify = self.n_classes
+    self.z_style = self.z_dim - self.z_classify
+    if self.z_style <= 0:
+      self.z_style = self.z_dim
+    self._latents = RVconf(event_shape=(self.z_style,),
+                           posterior='normal',
+                           projection=True,
+                           name=self.latents.name).create_posterior()
+    self.latents_cls = RVconf(event_shape=(self.z_classify,),
+                              posterior='normal',
+                              projection=True,
+                              name='denotations').create_posterior()
+
+  def sample_prior(self, n=1, seed=1, **kwargs):
+    z = self.latents.prior.sample(n, seed=seed)
+    y = np.concatenate([one_hot(np.mod(np.arange(n), i), i)
+                        for i in self.classes], -1)
+    qc = self.cond_prior_fn(tf.convert_to_tensor(y, dtype=self.dtype))
+    c = qc.sample((), seed=seed)
+    return z, c
+
+  def sample_traverse(self,
+                      inputs,
+                      n_traverse_points=11,
+                      n_best_latents=5,
+                      min_val=-2.0,
+                      max_val=2.0,
+                      mode='linear',
+                      smallest_stddev=True,
+                      training=False,
+                      mask=None,
+                      style=True):
+    # style: if True, traverse style, otherwise, traverse class
+    from odin.bay.vi import traverse_dims
+    qz, qc = self.encode(inputs, training=training, mask=mask)
+    # select style or class
+    dist = qz if style else qc
+    stddev = np.sum(dist.stddev(), axis=0)
+    # smaller stddev is better
+    if smallest_stddev:
+      top_latents = np.argsort(stddev)[:int(n_best_latents)]
+    else:
+      top_latents = np.argsort(stddev)[::-1][:int(n_best_latents)]
+    latents = traverse_dims(dist,
+                            feature_indices=top_latents,
+                            min_val=min_val, max_val=max_val,
+                            n_traverse_points=n_traverse_points,
+                            mode=mode)
+    # return the decode images
+    if style:
+      c = qc.mean()
+      c = tf.repeat(c, int(latents.shape[0] / c.shape[0]), 0)
+      latents = [latents, c]
+    else:
+      z = qz.mean()
+      z = tf.repeat(z, int(latents.shape[0] / z.shape[0]), 0)
+      latents = [z, latents]
+    return self.decode(latents, training=training, mask=mask), top_latents
+
+  def cond_prior_fn(self, y):
+    return self.cond_prior(y)
+
+  def _y_prior_fn(self, alpha):
+    return self._y_prior(alpha)
+
+  def encode(self, inputs, training=None, **kwargs):
+    inputs = as_tuple(inputs)
+    if len(inputs):
+      x = inputs[0]
+      y = None
+    else:
+      x, y = inputs
+    # encode normally
+    h_e = self.encoder(x, training=training)
+    qz_x = self.latents(h_e, training=training)
+    qzc_x = self.latents_cls(h_e, training=training)
+    return qz_x, qzc_x
+
+  def decode(self, latents, training=None, **kwargs):
+    if not isinstance(latents, (tuple, list)):
+      qz_x = latents[..., :self.z_style]
+      qzc_x = latents[..., self.z_style:]
+    else:
+      qz_x, qzc_x = latents
+    z = self.concat([qz_x, qzc_x])
+    px = super(M3VAE, self).decode(z, training=training, **kwargs)
+    # qy
+    z_class = tf.convert_to_tensor(qzc_x)
+    # detach to reduce variance of gradients
+    z_class = tf.stop_gradient(z_class)
+    qy = self._y_prior_fn(self.classifier(z_class))
+    return px, qy
+
+  def elbo_uns(self, x_u, training=None):
+    (px_u, qy_u), (qz_u, qc_u) = self(x_u, training=training)
+    bs_u = x_u.shape[0]
+    # basic ELBO
+    llk_u = px_u.log_prob(x_u)
+    kl_zu = qz_u.KL_divergence(analytic=self.analytic)
+    # sample y from prior
+    py_u = self._y_prior_fn(tf.tile(self.prior, [bs_u, 1]))
+    y_u = tf.convert_to_tensor(py_u)
+    # sample p(zc|y)
+    pc_u = self.cond_prior_fn(y_u)
+    # kl_c
+    c = tf.convert_to_tensor(qc_u)
+    kl_cu = qc_u.log_prob(c) - pc_u.log_prob(c)
+    # final elbo
+    return dict(llk_u=tf.reduce_mean(llk_u, 0)), \
+           dict(kl_zu=tf.reduce_mean(kl_zu, 0),
+                kl_cu=tf.reduce_mean(kl_cu, 0))
+
+  def elbo_sup(self, x_s, y_s, training=None):
+    (px_s, qy_s), (qz_s, qc_s) = self(x_s, training=training)
+    bs_s = x_s.shape[0]
+    # === 0. basic ELBO
+    llk_s = px_s.log_prob(x_s)
+    kl_zs = qz_s.KL_divergence(analytic=self.analytic)
+    # conditional prior q(zc|y)
+    pc_s = self.cond_prior_fn(y_s)
+    c = tf.convert_to_tensor(qc_s)
+    kl_cs = qc_s.log_prob(c) - pc_s.log_prob(c)
+    # classifier
+    k = self.n_resamples
+    zs = qc_s.sample(k)
+    zs = tf.reshape(zs, (-1, self.z_classify))
+    logits = self.classifier(zs)
+    d = self._y_prior_fn(logits)
+    lqy_z = d.log_prob(tf.tile(y_s, [k, 1]))  # repeat y_s for n_mcmc
+    lqy_z = tf.reshape(lqy_z, [k, bs_s])
+    lqy_x = tf.reduce_logsumexp(lqy_z, 0) - tf.math.log(tf.cast(k, self.dtype))
+    llk_classifier = self.alpha * lqy_x
+    # log_py
+    py_s = self._y_prior_fn(tf.tile(self.prior, [bs_s, 1]))
+    lpy = py_s.log_prob(y_s)
+    # ratio and weight
+    w_s = tf.math.exp(qy_s.log_prob(y_s) - lqy_x)
+    llk_s *= w_s
+    kl_zs *= w_s
+    kl_cs *= w_s
+    # final elbo
+    return dict(llk_s=tf.reduce_mean(llk_s, 0),
+                llk_classifier=tf.reduce_mean(llk_classifier, 0),
+                llk_py=tf.reduce_mean(lpy, 0)), \
+           dict(kl_zs=tf.reduce_mean(kl_zs, 0),
+                kl_cs=tf.reduce_mean(kl_cs, 0))
+
+  def elbo_components(self, inputs, training=None, mask=None, **kwargs):
+    x_u, x_s, y_s = inputs
+    llk_u, kl_u = self.elbo_uns(x_u, training=training)
+    llk_s, kl_s = self.elbo_sup(x_s, y_s, training=training)
+    # === 5. Final
+    llk = dict(**llk_u, **llk_s)
+    kl = dict(**kl_u, **kl_s)
+    return llk, kl
+
+  @classmethod
+  def is_semi_supervised(cls) -> bool:
+    return True
 
 
 # ===========================================================================
@@ -1201,7 +1455,10 @@ def main(args: Arguments):
   event_dim = FactorDistribution.event_dim(args.ds)
   networks['labels'] = DistributionDense(
     event_shape=(event_dim,),
-    posterior=partial(FactorDistribution, reparams=False, dsname=args.ds),
+    posterior=partial(
+      FactorDistribution,
+      reparams=True if issubclass(model, M2VAE) else False,
+      dsname=args.ds),
     units=event_dim,
     name=f'{args.ds}_py')
   if not model.is_semi_supervised():
@@ -1243,8 +1500,6 @@ def main(args: Arguments):
     with gym.run_model(n_samples=800 if args.debug else 30000,
                        device='cpu',
                        partition='test'):
-      print(gym.frechet_inception_distance())
-      exit()
       gym.write_report(score_path,
                        scores=(gym.accuracy_score, gym.log_likelihood,
                                gym.frechet_inception_distance,

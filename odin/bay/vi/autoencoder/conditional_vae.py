@@ -24,6 +24,10 @@ from odin.bay.vi.utils import (marginalize_categorical_labels,
                                prepare_ssl_inputs, split_ssl_inputs)
 from odin.networks import NetConf
 from odin.networks.conditional_embedding import get_embedding
+from odin.utils import one_hot
+from tensorflow_probability.python.layers.distribution_layer import \
+  DistributionLambda
+from tensorflow_probability.python.distributions import VectorDeterministic
 
 __all__ = [
   'M2VAE',
@@ -71,7 +75,9 @@ class M2VAE(BetaGammaVAE):
     super().__init__(**kwargs)
     self.alpha = float(alpha)
     ## the networks
-    self.labels = labels
+    # TODO: force reparams here
+    self.labels = _parse_layers(labels)
+    self.n_classes = int(np.prod(labels.event_shape))
     self.classifier = NetConf(classifier,
                               flatten_inputs=True,
                               activation=activation,
@@ -90,6 +96,16 @@ class M2VAE(BetaGammaVAE):
     self.z_to_px = Dense(128, activation='linear', name='z_to_px')
     self.concat = Concatenate(axis=-1)
     self.flatten = Flatten()
+    self.onehot_dist = DistributionLambda(lambda p: VectorDeterministic(p))
+    # classes
+    if self.n_classes in (10, 3, 4):
+      self.classes = [self.n_classes]
+    elif self.n_classes == (15 + 8 + 4 + 30):  # dsprites
+      self.classes = [15, 8, 4, 10, 10, 10]
+    elif self.n_classes == (40 + 6 + 3 + 32 + 32):  # shapes3d
+      self.classes = [40, 6, 3, 32, 32]
+    else:
+      raise NotImplementedError
 
   def classify(self,
                inputs: TensorType,
@@ -108,8 +124,13 @@ class M2VAE(BetaGammaVAE):
       self.labels.prior.sample(sample_shape=sample_shape, seed=seed))
 
   def sample_prior(self, n: int = 1, seed: int = 1, **kwargs) -> tf.Tensor:
-    # TODO
-    raise NotImplementedError
+    n_classes = self.n_classes
+    classes = self.classes
+    y = np.concatenate([one_hot(np.mod(np.arange(n), i), i) for i in classes],
+                       -1)
+    z = super(M2VAE, self).sample_prior(n=n, seed=seed, **kwargs)
+    z.qy_x = y
+    return z
 
   def encode(self, inputs, training=None, mask=None, **kwargs):
     X, y, mask = prepare_ssl_inputs(inputs, mask=mask, n_unsupervised_inputs=1)
@@ -137,6 +158,8 @@ class M2VAE(BetaGammaVAE):
     h_zy = self.concat([h_z, h_y])
     h_zy = self.zy_to_px_net(h_zy, training=training, mask=mask)
     px_z = super().decode(h_zy, training=training, mask=mask)
+    if not isinstance(qy_x, Distribution):
+      qy_x = self.onehot_dist(qy_x)
     return as_tuple(px_z) + (qy_x,)
 
   ##################### Helper methods for ELBO
