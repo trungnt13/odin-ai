@@ -490,7 +490,7 @@ class SemafoVAE(VariationalAutoencoder):
                    seed=1,
                    return_distribution=False,
                    return_labels=False,
-                   return_mean=False,
+                   return_mean=True,
                    **kwargs):
     dsname = config.ds.lower()
     is_2d = 'dsprites' in dsname
@@ -533,6 +533,7 @@ class SemafoVAE(VariationalAutoencoder):
       raise NotImplementedError(f'No sample_prior support for dataset {dsname}')
     # === 4. sample the prior p(z|u)
     qu_y = self.encode_aux(y, training=False)
+    # mean or sample
     u = qu_y.sample(seed=seed)
     pz_u = self.latents_prior(u, training=False)
     if return_distribution:
@@ -543,6 +544,13 @@ class SemafoVAE(VariationalAutoencoder):
     if return_labels:
       return ret, y
     return ret
+
+  def sample_fid(self, n=1, seed=1):
+    # complete random samples for FID scores
+    u = self.latents2.prior.sample(n, seed=seed)
+    pz_u = self.latents_prior(u, training=False)
+    z = pz_u.sample()
+    return self.decode(z, training=False)
 
   @classmethod
   def is_semi_supervised(cls) -> bool:
@@ -922,6 +930,18 @@ class SemafoHVAE(SemafoVAE):
       return posterior, prior
     return posterior
 
+  def sample_fid(self, n=1, seed=1):
+    # complete random samples for FID scores
+    u = self.latents2.prior.sample(n, seed=seed)
+    pz_u = self.latents_prior(u, training=False)
+    z = pz_u.sample()
+    # enable sampling mode for HVAE
+    sampling = self._is_sampling
+    self.set_sampling(True)
+    px = self.decode(z, training=False)
+    self.set_sampling(sampling)
+    return px
+
   def sample_observation(self, n: int = 1, seed: int = 1,
                          training: bool = False, **kwargs) -> Distribution:
     sampling = self._is_sampling
@@ -1064,13 +1084,8 @@ def multiple_onehot(params: tf.Tensor, classes: List[int]):
 class M3VAE(BetaGammaVAE):
   """Credit: https://github.com/thwjoy/ccvae"""
 
-  def __init__(
-      self,
-      labels: DistributionDense,
-      n_resamples: int = 100,
-      alpha: float = 10.,
-      **kwargs,
-  ):
+  def __init__(self, labels: DistributionDense, n_resamples: int = 100,
+               alpha: float = 10., **kwargs):
     super().__init__(**kwargs)
     self.alpha = float(alpha)
     self.n_classes = int(np.prod(labels.event_shape))
@@ -1089,8 +1104,10 @@ class M3VAE(BetaGammaVAE):
       tf.expand_dims(tf.convert_to_tensor([tf.math.log(1. / i)] * i), 0)
       for i in self.classes], axis=-1)
     self.concat = Concatenate(-1)
-    self._y_prior = DistributionLambda(
-      partial(multiple_onehot, classes=np.cumsum([0] + self.classes)))
+    self._y_prior = DistributionLambda(partial(FactorDistribution,
+                                               reparams=False,
+                                               dsname=config.ds))
+    # partial(multiple_onehot, classes=np.cumsum([0] + self.classes)))
     ## initialize CCVAE
     self.classifier = Classifier(self.n_classes)
     self.cond_prior = CondPrior(self.n_classes)
@@ -1217,7 +1234,7 @@ class M3VAE(BetaGammaVAE):
     pc_s = self.cond_prior_fn(y_s)
     c = tf.convert_to_tensor(qc_s)
     kl_cs = qc_s.log_prob(c) - pc_s.log_prob(c)
-    # classifier
+    # classifier loss
     k = self.n_resamples
     zs = qc_s.sample(k)
     zs = tf.reshape(zs, (-1, self.z_classify))

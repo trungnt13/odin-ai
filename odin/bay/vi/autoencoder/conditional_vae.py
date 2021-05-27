@@ -124,7 +124,6 @@ class M2VAE(BetaGammaVAE):
       self.labels.prior.sample(sample_shape=sample_shape, seed=seed))
 
   def sample_prior(self, n: int = 1, seed: int = 1, **kwargs) -> tf.Tensor:
-    n_classes = self.n_classes
     classes = self.classes
     y = np.concatenate([one_hot(np.mod(np.arange(n), i), i) for i in classes],
                        -1)

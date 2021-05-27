@@ -1209,13 +1209,24 @@ class DisentanglementGym(vs.Visualizer):
       seed=seed)
     factors, idx = factors[0], idx[0]
     x = self.x_true[idx:idx + 1]
-    images, top_latents = self.model.sample_traverse(
-      x,
-      min_val=min_val,
-      max_val=max_val,
-      n_best_latents=n_top_latents,
-      n_traverse_points=n_traverse_points,
-      mode='linear')
+    from odin.bay import HierarchicalVAE
+    if isinstance(self.model, HierarchicalVAE):
+      with self.model.sampling_mode():
+        images, top_latents = self.model.sample_traverse(
+          x,
+          min_val=min_val,
+          max_val=max_val,
+          n_best_latents=n_top_latents,
+          n_traverse_points=n_traverse_points,
+          mode='linear')
+    else:
+      images, top_latents = self.model.sample_traverse(
+        x,
+        min_val=min_val,
+        max_val=max_val,
+        n_best_latents=n_top_latents,
+        n_traverse_points=n_traverse_points,
+        mode='linear')
     images = as_tuple(images)[0]
     images = _prepare_images(images.mean().numpy(), normalize=True)
     ## plotting
@@ -1232,8 +1243,13 @@ class DisentanglementGym(vs.Visualizer):
   def plot_latents_sampling(self,
                             n_images: int = 36,
                             title: str = '') -> plt.Figure:
+    from odin.bay import HierarchicalVAE
     n_rows = int(np.sqrt(n_images))
-    images = self.model.sample_observation(n=n_images, seed=self.seed)
+    if isinstance(self.model, HierarchicalVAE):
+      with self.model.sampling_mode():
+        images = self.model.sample_observation(n=n_images, seed=self.seed)
+    else:
+      images = self.model.sample_observation(n=n_images, seed=self.seed)
     images = as_tuple(images)[0]
     images = _prepare_images(images.mean().numpy(), normalize=True)
     fig = plt.figure(figsize=(5, 5), dpi=self.dpi)
@@ -1681,7 +1697,7 @@ class DisentanglementGym(vs.Visualizer):
                                  gpu: bool = True,
                                  image_size: int = 299,
                                  n_samples: int = 500,
-                                 batch_size: int = 5,
+                                 batch_size: int = 3,
                                  verbose: bool = True) -> Tuple[float, float]:
     """Return the FID distance for reconstruction and random sampling"""
     self._assert_sampled()
@@ -1715,8 +1731,12 @@ class DisentanglementGym(vs.Visualizer):
       for s, e in minibatch(batch_size, n=self.x_true.shape[0], seed=self.seed):
         x1 = normalize(x_true[s:e])
         x2 = normalize(x_pred[s:e])
-        x3 = normalize(
-          self.model.sample_observation(x1.shape[0], seed=rand.randint(10e8)))
+        if hasattr(self.model, 'sample_fid'):
+          x3 = normalize(
+            self.model.sample_fid(x1.shape[0], seed=rand.randint(10e8)))
+        else:
+          x3 = normalize(
+            self.model.sample_observation(x1.shape[0], seed=rand.randint(10e8)))
         a_true.append(inception(x1))
         a_pred.append(inception(x2))
         a_rand.append(inception(x3))
