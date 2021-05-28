@@ -883,6 +883,9 @@ class DisentanglementGym(vs.Visualizer):
       else:
         p = p[0]
       all_pz.append(p)
+    # assign prior attribute to qz
+    for q, p in zip(all_qz, all_qz):
+      q.prior = p
     # labels
     x_true = tf.concat(x_true, axis=0).numpy()
     y_true = tf.concat(y_true, axis=0).numpy()
@@ -1173,21 +1176,24 @@ class DisentanglementGym(vs.Visualizer):
   def plot_latents_traverse(
       self,
       factors: FactorFilter = None,
+      latent_idx: int = 0,
       n_traverse_points: int = 41,
       n_top_latents: int = 15,
       min_val: Optional[float] = -3,
       max_val: Optional[float] = 3,
       value_type: Literal['fixed', 'post', 'prior', 'both'] = 'both',
       seed: int = 1,
-      title: str = '') -> plt.Figure:
+      title: str = '',
+      **vae_traverse_kwargs) -> plt.Figure:
     self._assert_sampled()
+    from odin.bay import HierarchicalVAE
 
     def summary(arr):
       return np.min(arr, 0), np.mean(arr, 0), np.max(arr, 0)
 
     # min, mean, max
-    q_std = summary(self.qz_x[0].stddev())
-    p_std = summary(self.pz[0].stddev())
+    q_std = summary(self.qz_x[latent_idx].stddev())
+    p_std = summary(self.pz[latent_idx].stddev())
 
     if value_type == 'post':
       std = q_std[2]
@@ -1209,7 +1215,7 @@ class DisentanglementGym(vs.Visualizer):
       seed=seed)
     factors, idx = factors[0], idx[0]
     x = self.x_true[idx:idx + 1]
-    from odin.bay import HierarchicalVAE
+    ## traverse
     if isinstance(self.model, HierarchicalVAE):
       with self.model.sampling_mode():
         images, top_latents = self.model.sample_traverse(
@@ -1218,7 +1224,7 @@ class DisentanglementGym(vs.Visualizer):
           max_val=max_val,
           n_best_latents=n_top_latents,
           n_traverse_points=n_traverse_points,
-          mode='linear')
+          mode='linear', **vae_traverse_kwargs)
     else:
       images, top_latents = self.model.sample_traverse(
         x,
@@ -1226,7 +1232,7 @@ class DisentanglementGym(vs.Visualizer):
         max_val=max_val,
         n_best_latents=n_top_latents,
         n_traverse_points=n_traverse_points,
-        mode='linear')
+        mode='linear', **vae_traverse_kwargs)
     images = as_tuple(images)[0]
     images = _prepare_images(images.mean().numpy(), normalize=True)
     ## plotting
@@ -1694,20 +1700,18 @@ class DisentanglementGym(vs.Visualizer):
       return tuple(au)
 
   def frechet_inception_distance(self,
-                                 gpu: bool = True,
+                                 gpu: bool = False,
                                  image_size: int = 299,
                                  n_samples: int = 500,
-                                 batch_size: int = 3,
+                                 batch_size: int = 20,
                                  verbose: bool = True) -> Tuple[float, float]:
-    """Return the FID distance for reconstruction and random sampling"""
+    """This is very heavy on the GPU memory, so by default we use CPU
+
+    Return the FID distance for reconstruction and random sampling"""
     self._assert_sampled()
     import tensorflow_gan as tfgan
     from odin.utils import minibatch
     preprocess = tf.keras.applications.inception_v3.preprocess_input
-    inception = tf.keras.applications.InceptionV3(
-      include_top=False, weights='imagenet', input_tensor=None,
-      input_shape=None, pooling='avg', classes=1000,
-      classifier_activation='softmax')
 
     def normalize(img):
       img = as_tuple(img)[0]
@@ -1721,6 +1725,12 @@ class DisentanglementGym(vs.Visualizer):
 
     rand = np.random.RandomState(seed=self.seed)
     with tf.device(f'/{"GPU" if gpu else "CPU"}:0'):
+      # load the inception network
+      inception = tf.keras.applications.InceptionV3(
+        include_top=False, weights='imagenet', input_tensor=None,
+        input_shape=None, pooling='avg', classes=1000,
+        classifier_activation='softmax')
+      # run the generation
       x_true = self.x_true
       x_pred = self.px_z[0].mean().numpy()
       a_true = []
@@ -1783,7 +1793,7 @@ class DisentanglementGym(vs.Visualizer):
         if verbose:
           print(text)
         f.write(text + '\n')
-      f.flush()
+        f.flush()
     if verbose:
       print(f'Saved report to {path_txt}')
     return self

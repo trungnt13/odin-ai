@@ -3,9 +3,8 @@ import itertools
 import os
 import shutil
 import warnings
-from collections import defaultdict
 from functools import partial
-from typing import Optional, Union, Sequence, List, Any, Dict, Callable
+from typing import Optional, Union, Sequence, List
 
 import numpy as np
 import tensorflow as tf
@@ -16,26 +15,16 @@ from tensorflow.python.keras.layers import (Dense, Flatten, Concatenate, Conv2D,
                                             Conv2DTranspose, GlobalAvgPool2D,
                                             BatchNormalization, Activation,
                                             Reshape, Layer)
-from tensorflow_probability.python.layers import IndependentNormal
 from tensorflow_probability.python.distributions import (Normal, Independent,
                                                          Blockwise,
-                                                         JointDistributionSequential,
-                                                         VonMises, Gamma,
-                                                         Categorical,
-                                                         Bernoulli,
-                                                         RelaxedBernoulli,
                                                          Distribution,
                                                          RelaxedOneHotCategorical,
-                                                         OneHotCategorical,
-                                                         Uniform,
-                                                         ContinuousBernoulli,
-                                                         Beta)
-from tensorflow_probability.python.math import clip_by_value_preserve_gradient
+                                                         OneHotCategorical)
 from tensorflow_probability.python.internal.reparameterization import \
   FULLY_REPARAMETERIZED, NOT_REPARAMETERIZED
 from tensorflow_probability.python.layers import DistributionLambda, \
   IndependentNormal
-from tqdm import tqdm
+from tensorflow_probability.python.math import clip_by_value_preserve_gradient
 
 from odin import visual as vs
 from odin.backend import one_hot
@@ -47,11 +36,10 @@ from odin.bay import (DistributionDense, MVNDiagLatents, kl_divergence,
 from odin.bay.vi import traverse_dims
 from odin.fuel import get_dataset, ImageDataset
 from odin.ml import DimReduce
-from odin.networks import get_networks, SequentialNetwork, TrainStep, NetConf
+from odin.networks import get_networks, SequentialNetwork, TrainStep
 from odin.utils import as_tuple
 from utils import get_args, train, run_multi, set_cfg, Arguments, \
   get_model_path, get_results_path, Callback, prepare_images, get_scores_path
-from tensorflow.python.training.tracking import base as trackable
 
 # ===========================================================================
 # Const and helper
@@ -1131,6 +1119,7 @@ class M3VAE(BetaGammaVAE):
                         for i in self.classes], -1)
     qc = self.cond_prior_fn(tf.convert_to_tensor(y, dtype=self.dtype))
     c = qc.sample((), seed=seed)
+    c.dist = qc
     return z, c
 
   def sample_traverse(self,
@@ -1143,12 +1132,12 @@ class M3VAE(BetaGammaVAE):
                       smallest_stddev=True,
                       training=False,
                       mask=None,
-                      style=True):
+                      traverse_style=True):
     # style: if True, traverse style, otherwise, traverse class
     from odin.bay.vi import traverse_dims
     qz, qc = self.encode(inputs, training=training, mask=mask)
     # select style or class
-    dist = qz if style else qc
+    dist = qz if traverse_style else qc
     stddev = np.sum(dist.stddev(), axis=0)
     # smaller stddev is better
     if smallest_stddev:
@@ -1161,7 +1150,7 @@ class M3VAE(BetaGammaVAE):
                             n_traverse_points=n_traverse_points,
                             mode=mode)
     # return the decode images
-    if style:
+    if traverse_style:
       c = qc.mean()
       c = tf.repeat(c, int(latents.shape[0] / c.shape[0]), 0)
       latents = [latents, c]
@@ -1281,6 +1270,16 @@ def _mean(dists, idx):
   return tf.reshape(m, (m.shape[0], -1))
 
 
+def _reshape2D(x: tf.Tensor) -> tf.Tensor:
+  if x.shape.rank == 1:
+    return x
+  return tf.reshape(x, (x.shape[0], -1))
+
+
+def concat_mean(dists: List[Distribution]) -> tf.Tensor:
+  return tf.concat([_reshape2D(d.mean()) for d in dists], -1)
+
+
 def semafo_latents(ds: ImageDataset,
                    model: SemafoVAE,
                    gym: DisentanglementGym,
@@ -1383,28 +1382,31 @@ def semafo_latents(ds: ImageDataset,
     vs.plot_save(os.path.join(path, f'qz_pz_y_{idx}.pdf'), verbose=True)
 
 
-def semafo_prior_traverse(model: SemafoVAE,
-                          dsname: str,
-                          path: str):
-  if not isinstance(model, SemafoVAE):
-    return
-  kw = dict(return_distribution=True, return_labels=True)
+def prior_traverse(model: SemafoVAE,
+                   dsname: str,
+                   path: str):
   classes = DS_TO_LABELS[dsname]
   n_classes = len(classes)
-  if dsname in ('mnist', 'fashionmnist', 'cifar10'):
-    pz, labels = model.sample_prior(n=10, **kw)
-  elif dsname in ('dsprites', 'dsprites0'):
-    pz, labels = model.sample_prior(n=3, **kw)
-  elif dsname in ('shapes3d', 'shapes3d0'):
-    pz, labels = model.sample_prior(n=4, **kw)
+  if isinstance(model, M3VAE):
+    z, c = model.sample_prior(n=n_classes, seed=1)
+    qc = c.dist
+    mean = tf.concat([z, qc.mean()], -1)
+    stddev = tf.concat([tf.ones_like(z), qc.stddev()], -1)
+  elif not isinstance(model, SemafoVAE):
+    pz = model.sample_prior(n=n_classes, seed=1)
+    mean = pz
+    stddev = tf.ones_like(mean)
   else:
-    raise NotImplementedError(dsname)
-  mean = pz.mean()
-  stddev = pz.stddev()
+    pz, labels = model.sample_prior(n=n_classes, seed=1,
+                                    return_distribution=True,
+                                    return_labels=True)
+    mean = pz.mean()
+    stddev = pz.stddev()
   n_points = 41
   n_latents = min(15, mean.shape[1])
   max_std = 4.
-  if model.is_hierarchical():
+  # SemafoHVAE
+  if hasattr(model, 'set_sampling'):
     model.set_sampling(True)
   # first latents
   for i in range(n_classes):
@@ -1416,13 +1418,13 @@ def semafo_prior_traverse(model: SemafoVAE,
                       min_val=-max_std * s,
                       max_val=max_std * s,
                       n_traverse_points=n_points)
-    img, _ = model.decode(m)
+    img = as_tuple(model.decode(m))[0]
     img = prepare_images(img.mean(), True)
     plt.figure(figsize=(1.5 * n_points, 1.5 * n_latents), dpi=200)
     vs.plot_images(img, images_per_row=n_points, title=f'Class={classes[i]}')
   vs.plot_save(os.path.join(path, 'prior_traverse.pdf'), verbose=True)
   # special case for hierarchical model
-  if model.is_hierarchical():
+  if hasattr(model, 'set_sampling'):
     model.set_sampling(True)
     for i in range(n_classes):
       z0 = mean[i:i + 1]
@@ -1525,7 +1527,11 @@ def main(args: Arguments):
                                gym.clustering_score),
                        verbose=True)
       ## special case for SemafoVAE
-      semafo_prior_traverse(model, args.ds, path)
+      try:
+        prior_traverse(model, args.ds, path)
+      except Exception as e:
+        warnings.warn(f'Failed prior_traverse {args}')
+        print(e)
       semafo_latents(ds, model, gym, path, args)
       ## latents t-SNE
       gym.plot_latents_tsne()
@@ -1543,7 +1549,12 @@ def main(args: Arguments):
         print(e)
       ## traverse
       try:
-        if model.is_hierarchical():
+        if isinstance(model, M3VAE):
+          gym.plot_latents_traverse(latent_idx=0, title='_style',
+                                    traverse_style=True)
+          gym.plot_latents_traverse(latent_idx=1, title='_class',
+                                    traverse_style=False)
+        elif isinstance(model, SemafoHVAE):
           model.set_sampling(True)
           gym.plot_latents_traverse(title='_prior')
           model.set_sampling(False)
