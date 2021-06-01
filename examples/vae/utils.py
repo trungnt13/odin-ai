@@ -52,7 +52,7 @@ _root_path: str = '/tmp/model'
 _logging_interval: float = 5.
 _valid_interval: float = 80
 _n_valid_batches: int = 200
-_extra_kw = []
+_extra_path = {}
 _DS: Dict[str, ImageDataset] = defaultdictkey(lambda name: get_dataset(name))
 
 
@@ -180,7 +180,8 @@ def save_figs(args: Arguments,
 def set_cfg(root_path: Optional[str] = None,
             logging_interval: Optional[float] = None,
             valid_interval: Optional[float] = None,
-            n_valid_batches: Optional[int] = None):
+            n_valid_batches: Optional[int] = None,
+            extra_path: Optional[Dict[str, Any]] = None):
   for k, v in locals().items():
     if v is None:
       continue
@@ -196,9 +197,13 @@ def get_output_dir(args: Arguments) -> str:
   if not os.path.exists(_root_path):
     os.makedirs(_root_path)
   path = f'{_root_path}/{args.ds}/{args.vae.lower()}_z{args.zdim}_i{args.it}'
-  if len(_extra_kw) > 0:
-    for kw in _extra_kw:
-      path += f'_{kw[0]}{getattr(args, kw)}'
+  if len(_extra_path) > 0:
+    for key, default_val in _extra_path.items():
+      if not hasattr(args, key):
+        raise ValueError(f'{args} and {key}')
+      val = getattr(args, key)
+      if val != default_val:
+        path += f'_{key}{val}'
   if not os.path.exists(path):
     os.makedirs(path)
   return path
@@ -465,7 +470,7 @@ def train(
     on_batch_end: Sequence[Callable[..., Any]] = (Callback.latent_units,
                                                   Callback.llk_pixels),
     on_valid_end: Sequence[Callable[..., Any]] = (Callback.save_best_llk,),
-    label_percent: float = 0,
+    label_percent: float = 0.,
     oversample_ratio: float = 0.5,
     train_data_map: Optional[Callable] = None,
     valid_data_map: Optional[Callable] = None,

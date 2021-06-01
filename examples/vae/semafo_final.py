@@ -1439,7 +1439,7 @@ def prior_traverse(model: SemafoVAE,
                                     return_labels=True)
     mean = pz.mean()
     stddev = pz.stddev()
-  n_points = 11 # TODO
+  n_points = 11  # TODO
   n_latents = min(20, mean.shape[1])
   max_std = 3.
   # SemafoHVAE
@@ -1620,8 +1620,14 @@ def main(args: Arguments):
 # Main
 # ===========================================================================
 if __name__ == '__main__':
-  set_cfg(root_path='/home/trung/exp/semafo', n_valid_batches=30)
-  parsed_args = get_args(dict(py=0.004, ratio=0.1, it=200000, bs=64))
+  parsed_args = get_args(dict(py=0.0, ratio=0.1, it=200000, bs=64))
+  set_cfg(root_path='/home/trung/exp/semafo',
+          n_valid_batches=30,
+          extra_path=dict(py=DefaultSemi[parsed_args.ds][0]))
   config = parsed_args
-  parsed_args.py, parsed_args.ratio = DefaultSemi[parsed_args.ds]
+  # NOTE: override the default SEMI here
+  if parsed_args.py == 0.0:
+    parsed_args.py, parsed_args.ratio = DefaultSemi[parsed_args.ds]
+  else:
+    pass
   run_multi(main, args=parsed_args)

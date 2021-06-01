@@ -16,10 +16,12 @@ from odin.utils.cache_utils import get_cache_path
 from tensorflow.python.data import Dataset
 
 
-def _extract_labeled_examples(ds, normalize_method=None
+def _extract_labeled_examples(ds, n_labeled: int,
+                              normalize_method=None
                               ) -> Tuple[tf.Tensor, tf.Tensor]:
   x_labeled, y_labeled = [], []
-  for m, (x, y) in tqdm(ds.batch(1024), desc='Extracting labeled examples'):
+  for m, (x, y) in tqdm(ds.batch(1024),
+                        desc=f'Extracting {n_labeled} labeled examples'):
     x_labeled.append(tf.boolean_mask(x, m, 0))
     y_labeled.append(tf.boolean_mask(y, m, 0))
   x_labeled = tf.concat(x_labeled, 0)
@@ -279,7 +281,8 @@ class ImageDataset(IterableDataset):
       # repeat the label data in every minibatch
       if oversample_ratio == 1.0:
         x_labeled, y_labeled = _extract_labeled_examples(
-          ds, partial(self.normalize, normalize=normalize))
+          ds, n_labeled=n_labeled,
+          normalize_method=partial(self.normalize, normalize=normalize))
         if y_labeled.shape.ndims == 1:
           y_labeled = tf.one_hot(y_labeled, len(self.labels))
         mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
@@ -290,7 +293,8 @@ class ImageDataset(IterableDataset):
         # if we sample from a single dataset that splitted into two by
         # filtering, and one of which is repeated
         # (e.g. 7000 samples/s dropped down to 1000 samples/s)
-        x_labeled, y_labeled = _extract_labeled_examples(ds, None)
+        x_labeled, y_labeled = _extract_labeled_examples(
+          ds, n_labeled=n_labeled, normalize_method=None)
         mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
         ds_supervised = tf.data.Dataset.from_tensor_slices(
           (mask_labeled, (x_labeled, y_labeled)))

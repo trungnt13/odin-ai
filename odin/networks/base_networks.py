@@ -605,7 +605,7 @@ class Networks(keras.Model, MD5object):
         # tracking the gradient norms for debugging
         if track_gradients:
           for g, p in grads_params:
-            metrics[f"_grad/{step_name}/{p.name}"] = g
+            metrics[f"_grad/{step_name}/{p.name}".replace('//', '/')] = g
       ## for validation
       else:
         loss, metrics = step()
