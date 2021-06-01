@@ -507,6 +507,8 @@ class Networks(keras.Model, MD5object):
           f"TrainStep or callable, but return type: {type(step)}")
       if opt is None:
         opt = optimizer[step_idx % n_optimizer]
+      if isinstance(opt, (tuple, list)):
+        opt = opt[0]
       ## for training
       if training:
         with tf.GradientTape(watch_accessed_variables=False) as tape:

@@ -1114,9 +1114,46 @@ class M3VAE(BetaGammaVAE):
                               name='denotations').create_posterior()
 
   def sample_prior(self, n=1, seed=1, **kwargs):
+    dsname = config.ds.lower()
+    is_2d = 'dsprites' in dsname
+    # === 0. mnist
+    if dsname in ('mnist', 'fashionmnist', 'cifar10'):
+      y = np.diag([1.] * 10)
+      y = np.tile(y, [int(np.ceil(n / 10)), 1])[:n]
+    # === 1. shapes with only shapes label
+    elif dsname in ('dsprites0', 'shapes3d0'):
+      n_classes = 3 if is_2d else 4
+      y = np.diag([1.] * n_classes)
+      y = np.tile(y, [int(np.ceil(n / n_classes)), 1])[:n]
+    # === 2. shapes
+    elif dsname in ('dsprites', 'shapes3d'):
+      if is_2d:
+        # orientation, scale, shape, x, y
+        combinations = [40, 6, 3, 32, 32]
+      else:
+        # orientation, scale, shape, floor, wall, object
+        combinations = [15, 8, 4, 10, 10, 10]
+      per_class = int(np.ceil(n / combinations[2]))
+      cls_to_labels = dict()
+      for cls in range(combinations[2]):
+        y2 = [0] * combinations[2]
+        y2[cls] = 1
+        y = [
+          np.array([y2]) if idx == 2 else
+          one_hot(
+            np.linspace(0, n_cls, per_class, endpoint=False, dtype=np.int32),
+            num_classes=n_cls)
+          for idx, n_cls in enumerate(combinations)]
+        y = np.array([np.concatenate(i, -1) for i in itertools.product(*y)])
+        cls_to_labels[cls] = y
+      y = np.concatenate([x[:per_class] for x in cls_to_labels.values()], 0)
+      y = y[:n].astype(np.float32)
+    # === 3. no idea
+    else:
+      raise NotImplementedError(f'No sample_prior support for dataset {dsname}')
     z = self.latents.prior.sample(n, seed=seed)
-    y = np.concatenate([one_hot(np.mod(np.arange(n), i), i)
-                        for i in self.classes], -1)
+    # y = np.concatenate([one_hot(np.mod(np.arange(n), i), i)
+    #                     for i in self.classes], -1)
     qc = self.cond_prior_fn(tf.convert_to_tensor(y, dtype=self.dtype))
     c = qc.sample((), seed=seed)
     c.dist = qc
@@ -1402,9 +1439,9 @@ def prior_traverse(model: SemafoVAE,
                                     return_labels=True)
     mean = pz.mean()
     stddev = pz.stddev()
-  n_points = 41
-  n_latents = min(15, mean.shape[1])
-  max_std = 4.
+  n_points = 11 # TODO
+  n_latents = min(20, mean.shape[1])
+  max_std = 3.
   # SemafoHVAE
   if hasattr(model, 'set_sampling'):
     model.set_sampling(True)
@@ -1515,7 +1552,7 @@ def main(args: Arguments):
                              dataset=args.ds,
                              batch_size=32,
                              dpi=args.dpi,
-                             seed=args.seed)
+                             seed=args.seed + 5)
     with gym.run_model(n_samples=800 if args.debug else 30000,
                        device='cpu',
                        partition='test'):
@@ -1560,7 +1597,7 @@ def main(args: Arguments):
           model.set_sampling(False)
           gym.plot_latents_traverse(title='_post')
         else:
-          gym.plot_latents_traverse(min_val=-3, max_val=3)
+          gym.plot_latents_traverse(min_val=-2, max_val=2)
       except Exception as e:
         warnings.warn(f'False plot_latents_traverse: {args}')
         print(e)

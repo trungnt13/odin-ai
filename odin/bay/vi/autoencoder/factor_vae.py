@@ -147,8 +147,9 @@ class FactorVAE(AnnealingVAE):
   """
 
   def __init__(self,
-               discriminator_units: Sequence[int] = (
-               1000, 1000, 1000, 1000, 1000),
+               discriminator_units: Sequence[int] = (1000, 1000, 1000,
+                                                     1000, 1000),
+               discriminator_optim: Optional[tf.optimizers.Optimizer] = None,
                activation: Union[str, Callable[[], Any]] = tf.nn.relu,
                batchnorm: bool = False,
                tc_coef: float = 7.0,
@@ -169,6 +170,10 @@ class FactorVAE(AnnealingVAE):
       batchnorm=batchnorm,
       ss_strategy=ss_strategy,
       observation=labels)
+    if discriminator_optim is None:
+      discriminator_optim = tf.optimizers.Adam(
+        learning_rate=1e-5, beta_1=0.5, beta_2=0.9)
+    self.discriminator_optim = discriminator_optim
     ## Discriminator and VAE must be trained separately
     self.disc_params = []
     self.vae_params = []
@@ -278,24 +283,8 @@ class FactorVAE(AnnealingVAE):
                                     mask=mask2,
                                     call_kw=call_kw2,
                                     parameters=self.disc_params,
+                                    optimizer=self.discriminator_optim,
                                     name=f'disc{name}')
-
-  def fit(self,
-          train,
-          *,
-          valid=None,
-          optimizer=(
-              tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.9, beta_2=0.999),
-              tf.optimizers.Adam(learning_rate=1e-4, beta_1=0.5, beta_2=0.9)
-          ),
-          **kwargs):
-    """ Override the original fit method of keras to provide simplified
-    procedure with `VariationalAutoencoder.optimize` and
-    `VariationalAutoencoder.train_steps` """
-    assert isinstance(optimizer, (tuple, list)) and len(optimizer) == 2, \
-      ("Two different optimizer must be provided, "
-       "one for VAE, and one of FactorDiscriminator")
-    return super().fit(train=train, valid=valid, optimizer=optimizer, **kwargs)
 
   def __str__(self):
     text = super().__str__()
