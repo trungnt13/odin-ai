@@ -1532,7 +1532,8 @@ def main(args: Arguments):
           on_valid_end=[Callback.save_best_llk],
           oversample_ratio=args.ratio,
           train_data_map=train_data_map,
-          valid_data_map=valid_data_map)
+          valid_data_map=valid_data_map,
+          cache_data_memory=True if 'shapes3d' not in args.ds else False)
   # === 4. evaluation
   else:
     path = get_results_path(args)

@@ -51,7 +51,7 @@ __all__ = [
 _root_path: str = '/tmp/model'
 _logging_interval: float = 5.
 _valid_interval: float = 80
-_n_valid_batches: int = 200
+_n_valid_batches: int = 400
 _extra_path = {}
 _DS: Dict[str, ImageDataset] = defaultdictkey(lambda name: get_dataset(name))
 
@@ -472,6 +472,8 @@ def train(
     on_valid_end: Sequence[Callable[..., Any]] = (Callback.save_best_llk,),
     label_percent: float = 0.,
     oversample_ratio: float = 0.5,
+    fixed_oversample: bool = True,
+    cache_data_memory: bool = True,
     train_data_map: Optional[Callable] = None,
     valid_data_map: Optional[Callable] = None,
     verbose: bool = True) -> VariationalModel:
@@ -496,11 +498,25 @@ def train(
       model.load_weights(model_path)
       return model
   # === 1. create data
-  train_ds = ds.create_dataset('train', batch_size=args.bs,
-                               label_percent=label_percent,
-                               oversample_ratio=oversample_ratio,
-                               fixed_oversample=True)
-  valid_ds = ds.create_dataset('valid', batch_size=64, label_percent=1.0)
+  fixed_oversample = (True if label_percent <= 0.1 else False) and \
+                     fixed_oversample
+  oversample_ratio = oversample_ratio if label_percent <= 0.1 else 0.0
+  print('=== Start training ===')
+  print(' * dataset          :', ds)
+  print(' * label_percent    :', label_percent)
+  print(' * fixed_oversample :', fixed_oversample)
+  print(' * oversample_ratio :', oversample_ratio)
+  print(' * cache_data_memory:', cache_data_memory)
+  train_ds = ds.create_dataset(
+    'train', batch_size=args.bs,
+    label_percent=label_percent,
+    oversample_ratio=oversample_ratio,
+    fixed_oversample=fixed_oversample,
+    cache="" if cache_data_memory else None)
+  valid_ds = ds.create_dataset('valid',
+                               batch_size=args.bs,
+                               label_percent=1.0,
+                               cache=None)
   train_ds: tf.data.Dataset
   valid_ds: tf.data.Dataset
 

@@ -17,10 +17,11 @@ from tqdm import tqdm
 from odin.fuel import MNIST
 from odin.utils import MPI
 from multiprocessing import cpu_count
-from odin.bay import BetaVAE, MVNDiagLatents, DistributionDense, BetaGammaVAE
+from odin.bay import MVNDiagLatents, DistributionDense, BetaGammaVAE
 from odin.networks.image_networks import CenterAt0
 from odin import visual as vs
 import seaborn as sns
+from dataclasses import dataclass
 
 sns.set()
 
@@ -34,23 +35,10 @@ if not os.path.exists(save_path):
 cache_path = os.path.join(save_path, 'cache')
 if not os.path.exists(cache_path):
   os.makedirs(cache_path)
-# [0.001, 0.005, 0.01, 0.1, 0.3, 0.5, 0.7, 0.9, 1., 2., 3., 5.]
-# beta = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
-# gamma = [0.001, 0.01, 0.1, 0.5, 1., 2.5, 5.]
-beta = [0.001, 0.005, 0.01, 0.1, 0.5, 1., 2.5, 5., 10]
-gamma = [0.001, 0.005, 0.01, 0.1, 0.5, 1., 2.5, 5., 10]
-zdim = [2, 5, 10, 20, 35, 60, 80]
-OVERRIDE = False
-
-
-def get_path(b, g, z) -> str:
-  path = f'{save_path}/{z}'
-  if not os.path.exists(path):
-    os.makedirs(path)
-  path = f'{path}/{b}_{g}'
-  if not os.path.exists(path):
-    os.makedirs(path)
-  return path
+BETA = [0.001, 0.005, 0.01, 0.1, 0.5, 1., 2.5, 5., 10]
+GAMMA = [0.001, 0.005, 0.01, 0.1, 0.5, 1., 2.5, 5., 10]
+ZDIM = [2, 5, 10, 20, 35, 60, 80]
+OVERWRITE = False
 
 
 def networks(zdim):
@@ -73,16 +61,55 @@ def networks(zdim):
                                   name='Image'))
 
 
+@dataclass()
+class Job:
+  beta: float = 1.0
+  gamma: float = 1.0
+  zdim: int = 10
+
+
+def get_path(job: Job) -> str:
+  path = f'{save_path}/{job.zdim}'
+  if not os.path.exists(path):
+    os.makedirs(path)
+  path = f'{path}/{job.beta}_{job.gamma}'
+  if not os.path.exists(path):
+    os.makedirs(path)
+  return path
+
+
+def get_cache_path(suffix: str = '') -> str:
+  path = os.path.join(cache_path, f'results{suffix}')
+  if os.path.exists(path) and OVERWRITE:
+    print('Overwrite results at path:', path)
+    os.remove(path)
+  return path
+
+
+def load_vae_eval(job: Job):
+  np.random.seed(1)
+  tf.random.set_seed(1)
+  path = get_path(job)
+  ds = MNIST()
+  vae = BetaGammaVAE(beta=job.beta, gamma=job.gamma, **networks(job.zdim))
+  vae.build(ds.full_shape)
+  vae.trainable = False
+  try:
+    vae.load_weights(path, verbose=False, raise_notfound=True)
+  except FileNotFoundError:
+    return None, None
+  return ds, vae
+
+
 # ===========================================================================
 # Main
 # ===========================================================================
-def training(job):
+def training(job: Job):
   np.random.seed(1)
   tf.random.set_seed(1)
-  b, g, z = job
-  path = get_path(b, g, z)
+  path = get_path(job)
   exist_files = glob.glob(f'{path}*')
-  if OVERRIDE:
+  if OVERWRITE:
     for f in exist_files:
       if os.path.isdir(f):
         shutil.rmtree(f)
@@ -95,25 +122,33 @@ def training(job):
     return
   ds = MNIST()
   train = ds.create_dataset('train', batch_size=32)
-  vae = BetaGammaVAE(beta=b, gamma=g, **networks(z))
+  vae = BetaGammaVAE(beta=job.beta, gamma=job.gamma, **networks(job.zdim))
   vae.build(ds.full_shape)
-  vae.fit(train, learning_rate=1e-3, max_iter=80000, logdir=path)
+  vae.fit(train, learning_rate=1e-3, max_iter=80000, logdir=path,
+          skip_fitted=True)
   vae.save_weights(path, overwrite=True)
 
 
-def evaluate(job):
-  np.random.seed(1)
-  tf.random.set_seed(1)
-  b, g, z = job
-  path = get_path(b, g, z)
-  ds = MNIST()
-  vae = BetaGammaVAE(beta=b, gamma=g, **networks(z))
-  vae.build(ds.full_shape)
-  vae.trainable = False
-  try:
-    vae.load_weights(path, verbose=False, raise_notfound=True)
-  except FileNotFoundError:
-    return None
+def evaluate_reconstruction(job: Job):
+  ds, vae = load_vae_eval(job)
+  if vae is None:
+    return
+  test = ds.create_dataset('test', batch_size=32)
+  for x in test.take(1):
+    px, qz = vae(x, training=False)
+  x = px.mean().numpy()
+  n_images = x.shape[0]
+  vmin = x.reshape((n_images, -1)).min(axis=1).reshape((n_images, 1, 1, 1))
+  vmax = x.reshape((n_images, -1)).max(axis=1).reshape((n_images, 1, 1, 1))
+  x = (x - vmin) / (vmax - vmin)
+  x = np.squeeze(x[0].astype(np.float32), -1)
+  return dict(beta=job.beta, gamma=job.gamma, zdim=job.zdim, image=x)
+
+
+def evaluate_balance(job: Job):
+  ds, vae = load_vae_eval(job)
+  if vae is None:
+    return
   test = ds.create_dataset('test', batch_size=32)
   llk = []
   kl = []
@@ -133,7 +168,7 @@ def evaluate(job):
   threshold = 1e-3
   au_mean = len(mean) - np.sum(np.abs(mean) <= threshold)
   au_std = len(stddev) - np.sum(np.abs(stddev - 1.0) <= threshold)
-  return dict(beta=b, gamma=g, zdim=z,
+  return dict(beta=job.beta, gamma=job.gamma, zdim=job.zdim,
               llk=llk, kl=kl,
               au_mean=au_mean, au_std=au_std)
 
@@ -167,32 +202,66 @@ if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument('mode', type=int)
   parser.add_argument('-ncpu', type=int, default=-1)
-  parser.add_argument('--override', action='store_true')
+  parser.add_argument('--overwrite', action='store_true')
   # === 1. prepare
   args = parser.parse_args()
   ncpu = args.ncpu
   if ncpu <= 0:
     ncpu = cpu_count() - 1
-  jobs = list(itertools.product(beta, gamma, zdim))
-
-  OVERRIDE = args.override
+  jobs = [Job(beta=b, gamma=g, zdim=z)
+          for b, g, z in itertools.product(BETA, GAMMA, ZDIM)]
+  OVERWRITE = args.overwrite
   # === 2. training
   if args.mode == 0:
     for _ in MPI(jobs, training, ncpu=ncpu):
       pass
   # === 3. evaluating
+  elif args.mode == 2:
+    path = get_cache_path(suffix='_reconstruction')
+    if not os.path.exists(path):
+      progress = tqdm(total=len(jobs), desc='Evaluating Reconstruction')
+      df = []
+      for results in MPI(jobs, evaluate_reconstruction, ncpu=ncpu):
+        progress.update(1)
+        if results is None:
+          continue
+        df.append(results)
+      progress.close()
+      df = pd.DataFrame(df)
+      with open(path, 'wb') as f:
+        pickle.dump(df, f)
+    else:
+      with open(path, 'rb') as f:
+        df = pickle.load(f)
+    ## plot the image
+    for zdim, group1 in tqdm(df.groupby('zdim')):
+      tmp = group1.groupby('beta')
+      n_row = len(tmp)
+      n_col = max(len(g) for _, g in tmp)
+      plt.figure(figsize=(n_col * 1.5, n_row * 1.5 + 0.5), dpi=150)
+      count = 0
+      for beta, group2 in tmp:
+        for i, (_, gamma, _, img) in enumerate(group2.values):
+          img[np.isnan(img)] = 1.
+          plt.subplot(n_row, n_col, count + 1)
+          plt.imshow(img, cmap='Greys_r')
+          plt.axis('off')
+          plt.title(f'b={beta} g={gamma}', fontsize=10)
+          count += 1
+      plt.suptitle(f'z={zdim}')
+      plt.tight_layout(rect=[0.0, 0.0, 1.0, 1.008])
+    vs.plot_save(os.path.join(save_path, 'reconstruction.pdf'), verbose=True)
+  # === 4. evaluating
   elif args.mode == 1:
-    path = os.path.join(cache_path, 'results')
-    # === 4. get evaluating results
-    if os.path.exists(path) and OVERRIDE:
-      os.remove(path)
+    path = get_cache_path()
+    # get evaluating results
     if os.path.exists(path):
       with open(path, 'rb') as f:
         df = pickle.load(f)
     else:
       df = []
-      progress = tqdm(total=len(jobs), desc='Evaluating')
-      for results in MPI(jobs, evaluate, ncpu=ncpu):
+      progress = tqdm(total=len(jobs), desc='Evaluating Balance')
+      for results in MPI(jobs, evaluate_balance, ncpu=ncpu):
         progress.update(1)
         if results is None:
           continue
@@ -203,10 +272,9 @@ if __name__ == '__main__':
         pickle.dump(df, f)
     # add elbo
     df['elbo'] = df['llk'] - df['kl']
-    # === 5. plotting
-    # fix zdim, show llk and kl
+    # plotting: fix zdim, show llk and kl
     n_cols = 4
-    n_rows = int(np.ceil(len(zdim) / n_cols))
+    n_rows = int(np.ceil(len(ZDIM) / n_cols))
     plt.figure(figsize=(n_cols * 6, n_rows * 5), dpi=200)
     for i, (zdim, group) in tqdm(enumerate(df.groupby('zdim'))):
       ax = plt.subplot(n_rows, n_cols, i + 1)
@@ -228,6 +296,6 @@ if __name__ == '__main__':
            title=f'zdim={zdim}', ax=ax)
     plt.tight_layout()
     # save all figures
-    vs.plot_save()
+    vs.plot_save(os.path.join(save_path, 'rate_distortion.pdf'), verbose=True)
   else:
     raise NotImplementedError(f'No support mode={args.mode}')

@@ -885,9 +885,11 @@ def _get_full_args(fn):
 
 def _prepare_encoder_decoder(encoder, decoder):
   if isinstance(encoder, keras.Sequential):
-    encoder = encoder.layers
+    encoder = [l.layer if isinstance(l, Wrapper) else l
+               for l in encoder.layers]
   if isinstance(decoder, keras.Sequential):
-    decoder = decoder.layers
+    decoder = [l.layer if isinstance(l, Wrapper) else l
+               for l in decoder.layers]
   assert isinstance(encoder, (tuple, list)), \
     f'encoder must be list of Layer, given {encoder}'
   assert isinstance(decoder, (tuple, list)), \
@@ -896,22 +898,18 @@ def _prepare_encoder_decoder(encoder, decoder):
 
 
 class UnetVAE(BetaVAE):
-  """ Unet-VAE """
+  """ Unet-VAE created for CIFAR10 """
 
   def __init__(
       self,
       encoder: List[keras.layers.Layer],
       decoder: List[keras.layers.Layer],
-      layers_map: List[Tuple[str, str]] = [
-        ('encoder2', 'decoder2'),
-        ('encoder1', 'decoder3'),
-        ('encoder0', 'decoder4'),
-      ],
+      layers_map: Sequence[Tuple[str, str]] = (('encoder2', 'decoder2'),
+                                               ('encoder0', 'decoder4')),
       dropout: float = 0.,
       noise: float = 0.,
       beta: float = 10.,
       free_bits: float = 2.,
-      name: str = 'UnetVAE',
       **kwargs,
   ):
     encoder, decoder = _prepare_encoder_decoder(encoder, decoder)
@@ -919,7 +917,6 @@ class UnetVAE(BetaVAE):
                      free_bits=free_bits,
                      encoder=encoder,
                      decoder=decoder,
-                     name=name,
                      **kwargs)
     encoder_layers = set(l.name for l in self.encoder)
     # mappping from layers in decoder to encoder
@@ -936,7 +933,7 @@ class UnetVAE(BetaVAE):
 
   @classmethod
   def is_hierarchical(cls) -> bool:
-    return True
+    return False
 
   def encode(self,
              inputs,

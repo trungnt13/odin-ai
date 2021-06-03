@@ -350,10 +350,10 @@ def cifar_networks(
   encoder = SequentialNetwork(
     [
       CenterAt0(enable=centerize_image),
-      conv(32, 4, strides=1, name='encoder0'),
-      conv(32, 4, strides=2, name='encoder1'),
-      conv(64, 4, strides=1, name='encoder2'),
-      conv(64, 4, strides=2, name='encoder3'),
+      conv(32, 4, strides=1, name='encoder0'),  # 32, 32, 32
+      conv(32, 4, strides=2, name='encoder1'),  # 16, 16, 32
+      conv(64, 4, strides=1, name='encoder2'),  # 16, 16, 64
+      conv(64, 4, strides=2, name='encoder3'),  # 8, 8, 64
       keras.layers.Flatten(),
       keras.layers.Dense(proj_dim, activation='linear', name='encoder_proj')
     ],
@@ -361,20 +361,20 @@ def cifar_networks(
   )
   layers = [
     keras.layers.Dense(proj_dim, activation='linear', name='decoder_proj'),
-    keras.layers.Reshape((8, 8, proj_dim // 64)),
-    deconv(64, 4, strides=2, name='decoder1'),
-    BiConvLatents(conv(64, 4, strides=1, name='decoder2'),
+    keras.layers.Reshape((8, 8, proj_dim // 64)),  # 8, 8, 4
+    deconv(64, 4, strides=2, name='decoder1'),  # 16, 16, 64
+    BiConvLatents(conv(64, 4, strides=1, name='decoder2'),  # 16, 16, 64
                   encoder=encoder.layers[3],
                   filters=32, kernel_size=8, strides=4,
                   disable=True,
                   name='latents1'),
-    deconv(32, 4, strides=2, name='decoder3'),
-    BiConvLatents(conv(32, 4, strides=1, name='decoder4'),
+    deconv(32, 4, strides=2, name='decoder3'),  # 32, 32, 32
+    BiConvLatents(conv(32, 4, strides=1, name='decoder4'),  # 32, 32, 32
                   encoder=encoder.layers[1],
                   filters=16, kernel_size=8, strides=4,
                   disable=True,
                   name='latents2'),
-    conv(n_channels * n_params,
+    conv(n_channels * n_params,  # 32, 32, 3
          1,
          strides=1,
          activation='linear',

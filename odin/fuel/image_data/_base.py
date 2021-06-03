@@ -223,6 +223,11 @@ class ImageDataset(IterableDataset):
     seed : int, optional
         [description], by default 1
 
+    Note
+    ----
+    `fixed_oversample` trigger the whole supervised dataset cached in memory,
+    which could lead to OOM on GPU.
+
     Returns
     -------
     If `0. < label_percent < 1.`, return a dictionary
@@ -289,31 +294,35 @@ class ImageDataset(IterableDataset):
         ds = ds.filter(lambda i, x: tf.logical_not(i))
       # mixing the label into minibatch
       elif oversample_ratio > 0.0:
-        # for some reason sample_from_datasets significantly slowed down
-        # if we sample from a single dataset that splitted into two by
-        # filtering, and one of which is repeated
-        # (e.g. 7000 samples/s dropped down to 1000 samples/s)
-        x_labeled, y_labeled = _extract_labeled_examples(
-          ds, n_labeled=n_labeled, normalize_method=None)
-        mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
-        ds_supervised = tf.data.Dataset.from_tensor_slices(
-          (mask_labeled, (x_labeled, y_labeled)))
-        n_repeat = int(
-          np.ceil(oversample_ratio * n_unlabeled / (1 - oversample_ratio) /
-                  n_labeled))
-        ds_supervised = ds_supervised.shuffle(
-          min(n_labeled, 1000),
-          seed=seed,
-          reshuffle_each_iteration=True,
-        ).repeat(n_repeat)
         ds_unsupervised = ds.filter(lambda i, x: tf.logical_not(i))
-        # only sampling if not fixed amount of labels
+        # only sampling if not fixed amount of labels per minibatch
         if not fixed_oversample:
+          ds_supervised = ds.filter(lambda i, x: i)
+          ds_supervised = ds_supervised.repeat(
+            int(np.ceil(n_unlabeled / n_labeled)))
           ds = tf.data.experimental.sample_from_datasets(
             [ds_unsupervised, ds_supervised],
             weights=[1. - oversample_ratio, oversample_ratio],
             seed=seed)
+        # cache the labeled data for fixed amount of labels per minibatch
         else:
+          # for some reason sample_from_datasets significantly slowed down
+          # if we sample from a single dataset that splitted into two by
+          # filtering, and one of which is repeated
+          # (e.g. 7000 samples/s dropped down to 1000 samples/s)
+          x_labeled, y_labeled = _extract_labeled_examples(
+            ds, n_labeled=n_labeled, normalize_method=None)
+          mask_labeled = tf.cast(tf.ones([x_labeled.shape[0]]), tf.bool)
+          ds_supervised = tf.data.Dataset.from_tensor_slices(
+            (mask_labeled, (x_labeled, y_labeled)))
+          n_repeat = int(
+            np.ceil(oversample_ratio * n_unlabeled / (1 - oversample_ratio) /
+                    n_labeled))
+          ds_supervised = ds_supervised.shuffle(
+            min(n_labeled, 1000),
+            seed=seed,
+            reshuffle_each_iteration=True,
+          ).repeat(n_repeat)
           ds = ds_unsupervised
       # default ratio
       else:
