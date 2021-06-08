@@ -4,6 +4,7 @@ import itertools
 import os
 import pickle
 import shutil
+from collections import defaultdict
 from typing import Optional
 
 import numpy as np
@@ -131,8 +132,10 @@ def training(job: Job):
 
 def evaluate_reconstruction(job: Job):
   ds, vae = load_vae_eval(job)
+  vae: BetaGammaVAE
   if vae is None:
     return
+  ## reconstruction
   test = ds.create_dataset('test', batch_size=32)
   for x in test.take(1):
     px, qz = vae(x, training=False)
@@ -142,14 +145,34 @@ def evaluate_reconstruction(job: Job):
   vmax = x.reshape((n_images, -1)).max(axis=1).reshape((n_images, 1, 1, 1))
   x = (x - vmin) / (vmax - vmin)
   x = np.squeeze(x[0].astype(np.float32), -1)
-  return dict(beta=job.beta, gamma=job.gamma, zdim=job.zdim, image=x)
+  reconstruction = x
+  ## sample prior
+  test = ds.create_dataset('test', label_percent=1.0, batch_size=32)
+  z_map = defaultdict(list)
+  for x, y in test.take(20):
+    y = np.argmax(y, axis=-1)
+    px, qz = vae(x, training=False)
+    z = qz.mean().numpy()
+    for i, j in zip(y, z):
+      z_map[i].append(j[np.newaxis, :])
+  z_map = {k: np.mean(np.concatenate(v, 0), 0)
+           for k, v in z_map.items()}
+  samples = vae.sample_observation(n=100).mean()
+  ref = z_map[8]  # number 8
+  distances = [np.linalg.norm(x - ref, 2)
+               for x in vae.encode(samples).mean().numpy()]
+  samples = np.squeeze(np.clip(samples[np.argmin(distances)], 0.0, 1.0), -1)
+  ## return
+  return dict(beta=job.beta, gamma=job.gamma, zdim=job.zdim,
+              image=reconstruction,
+              sample=samples)
 
 
 def evaluate_balance(job: Job):
   ds, vae = load_vae_eval(job)
   if vae is None:
     return
-  test = ds.create_dataset('test', batch_size=32)
+  test = ds.create_dataset('test', batch_size=64)
   llk = []
   kl = []
   mean = []
@@ -165,9 +188,10 @@ def evaluate_balance(job: Job):
   mean = np.mean(np.concatenate(mean, 0), 0)
   stddev = np.mean(np.concatenate(stddev, 0), 0)
   # active units
-  threshold = 1e-3
+  threshold = 0.1  # this threhold to be checked again
   au_mean = len(mean) - np.sum(np.abs(mean) <= threshold)
   au_std = len(stddev) - np.sum(np.abs(stddev - 1.0) <= threshold)
+  print(sorted(stddev), job.zdim, au_std)
   return dict(beta=job.beta, gamma=job.gamma, zdim=job.zdim,
               llk=llk, kl=kl,
               au_mean=au_mean, au_std=au_std)
@@ -187,12 +211,34 @@ def plot(df: pd.DataFrame,
     ax = plt.gca()
   splot = sns.scatterplot(x=x, y=y, hue=hue, size=size, style=style,
                           data=df, sizes=(40, 250), ax=ax, alpha=0.95,
-                          linewidth=0, palette='coolwarm')
+                          linewidth=0, palette='Spectral')
   splot.set(xscale="log")
   splot.set(yscale="log")
   plt.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0., fontsize=12)
   if title is not None:
     ax.set_title(title)
+
+
+def plot_images(df: pd.DataFrame, path: str, show_reconstruction: bool = True):
+  for zdim, group1 in tqdm(df.groupby('zdim')):
+    tmp = group1.groupby('gamma')
+    n_row = len(tmp)
+    n_col = max(len(g) for _, g in tmp)
+    plt.figure(figsize=(n_col * 1.5, n_row * 1.5 + 1.5), dpi=150)
+    count = 0
+    for gamma, group2 in list(iter(tmp))[::-1]:  # reverse the row order
+      for i, (beta, _, _, recon, sample) in enumerate(group2.values):
+        img = recon if show_reconstruction else sample
+        img[np.isnan(img)] = 1.
+        plt.subplot(n_row, n_col, count + 1)
+        plt.imshow(img, cmap='Greys_r')
+        plt.axis('off')
+        if not args.no_anno:
+          plt.title(f'b={beta} g={gamma}', fontsize=10)
+        count += 1
+    plt.suptitle(f'z={zdim}')
+    plt.tight_layout(rect=[0.0, 0.0, 1.0, 1.001])
+  vs.plot_save(path, verbose=True)
 
 
 # ===========================================================================
@@ -201,8 +247,9 @@ def plot(df: pd.DataFrame,
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument('mode', type=int)
-  parser.add_argument('-ncpu', type=int, default=-1)
+  parser.add_argument('-ncpu', type=int, default=1)
   parser.add_argument('--overwrite', action='store_true')
+  parser.add_argument('--no-anno', action='store_true')
   # === 1. prepare
   args = parser.parse_args()
   ncpu = args.ncpu
@@ -215,7 +262,7 @@ if __name__ == '__main__':
   if args.mode == 0:
     for _ in MPI(jobs, training, ncpu=ncpu):
       pass
-  # === 3. evaluating
+  # === 3. evaluating reconstruction and sampling
   elif args.mode == 2:
     path = get_cache_path(suffix='_reconstruction')
     if not os.path.exists(path):
@@ -234,24 +281,11 @@ if __name__ == '__main__':
       with open(path, 'rb') as f:
         df = pickle.load(f)
     ## plot the image
-    for zdim, group1 in tqdm(df.groupby('zdim')):
-      tmp = group1.groupby('beta')
-      n_row = len(tmp)
-      n_col = max(len(g) for _, g in tmp)
-      plt.figure(figsize=(n_col * 1.5, n_row * 1.5 + 0.5), dpi=150)
-      count = 0
-      for beta, group2 in tmp:
-        for i, (_, gamma, _, img) in enumerate(group2.values):
-          img[np.isnan(img)] = 1.
-          plt.subplot(n_row, n_col, count + 1)
-          plt.imshow(img, cmap='Greys_r')
-          plt.axis('off')
-          plt.title(f'b={beta} g={gamma}', fontsize=10)
-          count += 1
-      plt.suptitle(f'z={zdim}')
-      plt.tight_layout(rect=[0.0, 0.0, 1.0, 1.008])
-    vs.plot_save(os.path.join(save_path, 'reconstruction.pdf'), verbose=True)
-  # === 4. evaluating
+    plot_images(df, os.path.join(save_path, 'reconstruction.pdf'),
+                show_reconstruction=True)
+    plot_images(df, os.path.join(save_path, 'sampling.pdf'),
+                show_reconstruction=False)
+  # === 4. evaluating ELBO balancing
   elif args.mode == 1:
     path = get_cache_path()
     # get evaluating results
@@ -297,5 +331,10 @@ if __name__ == '__main__':
     plt.tight_layout()
     # save all figures
     vs.plot_save(os.path.join(save_path, 'rate_distortion.pdf'), verbose=True)
+    # save score file
+    score_path = os.path.join(save_path, 'results.txt')
+    with open(score_path, 'w') as f:
+      df.to_string(f, index=False)
+      print('Saved score file:', score_path)
   else:
     raise NotImplementedError(f'No support mode={args.mode}')

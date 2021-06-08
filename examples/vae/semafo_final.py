@@ -533,12 +533,41 @@ class SemafoVAE(VariationalAutoencoder):
       return ret, y
     return ret
 
-  def sample_fid(self, n=1, seed=1):
-    # complete random samples for FID scores
-    u = self.latents2.prior.sample(n, seed=seed)
+  def sample_fid(self, n=1, seed=1, mean=False, return_latents=False):
+    dsname = config.ds.lower()
+    is_2d = 'dsprites' in dsname
+    rand = np.random.RandomState(seed=seed)
+    # === 0. mnist
+    if dsname in ('mnist', 'fashionmnist', 'cifar10'):
+      classes = [10]
+    # === 1. shapes with only shapes label
+    elif dsname in ('dsprites0', 'shapes3d0'):
+      classes = [3 if is_2d else 4]
+    # === 2. shapes
+    elif dsname in ('dsprites', 'shapes3d'):
+      if is_2d:
+        # orientation, scale, shape, x, y
+        classes = [40, 6, 3, 32, 32]
+      else:
+        # orientation, scale, shape, floor, wall, object
+        classes = [15, 8, 4, 10, 10, 10]
+    else:
+      raise NotImplementedError(dsname)
+    y = [one_hot(rand.randint(0, i, size=n), i)
+         for i in classes]
+    y = np.concatenate(y, axis=-1)
+    qu_y = self.encode_aux(y, training=False)
+    u = qu_y.sample(seed=seed)
     pz_u = self.latents_prior(u, training=False)
-    z = pz_u.sample()
-    return self.decode(z, training=False)
+    if return_latents:
+      return pz_u
+    return self.decode(pz_u.mean() if mean else pz_u.sample(seed=seed),
+                       training=False)
+    # complete random samples for FID scores
+    # u = self.latents2.prior.sample(n, seed=seed)
+    # pz_u = self.latents_prior(u, training=False)
+    # z = pz_u.sample()
+    # return self.decode(z, training=False)
 
   @classmethod
   def is_semi_supervised(cls) -> bool:
@@ -918,11 +947,40 @@ class SemafoHVAE(SemafoVAE):
       return posterior, prior
     return posterior
 
-  def sample_fid(self, n=1, seed=1):
+  def sample_fid(self, n=1, seed=1, mean=False):
     # complete random samples for FID scores
-    u = self.latents2.prior.sample(n, seed=seed)
+    # u = self.latents2.prior.sample(n, seed=seed)
+    # pz_u = self.latents_prior(u, training=False)
+    # z = pz_u.sample()
+    dsname = config.ds.lower()
+    is_2d = 'dsprites' in dsname
+    rand = np.random.RandomState(seed=seed)
+    # === 0. mnist
+    if dsname in ('mnist', 'fashionmnist', 'cifar10'):
+      classes = [10]
+    # === 1. shapes with only shapes label
+    elif dsname in ('dsprites0', 'shapes3d0'):
+      classes = [3 if is_2d else 4]
+    # === 2. shapes
+    elif dsname in ('dsprites', 'shapes3d'):
+      if is_2d:
+        # orientation, scale, shape, x, y
+        classes = [40, 6, 3, 32, 32]
+      else:
+        # orientation, scale, shape, floor, wall, object
+        classes = [15, 8, 4, 10, 10, 10]
+    else:
+      raise NotImplementedError(dsname)
+    y = [one_hot(rand.randint(0, i, size=n), i)
+         for i in classes]
+    y = np.concatenate(y, axis=-1)
+    qu_y = self.encode_aux(y, training=False)
+    u = qu_y.sample(seed=seed)
     pz_u = self.latents_prior(u, training=False)
-    z = pz_u.sample()
+    if mean:
+      z = pz_u.mean()
+    else:
+      z = pz_u.sample(seed=seed)
     # enable sampling mode for HVAE
     sampling = self._is_sampling
     self.set_sampling(True)
@@ -1197,6 +1255,41 @@ class M3VAE(BetaGammaVAE):
       latents = [z, latents]
     return self.decode(latents, training=training, mask=mask), top_latents
 
+  def sample_fid(self, n=1, seed=1, mean=False, return_latents=False):
+    dsname = config.ds.lower()
+    is_2d = 'dsprites' in dsname
+    rand = np.random.RandomState(seed=seed)
+    # === 0. mnist
+    if dsname in ('mnist', 'fashionmnist', 'cifar10'):
+      classes = [10]
+    # === 1. shapes with only shapes label
+    elif dsname in ('dsprites0', 'shapes3d0'):
+      classes = [3 if is_2d else 4]
+    # === 2. shapes
+    elif dsname in ('dsprites', 'shapes3d'):
+      if is_2d:
+        # orientation, scale, shape, x, y
+        classes = [40, 6, 3, 32, 32]
+      else:
+        # orientation, scale, shape, floor, wall, object
+        classes = [15, 8, 4, 10, 10, 10]
+    else:
+      raise NotImplementedError(dsname)
+    y = [one_hot(rand.randint(0, i, size=n), i)
+         for i in classes]
+    y = np.concatenate(y, axis=-1)
+    ## sample the observation
+    z = self.latents.prior.sample(n, seed=seed)
+    qc = self.cond_prior_fn(tf.convert_to_tensor(y, dtype=self.dtype))
+    if return_latents:
+      return z, qc
+    if mean:
+      c = qc.mean()
+    else:
+      c = qc.sample((), seed=seed)
+    c.dist = qc
+    return self.decode([z, c], training=False)
+
   def cond_prior_fn(self, y):
     return self.cond_prior(y)
 
@@ -1419,29 +1512,52 @@ def semafo_latents(ds: ImageDataset,
     vs.plot_save(os.path.join(path, f'qz_pz_y_{idx}.pdf'), verbose=True)
 
 
+def sample_fid_images(args: Arguments, model: Union[SemafoVAE, M3VAE],
+                      path: str):
+  if not hasattr(model, 'sample_fid'):
+    return
+  # plot random sample z
+  images = model.sample_fid(n=100, seed=args.seed)[0]
+  images = images.mean()
+  images = prepare_images(images, normalize=True)
+  plt.figure(figsize=(10 * 1.5, 10 * 1.5), dpi=120)
+  vs.plot_images(images, images_per_row=10)
+  vs.plot_save(os.path.join(path, 'fid_images.pdf'), verbose=True)
+  # plot mean z
+  images = model.sample_fid(n=100, seed=args.seed, mean=True)[0]
+  images = images.mean()
+  images = prepare_images(images, normalize=True)
+  plt.figure(figsize=(10 * 1.5, 10 * 1.5), dpi=120)
+  vs.plot_images(images, images_per_row=10)
+  vs.plot_save(os.path.join(path, 'fid_images_mean.pdf'), verbose=True)
+
+
 def prior_traverse(model: SemafoVAE,
                    dsname: str,
-                   path: str):
+                   path: str,
+                   max_std: float = 3):
   classes = DS_TO_LABELS[dsname]
   n_classes = len(classes)
   if isinstance(model, M3VAE):
-    z, c = model.sample_prior(n=n_classes, seed=1)
-    qc = c.dist
+    # z, c = model.sample_prior(n=n_classes, seed=1)
+    # qc = c.dist
+    z, qc = model.sample_fid(n=n_classes, seed=1, return_latents=True)
     mean = tf.concat([z, qc.mean()], -1)
     stddev = tf.concat([tf.ones_like(z), qc.stddev()], -1)
-  elif not isinstance(model, SemafoVAE):
+  elif isinstance(model, SemafoVAE):
+    # pz, labels = model.sample_prior(n=n_classes, seed=1,
+    #                                 return_distribution=True,
+    #                                 return_labels=True)
+    pz = model.sample_fid(n=n_classes, seed=1, return_latents=True)
+    mean = pz.mean()
+    stddev = pz.stddev()
+  else:
+    n_classes *= 5
     pz = model.sample_prior(n=n_classes, seed=1)
     mean = pz
     stddev = tf.ones_like(mean)
-  else:
-    pz, labels = model.sample_prior(n=n_classes, seed=1,
-                                    return_distribution=True,
-                                    return_labels=True)
-    mean = pz.mean()
-    stddev = pz.stddev()
   n_points = 11  # TODO
-  n_latents = min(20, mean.shape[1])
-  max_std = 3.
+  n_latents = min(70, mean.shape[1])
   # SemafoHVAE
   if hasattr(model, 'set_sampling'):
     model.set_sampling(True)
@@ -1457,9 +1573,10 @@ def prior_traverse(model: SemafoVAE,
                       n_traverse_points=n_points)
     img = as_tuple(model.decode(m))[0]
     img = prepare_images(img.mean(), True)
-    plt.figure(figsize=(1.5 * n_points, 1.5 * n_latents), dpi=200)
-    vs.plot_images(img, images_per_row=n_points, title=f'Class={classes[i]}')
-  vs.plot_save(os.path.join(path, 'prior_traverse.pdf'), verbose=True)
+    plt.figure(figsize=(1.5 * n_points, 1.5 * n_latents), dpi=150)
+    vs.plot_images(img, images_per_row=n_points,
+                   title=f'Class={classes[i % len(classes)]}')
+  vs.plot_save(os.path.join(path, f'prior_traverse{max_std}.pdf'), verbose=True)
   # special case for hierarchical model
   if hasattr(model, 'set_sampling'):
     model.set_sampling(True)
@@ -1483,7 +1600,8 @@ def prior_traverse(model: SemafoVAE,
       img = prepare_images(img.mean(), True)
       plt.figure(figsize=(1.5 * n_points, 1.5 * n_latents), dpi=200)
       vs.plot_images(img, images_per_row=n_points, title=f'Class={classes[i]}')
-    vs.plot_save(os.path.join(path, 'prior1_traverse.pdf'), verbose=True)
+    vs.plot_save(os.path.join(path, f'prior1_traverse{max_std}.pdf'),
+                 verbose=True)
   # important, otherwise, all evaluation is wrong
   if isinstance(model, SemafoHVAE):
     model.set_sampling(False)
@@ -1547,23 +1665,54 @@ def main(args: Arguments):
     ### load model weights
     model.load_weights(get_model_path(args), raise_notfound=True, verbose=True)
     print('Trained steps:', model.step.numpy())
+    ### extra plotting
+    # sample_fid_images(args, model, path)
+    # [0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5, 10]
+    for i in [20]:
+      prior_traverse(model, args.ds, path, max_std=i)
+    exit()
+
     ### run the disentanglement gym
     score_path = get_scores_path(args)
     gym = DisentanglementGym(model=model,
                              dataset=args.ds,
                              batch_size=32,
                              dpi=args.dpi,
-                             seed=args.seed + 5)
+                             seed=args.seed)
     with gym.run_model(n_samples=800 if args.debug else 30000,
-                       device='cpu',
+                       device='gpu',
                        partition='test'):
-      gym.write_report(score_path,
-                       scores=(gym.accuracy_score, gym.log_likelihood,
-                               gym.frechet_inception_distance,
-                               gym.kl_divergence, gym.active_units,
-                               gym.mig_score, gym.dci_score, gym.sap_score,
-                               gym.clustering_score),
-                       verbose=True)
+      # n_latents = 40
+      # for val in [1, 1.5, 2, 2.5, 3, 4, 5, 8, 10]:
+      #   if isinstance(model, M3VAE):
+      #     gym.plot_latents_traverse(latent_idx=0, title=f'_style{val}',
+      #                               min_val=-val, max_val=val,
+      #                               value_type='fixed',
+      #                               n_top_latents=n_latents,
+      #                               traverse_style=True)
+      #     gym.plot_latents_traverse(latent_idx=1, title=f'_class{val}',
+      #                               min_val=-val, max_val=val,
+      #                               value_type='fixed',
+      #                               n_top_latents=n_latents,
+      #                               traverse_style=False)
+      #   elif isinstance(model, SemafoVAE):
+      #     gym.plot_latents_traverse(latent_idx=0, min_val=-val, max_val=val,
+      #                               n_top_latents=n_latents,
+      #                               title=str(val), value_type='both')
+      #   else:
+      #     gym.plot_latents_traverse(latent_idx=0, min_val=-val, max_val=val,
+      #                               n_top_latents=n_latents,
+      #                               title=str(val), value_type='fixed')
+      # gym.save_figures(path, verbose=True)
+
+      if not args.noscore:
+        gym.write_report(score_path,
+                         scores=(gym.accuracy_score, gym.log_likelihood,
+                                 gym.frechet_inception_distance,
+                                 gym.kl_divergence, gym.active_units,
+                                 gym.mig_score, gym.dci_score, gym.sap_score,
+                                 gym.clustering_score),
+                         verbose=True)
       ## special case for SemafoVAE
       try:
         prior_traverse(model, args.ds, path)
@@ -1591,6 +1740,12 @@ def main(args: Arguments):
           gym.plot_latents_traverse(latent_idx=0, title='_style',
                                     traverse_style=True)
           gym.plot_latents_traverse(latent_idx=1, title='_class',
+                                    traverse_style=False)
+          gym.plot_latents_traverse(latent_idx=0, title='_style',
+                                    min_val=-3, max_val=3, value_type='fixed',
+                                    traverse_style=True)
+          gym.plot_latents_traverse(latent_idx=1, title='_class',
+                                    min_val=-3, max_val=3, value_type='fixed',
                                     traverse_style=False)
         elif isinstance(model, SemafoHVAE):
           model.set_sampling(True)

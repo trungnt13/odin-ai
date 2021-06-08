@@ -28,8 +28,8 @@ dependencies:
   - torchaudio
 
   - pip:
-      - tensorflow==2.4.1
-      - tensorflow-probability==0.12.1
+      - tensorflow==2.5.0
+      - tensorflow-probability==0.13.0-rc0
       - tensorflow-datasets
       - tensorflow_io
       - tensorflow-addons

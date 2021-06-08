@@ -1788,7 +1788,11 @@ class DisentanglementGym(vs.Visualizer):
           method = getattr(self, name)
         else:
           raise ValueError(f'No support for score type {name}')
-        scores = method()
+        try:
+          scores = method()
+        except Exception as e:
+          print('Error calculating score:', name, e)
+          scores = np.nan
         text = f'{name.capitalize():20s}: {scores}'
         if verbose:
           print(text)

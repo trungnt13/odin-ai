@@ -474,6 +474,14 @@ def model_equilibriumvae7(args: Arguments):
     R=-0.1, C=0.5, dropout=0., beta=1.)
 
 
+# R = -0.5
+def model_equilibriumvae9(args: Arguments):
+  return EquilibriumVAE(
+    **get_networks(args.ds, zdim=args.zdim, is_hierarchical=False,
+                   is_semi_supervised=False),
+    R=-0.5, C=0., dropout=0., beta=1.)
+
+
 # beta=1 C=1.0, random_capacity=True
 def model_equilibriumvae8(args: Arguments):
   return EquilibriumVAE(
@@ -573,7 +581,7 @@ def evaluate(model: VariationalModel, ds: ImageDataset, args: Arguments):
       gym.plot_latents_traverse(n_top_latents=20, title=f'_x{i}',
                                 max_val=3 * stddev,
                                 min_val=-3 * stddev,
-                                mode='linear', seed=i)
+                                seed=i)
     gym.plot_latents_stats()
     gym.plot_reconstruction()
     gym.plot_latents_sampling()

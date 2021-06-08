@@ -74,6 +74,7 @@ class Arguments:
   eval: bool = False
   override: bool = False
   debug: bool = False
+  noscore: bool = False
   # semi-supervised
   py: float = 0.0
   ratio: float = 0.1
@@ -238,7 +239,10 @@ def get_model(args: Arguments,
   ds = _DS[args.ds]
   vae_name = args.vae
   vae_cls = get_vae(vae_name)
-  networks = get_networks(ds.name, zdim=None if args.zdim < 1 else args.zdim)
+  networks = get_networks(ds.name,
+                          is_semi_supervised=vae_cls.is_semi_supervised(),
+                          is_hierarchical=vae_cls.is_hierarchical(),
+                          zdim=None if args.zdim < 1 else args.zdim)
   for k, v in locals().items():
     if k in networks and v is not None:
       networks[k] = v

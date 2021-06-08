@@ -281,7 +281,7 @@ class VariationalAutoencoder(VariationalModel):
 
   def sample_observation(self, n: int = 1, seed: int = 1,
                          training: bool = False, **kwargs) -> Distribution:
-    """Sample observation using latents prios"""
+    """Sample observation using latents prior"""
     z = self.sample_prior(n, seed=seed)
     return self.decode(z, training=training)
 
