@@ -94,6 +94,9 @@ class CIFAR(ImageDataset):
 # Shortcuts
 # ===========================================================================
 class CIFAR10(CIFAR):
+  """Labels: ['airplane', 'automobile', 'bird', 'cat', 'deer', 'dog', 'frog',
+              'horse', 'ship', 'truck']
+  """
 
   def __init__(self):
     super().__init__(10)
