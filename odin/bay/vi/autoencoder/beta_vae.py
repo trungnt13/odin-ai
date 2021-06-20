@@ -92,7 +92,7 @@ class AnnealingVAE(BetaVAE):
   Maaløe, L., Sønderby, C.K., Sønderby, S.K., Winther, O., 2016. Auxiliary
       Deep Generative Models. arXiv:1602.05473 [cs, stat].
   Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
-      Ladder variational autoencodersself. Advances in Neural Information
+      Ladder variational autoencoder. Advances in Neural Information
       Processing Systems. Curran Associates, Inc., pp. 3738–3746.
   """
 

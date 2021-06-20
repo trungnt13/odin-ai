@@ -781,10 +781,15 @@ class HierarchicalVAE(AnnealingVAE):
 
   References
   ----------
-  Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O., 2016.
-    Ladder variational autoencoders, Advances in Neural Information Processing Systems.
-    Curran Associates, Inc., pp. 3738–3746.
-  Tomczak, J.M., Welling, M., 2018. VAE with a VampPrior. arXiv:1705.07120 [cs, stat].
+  Sønderby, C.K., Raiko, T., Maaløe, L., Sønderby, S.K., Winther, O.,
+    Ladder variational autoencoders,
+    Advances in Neural Information Processing Systems, 2016
+  Tomczak, J.M., Welling, M., 2018. VAE with a VampPrior.
+    arXiv:1705.07120 [cs, stat].
+  D. P. Kingma, T. Salimans, R. Jozefowicz, X. Chen, I. Sutskever, and M. Welling,
+    Improved variational inference with inverse autoregressive flow, in
+    Advances in neural information processing systems, 2016
+
   """
 
   def __init__(self, free_bits=0.25, **kwargs):
