@@ -11,6 +11,21 @@ End-to-end design, versatile, plug-n-play, minimized repetitive work
 
 This repo contains the most comprehensive implementation of variational autoencoder and disentangled representation benchmark.
 
+TOC
+---
+
+1. `VAE`__
+2. `Hierachical VAE`__
+3. `Semi-supervised VAE`__
+4. `Disentanglement Gym`__
+5. `Faster Classical ML`__ (automatically select GPU implementation)
+
+.. __: #variational-autoencoder-vae
+.. __: #hierachical-vae
+.. __: #semi-supervised-vae
+.. __: #disentanglement-gym
+.. __: #fast-api-for-classical-ml
+
 Variational Autoencoder (VAE)
 -----------------------------
 
@@ -130,8 +145,8 @@ Semi-supervised VAE
      - [`Code <https://github.com/trungnt13/odin-ai/blob/aea88577cbc972230e3d9dabfbe6144509364768/examples/vae/semafo_final.py#L351>`_][`Example <https://github.com/trungnt13/odin-ai/blob/master/examples/vae/semafo_final.py>`_]
 
 
-DisentanglementGym
-------------------
+Disentanglement Gym
+-------------------
 
 `DisentanglementGym <https://github.com/trungnt13/odin-ai/blob/master/odin/bay/vi/disentanglement_gym.py>`_: fast API for benchmarks on popular datasets and renowned disentanglement metrics.
 
