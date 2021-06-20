@@ -3,13 +3,13 @@
 
 O.D.I.N
 =======
-Orgainzed Digital Intelligent Network (O.D.I.N)
+Organized Digital Intelligent Network (O.D.I.N)
 
 O.D.I.N is a framework for building "Organized Digital Intelligent Networks".
 
 End-to-end design, versatile, plug-n-play, minimized repetitive work
 
-This repo contains the most comprehensive implementation of variational autoencoder and disentangled representaiton benchmark.
+This repo contains the most comprehensive implementation of variational autoencoder and disentangled representation benchmark.
 
 Variational Autoencoder (VAE)
 -----------------------------
