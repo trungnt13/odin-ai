@@ -21,7 +21,7 @@ TOC
 5. `Faster Classical ML`__ (automatically select GPU implementation)
 
 .. __: #variational-autoencoder-vae
-.. __: #hierachical-vae
+.. __: #hierarchical-vae
 .. __: #semi-supervised-vae
 .. __: #disentanglement-gym
 .. __: #fast-api-for-classical-ml
