@@ -1,33 +1,70 @@
 # -*- coding: utf-8 -*-
-# ===========================================================================
 # Copyright 2016-2017 TrungNT
-# ===========================================================================
 from __future__ import print_function, division, absolute_import
 
-import os
-import sys
 import inspect
 import marshal
+import math
+import os
+import time
+import types
 import warnings
 from array import array
-from six.moves import builtins
-
+from collections import Mapping
 from collections import OrderedDict, defaultdict
-from collections import MutableMapping, Mapping
-from functools import wraps, partial
-from six import string_types
-from six.moves import zip, zip_longest, cPickle
-import types
+from functools import wraps
+from typing import Callable
 
 import numpy as np
+from six import string_types
+from six.moves import builtins
+from six.moves import zip, cPickle
+from decorator import decorator
 
 __all__ = [
-    'typecheck',
-    'autoattr',
-    'abstractstatic',
-    'functionable',
-    'singleton'
+  'schedule',
+  'typecheck',
+  'autoattr',
+  'abstractstatic',
+  'functionable',
+  'singleton'
 ]
+
+
+def schedule(interval: float,
+             stop_after: float = math.inf,
+             max_repeat: float = math.inf):
+  """Schedule a function to be executed periodically by `interval` second
+
+  Parameters
+  ----------
+  interval : float
+      execution interval in seconds.
+  stop_after : float
+      stop the execution after seconds.
+  max_repeat : float
+      stop the execution after number of repetition.
+  """
+  start_time = [time.time()]
+  first_time = [-1.]
+  n_repetition = [0]
+
+  @decorator
+  def scheduled_fn(fn: Callable, *args, **kwargs):
+    curr_time = time.time()
+    if (curr_time - start_time[0]) >= interval:
+      if first_time[0] < 0:
+        first_time[0] = curr_time
+      elif curr_time - first_time[0] > stop_after:
+        return
+      n_repetition[0] += 1
+      if n_repetition[0] > max_repeat:
+        return
+      start_time[0] = curr_time
+      return fn(*args, **kwargs)
+    return
+
+  return scheduled_fn
 
 
 # ===========================================================================
@@ -35,6 +72,7 @@ __all__ = [
 # ===========================================================================
 def _info(fname, expected, actual, flag):
   '''Convenience function outputs nicely formatted error/warning msg.'''
+
   def to_str(t):
     s = []
     for i in t:
@@ -47,8 +85,8 @@ def _info(fname, expected, actual, flag):
   expected, actual = to_str(expected), to_str(actual)
   ftype = 'method'
   msg = "'{}' {} ".format(fname, ftype) \
-      + ("inputs", "outputs")[flag] + " ({}), but ".format(expected) \
-      + ("was given", "result is")[flag] + " ({})".format(actual)
+        + ("inputs", "outputs")[flag] + " ({}), but ".format(expected) \
+        + ("was given", "result is")[flag] + " ({})".format(actual)
   return msg
 
 
@@ -137,11 +175,11 @@ def typecheck(inputs=None, outputs=None, debug=2):
       excluded = {i: j for i, j in zip(args_name, input_args)}
       # check default kwargs
       for i, j in args_defaults.items():
-        if i in excluded: # already input as positional argument
+        if i in excluded:  # already input as positional argument
           continue
-        if i in kwargs: # specified value
+        if i in kwargs:  # specified value
           input_args.append(kwargs[i])
-        else: # default value
+        else:  # default value
           input_args.append(j)
       ### main logic
       if debug == 0: # ignore
@@ -152,8 +190,9 @@ def typecheck(inputs=None, outputs=None, debug=2):
         length = int(min(len(input_args), len(inputs)))
         argtypes = tuple(map(type, input_args))
         # TODO: smarter way to check argtypes for methods
-        if not _compares_types(argtypes[:length], inputs[:length]) and\
-            not _compares_types(argtypes[1:length + 1], inputs[:length]): # wrong types
+        if not _compares_types(argtypes[:length], inputs[:length]) and \
+            not _compares_types(argtypes[1:length + 1],
+                                inputs[:length]):  # wrong types
           msg = _info(func.__name__, inputs, argtypes, 0)
           if debug == 1:
             print('TypeWarning:', msg)
@@ -176,7 +215,9 @@ def typecheck(inputs=None, outputs=None, debug=2):
             raise TypeError(msg)
       ### finally everything ok
       return results
+
     return wrapper
+
   return wrap_function
 
 
@@ -203,7 +244,8 @@ def autoattr(*args, **kwargs):
   >>> c.test2() # arg2 = True
 
   '''
-  if len(args) > 0 and (inspect.ismethod(args[0]) or inspect.isfunction(args[0])):
+  if len(args) > 0 and (
+      inspect.ismethod(args[0]) or inspect.isfunction(args[0])):
     raise ValueError('You must specify at least 1 *args or **kwargs, all '
                      'attributes in *args will be setted to True, likewise, '
                      'all attributes in **kwargs will be setted to given '
@@ -223,9 +265,11 @@ def autoattr(*args, **kwargs):
             else:
               setattr(args[0], str(i), j)
       return results
+
     return wrapper
 
   return wrap_function
+
 
 # ===========================================================================
 # Abstract static
@@ -236,7 +280,9 @@ class abstractstatic(staticmethod):
   def __init__(self, function):
     super(abstractstatic, self).__init__(function)
     function.__isabstractmethod__ = True
+
   __isabstractmethod__ = True
+
 
 # ===========================================================================
 # Python utilities
@@ -262,18 +308,19 @@ def func_to_str(func):
 def str_to_func(s, sandbox=None):
   if isinstance(s, (tuple, list)):
     code, closure, defaults = s
-  elif isinstance(s, string_types): # path to file
+  elif isinstance(s, string_types):  # path to file
     if os.path.isfile(s):
       with open(s, 'rb') as f:
         code, closure, defaults = cPickle.load(f)
-    else: # pickled string
+    else:  # pickled string
       code, closure, defaults = cPickle.loads(s)
   else:
     raise ValueError("Unsupport str_to_func for type:%s" % type(s))
   code = marshal.loads(cPickle.loads(code).tobytes())
   func = types.FunctionType(code=code, name=code.co_name,
-              globals=sandbox if isinstance(sandbox, Mapping) else globals(),
-              closure=closure, argdefs=defaults)
+                            globals=sandbox if isinstance(sandbox,
+                                                          Mapping) else globals(),
+                            closure=closure, argdefs=defaults)
   return func
 
 
@@ -313,7 +360,8 @@ def _serialize_function_sandbox(function, source):
         typ = 'module'
       # edward distribution
       elif isinstance(val, type) and str(val.__module__) == 'abc' and \
-      str(type(val).__module__) == "tensorflow.contrib.distributions.python.ops.distribution":
+          str(type(
+            val).__module__) == "tensorflow.contrib.distributions.python.ops.distribution":
         val = val.__name__
         typ = 'edward_distribution'
       # the FunctionType itself cannot be pickled (weird!)
@@ -327,7 +375,7 @@ def _serialize_function_sandbox(function, source):
       elif isinstance(val, Mapping):
         val = cPickle.dumps(val, protocol=cPickle.HIGHEST_PROTOCOL)
         typ = 'Mapping'
-      elif inspect.isfunction(val): # special case: function
+      elif inspect.isfunction(val):  # special case: function
         # function might nested, so cannot find it in globals()
         if val == function:
           seen_main_function = True
@@ -345,7 +393,7 @@ def _serialize_function_sandbox(function, source):
     if typ is not None:
       sandbox[name] = (typ, val)
   # ====== not seen the main function ====== #
-  if not seen_main_function: # mark the main function with "_main"
+  if not seen_main_function:  # mark the main function with "_main"
     sandbox['random_name_1234'] = ('defined_function_main',
                                    func_to_str(function))
   return sandbox
@@ -356,7 +404,6 @@ def _deserialize_function_sandbox(sandbox):
   environment : dictionary
       create by `serialize_sandbox`
   '''
-  import marshal
   with warnings.catch_warnings():
     warnings.filterwarnings(action='ignore', category=ImportWarning)
     import importlib
@@ -411,7 +458,6 @@ class _ArgPlaceHolder_(object):
 
 
 class functionable(object):
-
   """ Class handles save and load a function with its arguments
 
   This function does perfectly for following cases:
@@ -447,7 +493,7 @@ class functionable(object):
     super(functionable, self).__init__()
     self._function = func
     self.__name__ = self._function.__name__
-    try: # sometime cannot get the source
+    try:  # sometime cannot get the source
       self._source = inspect.getsource(self._function)
     except Exception as e:
       print("[WARNING] Cannot get source code of function:", func,
@@ -456,7 +502,7 @@ class functionable(object):
     # try to pickle the function directly
     try:
       self._sandbox = cPickle.dumps(self._function,
-          protocol=cPickle.HIGHEST_PROTOCOL)
+                                    protocol=cPickle.HIGHEST_PROTOCOL)
     except Exception:
       self._sandbox = _serialize_function_sandbox(func, self._source)
     # ====== store argsmap ====== #
@@ -534,7 +580,7 @@ class functionable(object):
 
   def __eq__(self, other):
     if self._function == other._function and \
-       self._argsmap == other._argsmap:
+        self._argsmap == other._argsmap:
       return True
     return False
 
@@ -597,8 +643,8 @@ class Singleton(type):
   def __new__(mcs, name, bases, class_dict):
     if '_get_id' not in class_dict:
       raise ValueError("Instance of Singleton must define classmethod "
-          "'_get_id', this method takes the same arguments as __init__ "
-          "and return the unique identity for an instance.")
+                       "'_get_id', this method takes the same arguments as __init__ "
+                       "and return the unique identity for an instance.")
     return super().__new__(mcs, name, bases, class_dict)
 
   def __call__(cls, *args, **kwargs):

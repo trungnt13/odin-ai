@@ -32,7 +32,7 @@ def _get_tokenizer(model, pretrained, **kwargs):
 # main classes
 # ===========================================================================
 class Transformer(BaseEstimator, TransformerMixin):
-  r"""
+  """
 
   Arguments:
     pretrained : a String. The name of pretrained model,

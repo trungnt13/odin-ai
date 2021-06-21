@@ -1,0 +1,41 @@
+# conda env create -f=odin.yml
+# conda activate odin
+name: odinjax
+
+channels:
+  - conda-forge
+  - rapidsai
+  - nvidia
+  - pytorch
+  - defaults
+
+dependencies:
+  - python=3.7
+  - pip>=20.3
+  - cudatoolkit=11.0
+  - cudnn=8.0
+  - rapids>=0.17
+  - jax>=0.2.12
+  - matplotlib
+  - ipython
+  - scikit-learn
+  - pandas
+  - seaborn
+  - tqdm
+  - dill
+
+  - pip:
+      - tensorflow-probability==0.12.1
+      - tensorflow-datasets
+      - kaggle
+      - numba
+      - pycrypto
+      - spacy
+      - umap-learn
+      - arviz # bayesian analysis
+      - statsmodels # hypothesis testing and frequentist statistic analysis
+      - typeguard>=2.10.0
+      - pyro-ppl
+
+# Other helpful library:
+# pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git

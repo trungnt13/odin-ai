@@ -30,8 +30,8 @@ class ClusteringTest(unittest.TestCase):
     from sklearn.cluster import MiniBatchKMeans, KMeans
 
     model = [
-        fast_kmeans(x, n_clusters=n, force_sklearn=True),
-        fast_kmeans(x, n_clusters=n, batch_size=64)
+        fast_kmeans(x, n_clusters=n, framework='sklearn'),
+        fast_kmeans(x, n_clusters=n, batch_size=32)
     ]
     mtype = [KMeans, MiniBatchKMeans]
     if _CUML:
@@ -46,7 +46,7 @@ class ClusteringTest(unittest.TestCase):
   def test_knn(self):
     x, y, n = _prepare()
     from sklearn.neighbors import NearestNeighbors
-    model = [fast_knn(x, n_neighbors=n, force_sklearn=True)]
+    model = [fast_knn(x, n_neighbors=n, framework='sklearn')]
     mtype = [NearestNeighbors]
     print(model[0].transform(x))
     exit()

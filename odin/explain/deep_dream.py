@@ -10,7 +10,7 @@ from six import string_types
 from sklearn.base import BaseEstimator
 from tensorflow import keras
 
-from odin.explain.helpers import _may_add_batch_dim, get_pretrained_model
+from odin.traininglain.helpers import _may_add_batch_dim, get_pretrained_model
 
 
 @tf.function

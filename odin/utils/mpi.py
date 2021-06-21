@@ -4,13 +4,16 @@ import inspect
 import os
 import pickle
 import sys
+import threading
 import time
 import types
 from abc import ABCMeta, abstractmethod
 from collections import defaultdict
+from functools import wraps
 from multiprocessing import (Lock, Pipe, Process, Queue, Value, cpu_count,
                              current_process)
 from multiprocessing.pool import Pool, ThreadPool
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 from decorator import decorator
@@ -21,9 +24,16 @@ os.environ['MKL_NUM_THREADS'] = '1'
 os.environ['NUMEXPR_NUM_THREADS'] = '1'
 os.environ['OMP_NUM_THREADS'] = '1'
 
-
-
 get_cpu_count = cpu_count
+
+__all__ = [
+    'set_max_threads',
+    'async_thread',
+    'async_process',
+    'TimeoutTask',
+    'run_with_timeout',
+    'MPI',
+]
 
 # ===========================================================================
 # Threading
@@ -31,10 +41,11 @@ get_cpu_count = cpu_count
 _async_function_counter = defaultdict(int)
 _NTHREADS = max(int(cpu_count()) // 2, 2)
 _THREAD_POOL = None
-_MAX_PIPE_BLOCK = 8 * 1024 * 1024 # 8MB
+_MAX_PIPE_BLOCK = 8 * 1024 * 1024  # 8MB
 # this keep track all the running async-tasks that haven't
 # finished
 _RUNNING_ASYNC_TASKS = []
+
 
 def set_max_threads(n):
   """ Set the maximum number of Threads for the
@@ -50,8 +61,10 @@ def set_max_threads(n):
       _THREAD_POOL.close()
     _THREAD_POOL = ThreadPool(processes=_NTHREADS)
 
+
 def _full_func_name(f):
   return f.__module__ + "." + f.__class__.__qualname__ + '.' + f.__name__
+
 
 class _async_task(object):
   """ A class converting blocking functions into
@@ -76,19 +89,18 @@ class _async_task(object):
       global _THREAD_POOL
       if _THREAD_POOL is None:
         _THREAD_POOL = ThreadPool(processes=_NTHREADS)
-      self._async_task = _THREAD_POOL.apply_async(
-          func=func, args=args, kwds=kw)
+      self._async_task = _THREAD_POOL.apply_async(func=func, args=args, kwds=kw)
     # ====== using Multiprocessing ====== #
     else:
+
       def wrapped_func(conn, *args, **kwargs):
         results = self._func(*args, **kwargs)
-        ret_data = pickle.dumps(results,
-                                protocol=pickle.HIGHEST_PROTOCOL)
+        ret_data = pickle.dumps(results, protocol=pickle.HIGHEST_PROTOCOL)
         ret_length = len(ret_data)
         conn.send(ret_length)
         sent_bytes = 0
         while sent_bytes < ret_length:
-          data = ret_data[sent_bytes: sent_bytes + _MAX_PIPE_BLOCK]
+          data = ret_data[sent_bytes:sent_bytes + _MAX_PIPE_BLOCK]
           conn.send(data)
           sent_bytes += _MAX_PIPE_BLOCK
 
@@ -132,7 +144,7 @@ class _async_task(object):
         self._result = self._async_task.get(timeout=timeout)
       # ====== multi-processing ====== #
       else:
-        while not self._conn.poll(): # waiting for data
+        while not self._conn.poll():  # waiting for data
           pass
         ret_length = self._conn.recv()
         read_bytes = 0
@@ -147,6 +159,7 @@ class _async_task(object):
         self._conn.close()
         self._async_task.join(timeout=timeout)
     return self._result
+
 
 def async_thread(func=None):
   """ This create and asynchronized result using Threading instead of
@@ -187,18 +200,21 @@ def async_thread(func=None):
   ...   print(x3)
 
   """
+
   @decorator
   def _decorator_func_(func, *args, **kwargs):
     kwargs['_is_threading'] = True
     task = _async_task(func, *args, **kwargs)
     return task
+
   # roles are not specified, given function directly
   if inspect.isfunction(func) or inspect.ismethod(func):
     return _decorator_func_(func)
   # roles are specified
   return _decorator_func_
 
-def async_mpi(func=None):
+
+def async_process(func=None):
   """ This create and asynchronized result using multi-Processing
   Also check: `odin.utils.mpi.async` for multi-Threading
   decorator
@@ -237,21 +253,86 @@ def async_mpi(func=None):
   ...   print(x3)
 
   """
+
   @decorator
   def _decorator_func_(func, *args, **kwargs):
     kwargs['_is_threading'] = False
     task = _async_task(func, *args, **kwargs)
     return task
+
   # roles are not specified, given function directly
   if inspect.isfunction(func) or inspect.ismethod(func):
     return _decorator_func_(func)
   # roles are specified
   return _decorator_func_
 
+
+# ===========================================================================
+# Timeout Task
+# ===========================================================================
+class TimeoutTask(threading.Thread):
+
+  def __init__(self,
+               target: Callable[..., Any],
+               *,
+               args: List[Any] = (),
+               kwargs: Dict[str, Any] = None,
+               name: str = 'Timeout'):
+    super().__init__(target=target,
+                     args=args,
+                     kwargs=kwargs,
+                     daemon=True,
+                     name=name)
+    self._result_lock = threading.Lock()
+
+  def run(self):
+    try:
+      if self._target:
+        self._result_lock.acquire()
+        self._results = self._target(*self._args, **self._kwargs)
+        self._result_lock.release()
+    finally:
+      del self._target, self._args, self._kwargs
+
+  @property
+  def has_results(self) -> bool:
+    return hasattr(self, '_results')
+
+  @property
+  def results(self) -> Any:
+    with self._result_lock:
+      return self._results
+
+
+def run_with_timeout(func: Optional[Callable[..., Any]] = None,
+                     *,
+                     timeout: Optional[int] = None):
+  """Run a function with specific timeout periord.
+  If the function cannot finish on time, a Thread is return and the results
+  could be access under the locking condition.
+  """
+
+  def first_layer(func):
+
+    @wraps(func)
+    def second_layer(*args, **kwargs):
+      task = TimeoutTask(func, args=args, kwargs=kwargs, name='Timeout')
+      task.start()
+      task.join(timeout=timeout)
+      return task.results if task.has_results else task
+
+    return second_layer
+
+  if callable(func):
+    return first_layer(func)
+  return first_layer
+
+
 # ===========================================================================
 # Multi-processing
 # ===========================================================================
 _SLEEP_TIME = 0.01
+
 
 def segment_list(l, size=None, n_seg=None):
   '''
@@ -280,6 +361,7 @@ def segment_list(l, size=None, n_seg=None):
     remain_seg -= 1
   return segments
 
+
 class SharedCounter(object):
   """ A multiprocessing syncrhonized counter """
 
@@ -299,6 +381,7 @@ class SharedCounter(object):
   def __del__(self):
     del self.lock
     del self.val
+
 
 class MPI(object):
   r""" MPI - Simple multi-processing interface
@@ -338,9 +421,7 @@ class MPI(object):
     Using pyzmq backend often 3 time faster than python Queue
   """
 
-  def __init__(self, jobs, func,
-               ncpu=1, batch=1, hwm=144,
-               backend='python'):
+  def __init__(self, jobs, func, ncpu=1, batch=1, hwm=144, backend='python'):
     super(MPI, self).__init__()
     backend = str(backend).lower()
     if backend not in ('pyzmq', 'python'):
@@ -355,10 +436,7 @@ class MPI(object):
     # never use all available CPU
     if ncpu is None:
       ncpu = cpu_count() - 1
-    self._ncpu = min(
-        np.clip(int(ncpu), 1, cpu_count() - 1),
-        len(jobs)
-    )
+    self._ncpu = min(np.clip(int(ncpu), 1, cpu_count() - 1), len(jobs))
     self._batch = max(1, int(batch))
     self._hwm = max(0, int(hwm))
     # ====== internal states ====== #
@@ -378,7 +456,7 @@ class MPI(object):
     for i in segment_list(np.arange(len(self._jobs), dtype='int32'),
                           size=self._batch):
       self._tasks.put_nowait(i)
-    for i in range(self._ncpu): # ending signal
+    for i in range(self._ncpu):  # ending signal
       self._tasks.put_nowait(None)
     # ====== only 1 iteration is created ====== #
     self._current_iter = None
@@ -426,7 +504,7 @@ class MPI(object):
         run_func = self._run_python
       init_func()
       self._is_init = True
-    yield None # yeild not thing for init
+    yield None  # yeild not thing for init
     # Select run function
     self._is_running = True
     for i in run_func():
@@ -465,9 +543,9 @@ class MPI(object):
         t = [self._jobs[i] for i in t]
         # monitor current number of remain jobs
         remain_jobs.add(-len(t))
-        if self._batch == 1: # batch=1, NO need for list of inputs
+        if self._batch == 1:  # batch=1, NO need for list of inputs
           ret = self._func(t[0])
-        else: # we have input is list of inputs here
+        else:  # we have input is list of inputs here
           ret = self._func(t)
         # if a generator is return, traverse through the
         # iterator and return each result
@@ -488,17 +566,19 @@ class MPI(object):
       sk.close()
       ctx.term()
       sys.exit(0)
+
     # ====== start the processes ====== #
-    self._processes = [Process(target=wrapped_map,
-                               args=(i, self._tasks, self._remain_jobs))
-                       for i in range(self._ncpu)]
+    self._processes = [
+        Process(target=wrapped_map, args=(i, self._tasks, self._remain_jobs))
+        for i in range(self._ncpu)
+    ]
     [p.start() for p in self._processes]
     # ====== pyzmq PULL socket ====== #
     ctx = zmq.Context()
     sockets = []
     for i in range(self._ncpu):
       sk = ctx.socket(zmq.PAIR)
-      sk.set(zmq.RCVHWM, 0) # no limit receiving
+      sk.set(zmq.RCVHWM, 0)  # no limit receiving
       sk.connect("ipc:///tmp/%d" % (self._ID + i))
       sockets.append(sk)
     self._ctx = ctx
@@ -523,6 +603,7 @@ class MPI(object):
 
   # ==================== python queue ==================== #
   def _init_python(self):
+
     def worker_func(tasks, queue, counter, remain_jobs):
       hwm = self._hwm
       minimum_update_size = max(hwm // self._ncpu, 1)
@@ -531,10 +612,10 @@ class MPI(object):
       while t is not None:
         # `t` is just list of indices
         t = [self._jobs[i] for i in t]
-        remain_jobs.add(-len(t)) # monitor current number of remain jobs
-        if self._batch == 1: # batch=1, NO need for list of inputs
+        remain_jobs.add(-len(t))  # monitor current number of remain jobs
+        if self._batch == 1:  # batch=1, NO need for list of inputs
           ret = self._func(t[0])
-        else: # we have input is list of inputs here
+        else:  # we have input is list of inputs here
           ret = self._func(t)
         # if a generator is return, traverse through the
         # iterator and return each result
@@ -542,7 +623,7 @@ class MPI(object):
           ret = (ret,)
         nb_returned = 0
         for r in ret:
-          if r is not None: # ignore None values
+          if r is not None:  # ignore None values
             queue.put(r)
             nb_returned += 1
             # sometime 1 batch get too big, and we need to stop
@@ -552,7 +633,7 @@ class MPI(object):
               nb_returned = 0
               while counter.value > hwm:
                 time.sleep(_SLEEP_TIME)
-        del ret # delete old data (this work, checked)
+        del ret  # delete old data (this work, checked)
         # increase shared counter (this number must perfectly
         # counted, only 1 mismatch and deadlock will happen)
         if nb_returned > 0:
@@ -565,13 +646,15 @@ class MPI(object):
       # ending signal
       queue.put(None)
       sys.exit(0)
+
     # ====== multiprocessing variables ====== #
     self._queue = Queue(maxsize=0)
     self._counter = SharedCounter(initial_value=0)
-    self._processes = [Process(target=worker_func,
-                               args=(self._tasks, self._queue,
-                                     self._counter, self._remain_jobs))
-                       for i in range(self._ncpu)]
+    self._processes = [
+        Process(target=worker_func,
+                args=(self._tasks, self._queue, self._counter,
+                      self._remain_jobs)) for i in range(self._ncpu)
+    ]
     [p.start() for p in self._processes]
 
   def _run_python(self):
@@ -590,12 +673,14 @@ class MPI(object):
   def _finalize(self):
     # terminate or join all processes
     if self._terminate_now:
-      [p.terminate() for p in self._processes
-       if p._popen is not None and p.is_alive()]
+      [
+          p.terminate()
+          for p in self._processes
+          if p._popen is not None and p.is_alive()
+      ]
     # only join started process which has _popen is not None
     else:
-      [p.join() for p in self._processes
-      if p._popen is not None]
+      [p.join() for p in self._processes if p._popen is not None]
     self._tasks.close()
     del self._remain_jobs
     # ====== pyzmq ====== #

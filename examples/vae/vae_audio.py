@@ -14,8 +14,8 @@ from odin import bay
 from odin import networks as net
 from odin import visual as vs
 from odin.backend import interpolation
-from odin.bay.vi.autoencoder import RandomVariable, VariationalAutoencoder
-from odin.exp import Trainer
+from odin.bay.vi.autoencoder import RVconf, VariationalAutoencoder
+from odin.training import Trainer
 from odin.fuel import AudioFeatureLoader
 from odin.utils import ArgController, clean_folder, partialclass
 
@@ -84,11 +84,11 @@ input_shape = tf.data.experimental.get_structure(train).shape[1:]
 # ===========================================================================
 # Create the model
 # ===========================================================================
-outputs = RandomVariable(event_shape=input_shape,
-                         posterior='gaus',
-                         projection=False,
-                         name="Spectrogram")
-latents = bay.layers.MultivariateNormalDiagLatent(ZDIM, name="Latents")
+outputs = RVconf(event_shape=input_shape,
+                 posterior='gaus',
+                 projection=False,
+                 name="Spectrogram")
+latents = bay.layers.MVNDiagLatents(ZDIM, name="Latents")
 encoder = keras.Sequential(
     [
         keras.Input(shape=input_shape),
@@ -156,7 +156,7 @@ vae.fit(train=train,
         max_iter=10000,
         valid_freq=500,
         checkpoint=MODEL_PATH,
-        callback=callback,
+        on_valid_end=callback,
         skip_fitted=True)
 vae.plot_learning_curves(os.path.join(SAVE_PATH, 'learning_curves.pdf'),
                          summary_steps=[100, 10])

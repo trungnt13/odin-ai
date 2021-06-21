@@ -10,7 +10,7 @@ from scipy.stats import spearmanr, pearsonr
 
 import numpy as np
 
-from odin.utils import as_tuple, batching, flatten_list
+from odin.utils import as_tuple, minibatch, flatten_list
 
 
 def prior2weights(prior,
@@ -164,7 +164,7 @@ def train_valid_test_split(x,
 def is_discrete(x: np.ndarray):
   r""" A discrete array contain only integer values """
   if not isinstance(x.dtype, np.integer):
-    for s, e in batching(batch_size=1024, n=len(x)):
+    for s, e in minibatch(batch_size=1024, n=len(x)):
       y = x[s:e]
       if np.any(y.astype(np.int32) != y.astype(np.float32)):
         return False
@@ -173,7 +173,7 @@ def is_discrete(x: np.ndarray):
 
 def is_binary(x: np.ndarray):
   r""" A binary array only contain 0 or 1 """
-  for s, e in batching(batch_size=1024, n=len(x)):
+  for s, e in minibatch(batch_size=1024, n=len(x)):
     y = x[s:e]
     if np.all(np.unique(y) != (0., 1.)):
       return False
@@ -360,7 +360,7 @@ def sampling_iter(it,
 def sparsity_percentage(x, batch_size=1024):
   n_zeros = 0
   n_total = np.prod(x.shape)
-  for start, end in batching(batch_size=batch_size, n=x.shape[0], seed=None):
+  for start, end in minibatch(batch_size=batch_size, n=x.shape[0], seed=None):
     y = x[start:end]
     if hasattr(y, 'count_nonzero'):
       n_nonzeros = y.count_nonzero()

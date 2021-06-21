@@ -1,12 +1,18 @@
-from typing import Dict, List
+from typing import Dict, List, Optional, Union, Sequence
 
 import numpy as np
 import tensorflow as tf
+from typing_extensions import Literal
 
+from odin.backend.types_helpers import DataType, LabelType
+from tensorflow.python.data import Dataset
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
+Partition = Literal['train', 'valid', 'test', 'unlabelled']
+
+
 def get_partition(part,
                   train=None,
                   valid=None,
@@ -34,11 +40,55 @@ def get_partition(part,
   return ret
 
 
+def _merge_list(data):
+  return [
+    np.concatenate([x[i].numpy()
+                    for x in data], axis=0)
+    for i in range(len(data[0]))
+  ]
+
+
+def _merge_dict(data):
+  data = {k: [x[k] for x in data] for k in data[0].keys()}
+  ret = {}
+  for k, v in data.items():
+    if tf.is_tensor(v[0]):
+      ret[k] = _merge_tensor(v)
+    elif isinstance(v[0], (tuple, list)):
+      ret[k] = _merge_list(v)
+    else:
+      ret[k] = _merge_dict(v)
+  return ret
+
+
+def _merge_tensor(data):
+  return np.concatenate(data, axis=0)
+
+
+# ===========================================================================
+# Main
+# ===========================================================================
 class IterableDataset:
+
+  def __init__(self, *args, **kwargs):
+    pass
+
+  @classmethod
+  def data_type(cls) -> DataType:
+    raise NotImplementedError
+
+  @property
+  def label_type(self) -> LabelType:
+    raise NotImplementedError
 
   @property
   def name(self) -> str:
+    """name of the dataset (all lower-case characters)"""
     return self.__class__.__name__.lower()
+
+  @property
+  def has_labels(self) -> bool:
+    return self.n_labels > 0
 
   @property
   def n_labels(self) -> int:
@@ -51,25 +101,65 @@ class IterableDataset:
     return self._labels_indices
 
   @property
-  def labels(self) -> List[str]:
+  def labels(self) -> np.ndarray:
     return np.array([])
 
   @property
   def shape(self) -> List[int]:
+    """Return shape of single example (i.e. no batch dimension)"""
     raise NotImplementedError()
 
   @property
-  def is_binary(self) -> bool:
+  def full_shape(self) -> Sequence[Union[None, int]]:
+    """Return the shape with batch dimension"""
+    return (None,) + tuple([i for i in self.shape])
+
+  @property
+  def binarized(self) -> bool:
     raise NotImplementedError()
 
   def create_dataset(self,
-                     batch_size=64,
-                     drop_remainder=False,
-                     shuffle=1000,
-                     prefetch=tf.data.experimental.AUTOTUNE,
-                     cache='',
-                     parallel=None,
-                     partition='train',
-                     inc_labels=False,
-                     seed=1) -> tf.data.Dataset:
+                     partition: Partition = 'train',
+                     *,
+                     batch_size: Optional[int] = 32,
+                     drop_remainder: bool = False,
+                     shuffle: int = 1000,
+                     prefetch: int = tf.data.experimental.AUTOTUNE,
+                     cache: str = '',
+                     parallel: Optional[int] = None,
+                     label_percent: bool = False,
+                     seed: int = 1) -> tf.data.Dataset:
+    """ Create tensorflow Dataset """
     raise NotImplementedError()
+
+  def numpy(self,
+            batch_size: int = 32,
+            drop_remainder: bool = False,
+            shuffle: int = 1000,
+            prefetch: int = tf.data.experimental.AUTOTUNE,
+            cache: str = '',
+            parallel: Optional[int] = None,
+            partition: Partition = 'train',
+            label_percent: bool = False,
+            seed: int = 1,
+            verbose: bool = False):
+    """Return the numpy data returned when iterate the partition"""
+    kw = dict(locals())
+    kw.pop('self', None)
+    verbose = kw.pop('verbose')
+    ds = self.create_dataset(**kw)
+    # load the data
+    if verbose:
+      from tqdm import tqdm
+      ds = tqdm(ds, desc='Converting dataset to numpy')
+    data = [x for x in ds]
+    # post-process the data
+    if isinstance(data[0], (tuple, list)):
+      data = _merge_list(data)
+    elif tf.is_tensor(data[0]):
+      data = _merge_tensor(data)
+    elif isinstance(data[0], dict):
+      data = _merge_dict(data)
+    else:
+      raise NotImplementedError(f'{type(data[0])}')
+    return data

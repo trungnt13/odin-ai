@@ -6,12 +6,12 @@ from tempfile import mkstemp
 
 import numpy as np
 
-from odin.bay import RandomVariable
+from odin.bay import RVconf
 
 np.random.seed(8)
 
 
-class RandomVariableTest(unittest.TestCase):
+class RVmetaTest(unittest.TestCase):
 
   def test_posterior(self):
     pass

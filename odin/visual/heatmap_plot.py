@@ -5,7 +5,6 @@ from numbers import Number
 
 import numpy as np
 import scipy as sp
-
 from odin.visual.plot_utils import tile_raster_images, to_axis
 
 
@@ -130,7 +129,7 @@ def plot_confusion_matrix(cm=None,
                           labels=None,
                           cmap="Blues",
                           ax=None,
-                          fontsize=12,
+                          fontsize=10,
                           cbar=False,
                           title=None,
                           y_true=None,
@@ -423,10 +422,11 @@ def plot_distance_heatmap(X,
     X : (n_samples, n_features). Coordination for scatter points
     labels : (n_samples,). List of classes index or name
   """
+  import seaborn as sns
   from matplotlib import pyplot as plt
   from matplotlib.lines import Line2D
   from odin import backend as K
-  import seaborn as sns
+
   # prepare data
   X = K.length_norm(X, axis=-1, epsilon=np.finfo(X.dtype).eps)
   ax = to_axis(ax)

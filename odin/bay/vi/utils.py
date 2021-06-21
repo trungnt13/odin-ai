@@ -1,35 +1,46 @@
 from __future__ import absolute_import, division, print_function
 
 import types
-import warnings
 from numbers import Number
+from typing import List, Tuple, Union, Sequence, Optional
 
 import numpy as np
 import tensorflow as tf
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import KBinsDiscretizer
+from tensorflow import Tensor
+from tensorflow_probability.python.distributions import Distribution, Normal
+from typing_extensions import Literal
+
+from odin.utils import as_tuple
 
 __all__ = [
-    'discretizing',
-    'permute_dims',
-    'marginalize_categorical_labels',
+  'discretizing',
+  'permute_dims',
+  'traverse_dims',
+  'prepare_ssl_inputs',
+  'split_ssl_inputs',
+  'marginalize_categorical_labels',
 ]
 
 
 def _gmm_discretizing_predict(self, X):
-  self._check_is_fitted()
+  # self._check_is_fitted()
   means = self.means_.ravel()
   ids = self._estimate_weighted_log_prob(X).argmax(axis=1)
   # sort by increasing order of means_
   return np.expand_dims(np.argsort(means)[ids], axis=1)
 
 
-def discretizing(*factors,
-                 independent=True,
-                 n_bins=5,
-                 strategy='quantile',
-                 return_model=False):
-  r""" Transform continuous value into discrete
+def discretizing(*factors: List[np.ndarray],
+                 independent: bool = True,
+                 n_bins: Union[int, List[int]] = 5,
+                 strategy: Literal['uniform', 'quantile', 'kmeans',
+                                   'gmm'] = 'quantile',
+                 return_model: bool = False,
+                 seed: int = 1,
+                 **gmm_kwargs):
+  """Transform continuous value into discrete
 
   Note: the histogram discretizer is equal to
     `KBinsDiscretizer(n_bins=n, encode='ordinal', strategy='uniform')`
@@ -59,11 +70,8 @@ def discretizing(*factors,
     strategy = 'uniform'
   # ====== GMM base discretizer ====== #
   if 'gmm' in strategy:
-    create_gmm = lambda: GaussianMixture(n_components=n_bins,
-                                         max_iter=800,
-                                         covariance_type='diag',
-                                         random_state=1)  # fix random state
-
+    create_gmm = lambda: GaussianMixture(
+      n_components=n_bins, random_state=seed, **gmm_kwargs)  # fix random state
     if independent:
       gmm = []
       for f in factors[0].T:
@@ -72,15 +80,15 @@ def discretizing(*factors,
         gm.predict = types.MethodType(_gmm_discretizing_predict, gm)
         gmm.append(gm)
       transform = lambda x: np.concatenate([
-          gm.predict(np.expand_dims(col, axis=1)) for gm, col in zip(gmm, x.T)
+        gm.predict(np.expand_dims(col, axis=1)) for gm, col in zip(gmm, x.T)
       ],
-                                           axis=1)
+        axis=1)
     else:
       gmm = create_gmm()
       gmm.fit(np.expand_dims(factors[0].ravel(), axis=1))
       gmm.predict = types.MethodType(_gmm_discretizing_predict, gmm)
       transform = lambda x: np.concatenate(
-          [gmm.predict(np.expand_dims(col, axis=1)) for col in x.T], axis=1)
+        [gmm.predict(np.expand_dims(col, axis=1)) for col in x.T], axis=1)
     disc = gmm
   # ====== start with bins discretizer ====== #
   else:
@@ -91,8 +99,8 @@ def discretizing(*factors,
     else:
       disc.fit(np.expand_dims(factors[0].ravel(), axis=-1))
       transform = lambda x: np.hstack([
-          disc.transform(np.expand_dims(i, axis=-1)).astype(np.int64)
-          for i in x.T
+        disc.transform(np.expand_dims(i, axis=-1)).astype(np.int64)
+        for i in x.T
       ])
   # ====== returns ====== #
   factors = tuple([transform(i) for i in factors])
@@ -102,8 +110,103 @@ def discretizing(*factors,
   return factors
 
 
-def marginalize_categorical_labels(batch_size, num_classes, dtype=tf.float32):
-  r"""
+# ===========================================================================
+# Helper for semi-supervised learning
+# ===========================================================================
+def _batch_size(x):
+  batch_size = x.shape[0]
+  if batch_size is None:
+    batch_size = tf.shape(x)[0]
+  return batch_size
+
+
+def prepare_ssl_inputs(
+    inputs: Union[Tensor, List[Tensor]],
+    mask: Tensor,
+    n_unsupervised_inputs: int,
+) -> Tuple[List[Tensor], List[Tensor], Tensor]:
+  """Prepare the inputs for the semi-supervised learning,
+  three cases are considered:
+
+    - Only the unlabeled data given
+    - Only the labeled data given
+    - A mixture of both unlabeled and labeled data, indicated by mask
+
+  Parameters
+  ----------
+  inputs : Union[TensorTypes, List[TensorTypes]]
+  n_unsupervised_inputs : int
+  mask : TensorTypes
+      The `mask` is given as indicator, `1` for labeled sample and
+      `0` for unlabeled samples
+
+  Returns
+  -------
+  Tuple[tf.Tensor, tf.Tensor, tf.Tensor]
+      - List of inputs tensors
+      - List of labels tensors (empty if there is only unsupervised data)
+      - mask tensor
+  """
+  inputs = tf.nest.flatten(as_tuple(inputs))
+  batch_size = _batch_size(inputs[0])
+  ## no labels provided
+  if len(inputs) == n_unsupervised_inputs:
+    X = inputs
+    y = []
+    mask = tf.cast(tf.zeros(shape=(batch_size,)), dtype=tf.bool)
+  ## labels is provided
+  else:
+    X = inputs[:n_unsupervised_inputs]
+    y = inputs[n_unsupervised_inputs:]
+    if mask is None:  # all data is labelled
+      mask = tf.cast(tf.ones(shape=(batch_size,)), dtype=tf.bool)
+  y = [i for i in y if i is not None]
+  return X, y, mask
+
+
+def split_ssl_inputs(
+    X: List[Tensor],
+    y: List[Tensor],
+    mask: Tensor,
+) -> Tuple[List[Tensor], List[Tensor], List[Tensor]]:
+  """Split semi-supervised inputs into unlabelled and labelled data
+
+  Parameters
+  ----------
+  X : List[tf.Tensor]
+  y : List[tf.Tensor]
+  mask : tf.Tensor
+
+  Returns
+  -------
+  Tuple[List[tf.Tensor], List[tf.Tensor], List[tf.Tensor], tf.Tensor]
+      - list of unlablled inputs
+      - list of labelled inputs
+      - list of labels
+  """
+  if not isinstance(X, (tuple, list)):
+    X = [X]
+  if y is None:
+    y = []
+  elif not isinstance(y, (tuple, list)):
+    y = [y]
+  if mask is None:
+    mask = tf.cast(tf.zeros(shape=(_batch_size(X[0]), 1)), dtype=tf.bool)
+  # flatten the mask
+  mask = tf.reshape(mask, (-1,))
+  # split into unlabelled and labelled data
+  X_unlabelled = [tf.boolean_mask(i, tf.logical_not(mask), axis=0) for i in X]
+  X_labelled = [tf.boolean_mask(i, mask, axis=0) for i in X]
+  y_labelled = [tf.boolean_mask(i, mask, axis=0) for i in y]
+  return X_unlabelled, X_labelled, y_labelled
+
+
+def marginalize_categorical_labels(X: tf.Tensor,
+                                   n_classes: int,
+                                   dtype: tf.DType = tf.float32):
+  """Marginalize discrete variable by repeating the input tensor for
+  all possible discrete values of the distribution.
+
   Example:
   ```
   # shape: [batch_size * n_labels, n_labels]
@@ -114,12 +217,19 @@ def marginalize_categorical_labels(batch_size, num_classes, dtype=tf.float32):
   X = [tf.repeat(i, n_labels, axis=0) for i in inputs]
   ```
   """
-  y = tf.expand_dims(tf.eye(num_classes, dtype=dtype), axis=0)
-  y = tf.repeat(y, batch_size, axis=0)
-  y = tf.reshape(y, (-1, num_classes))
-  return y
+  n = X.shape[0]
+  if n is None:
+    n = tf.shape(X)[0]
+  y = tf.expand_dims(tf.eye(n_classes, dtype=dtype), axis=0)
+  y = tf.repeat(y, n, axis=0)
+  y = tf.reshape(y, (-1, n_classes))
+  X = tf.repeat(X, n_classes, axis=0)
+  return X, y
 
 
+# ===========================================================================
+# Dimensions manipulation
+# ===========================================================================
 @tf.function(autograph=True)
 def permute_dims(z):
   r""" Permutation of latent dimensions Algorithm(1):
@@ -132,13 +242,15 @@ def permute_dims(z):
       shuffle points along batch_dim
   ```
 
+  Parameters
+  -----------
+    z : A Tensor
+      a tensor of shape `[batch_size, latent_dim]`
 
-  Arguments:
-    z : A Tensor `[batch_size, latent_dim]`
-
-  Reference:
-    Kim, H., Mnih, A., 2018. Disentangling by Factorising.
-      arXiv:1802.05983 [cs, stat].
+  Reference
+  -----------
+  Kim, H., Mnih, A., 2018. Disentangling by Factorising.
+    arXiv:1802.05983 [cs, stat].
   """
   shape = z.shape
   batch_dim, latent_dim = shape[-2:]
@@ -155,3 +267,133 @@ def permute_dims(z):
     perm = perm.write(i, z_i)
   return tf.transpose(perm.stack(),
                       perm=tf.concat([tf.range(1, tf.rank(z)), (0,)], axis=0))
+
+
+def traverse_dims(
+    x: Union[np.ndarray, tf.Tensor, Distribution],
+    feature_indices: Optional[Sequence[int]] = None,
+    min_val: Union[float, np.ndarray] = -2.0,
+    max_val: Union[float, np.ndarray] = 2.0,
+    n_traverse_points: int = 11,
+    mode: Literal['linear', 'quantile', 'gaussian'] = 'linear') -> np.ndarray:
+  """Traversing a dimension of a matrix between given range
+
+  Parameters
+  ----------
+  x : Union[np.ndarray, tf.Tensor, Distribution]
+      the 2-D array for performing dimension traverse
+  feature_indices : Union[int, List[int]]
+      a single index or list of indices for traverse (i.e. which columns in the
+      last dimension are for traverse)
+  min_val : int, optional
+      minimum value of the traverse, by default -2.0
+  max_val : int, optional
+      maximum value of the traverse, by default 2.0
+  n_traverse_points : int, optional
+      number of points in the traverse, must be odd number, by default 11
+  mode : {'linear', 'quantile', 'gaussian'}, optional
+      'linear' mode take linear interpolation between the `min_val` and
+      `max_val`.
+      'quantile' mode return `num` quantiles based on min and max values inferred
+      from the data. 'gaussian' mode takes `num` Gaussian quantiles,
+      by default 'linear'
+
+  Returns
+  -------
+  np.ndarray
+      the ndarray with traversed axes
+
+  Example
+  --------
+  For `n_traverse_points=3`, and `feature_indices=[0]`,
+  the return latents are:
+  ```
+  [[-2., 0.47],
+   [ 0., 0.47],
+   [ 2., 0.47]]
+  ```
+  """
+  if feature_indices is None:
+    feature_indices = list(
+      range(
+        x.event_shape[-1] if isinstance(x, Distribution) else x.shape[-1]))
+  if hasattr(feature_indices, 'numpy'):
+    feature_indices = feature_indices.numpy()
+  if isinstance(feature_indices, np.ndarray):
+    feature_indices = feature_indices.tolist()
+  feature_indices = as_tuple(feature_indices, t=int)
+  # === 0. list of indices, repeat for each index
+  if len(feature_indices) > 1:
+    arr = [
+      traverse_dims(
+        x,
+        feature_indices=i,
+        min_val=min_val,
+        max_val=max_val,
+        n_traverse_points=n_traverse_points,
+        mode=mode) for i in feature_indices]
+    return np.concatenate(arr, axis=0)
+  # === 1. single index
+  if not isinstance(min_val, Number):
+    assert len(min_val) == x.shape[-1]
+    min_val = min_val[feature_indices]
+  if not isinstance(max_val, Number):
+    assert len(max_val) == x.shape[-1]
+    max_val = max_val[feature_indices]
+  feature_indices = feature_indices[0]
+  n_traverse_points = int(n_traverse_points)
+  assert n_traverse_points % 2 == 1, \
+    ('n_traverse_points must be odd number, '
+     f'i.e. centered at 0, given {n_traverse_points}')
+  assert n_traverse_points > 1, \
+    f'n_traverse_points > 1 but given: n_traverse_points={n_traverse_points}.'
+  ### check the mode
+  all_mode = ('quantile', 'linear', 'gaussian')
+  mode = str(mode).strip().lower()
+  assert mode in all_mode, \
+    f"Only support traverse mode:{all_mode}, but given '{mode}'"
+  px = None
+  if isinstance(x, Distribution):
+    px = x
+    x = px.mean()
+  elif mode == 'gaussian':
+    raise ValueError('A distribution must be provided for mean and stddev '
+                     'in Gaussian mode.')
+  ### sample
+  x_org = x
+  x = np.array(x)
+  assert len(x.shape) == 2, f'input arrays x must be 2D-array, given: {x.shape}'
+  ### ranges
+  # z_range is a matrix [n_latents, num]
+  # linear range
+  if mode == 'linear':
+    x_range = np.linspace(min_val, max_val, num=n_traverse_points)
+  # min-max quantile
+  elif mode == 'quantile':
+    if x_org.shape[0] == 1:
+      vmin, vmax = np.min(x_org), np.max(x_org)
+    else:
+      vmin = np.min(x_org[:, feature_indices])
+      vmax = np.max(x_org[:, feature_indices])
+    x_range = np.linspace(vmin, vmax, num=n_traverse_points)
+  # gaussian quantile
+  elif mode == 'gaussian':
+    dist = Normal(loc=tf.reduce_mean(px.mean(), 0)[feature_indices],
+                  scale=tf.reduce_max(px.stddev(), 0)[feature_indices])
+    x_range = []
+    for i in np.linspace(1e-6, 1.0 - 1e-6,
+                         num=n_traverse_points,
+                         dtype=np.float32):
+      x_range.append(dist.quantile(i))
+    x_range = np.array(x_range)
+  else:
+    raise ValueError(f'Unknown mode="mode"')
+  ### traverse
+  X = np.repeat(x, len(x_range), axis=0)
+  # repeat for each sample
+  for i in range(x.shape[0]):
+    s = i * len(x_range)
+    e = (i + 1) * len(x_range)
+    # note, this should be added not simple assignment
+    X[s:e, feature_indices] += x_range.astype(X.dtype)
+  return X

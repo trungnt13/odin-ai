@@ -3,11 +3,11 @@
 import numpy as np
 from scipy import sparse
 
-from odin.fuel.bio_data._base import BioDataset
+from odin.fuel.bio_data._base import GeneDataset
 from odin.fuel.bio_data.cortex import _load_single_cell_data
 
 
-class HumanEmbryos(BioDataset):
+class HumanEmbryos(GeneDataset):
 
   def __init__(self, path="~/tensorflow_datasets/human_embryos"):
     super().__init__()

@@ -1,43 +1,51 @@
 # conda env create -f=odin.yml
 # conda activate odin
 name: odin
+
 channels:
   - conda-forge
   - rapidsai
   - nvidia
+  - pytorch
   - defaults
 
 dependencies:
   - python=3.7
+  - pip>=20.3
+  - cudatoolkit=11.0
+  - cudnn=8.0
+  - rapids=0.17
+  - jax>=0.2.12
   - matplotlib
   - ipython
-  - scikit-learn>=0.22.1
+  - scikit-learn
+  - pandas
   - seaborn
   - tqdm
   - dill
-  - jax==0.1.75
-  - rapids==0.15
+  - pytorch
+  - torchvision
+  - torchaudio
 
   - pip:
-      - tensorflow==2.3.0
-      - tensorflow-probability==0.11.0
-      - tensorflow-datasets>=3.2.1
-      - tensorflow-addons>=0.8.3
-      - torch==1.6.0
-      - torchvision==1.6.0
-      - pyro-ppl==1.4.0
-      - transformers>=3.0.2
-      - numba>=0.48.0
-      - pycrypto==2.6.1
-      - pytorch-lightning
-      - bigarray==0.2.1
-      - pandas>=1.0.3
+      - tensorflow==2.5.0
+      - tensorflow-probability==0.13.0-rc0
+      - tensorflow-datasets
+      - tensorflow_io
+      - tensorflow-addons
+      - transformers
+      - kaggle
       - hydra-core>=1.0.0
       - hydra-joblib-launcher>=1.1.0
+      - bigarray==0.2.1
+      - numba
+      - pycrypto
       - spacy
       - umap-learn
+      - arviz # bayesian analysis
+      - statsmodels # hypothesis testing and frequentist statistic analysis
+      - typeguard>=2.10.0
+      - pyro-ppl
 
 # Other helpful library:
 # pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git
-# conda install -c rapidsai -c nvidia -c conda-forge -c defaults rapids=0.15 python=3.7
-# pip install umap-learn

@@ -1,42 +1,51 @@
 from __future__ import absolute_import, division, print_function
 
 import numpy as np
+from typing import Optional, Any, Dict, Union, Callable
+from typing_extensions import Literal
 
 
-def fast_umap(*X,
-              n_components=2,
-              n_neighbors=12,
-              n_samples=None,
-              metric="euclidean",
-              n_epochs=None,
-              learning_rate=1.0,
-              init="spectral",
-              min_dist=0.1,
-              spread=1.0,
-              set_op_mix_ratio=1.0,
-              local_connectivity=1.0,
-              repulsion_strength=1.0,
-              negative_sample_rate=5,
-              transform_queue_size=4.0,
-              a=None,
-              b=None,
-              random_state=8,
-              metric_kwds=None,
-              angular_rp_forest=False,
-              target_n_neighbors=-1,
-              target_metric="categorical",
-              target_metric_kwds=None,
-              target_weight=0.5,
-              transform_seed=42,
-              return_model=False,
-              verbose=False):
-  r"""Uniform Manifold Approximation and Projection
+def fast_umap(
+    *X,
+    n_components: int = 2,
+    n_neighbors: int = 15,
+    max_samples: Optional[int] = None,
+    metric: str = "euclidean",
+    n_epochs: Optional[int] = None,
+    learning_rate: float = 1.0,
+    init: Literal['spectral', 'random'] = "spectral",
+    min_dist: float = 0.1,
+    spread: float = 1.0,
+    set_op_mix_ratio: float = 1.0,
+    local_connectivity: float = 1.0,
+    repulsion_strength: float = 1.0,
+    negative_sample_rate: int = 5,
+    transform_queue_size: float = 4.0,
+    a: float = None,
+    b: float = None,
+    metric_kwds: Dict[str, Any] = None,
+    angular_rp_forest: bool = False,
+    target_n_neighbors: int = -1,
+    target_metric: Union[str, Callable] = "categorical",
+    target_metric_kwds: Dict[str, Any] = None,
+    target_weight: float = 0.5,
+    transform_seed: int = 42,
+    random_state: int = 1,
+    return_model: bool = False,
+    framework: Literal['auto', 'cuml', 'umap'] = 'umap',
+    verbose: bool = False,
+):
+  """Uniform Manifold Approximation and Projection
 
   Finds a low dimensional embedding of the data that approximates
   an underlying manifold.
 
   Parameters
   ----------
+  n_components: int (optional, default 2)
+      The dimension of the space to embed into. This defaults to 2 to
+      provide easy visualization, but can reasonably be set to any
+      integer value in the range 2 to 100.
   n_neighbors: float (optional, default 15)
       The size of local neighborhood (in terms of number of neighboring
       sample points) used for manifold approximation. Larger values
@@ -44,10 +53,6 @@ def fast_umap(*X,
       values result in more local data being preserved. In general
       values should be in the range 2 to 100.
       Note: try to reduce `n_neighbors` for big dataset
-  n_components: int (optional, default 2)
-      The dimension of the space to embed into. This defaults to 2 to
-      provide easy visualization, but can reasonably be set to any
-      integer value in the range 2 to 100.
   metric: string or function (optional, default 'euclidean')
       The metric to use to compute distances in high dimensional space.
       If a string is passed it must match a valid predefined metric. If
@@ -178,35 +183,49 @@ def fast_umap(*X,
   # ====== kwarg for creating UMAP class ====== #
   kwargs = dict(locals())
   del kwargs['X']
-  n_samples = kwargs.pop('n_samples', None)
-  return_model = kwargs.pop('return_model', False)
+  kwargs.pop('max_samples')
+  kwargs.pop('return_model')
+  kwargs.pop('framework')
   # check X
   if isinstance(X[0], (tuple, list)):
     X = X[0]
   if not all(isinstance(x, np.ndarray) for x in X):
-    raise ValueError("`X` can only be list of numpy.ndarray or numpy.ndarray")
+    raise ValueError("`X` can only be list of numpy.ndarray")
   # ====== downsampling ====== #
-  if n_samples is not None:
-    n_samples = int(n_samples)
-    assert n_samples > 0
+  if max_samples is not None:
+    max_samples = int(max_samples)
+    assert max_samples > 0
     new_X = []
-    rand = random_state if isinstance(random_state, np.random.RandomState) else \
-    np.random.RandomState(seed=random_state)
+    rand = (random_state if isinstance(random_state, np.random.RandomState) else
+            np.random.RandomState(seed=random_state))
     for x in X:
-      if x.shape[0] > n_samples:
-        ids = rand.permutation(x.shape[0])[:n_samples]
+      if x.shape[0] > max_samples:
+        ids = rand.permutation(x.shape[0])[:max_samples]
         x = x[ids]
       new_X.append(x)
     X = new_X
   # ====== train UMAP ====== #
   msg = '`pip install umap-learn` or `conda install -c conda-forge umap-learn`'
-  try:
-    import umap
-  except ImportError:
-    raise ImportError(msg)
-  umap = umap.UMAP(**kwargs)
+  if framework == 'umap':
+    try:
+      from umap import UMAP
+    except ImportError:
+      raise ImportError(msg)
+  else:  # use cuML
+    try:
+      from cuml import UMAP
+      for key in ('angular_rp_forest', 'metric', 'metric_kwds',
+                  'target_metric_kwds', 'target_weight', 'transform_seed'):
+        kwargs.pop(key)
+    except ImportError:
+      from umap import UMAP
+    except ImportError:
+      raise ImportError(msg)
+  ## train the UMAP
+  umap = UMAP(**kwargs)
   umap.fit(X[0])
   results = [umap.transform(x) for x in X]
   if return_model:
     return results[0] if len(results) == 1 else results, umap
+  del umap
   return results[0] if len(results) == 1 else results

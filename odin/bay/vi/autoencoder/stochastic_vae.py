@@ -1,7 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
 import tensorflow as tf
-
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
 from odin.bay.vi.autoencoder.variational_autoencoder import TrainStep
 from odin.utils import as_tuple
@@ -36,7 +35,7 @@ class LikelihoodStep(TrainStep):
     pX_Z = self.vae.decode(prior,
                            training=training,
                            sample_shape=self.sample_shape)
-    if len(self.vae.output_layers) == 1:
+    if len(self.vae.observation) == 1:
       pX_Z = [pX_Z]
     inputs = tf.nest.flatten(self.inputs)
     #
@@ -61,7 +60,7 @@ class StochasticVAE(BetaVAE):
       kl_params += layer.trainable_variables
     #
     llk_params = self.decoder.trainable_variables
-    for layer in self.output_layers:
+    for layer in self.observation:
       llk_params += layer.trainable_variables
     #
     self.kl_params = kl_params
@@ -78,9 +77,9 @@ class StochasticVAE(BetaVAE):
 
     Example:
     ```
-    vae = FactorVAE()
-    x = vae.sample_data()
-    vae_step, discriminator_step = list(vae.train_steps(x))
+    model = factorVAE()
+    x = model.sample_data()
+    vae_step, discriminator_step = list(model.train_steps(x))
     # optimizer VAE with total correlation loss
     with tf.GradientTape(watch_accessed_variables=False) as tape:
       tape.watch(vae_step.parameters)
@@ -126,12 +125,12 @@ class ImputeVAE(BetaVAE):
   ```
   ds = MNIST()
   train = ds.create_dataset(partition='train')
-  vae = ImputeVAE(
+  model = ImputeVAE(
       encoder='mnist',
       outputs=RV((28, 28, 1), 'bern', name="Image"),
       impute_steps=3,
       sequential=True)
-  vae.fit(train, epochs=-1, max_iter=8000, compile_graph=True)
+  model.fit(train, epochs=-1, max_iter=8000, compile_graph=True)
   ```
   """
 

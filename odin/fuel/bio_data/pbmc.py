@@ -6,11 +6,11 @@ import numpy as np
 import tensorflow as tf
 from scipy import sparse
 
-from odin.fuel.bio_data._base import BioDataset
+from odin.fuel.bio_data._base import GeneDataset
 from odin.utils.crypto import md5_checksum
 
 
-class PBMC(BioDataset):
+class PBMC(GeneDataset):
   _URL = {
       '5k':
           b'aHR0cHM6Ly9haS1kYXRhc2V0cy5zMy5hbWF6b25hd3MuY29tL3BibWM1ay5ucHo=\n',

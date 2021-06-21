@@ -9,6 +9,7 @@ from __future__ import absolute_import, division, print_function
 
 import colorsys
 import copy
+import io
 import itertools
 import os
 import sys
@@ -16,22 +17,29 @@ import warnings
 from collections import Mapping, OrderedDict, defaultdict
 from contextlib import contextmanager
 from numbers import Number
+from typing import List, Optional, Tuple, Union, Sequence
 
 import numpy as np
-from scipy import stats
-from six import string_types
-from six.moves import range, zip
-
+from odin.utils import as_tuple
 from odin.visual.heatmap_plot import *
 from odin.visual.histogram_plot import *
 from odin.visual.plot_utils import *
 from odin.visual.scatter_plot import *
 from odin.visual.stats_plot import *
+from scipy import stats
+from six import string_types
+from six.moves import range, zip
 
-# try:
-#     import seaborn # import seaborn for pretty plot
-# except:
-#     pass
+try:
+  import matplotlib as mpl
+  import seaborn  # import seaborn for pretty plot
+  import tensorflow as tf
+  from matplotlib import pyplot as plt
+except ImportError:
+  seaborn = None
+  mpl = None
+  plt = None
+  tf = None
 
 
 # ===========================================================================
@@ -85,8 +93,6 @@ def time_ticks(locs, *args, **kwargs):  # pylint: disable=star-args
   >>> # Tick along the y axis
   >>> librosa.display.time_ticks(beat_times, axis='y')
   '''
-  from matplotlib import pyplot as plt
-
   n_ticks = kwargs.pop('n_ticks', 5)
   axis = kwargs.pop('axis', 'x')
   time_fmt = kwargs.pop('time_fmt', None)
@@ -113,15 +119,15 @@ def time_ticks(locs, *args, **kwargs):  # pylint: disable=star-args
 
   # Format the labels by time
   formats = {
-      'ms':
-          lambda t: '{:d}ms'.format(int(1e3 * t)),
-      's':
-          '{:0.2f}s'.format,
-      'm':
-          lambda t: '{:d}:{:02d}'.format(int(t / 6e1), int(np.mod(t, 6e1))),
-      'h':
-          lambda t: '{:d}:{:02d}:{:02d}'.format(int(
-              t / 3.6e3), int(np.mod(t / 6e1, 6e1)), int(np.mod(t, 6e1)))
+    'ms':
+      lambda t: '{:d}ms'.format(int(1e3 * t)),
+    's':
+      '{:0.2f}s'.format,
+    'm':
+      lambda t: '{:d}:{:02d}'.format(int(t / 6e1), int(np.mod(t, 6e1))),
+    'h':
+      lambda t: '{:d}:{:02d}:{:02d}'.format(int(
+        t / 3.6e3), int(np.mod(t / 6e1, 6e1)), int(np.mod(t, 6e1)))
   }
 
   if time_fmt is None:
@@ -171,9 +177,6 @@ def _cmap(data):
   matplotlib.pyplot.colormaps
   seaborn.cubehelix_palette
   '''
-  import matplotlib as mpl
-  from matplotlib import pyplot as plt
-
   _HAS_SEABORN = False
   try:
     _matplotlibrc = copy.deepcopy(mpl.rcParams)
@@ -213,7 +216,6 @@ def _cmap(data):
 # ===========================================================================
 @contextmanager
 def figure(nrow=8, ncol=8, dpi=180, show=False, tight_layout=True, title=''):
-  from matplotlib import pyplot as plt
   inches_for_box = 2.4
   if nrow != ncol:
     nrow = inches_for_box * ncol
@@ -244,25 +246,21 @@ def fig2data(fig):
 
 
 def data2fig(data):
-  from matplotlib import pyplot as plt
   fig = plt.figure()
   plt.imshow(data)
   return fig
 
 
-def plot_figure(nrow=8, ncol=8, dpi=180):
-  from matplotlib import pyplot as plt
-  fig = plt.figure(figsize=(ncol, nrow), dpi=dpi)
+def plot_figure(nrows=8, ncols=8, dpi=180):
+  fig = plt.figure(figsize=(ncols, nrows), dpi=dpi)
   return fig
 
 
 def plot_title(title, fontsize=12):
-  from matplotlib import pyplot as plt
   plt.suptitle(str(title), fontsize=fontsize)
 
 
 def subplot(*arg, **kwargs):
-  from matplotlib import pyplot as plt
   subplot = plt.subplot(*arg)
   if 'title' in kwargs:
     subplot.set_title(kwargs['title'])
@@ -314,7 +312,6 @@ def plot_gridSpec(nrow, ncol, wspace=None, hspace=None):
   plt.subplot(grid[1, :2])
   plt.subplot(grid[1, 2])
   """
-  from matplotlib import pyplot as plt
   grid = plt.GridSpec(nrows=nrow, ncols=ncol, wspace=wspace, hspace=hspace)
   yield grid
 
@@ -328,7 +325,6 @@ def plot_gridSubplot(shape, loc, colspan=1, rowspan=1):
   ax3 = plt.subplot2grid((3, 3), (1, 0), colspan=2, rowspan=2)
   ax4 = plt.subplot2grid((3, 3), (1, 2), rowspan=2)
   """
-  from matplotlib import pyplot as plt
   return plt.subplot2grid(shape=shape,
                           loc=loc,
                           colspan=colspan,
@@ -336,7 +332,6 @@ def plot_gridSubplot(shape, loc, colspan=1, rowspan=1):
 
 
 def plot_subplot(*args):
-  from matplotlib import pyplot as plt
   return plt.subplot(*args)
 
 
@@ -350,7 +345,6 @@ def set_labels(ax, title=None, xlabel=None, ylabel=None):
 
 
 def plot_vline(x, ymin=0., ymax=1., color='r', ax=None):
-  from matplotlib import pyplot as plt
   ax = ax if ax is not None else plt.gca()
   ax.axvline(x=x, ymin=ymin, ymax=ymax, color=color, linewidth=1, alpha=0.6)
   return ax
@@ -388,7 +382,6 @@ def plot_comparison_track(Xs,
                      "number of xticks' labels: %d" %
                      (len(Xs[0], len(tick_labels))))
   nb_points = len(Xs[0])
-  from matplotlib import pyplot as plt
   # ====== some default styles ====== #
   default_marker_styles = ['o', '^', 's', '*', '+', 'X', '|', 'D', 'H', '8']
   if marker_styles is None and nb_series <= len(default_marker_styles):
@@ -453,10 +446,10 @@ def plot_gaussian_mixture(x,
                           legend=True,
                           ax=None,
                           title=None):
-  from sklearn.mixture import GaussianMixture
-  from odin.utils import as_tuple, catch_warnings_ignore
   import seaborn as sns
+  from odin.utils import as_tuple, catch_warnings_ignore
   from scipy import stats
+  from sklearn.mixture import GaussianMixture
   ax = to_axis(ax, is_3D=False)
   n_points = int(bins * 12)
   assert gmm.means_.shape[1] == 1, "Only support plotting 1-D series GMM"
@@ -480,10 +473,10 @@ def plot_gaussian_mixture(x,
   ax.set_ylabel("Histogram Count", fontsize=fontsize)
   ax.set_xlim((np.min(x), np.max(x)))
   ax.set_xticks(
-      np.linspace(start=np.min(x), stop=np.max(x), num=5, dtype='float32'))
+    np.linspace(start=np.min(x), stop=np.max(x), num=5, dtype='float32'))
   ax.set_yticks(
-      np.linspace(start=np.min(count), stop=np.max(count), num=5,
-                  dtype='int32'))
+    np.linspace(start=np.min(count), stop=np.max(count), num=5,
+                dtype='int32'))
   # ====== GMM PDF ====== #
   x_ = np.linspace(np.min(bins), np.max(bins), n_points)
   y_ = np.exp(gmm.score_samples(x_[:, np.newaxis]))
@@ -552,8 +545,6 @@ def plot_gaussian_mixture(x,
 def plot(x, y=None, ax=None, color='b', lw=1, **kwargs):
   '''Plot the amplitude envelope of a waveform.
   '''
-  from matplotlib import pyplot as plt
-
   ax = ax if ax is not None else plt.gca()
   if y is None:
     ax.plot(x, c=color, lw=lw, **kwargs)
@@ -567,15 +558,13 @@ def plot_ellipses(mean, sigma, color, alpha=0.75, ax=None):
   If the data is more than 2-D, you can use PCA before
   fitting the GMM.
   """
-  import matplotlib as mpl
-  from matplotlib import pyplot as plt
   # ====== prepare ====== #
   mean = mean.ravel()
   assert len(mean) == 2, "mean must be vector of size 2"
   assert sigma.shape == (2, 2), "sigma must be matrix of shape (2, 2)"
   if ax is None:
     ax = plt.gca()
-  covariances = sigma**2
+  covariances = sigma ** 2
   # ====== create the ellipses ====== #
   v, w = np.linalg.eigh(covariances)
   u = w[0] / np.linalg.norm(w[0])
@@ -589,10 +578,7 @@ def plot_ellipses(mean, sigma, color, alpha=0.75, ax=None):
 
 
 def plot_indices(idx, x=None, ax=None, alpha=0.3, ymin=0., ymax=1.):
-  from matplotlib import pyplot as plt
-
   ax = ax if ax is not None else plt.gca()
-
   x = range(idx.shape[0]) if x is None else x
   for i, j in zip(idx, x):
     if i:
@@ -623,61 +609,59 @@ def plot_multiple_features(features,
   delta or delta delta features should have suffix: '_d1' and '_d2'
   """
   known_order = [
-      # For audio processing
-      'raw',
-      'stft_energy',
-      'stft_energy_d1',
-      'stft_energy_d2',
-      'frames_energy',
-      'frames_energy_d1',
-      'frames_energy_d2',
-      'energy',
-      'energy_d1',
-      'energy_d2',
-      'vad',
-      'sad',
-      'sap',
-      'sap_d1',
-      'sap_d2',
-      'pitch',
-      'pitch_d1',
-      'pitch_d2',
-      'loudness',
-      'loudness_d1',
-      'loudness_d2',
-      'f0',
-      'f0_d1',
-      'f0_d2',
-      'spec',
-      'spec_d1',
-      'spec_d2',
-      'mspec',
-      'mspec_d1',
-      'mspec_d2',
-      'mfcc',
-      'mfcc_d1',
-      'mfcc_d2',
-      'sdc',
-      'qspec',
-      'qspec_d1',
-      'qspec_d2',
-      'qmspec',
-      'qmspec_d1',
-      'qmspec_d2',
-      'qmfcc',
-      'qmfcc_d1',
-      'qmfcc_d2',
-      'bnf',
-      'bnf_d1',
-      'bnf_d2',
-      'ivec',
-      'ivec_d1',
-      'ivec_d2',
-      # For image processing
-      # For video processing
+    # For audio processing
+    'raw',
+    'stft_energy',
+    'stft_energy_d1',
+    'stft_energy_d2',
+    'frames_energy',
+    'frames_energy_d1',
+    'frames_energy_d2',
+    'energy',
+    'energy_d1',
+    'energy_d2',
+    'vad',
+    'sad',
+    'sap',
+    'sap_d1',
+    'sap_d2',
+    'pitch',
+    'pitch_d1',
+    'pitch_d2',
+    'loudness',
+    'loudness_d1',
+    'loudness_d2',
+    'f0',
+    'f0_d1',
+    'f0_d2',
+    'spec',
+    'spec_d1',
+    'spec_d2',
+    'mspec',
+    'mspec_d1',
+    'mspec_d2',
+    'mfcc',
+    'mfcc_d1',
+    'mfcc_d2',
+    'sdc',
+    'qspec',
+    'qspec_d1',
+    'qspec_d2',
+    'qmspec',
+    'qmspec_d1',
+    'qmspec_d2',
+    'qmfcc',
+    'qmfcc_d1',
+    'qmfcc_d2',
+    'bnf',
+    'bnf_d1',
+    'bnf_d2',
+    'ivec',
+    'ivec_d1',
+    'ivec_d2',
+    # For image processing
+    # For video processing
   ]
-
-  from matplotlib import pyplot as plt
   if isinstance(features, (tuple, list)):
     features = OrderedDict(features)
   if not isinstance(features, Mapping):
@@ -770,7 +754,6 @@ def plot_spectrogram(x,
       ambiguous. Use a.any() or a.all()
 
   '''
-  from matplotlib import pyplot as plt
   if vmin == 'auto':
     vmin = np.min(x)
   if vmax == 'auto':
@@ -790,7 +773,7 @@ def plot_spectrogram(x,
     if len(vad) != x.shape[1]:
       raise ValueError('Length of VAD must equal to signal length, but '
                        'length[vad]={} != length[signal]={}'.format(
-                           len(vad), x.shape[1]))
+        len(vad), x.shape[1]))
     # normalize vad
     vad = np.cast[np.bool](vad)
 
@@ -830,44 +813,37 @@ def plot_spectrogram(x,
   return ax
 
 
-def plot_images(X, tile_shape=None, tile_spacing=None, fig=None, title=None):
-  r"""
+def plot_images(X: np.ndarray,
+                images_per_row: Optional[int] = None,
+                v_pad: float = 0.01,
+                h_pad: float = 0.01,
+                ax: Optional['Axes'] = None,
+                fontsize: int = 12,
+                title: Optional[str] = None):
+  r"""Tile images in X together into a single image for plotting
+
   Parameters
   ----------
-  x : 2D-gray or 3D-color images, or list of (2D, 3D images)
-      for color image the color channel is the first dimension
-  tile_shape : tuple
-      resized shape of images
-  tile_spacing : tuple
-      space betwen rows and columns of images
+  X : np.ndarray
+      2D-gray images with shape `[batch_dim, height, width]`
+      or 3D-color images `[batch_dim, color, height, width]`
+  images_per_row : int
+      number of images per row
+  v_pad : float
+      fraction of image height for vertical padding
+  h_pad : float
+      fraction of image width for horizontal padding
   """
-  from matplotlib import pyplot as plt
-  if not isinstance(X, (tuple, list)):
-    X = [X]
-  X = [np.asarray(x) for x in X]
-  if not isinstance(title, (tuple, list)):
-    title = [title]
-
-  n = int(np.ceil(np.sqrt(len(X))))
-  for i, (x, t) in enumerate(zip(X, title)):
-    if x.ndim == 3 or x.ndim == 2:
-      cmap = plt.cm.Greys_r
-    elif x.ndim == 4:
-      cmap = None
-    else:
-      raise ValueError('NO support for %d dimensions image!' % x.ndim)
-
-    x = tile_raster_images(x, tile_shape, tile_spacing)
-    if fig is None:
-      fig = plt.figure()
-    subplot = fig.add_subplot(n, n, i + 1)
-    subplot.imshow(x, cmap=cmap)
-    if t is not None:
-      subplot.set_title(str(t), fontsize=12, fontweight='bold')
-    subplot.axis('off')
-
-  fig.tight_layout()
-  return fig
+  X = tile_raster_images(X,
+                         images_per_row=images_per_row,
+                         v_pad=v_pad,
+                         h_pad=h_pad)
+  ax = to_axis2D(ax)
+  ax.imshow(X, cmap=plt.cm.Greys_r if X.ndim == 2 else None)
+  if title is not None:
+    ax.set_title(str(title), fontsize=fontsize, fontweight='regular')
+  ax.axis('off')
+  return ax
 
 
 def plot_images_old(x, fig=None, titles=None, show=False):
@@ -875,7 +851,6 @@ def plot_images_old(x, fig=None, titles=None, show=False):
   x : 2D-gray or 3D-color images
       for color image the color channel is second dimension
   '''
-  from matplotlib import pyplot as plt
   if x.ndim == 3 or x.ndim == 2:
     cmap = plt.cm.Greys_r
   elif x.ndim == 4:
@@ -931,12 +906,11 @@ def plot_hinton(matrix, max_weight=None, ax=None):
       W = np.random.rand(10,10)
       hinton_plot(W)
   '''
-  from matplotlib import pyplot as plt
   """Draw Hinton diagram for visualizing a weight matrix."""
   ax = ax if ax is not None else plt.gca()
 
   if not max_weight:
-    max_weight = 2**np.ceil(np.log(np.abs(matrix).max()) / np.log(2))
+    max_weight = 2 ** np.ceil(np.log(np.abs(matrix).max()) / np.log(2))
 
   ax.patch.set_facecolor('gray')
   ax.set_aspect('equal', 'box')
@@ -962,7 +936,6 @@ def plot_hinton(matrix, max_weight=None, ax=None):
 # Helper methods
 # ===========================================================================
 def plot_show(block=True, tight_layout=False):
-  from matplotlib import pyplot as plt
   if tight_layout:
     plt.tight_layout()
   plt.show(block=block)
@@ -1009,10 +982,13 @@ def _ppndf(cum_prob):
   # do centerstuff first
   R[centerindexes] = adj_prob[centerindexes] * adj_prob[centerindexes]
   norm_dev[centerindexes] = adj_prob[centerindexes] * \
-      (((A3 * R[centerindexes] + A2) * R[centerindexes] + A1) * R[centerindexes] + A0)
-  norm_dev[centerindexes] = norm_dev[centerindexes] /\
-      ((((B4 * R[centerindexes] + B3) * R[centerindexes] + B2) * R[centerindexes] + B1) * R[centerindexes] + 1.0)
-  #find left and right tails
+                            (((A3 * R[centerindexes] + A2) * R[
+                              centerindexes] + A1) * R[centerindexes] + A0)
+  norm_dev[centerindexes] = norm_dev[centerindexes] / \
+                            ((((B4 * R[centerindexes] + B3) * R[
+                              centerindexes] + B2) * R[centerindexes] + B1) * R[
+                               centerindexes] + 1.0)
+  # find left and right tails
   right = np.argwhere(cum_prob[tailindexes] > 0.5).ravel()
   left = np.argwhere(cum_prob[tailindexes] < 0.5).ravel()
   # do tail stuff
@@ -1020,7 +996,8 @@ def _ppndf(cum_prob):
   R[tailindexes[right]] = 1 - cum_prob[tailindexes[right]]
   R[tailindexes] = np.sqrt((-1.0) * np.log(R[tailindexes]))
   norm_dev[tailindexes] = ((
-      (C3 * R[tailindexes] + C2) * R[tailindexes] + C1) * R[tailindexes] + C0)
+                               (C3 * R[tailindexes] + C2) * R[
+                             tailindexes] + C1) * R[tailindexes] + C0)
   norm_dev[tailindexes] = norm_dev[tailindexes] / (
       (D2 * R[tailindexes] + D1) * R[tailindexes] + 1.0)
   # swap sign on left tail
@@ -1063,9 +1040,8 @@ def plot_detection_curve(x,
   for 'roc': xaxis is FPR - Pfa, and yaxis is TPR
   for 'prc': xaxis is, yaxis is
   """
-  from matplotlib import pyplot as plt
   from odin import backend as K
-  from odin.utils import as_tuple
+
   # ====== preprocessing ====== #
   if not isinstance(x, (tuple, list)):
     x = (x,)
@@ -1073,8 +1049,8 @@ def plot_detection_curve(x,
     y = (y,)
   if len(x) != len(y):
     raise ValueError(
-        "Given %d series for `x`, but only get %d series for `y`." %
-        (len(x), len(y)))
+      "Given %d series for `x`, but only get %d series for `y`." %
+      (len(x), len(y)))
   if not isinstance(labels, (tuple, list)):
     labels = (labels,)
   labels = as_tuple(labels, N=len(x))
@@ -1099,41 +1075,42 @@ def plot_detection_curve(x,
     # 0.00001, 0.00002,
     # , 0.99995, 0.99998, 0.99999
     xticks = np.array([
-        0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05,
-        0.1, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.98, 0.99, 0.995, 0.998, 0.999,
-        0.9995, 0.9998, 0.9999
+      0.00005, 0.0001, 0.0002, 0.0005, 0.001, 0.002, 0.005, 0.01, 0.02, 0.05,
+      0.1, 0.2, 0.4, 0.6, 0.8, 0.9, 0.95, 0.98, 0.99, 0.995, 0.998, 0.999,
+      0.9995, 0.9998, 0.9999
     ])
     xticklabels = [
-        str(i)[:-2] if '.0' == str(i)[-2:] else
-        (str(i) if i > 99.99 else str(i)) for i in xticks * 100
+      str(i)[:-2] if '.0' == str(i)[-2:] else
+      (str(i) if i > 99.99 else str(i)) for i in xticks * 100
     ]
     if xlims is None:
       xlims = (max(min(np.min(i) for i in x),
                    xticks[0]), min(max(np.max(i) for i in x), xticks[-1]))
     xlims = (
-        [val for i, val in enumerate(xticks) if val <= xlims[0] or i == 0][-1] +
-        eps, [
-            val for i, val in enumerate(xticks)
-            if val >= xlims[1] or i == len(xticks) - 1
-        ][0] - eps)
+      [val for i, val in enumerate(xticks) if val <= xlims[0] or i == 0][-1] +
+      eps, [
+        val for i, val in enumerate(xticks)
+        if val >= xlims[1] or i == len(xticks) - 1
+      ][0] - eps)
     if ylims is None:
       ylims = (max(min(np.min(i) for i in y),
                    xticks[0]), min(max(np.max(i) for i in y), xticks[-1]))
     ylims = (
-        [val for i, val in enumerate(xticks) if val <= ylims[0] or i == 0][-1] +
-        eps, [
-            val for i, val in enumerate(xticks)
-            if val >= ylims[1] or i == len(xticks) - 1
-        ][0] - eps)
+      [val for i, val in enumerate(xticks) if val <= ylims[0] or i == 0][-1] +
+      eps, [
+        val for i, val in enumerate(xticks)
+        if val >= ylims[1] or i == len(xticks) - 1
+      ][0] - eps)
     # convert to log scale
     xticks = _ppndf(xticks)
     yticks, yticklabels = xticks, xticklabels
     xlims, ylims = _ppndf(xlims), _ppndf(ylims)
     # main line
     # TODO: add EER value later
-    name_fmt = lambda name, dcf, eer: ('EER=%.2f;minDCF=%.2f' % (eer * 100, dcf * 100)) \
-        if name is None else \
-        ('%s (EER=%.2f;minDCF=%.2f)' % (name, eer * 100, dcf * 100))
+    name_fmt = lambda name, dcf, eer: (
+        'EER=%.2f;minDCF=%.2f' % (eer * 100, dcf * 100)) \
+      if name is None else \
+      ('%s (EER=%.2f;minDCF=%.2f)' % (name, eer * 100, dcf * 100))
     labels_new = []
     for count, (Pfa, Pmiss, name) in enumerate(zip(x, y, labels)):
       eer = K.metrics.compute_EER(Pfa=Pfa, Pmiss=Pmiss)
@@ -1147,9 +1124,9 @@ def plot_detection_curve(x,
       Pmiss = _ppndf(Pmiss)
       name = name_fmt(name, eer, dcf)
       lines.append(((Pfa, Pmiss), {
-          'lw': linewidth,
-          'label': name,
-          'linestyle': '-' if count % 2 == 0 else '-.'
+        'lw': linewidth,
+        'label': name,
+        'linestyle': '-' if count % 2 == 0 else '-.'
       }))
       labels_new.append(name)
     labels = labels_new
@@ -1161,23 +1138,23 @@ def plot_detection_curve(x,
     ylims = (0, 1)
     # roc
     name_fmt = lambda name, auc: ('AUC=%.2f' % auc) if name is None else \
-        ('%s (AUC=%.2f)' % (name, auc))
+      ('%s (AUC=%.2f)' % (name, auc))
     labels_new = []
     for count, (i, j, name) in enumerate(zip(x, y, labels)):
       auc = K.metrics.compute_AUC(i, j)
       name = name_fmt(name, auc)
       lines.append([(i, j), {
-          'lw': linewidth,
-          'label': name,
-          'linestyle': '-' if count % 2 == 0 else '-.'
+        'lw': linewidth,
+        'label': name,
+        'linestyle': '-' if count % 2 == 0 else '-.'
       }])
       labels_new.append(name)
     labels = labels_new
     # diagonal
     lines.append([(xlims, ylims), {
-        'lw': 0.8,
-        'linestyle': '-.',
-        'color': 'black'
+      'lw': 0.8,
+      'linestyle': '-.',
+      'color': 'black'
     }])
   # ====== select ROC curve style ====== #
   elif curve == 'prc':
@@ -1239,9 +1216,6 @@ def plot_colorbar(colormap,
   label : text label
   fig : figure instance matplotlib
   """
-  import matplotlib as mpl
-  from matplotlib import pyplot as plt
-
   if isinstance(colormap, string_types):
     cmap = mpl.cm.get_cmap(name=colormap)
   else:
@@ -1287,25 +1261,36 @@ def plot_colorbar(colormap,
 # Shortcut
 # ===========================================================================
 def plot_close():
-  from matplotlib import pyplot as plt
   plt.close('all')
 
 
-def plot_save(path='/tmp/tmp.pdf',
-              figs=None,
-              dpi=180,
-              tight_plot=False,
-              clear_all=True,
-              log=False,
-              transparent=False):
-  """
-  Parameters
-  ----------
-  clear_all: bool
-      if True, remove all saved figures from current figure list
-      in matplotlib
-  """
-  import matplotlib.pyplot as plt
+def plot_to_image(figure: plt.Figure,
+                  close_figure: bool = True,
+                  dpi: int = 150) -> tf.Tensor:
+  """Convert the figure to png image for tensorboard"""
+  # Save the plot to a PNG in memory.
+  buf = io.BytesIO()
+  figure.savefig(buf, format='png', dpi=dpi)
+  # Closing the figure prevents it from being displayed directly inside
+  # the notebook.
+  if close_figure:
+    plt.close(figure)
+  buf.seek(0)
+  # Convert PNG buffer to TF image
+  image = tf.image.decode_png(buf.getvalue(), channels=4)
+  # Add the batch dimension
+  image = tf.expand_dims(image, 0)
+  return image
+
+
+def plot_save(path: str = '/tmp/tmp.pdf',
+              figs: Union[None, plt.Figure, Sequence[plt.Figure]] = None,
+              dpi: Optional[int] = None,
+              tight_plot: bool = False,
+              clear_all: bool = True,
+              verbose: bool = False,
+              transparent: bool = False):
+  """Save all figures to pdf or png file"""
   if tight_plot:
     plt.tight_layout()
   if os.path.exists(path) and os.path.isfile(path):
@@ -1326,7 +1311,7 @@ def plot_save(path='/tmp/tmp.pdf',
                     bbox_inches="tight")
       pp.close()
     except Exception as e:
-      sys.stderr.write('Cannot save figures to pdf, error:%s \n' % str(e))
+      sys.stderr.write(f'Cannot save figures to pdf, error:{str(e)}\n')
   # ====== saving PNG file ====== #
   else:
     saved_path = []
@@ -1336,14 +1321,14 @@ def plot_save(path='/tmp/tmp.pdf',
     kwargs = dict(dpi=dpi, bbox_inches="tight")
     for idx, fig in enumerate(figs):
       if len(figs) > 1:
-        out_path = path + ('.%d.' % idx) + ext
+        out_path = path + (f'{idx}') + ext
       else:
         out_path = path + '.' + ext
       fig.savefig(out_path, transparent=transparent, **kwargs)
       saved_path.append(out_path)
   # ====== clean ====== #
-  if log:
-    sys.stderr.write('Saved figures to:%s \n' % ', '.join(saved_path))
+  if verbose:
+    sys.stdout.write(f"Saved figures to:{', '.join(saved_path)} \n")
   if clear_all:
     plt.close('all')
 

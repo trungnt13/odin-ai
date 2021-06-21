@@ -7,7 +7,7 @@ import numpy as np
 import tensorflow as tf
 
 from odin import backend as K, nnet as N, visual as V, fuel as F
-from odin.utils import batching, Progbar, get_exppath, crypto
+from odin.utils import minibatch, Progbar, get_exppath, crypto
 from odin import ml
 
 from sklearn.svm import SVC

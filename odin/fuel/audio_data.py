@@ -4,6 +4,8 @@ import os
 import tarfile
 from urllib.request import urlretrieve
 from zipfile import ZIP_DEFLATED, ZipFile
+from typing import Optional, List
+from typing_extensions import Literal
 
 import numpy as np
 import tensorflow as tf
@@ -99,19 +101,21 @@ class AudioFeatureLoader():
         dtype=self.dtype)
 
   def create_dataset(self,
-                     file_list,
-                     feature='mels',
-                     channels=0,
-                     batch_size=64,
-                     drop_remainder=False,
-                     shuffle=None,
-                     prefetch=tf.data.experimental.AUTOTUNE,
-                     cache='',
-                     parallel=tf.data.experimental.AUTOTUNE,
-                     max_length=300,
-                     random_clipping=True,
-                     return_path=False):
-    r""" Create a tensorflow dataset extracting spectrogram from a list of
+                     file_list: List[str],
+                     *,
+                     feature: Literal['mels', 'spec', 'mfcc'] = 'mels',
+                     channels: int = 0,
+                     batch_size: Optional[int] = 32,
+                     drop_remainder: bool = False,
+                     shuffle: Optional[int] = None,
+                     prefetch: int = tf.data.experimental.AUTOTUNE,
+                     cache: Optional[str] = '',
+                     parallel: int = tf.data.experimental.AUTOTUNE,
+                     max_length: int = 300,
+                     random_clipping: bool = True,
+                     return_filepath: bool = False,
+                     seed: int = 1):
+    """ Create a tensorflow dataset extracting spectrogram from a list of
       audio file
 
     Arguments:
@@ -173,9 +177,10 @@ class AudioFeatureLoader():
         s = self.mfccs(s)
       return s
 
-    ds = ds.map(map_spec, num_parallel_calls=parallel)
     if cache is not None:
       ds = ds.cache(cache)
+    ds = ds.map(map_spec, num_parallel_calls=parallel)
+
     ### batching
     def map_batch(s):
       if random_clipping:
@@ -188,13 +193,15 @@ class AudioFeatureLoader():
 
     ds = ds.map(map_batch, num_parallel_calls=None)
     dim = tf.data.experimental.get_structure(ds).shape[-1]
-    ds = ds.padded_batch(batch_size,
-                         padded_shapes=[max_length, dim],
-                         drop_remainder=drop_remainder)
+    if batch_size is not None:
+      ds = ds.padded_batch(batch_size,
+                           padded_shapes=[max_length, dim],
+                           drop_remainder=drop_remainder)
     ### post-processing
-    if return_path:
-      ds = tf.data.Dataset.zip(
-          (ds, ds_org.batch(batch_size, drop_remainder=drop_remainder)))
+    if return_filepath:
+      if batch_size is not None:
+        ds_org = ds_org.batch(batch_size, drop_remainder=drop_remainder)
+      ds = tf.data.Dataset.zip((ds, ds_org))
     ### prefetch
     if prefetch is not None and prefetch != 0:
       ds = ds.prefetch(prefetch)

@@ -3,34 +3,37 @@ from __future__ import absolute_import, division, print_function
 import inspect
 
 import numpy as np
-from six import string_types
-from tensorflow_probability.python import distributions as tfd
-from tensorflow_probability.python.layers import distribution_layer as tfl
-
+from typing import Type, Tuple
 from odin.bay import distributions as obd
 from odin.bay import layers as obl
 from odin.utils.python_utils import multikeysdict, partialclass
+from six import string_types
+from tensorflow_probability.python import distributions as tfd
+from tensorflow_probability.python.layers import distribution_layer as tfl
+from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.layers import DistributionLambda
 
 # TODO: better specifying complex distribution
 # mapping from alias to
 _dist_mapping = multikeysdict({
-    ('normal', 'gaussian', 'norm', 'gaus', 'gauss'):
-        (obl.NormalLayer, tfd.Normal),
-    ('diag', 'normaldiag', 'gaussiandiag'):
-        (partialclass(obl.MultivariateNormalLayer,
-                      covariance='diag'), tfd.MultivariateNormalDiag),
-    ('tril', 'full', 'normaltril', 'gaussiantril', 'normalfull', 'gaussianfull'):
-        (partialclass(obl.MultivariateNormalLayer,
-                      covariance='tril'), tfd.MultivariateNormalTriL),
-    ('lognormal', 'lognorm', 'loggaus'): (obl.LogNormalLayer, tfd.LogNormal),
+    ('normal', 'gaussian'): (obl.NormalLayer, tfd.Normal),
+    'mvndiag': (partialclass(obl.MultivariateNormalLayer,
+                             covariance='diag'), tfd.MultivariateNormalDiag),
+    'mvntril': (partialclass(obl.MultivariateNormalLayer,
+                             covariance='tril'), tfd.MultivariateNormalTriL),
+    'mvnfull': (partialclass(obl.MultivariateNormalLayer, covariance='full'),
+                tfd.MultivariateNormalFullCovariance),
+    'lognormal': (obl.LogNormalLayer, tfd.LogNormal),
     # ====== Mixture of Gaussian ====== #
-    ('mixnormal', 'mdn', 'mixgaussian', 'mixdensity', 'mixgaus', 'mixgauss'):
-        (obl.MixtureGaussianLayer, tfd.MixtureSameFamily),
-    'mixdiag': (partialclass(obl.MixtureGaussianLayer,
-                             covariance='diag'), tfd.MixtureSameFamily),
-    ('mixtril', 'mixfull'): (partialclass(obl.MixtureGaussianLayer,
+    ('mdn', 'gmm'): (obl.MixtureGaussianLayer, tfd.MixtureSameFamily),
+    ('mdndiag', 'gmmdiag'): (partialclass(obl.MixtureGaussianLayer,
+                                          covariance='diag'),
+                             tfd.MixtureSameFamily),
+    ('mdntril', 'gmmtril'): (partialclass(obl.MixtureGaussianLayer,
                                           covariance='tril'),
                              tfd.MixtureSameFamily),
+    # ====== Mixture of Logistic ====== #
+    ('mixqlogist',): (obl.MixtureQLogisticLayer, tfd.Logistic),
     # ====== NegativeBinomial ====== #
     ('nb', 'negativebinomial'):
         (obl.NegativeBinomialLayer, tfd.NegativeBinomial),
@@ -40,8 +43,7 @@ _dist_mapping = multikeysdict({
                               dispersion='single'), obd.NegativeBinomial),
     'nbfull': (partialclass(obl.NegativeBinomialLayer,
                             dispersion='full'), obd.NegativeBinomial),
-    ('zinb', 'zinegativebinomial', 'zeroinflatednegativebinomial'):
-        (obl.ZINegativeBinomialLayer, tfd.NegativeBinomial),
+    'zinb': (obl.ZINegativeBinomialLayer, tfd.NegativeBinomial),
     'zinbshare': (partialclass(obl.ZINegativeBinomialLayer,
                                dispersion='share'), obd.NegativeBinomial),
     'zinbsingle': (partialclass(obl.ZINegativeBinomialLayer,
@@ -57,8 +59,7 @@ _dist_mapping = multikeysdict({
                                dispersion='single'), obd.NegativeBinomialDisp),
     'nbdfull': (partialclass(obl.NegativeBinomialDispLayer,
                              dispersion='full'), obd.NegativeBinomialDisp),
-    ('zinbd', 'zinegativebinomialdisp', 'zeroinflatednegativebinomialdisp'):
-        (obl.ZINegativeBinomialDispLayer, obd.NegativeBinomialDisp),
+    'zinbd': (obl.ZINegativeBinomialDispLayer, obd.NegativeBinomialDisp),
     'zinbdshare': (partialclass(obl.ZINegativeBinomialDispLayer,
                                 dispersion='share'), obd.NegativeBinomialDisp),
     'zinbdsingle': (partialclass(obl.ZINegativeBinomialDispLayer,
@@ -103,7 +104,8 @@ _dist_mapping = multikeysdict({
     ('dirimultinomial', 'dirichletmultinomial'):
         (obl.DirichletMultinomialLayer, tfd.DirichletMultinomial),
     # ====== Gumbel ====== #
-    ('bern', 'bernoulli'): (obl.BernoulliLayer, tfd.Bernoulli),
+    'bernoulli': (obl.BernoulliLayer, tfd.Bernoulli),
+    'cbernoulli': (obl.ContinuousBernoulliLayer, tfd.ContinuousBernoulli),
     ('zibernoulli', 'zeroinflatedbernoulli'):
         (obl.ZIBernoulliLayer, tfd.Bernoulli),
     ('relaxedbern', 'relaxedsigmoid', 'relaxedbernoulli'):
@@ -113,7 +115,9 @@ _dist_mapping = multikeysdict({
 })
 
 
-def parse_distribution(alias: str):
+def parse_distribution(alias: str
+                       ) -> Tuple[Type[DistributionLambda],
+                                  Type[Distribution]]:
   r""" Parse a string alias to appropriate class of `DistributionLambda`
   and `Distribution`.
 

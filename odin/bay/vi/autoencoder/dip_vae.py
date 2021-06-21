@@ -2,24 +2,26 @@ from typing import Dict, List, Optional, Tuple, Union
 
 import tensorflow as tf
 from odin.bay.vi.autoencoder.beta_vae import BetaVAE
-from odin.bay.vi.autoencoder.variational_autoencoder import TensorTypes
 from odin.bay.vi.losses import disentangled_inferred_prior_loss
-from tensorflow import Tensor
-from tensorflow_probability.python.distributions import Distribution
+from odin.utils import as_tuple
+
 
 class DIPVAE(BetaVAE):
-  r""" Implementation of disentangled infered prior VAE
+  """ Implementation of disentangled infered prior VAE
 
-  Arguments:
-    only_mean : A Boolean. If `True`, applying DIP constraint only on the
+  Parameters
+  ----------
+  only_mean : A Boolean. If `True`, applying DIP constraint only on the
       mean of latents `Cov[E(z)]` (i.e. type 'i'), otherwise,
       `E[Cov(z)] + Cov[E(z)]` (i.e. type 'ii')
-    lambda_offdiag : A Scalar. Weight for penalizing the off-diagonal part of
+  lambda_offdiag : A Scalar. Weight for penalizing the off-diagonal part of
       covariance matrix.
-    lambda_diag : A Scalar. Weight for penalizing the diagonal.
+  lambda_diag : A Scalar.
+      Weight for penalizing the diagonal.
 
-  Reference:
-    Kumar, A., Sattigeri, P., Balakrishnan, A., 2018. "Variational Inference
+  References
+  ----------
+  Kumar, A., Sattigeri, P., Balakrishnan, A., 2018. "Variational Inference
       of Disentangled Latent Concepts from Unlabeled Observations".
       arXiv:1711.00848 [cs, stat].
   """
@@ -39,19 +41,13 @@ class DIPVAE(BetaVAE):
                                                dtype=self.dtype,
                                                name='lambda_offdiag')
 
-  def _elbo(
-      self,
-      inputs: Union[TensorTypes, List[TensorTypes]],
-      pX_Z: Union[Distribution, List[Distribution]],
-      qZ_X: Union[Distribution, List[Distribution]],
-      mask: Optional[TensorTypes] = None,
-      training: Optional[bool] = None
-  ) -> Tuple[Dict[str, Tensor], Dict[str, Tensor]]:
-    llk, div = super()._elbo(inputs, pX_Z, qZ_X, mask=mask, training=training)
-    for name, q in zip(self.latent_names, qZ_X):
-      dip = disentangled_inferred_prior_loss(q,
+  def elbo_components(self, inputs, training=None, mask=None):
+    llk, kl = super().elbo_components(inputs, mask=mask, training=training)
+    px_z, qz_x = self.last_outputs
+    for z, qz in zip(as_tuple(self.latents), as_tuple(qz_x)):
+      dip = disentangled_inferred_prior_loss(qz,
                                              only_mean=self.only_mean,
                                              lambda_offdiag=self.lambda_offdiag,
                                              lambda_diag=self.lambda_diag)
-      div['dip_%s' % name] = dip
-    return llk, div
+      kl[f'dip_{z.name}'] = dip
+    return llk, kl

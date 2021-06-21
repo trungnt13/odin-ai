@@ -2,13 +2,13 @@ import base64
 import os
 from typing import Dict, List, Optional, Union
 from urllib.request import urlretrieve
+from odin.backend.types_helpers import DataType, LabelType
 
 import numpy as np
 import tensorflow as tf
-from scipy import sparse
-
 from odin.fuel.dataset_base import IterableDataset, get_partition
 from odin.utils.crypto import md5_checksum
+from scipy import sparse
 
 
 def _tensor(x):
@@ -20,7 +20,7 @@ def _tensor(x):
   return tf.data.Dataset.from_tensor_slices(x)
 
 
-class BioDataset(IterableDataset):
+class GeneDataset(IterableDataset):
 
   def __init__(self):
     super().__init__()
@@ -32,10 +32,18 @@ class BioDataset(IterableDataset):
     self.valid_ids = None
     self.test_ids = None
 
+  @property
+  def data_type(self) -> DataType:
+    return 'gene'
+
+  @property
+  def label_type(self) -> LabelType:
+    return 'factor'
+
   def __str__(self):
     return (f"<{self.__class__.__name__} "
-            f"{self.x.shape} {self.y.shape} "
-            f"{self.xvar.shape} {self.yvar.shape}>")
+            f"X:{self.x.shape} y:{self.y.shape} "
+            f"labels:{self.labels}>")
 
   @property
   def genes_dictionary(self) -> Dict[int, str]:
@@ -74,18 +82,19 @@ class BioDataset(IterableDataset):
     return tuple(self.x.shape[1:])
 
   @property
-  def is_binary(self) -> bool:
+  def binarized(self) -> bool:
     return False
 
   def create_dataset(self,
-                     batch_size: int = 64,
+                     partition: str = 'train',
+                     *,
+                     batch_size: Optional[int] = 32,
                      drop_remainder: bool = False,
                      shuffle: Optional[int] = 1000,
                      prefetch: int = tf.data.experimental.AUTOTUNE,
                      cache: str = '',
                      parallel: Optional[int] = None,
-                     partition: str = 'train',
-                     inc_labels: bool = False,
+                     label_percent: bool = False,
                      seed: int = 1) -> tf.data.Dataset:
     for attr in ('x', 'y', 'xvar', 'yvar'):
       assert hasattr(self, attr)
@@ -115,22 +124,23 @@ class BioDataset(IterableDataset):
       if is_sparse_y and len(data) > 1:
         data[1] = tf.sparse.to_dense(data[1])
       data = tuple(data)
-      if inc_labels:
-        if 0. < inc_labels < 1.:  # semi-supervised mask
-          mask = gen.uniform(shape=(1,)) < inc_labels
+      if label_percent:
+        if 0. < label_percent < 1.:  # semi-supervised mask
+          mask = gen.uniform(shape=(1,)) < label_percent
           return dict(inputs=data, mask=mask)
       return data[0] if len(data) == 1 else data
 
     ds = x
-    if inc_labels > 0.:
+    if label_percent > 0.:
       ds = tf.data.Dataset.zip((x, y))
-    ds = ds.map(_process, parallel)
     if cache is not None:
       ds = ds.cache(str(cache))
+    ds = ds.map(_process, parallel)
     # shuffle must be called after cache
     if shuffle is not None and shuffle > 0:
-      ds = ds.shuffle(int(shuffle))
-    ds = ds.batch(batch_size, drop_remainder)
+      ds = ds.shuffle(int(shuffle), seed=seed, reshuffle_each_iteration=True)
+    if batch_size is not None:
+      ds = ds.batch(batch_size, drop_remainder)
     if prefetch is not None:
       ds = ds.prefetch(prefetch)
     return ds

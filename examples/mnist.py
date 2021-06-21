@@ -8,7 +8,7 @@ import tensorflow as tf
 import tensorflow_datasets as tfds
 from tensorflow import keras
 
-from odin.exp import Trainer
+from odin.training import Trainer
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
 os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
@@ -20,7 +20,11 @@ np.random.seed(8)
 # Load data
 # ===========================================================================
 train, valid, test = tfds.load('fashion_mnist:3.0.0',
-                               split=['train[:80%]', 'train[80%:]', 'test'])
+                               split=['train[:80%]', 'train[80%:]', 'test'],
+                               read_config=tfds.ReadConfig(
+                                   shuffle_seed=1,
+                                   shuffle_reshuffle_each_iteration=True))
+
 input_shape = tf.data.experimental.get_structure(train)['image'].shape
 
 
@@ -87,5 +91,5 @@ trainer.fit(Trainer.prepare(train,
             valid_freq=2500,
             autograph=True,
             logging_interval=2,
-            callback=callback)
+            on_valid_end=callback)
 print("Total:", time.time() - start_time)

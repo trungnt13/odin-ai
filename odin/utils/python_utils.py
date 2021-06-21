@@ -15,6 +15,7 @@ from collections import (Iterable, Iterator, Mapping, OrderedDict, defaultdict,
                          deque)
 from contextlib import contextmanager
 from datetime import datetime
+from typing import List, Callable, Any
 
 import numpy as np
 from six import add_metaclass, string_types
@@ -54,6 +55,15 @@ def is_tar_file(path):
 # Regular expression
 # ===========================================================================
 RE_NUMBER = re.compile(r'^[+-]*((\d*\.\d+)|(\d+))$')
+
+
+# ===========================================================================
+# Data Function tools
+# ===========================================================================
+def get_function_arguments(func: Callable[..., Any]) -> List[str]:
+  """Get all arguments' name of a function"""
+  spec = inspect.getfullargspec(func)
+  return spec.args + spec.kwonlyargs
 
 
 # ===========================================================================
@@ -107,9 +117,11 @@ class struct(dict):
 
 
 class bidict(dict):
-  r""" Bi-directional dictionary (i.e. a <-> b)
-  Note:
-    When you iterate over this dictionary, it will be a double-size dictionary
+  """Bi-directional dictionary (i.e. a <-> b)
+
+  Note
+  ----
+  When you iterate over this dictionary, it will be a double-size dictionary
   """
 
   def __init__(self, *args, **kwargs):
@@ -144,7 +156,7 @@ class bidict(dict):
 
 
 class defaultdictkey(defaultdict):
-  """ Enhanced version of `defaultdict`, instead of return a
+  """Enhanced version of `defaultdict`, instead of return a
   default value, return an "improvised" default value based on
   the given key.
 
@@ -184,6 +196,51 @@ def partialclass(cls, *args, **kwargs):
   # class PartialClass(cls):
   #   __init__ = functools.partialmethod(cls.__init__, *args, **kwargs)
   return new_cls
+
+
+class fifodict(dict):
+  """Dictionary with first-in-first-out (fIFO) queue for storing
+  a maximum number of keys.
+
+  Note
+  ----
+  This class is useful in caching function returns
+  """
+
+  def __init__(self, *args, maxlen: int = 1000, **kwargs):
+    super().__init__(*args, **kwargs)
+    self._queue = list(self.keys())
+    self.maxlen = int(maxlen)
+
+  def copy(self):
+    return fifodict(self, maxlen=self.maxlen)
+
+  def clear(self):
+    self._queue.clear()
+    return super().clear()
+
+  def pop(self, key, default=...):
+    super().pop(key, default)
+    if key in self:
+      self._queue.remove(key)
+
+  def popitem(self):
+    super().popitem()
+    self._queue.pop(-1)
+
+  def __delitem__(self, key):
+    self._queue.remove(key)
+    return super().__delitem__(key)
+
+  def update(self, **kwargs):
+    return super().update(**kwargs)
+
+  def __setitem__(self, key, value):
+    if key not in self:
+      if len(self) >= self.maxlen:
+        del self[self._queue[0]]
+      self._queue.append(key)
+    return super().__setitem__(key, value)
 
 
 # ===========================================================================
@@ -282,13 +339,12 @@ def as_tuple(x, N=None, t=None):
     else:
       x = (x,)
   # ====== check length ====== #
-  if is_number(N):
+  if N is not None and isinstance(N, numbers.Number):
     N = int(N)
     if len(x) == 1:
       x = x * N
     elif len(x) != N:
-      raise ValueError('x has length=%d, but required length N=%d' %
-                       (len(x), N))
+      raise ValueError(f'x has length={len(x)}, but required length {N}')
   # ====== check type ====== #
   if t is None:
     filter_func = lambda o: True
@@ -414,8 +470,16 @@ def is_primitive(x, inc_ndarray=True, exception_types=[]):
 # ===========================================================================
 # IO utilities
 # ===========================================================================
-def get_all_files(path, filter_func=None):
-  ''' Recurrsively get all files in the given path '''
+def get_all_folder(path: str,
+                   filter_func: Callable[[str], bool] = None) -> List[str]:
+  return get_all_files(path=path, filter_func=filter_func, only_folder=True)
+
+
+def get_all_files(path: str,
+                  filter_func: Callable[[str], bool] = None,
+                  only_folder: bool = False) -> List[str]:
+  """Recurrsively get all files in the given path"""
+  org_path = path
   file_list = []
   if os.access(path, os.R_OK):
     for p in os.listdir(path):
@@ -430,6 +494,11 @@ def get_all_files(path, filter_func=None):
             '._' == os.path.basename(p)[:2]:
           continue
         file_list.append(p)
+  else:
+    raise RuntimeError(f"No access to the path '{path}'")
+  if only_folder:
+    file_list = set([os.path.dirname(i) for i in file_list])
+    file_list.discard(org_path)
   return file_list
 
 

@@ -7,23 +7,19 @@ import tensorflow as tf
 from matplotlib import pyplot as plt
 from tqdm import tqdm
 
-from odin.bay.vi import RandomVariable as RV
-from odin.bay.vi.autoencoder import BetaVAE, MultitaskVAE, SemiFactorVAE
+from odin.bay.vi import RVconf as RV
+from odin.bay.vi.autoencoder import BetaVAE, MultitaskVAE, SemifactorVAE
 from odin.fuel import MNIST, STL10, LegoFaces
-
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'
-os.environ['TF_FORCE_GPU_ALLOW_GROWTH'] = 'true'
 
 tf.random.set_seed(1)
 np.random.seed(1)
 
 ds = LegoFaces()
-train = ds.create_dataset(partition='train', inc_labels=True)
-train_l = ds.create_dataset(partition='train_labelled', inc_labels=True)
-test = ds.create_dataset(partition='test', inc_labels=True)
-train_u = ds.create_dataset(partition='train', inc_labels=False)
-test_u = ds.create_dataset(partition='test', inc_labels=False)
+train = ds.create_dataset(partition='train', label_percent=True)
+train_l = ds.create_dataset(partition='train_labelled', label_percent=True)
+test = ds.create_dataset(partition='test', label_percent=True)
+train_u = ds.create_dataset(partition='train', label_percent=False)
+test_u = ds.create_dataset(partition='test', label_percent=False)
 save_path = f'/tmp/{ds.name}.w'
 
 vae = MultitaskVAE(encoder=ds.name,

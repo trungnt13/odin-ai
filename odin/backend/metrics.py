@@ -6,12 +6,60 @@ from __future__ import absolute_import, division, print_function
 import math
 
 import numpy as np
+import scipy as sp
 import tensorflow as tf
 from tensorflow.python.ops import confusion_matrix as tf_cm
 
 from odin.backend.maths import to_llr
 from odin.backend.tensor import nonzeros, transpose
 from odin.utils import as_tuple, is_number
+
+
+def frechet_inception_distance(original: np.ndarray,
+                               generated: np.ndarray,
+                               eps: float = 1e-6) -> float:
+  """ Numpy implementation of the Frechet Distance.
+  The Frechet distance between two multivariate Gaussians:
+    - X_1 ~ N(mu_1, C_1)
+    - X_2 ~ N(mu_2, C_2)
+
+  is: `d^2 = ||mu_1 - mu_2||^2 + Tr(C_1 + C_2 - 2*sqrt(C_1*C_2))`.
+
+  Stable version by Dougal J. Sutherland.
+  https://github.com/bioinf-jku/TTUR/blob/master/fid.py
+
+  Parameters
+  ----------
+  original : np.ndarray
+      features for the original images
+  generated : np.ndarray
+      features for the generated images
+  eps : float, optional
+      epsilon for numberical stability, by default 1e-6
+
+  Returns
+  -------
+  float : The Frechet Distance.
+  """
+  assert original.shape == generated, \
+    f'Shape mismatch original={original.shape} generated={generated.shape}'
+  u_1 = np.mean(original, axis=0)
+  u_2 = np.mean(generated, axis=0)
+  c_1 = np.cov(original, rowvar=True)
+  c_2 = np.cov(generated, rowvar=True)
+  diff = u_1 - u_2
+
+  # product might be almost singular
+  covmean, _ = sp.linalg.sqrtm(c_1.dot(c_2), disp=False)
+  if not np.all(np.isfinite(covmean)):
+    offset = np.eye(c_1.shape[0]) * eps
+    covmean = sp.linalg.sqrtm((c_1 + offset).dot(c_2 + offset))
+
+  # numerical error might give slight imaginary component
+  if np.iscomplexobj(covmean):
+    covmean = covmean.real
+
+  return diff.dot(diff) + np.trace(c_1 + c_2 - 2 * covmean)
 
 
 # ===========================================================================
@@ -607,10 +655,6 @@ def det_curve(y_true, y_score, pos_label=None, sample_weight=None):
   # FPR
   Pfa = 1 - np.cumsum(imp_weights) / np.sum(imp_weights)
   return Pfa, Pmiss
-
-
-
-
 
 
 # ===========================================================================

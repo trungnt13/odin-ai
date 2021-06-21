@@ -1,8 +1,9 @@
 from __future__ import absolute_import, division, print_function
 
 import colorsys
-from collections import OrderedDict
+from collections import OrderedDict, defaultdict
 from numbers import Number
+from typing import Optional, Tuple, Union, List
 
 import numpy as np
 
@@ -11,8 +12,8 @@ line_styles = ['-', '--', '-.', ':']
 # this is shuffled by hand to make sure everything ordered
 # in the most intuitive way
 marker_styles = [
-    ".", "_", "|", "2", "s", "P", "+", "x", "^", "*", "h", "p", "d", "v", "H",
-    "<", "8", ">", "X", "1", "3", "4", "D", "o"
+  ".", "_", "|", "2", "s", "P", "+", "x", "^", "*", "h", "p", "d", "v", "H",
+  "<", "8", ">", "X", "1", "3", "4", "D", "o"
 ]
 
 
@@ -22,8 +23,8 @@ def get_all_named_colors(to_hsv=False):
   # Sort colors by hue, saturation, value and name.
   if to_hsv:
     by_hsv = sorted(
-        (tuple(mcolors.rgb_to_hsv(mcolors.to_rgba(color)[:3])), name)
-        for name, color in colors.items())
+      (tuple(mcolors.rgb_to_hsv(mcolors.to_rgba(color)[:3])), name)
+      for name, color in colors.items())
     colors = OrderedDict([(name, color) for color, name in by_hsv])
   return colors
 
@@ -34,6 +35,7 @@ def generate_palette_colors(n,
                             return_hsl=False,
                             return_hex=True):
   import seaborn as sns
+
   # six variations of the default theme: deep, muted, pastel, bright, dark,
   # and colorblind.
   colors = sns.color_palette(n_colors=int(n))  # RGB values
@@ -42,8 +44,8 @@ def generate_palette_colors(n,
     rand.shuffle(colors)
   if return_hex:
     colors = [
-        "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255), int(rgb[1] * 255),
-                                     int(rgb[2] * 255)) for rgb in colors
+      "#{:02x}{:02x}{:02x}".format(int(rgb[0] * 255), int(rgb[1] * 255),
+                                   int(rgb[2] * 255)) for rgb in colors
     ]
   return colors
 
@@ -79,9 +81,9 @@ def generate_random_colormaps(n, seed=1234, bicolors=False):
   from matplotlib.colors import LinearSegmentedColormap
   color_maps = []
   interpolate_hsl = lambda h, s, l: \
-      [(h, l + 0.49, s),
-       (h, l, s),
-       (h, l - 0.1, min(s + 0.1, 1.))]
+    [(h, l + 0.49, s),
+     (h, l, s),
+     (h, l - 0.1, min(s + 0.1, 1.))]
   if bicolors:
     base_colors = generate_random_colors(n * 2,
                                          lightness_value=0.5,
@@ -97,17 +99,17 @@ def generate_random_colormaps(n, seed=1234, bicolors=False):
     if bicolors:
       cA, cB = c
       colors = [
-          colorsys.hls_to_rgb(*i)
-          for i in interpolate_hsl(*cB)[::-1] + interpolate_hsl(*cA)
+        colorsys.hls_to_rgb(*i)
+        for i in interpolate_hsl(*cB)[::-1] + interpolate_hsl(*cA)
       ]
     else:
       hue, saturation, lightness = c
       colors = [colorsys.hls_to_rgb(*i) for i in interpolate_hsl(*c)]
     color_maps.append(
-        LinearSegmentedColormap.from_list(name='Colormap%d' % i,
-                                          colors=colors,
-                                          N=256,
-                                          gamma=1))
+      LinearSegmentedColormap.from_list(name='Colormap%d' % i,
+                                        colors=colors,
+                                        N=256,
+                                        gamma=1))
   return color_maps
 
 
@@ -124,12 +126,13 @@ def to_axis(ax, is_3D=False):
   to proper matplotlib Axes (2D and 3D)
   """
   from matplotlib import pyplot as plt
+
   # 3D plot
   if is_3D:
     from mpl_toolkits.mplot3d import Axes3D
     if ax is not None:
       assert isinstance(ax, (Axes3D, Number, tuple, list)), \
-      'Axes3D must be used for 3D plot (z is given)'
+        'Axes3D must be used for 3D plot (z is given)'
       if isinstance(ax, Number):
         ax = plt.gcf().add_subplot(ax, projection='3d')
       elif isinstance(ax, (tuple, list)):
@@ -183,61 +186,80 @@ def resize_images(x, shape):
   return imgs
 
 
-def tile_raster_images(X,
-                       tile_shape=None,
-                       tile_spacing=(2, 2),
-                       spacing_value=0.):
-  r''' This function create tile of images
+def tile_raster_images(X: np.ndarray,
+                       images_per_row: Optional[int] = None,
+                       v_pad: float = 0.01,
+                       h_pad: float = 0.01) -> np.ndarray:
+  """This function create tile of images
+  X : 3D-gray or 4D-color images
+      for color images, the color channel must be the second dimension
 
   Parameters
   ----------
-  X : 3D-gray or 4D-color images
-      for color images, the color channel must be the second dimension
-  tile_shape : tuple
-      resized shape of images
-  tile_spacing : tuple
-      space betwen rows and columns of images
-  spacing_value : int, float
-      value used for spacing
+  X : np.ndarray
+      2D-gray images with shape `[batch_dim, height, width]`
+      or 3D-color images `[batch_dim, color, height, width]`
+  images_per_row : int
+      number of images per row
+  v_pad : float
+      fraction of image height for vertical padding
+  h_pad : float
+      fraction of image width for horizontal padding
 
-  '''
-  if X.ndim == 3:
-    img_shape = X.shape[1:]
-  elif X.ndim == 4:
-    img_shape = X.shape[2:]
+  Returns
+  -------
+  np.ndarray
+      single image
+
+  Raises
+  ------
+  ValueError
+      Invalid number of dimension for input image
+  """
+  if X.shape[-1] == 1:
+    X = np.squeeze(X, -1)
+  ## prepare the images
+  is_255 = np.max(X) > 1
+  if X.ndim == 2:
+    X = np.expand_dims(X, axis=0)
+  if X.ndim == 3:  # Greys scale
+    image_shape = X.shape[1:]
+    spacing_value = 255. if is_255 else 1.
+  elif X.ndim == 4:  # RGB
+    image_shape = X.shape[2:]
+    spacing_value = 0.
   else:
-    raise ValueError('Unsupport %d dimension images' % X.ndim)
-  if tile_shape is None:
-    tile_shape = img_shape
-  if tile_spacing is None:
-    tile_spacing = (2, 2)
-
-  if img_shape != tile_shape:
-    X = resize_images(X, tile_shape)
-  else:
-    X = [np.swapaxes(x.T, 0, 1) for x in X]
-
-  n = len(X)
-  n = int(np.ceil(np.sqrt(n)))
-
-  # create spacing
-  rows_spacing = np.zeros_like(X[0])[:tile_spacing[0], :] + spacing_value
-  nothing = np.vstack((np.zeros_like(X[0]), rows_spacing))
-  cols_spacing = np.zeros_like(nothing)[:, :tile_spacing[1]] + spacing_value
-
+    raise ValueError(f'No support for images with shape {X.shape}')
+  ## prepare the image shape
+  h, w = image_shape
+  image_spacing = (int(np.ceil(h_pad * h)), int(np.ceil(v_pad * w)))
+  ## resize images
+  X = [np.swapaxes(x.T, 0, 1) for x in X]
+  ## prepare the grids
+  if images_per_row is None:
+    images_per_row = int(np.ceil(np.sqrt(len(X))))
+  grids = (int(np.ceil(len(X) / images_per_row)), images_per_row)
+  ## create spacing
+  rows_spacing = np.zeros_like(X[0])[:image_spacing[0], :] + spacing_value
+  empty_image = np.vstack((np.zeros_like(X[0]), rows_spacing))
+  cols_spacing = np.zeros_like(
+    empty_image)[:, :image_spacing[1]] + spacing_value
   # ====== Append columns ====== #
   rows = []
-  for i in range(n):  # each rows
+  nrows, ncols = grids
+  nrows = int(nrows)
+  ncols = int(ncols)
+  for i in range(nrows):  # each rows
     r = []
-    for j in range(n):  # all columns
-      idx = i * n + j
+    for j in range(ncols):  # all columns
+      idx = i * ncols + j
       if idx < len(X):
-        r.append(np.vstack((X[i * n + j], rows_spacing)))
+        r.append(np.vstack((X[idx], rows_spacing)))
       else:
-        r.append(nothing)
-      if j != n - 1:  # cols spacing
+        r.append(empty_image)
+      if j != ncols - 1:  # cols spacing
         r.append(cols_spacing)
     rows.append(np.hstack(r))
   # ====== Append rows ====== #
-  img = np.vstack(rows)[:-tile_spacing[0]]
+  img = np.vstack(rows)[:-image_spacing[0]]
   return img

@@ -13,7 +13,7 @@ import tensorflow as tf
 
 from odin import (nnet as N, backend as K, fuel as F,
                   visual as V, training as T, ml)
-from odin.utils import args_parse, ctext, batching, Progbar
+from odin.utils import args_parse, ctext, minibatch, Progbar
 
 args = args_parse(descriptions=[
     ('-dim', 'latent dimension', None, 2),
@@ -179,8 +179,8 @@ while True:
   train_losses = []
   prog = Progbar(target=X_train.shape[0], name='Epoch%d' % epoch)
   start_time = timeit.default_timer()
-  for start, end in batching(batch_size=args.bs, n=X_train.shape[0],
-                             seed=K.get_rng().randint(10e8)):
+  for start, end in minibatch(batch_size=args.bs, n=X_train.shape[0],
+                              seed=K.get_rng().randint(10e8)):
     _ = K.eval(loss, feed_dict={X: X_train[start:end]},
                update_after=update_ops)
     prog.add(end - start)

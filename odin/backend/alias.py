@@ -1,14 +1,11 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
-import os
 from functools import partial
 from numbers import Number
-from typing import Text, Type, Union
+from typing import Text, Type
 
-import numpy as np
 import tensorflow as tf
-import tensorflow_addons as tfa
 import torch
 from six import string_types
 from tensorflow.python import keras
@@ -245,13 +242,13 @@ def parse_attention(attention, framework):
 
 
 def parse_normalizer(normalizer, framework):
+  import tensorflow_addons as tfa
   if _is_tensorflow(framework):
     if isinstance(normalizer, string_types):
       normalizer = normalizer.strip().lower()
       if normalizer == 'batchnorm':
         return keras.layers.BatchNormalization
       elif normalizer == 'batchrenorm':
-        from odin.networks.util_layers import BatchRenormalization
         return keras.layers.BatchRenormalization
       elif normalizer == 'layernorm':
         return keras.layers.LayerNormalization

@@ -4,17 +4,19 @@ import collections
 import inspect
 from enum import Flag, auto
 from numbers import Number
-from typing import Callable, List, Optional, Text, Union
+from typing import Callable, List, Optional, Text, Union, Sequence
 
 import numpy as np
 import tensorflow as tf
 from odin.bay import distributions as obd
+from odin.utils import as_tuple
 from six import string_types
 from tensorflow import Tensor
 from tensorflow.python import keras
 from tensorflow.python.ops import array_ops
 from tensorflow_probability import distributions as tfd
 from tensorflow_probability.python.distributions import Distribution
+from tensorflow_probability.python.distributions.joint_distribution import JointDistribution
 from tensorflow_probability.python.layers import DistributionLambda
 from tensorflow_probability.python.layers.distribution_layer import (
     _get_convert_to_tensor_fn, _serialize)
@@ -152,6 +154,9 @@ def coercible_tensor(d: tfd.Distribution,
   assert isinstance(d, tfd.Distribution), \
     "dist must be instance of tensorflow_probability.Distribution"
   convert_to_tensor_fn = _get_convert_to_tensor_fn(convert_to_tensor_fn)
+  if inspect.isfunction(convert_to_tensor_fn) and \
+    convert_to_tensor_fn in list(tfd.Distribution.__dict__.values()):
+    convert_to_tensor_fn = getattr(type(d), convert_to_tensor_fn.__name__)
   # Wraps the distribution to return both dist and concrete value."""
   distribution = dtc._TensorCoercible(distribution=d,
                                       convert_to_tensor_fn=convert_to_tensor_fn)
@@ -173,38 +178,50 @@ def kl_divergence(
     q: Union[Distribution, Callable[[], Distribution]],
     p: Union[Distribution, Callable[[], Distribution]],
     analytic: bool = False,
-    q_sample: Union[int, Callable[[Distribution],
-                                  Tensor]] = lambda q: q.sample(),
-    reduce_axis: List[int] = (),
+    q_sample: Union[int,
+                    Callable[[Distribution], Tensor]] = lambda q: q.sample(),
+    reduce_axis: Sequence[int] = (),
     reverse: bool = True,
+    free_bits: Optional[float] = None,
 ) -> Tensor:
-  r""" Calculating `KL(q(x)||p(x))` (if reverse=True) or
+  """ Calculating `KL(q(x)||p(x))` (if reverse=True) or
   `KL(p(x)||q(x))` (if reverse=False)
 
-  Arguments:
-    q : `tensorflow_probability.Distribution` or `Callable`,
+  Parameters
+  ----------
+  q : `tensorflow_probability.Distribution` or `Callable`,
       the approximated posterior distribution
-    p : `tensorflow_probability.Distribution` or `Callable`,
+  p : `tensorflow_probability.Distribution` or `Callable`,
       the prior distribution
-    analytic : bool (default: False)
+  analytic : bool (default: False)
       if True, use the close-form solution  for
-    q_sample : {callable, Tensor, Number}
+  q_sample : {callable, Tensor, Number}
       callable for extracting sample from `q(x)` (takes `q` posterior distribution
       as input argument)
-    reudce_axis : {None, int, tuple}. Reduce axis when use MCMC to estimate KL
+  reduce_axis : {None, int, tuple}. Reduce axis when use MCMC to estimate KL
       divergence, default `()` mean keep all original dimensions.
-    reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
+  reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
       (or p_model) by greedily filling in the highest modes of data (or, in
       other word, placing low probability to where data does not occur).
       Otherwise, `KL(p||q)` a.k.a maximum likelihood, place high probability
       at anywhere data occur (i.e. averagely fitting the data).
+  free_bits : `float` (optional)
+      maximum(lambda, KL) as stated in (Kingma et al. 2016)
 
-  Returns:
-    A Tensor with the batchwise KL-divergence between `distribution_a`
+  Returns
+  -------
+  A Tensor with the batchwise KL-divergence between `distribution_a`
       and `distribution_b`.  The shape is `[batch_dims]` for analytic KL,
       otherwise, `[sample_shape, batch_dims]`.
 
-  Example:
+  References
+  ----------
+  Kingma, D.P., et al., 2016. Improved variational inference with inverse
+      autoregressive flow, Advances in Neural Information Processing
+      Systems. Curran Associates, Inc., pp. 4743–4751.
+
+  Example
+  -------
   ```python
   p = bay.distributions.OneHotCategorical(logits=[1, 2, 3])
 
@@ -245,17 +262,22 @@ def kl_divergence(
     q, p = [q, p][::-1]
   ### analytic KL
   if bool(analytic):
-    return tfd.kl_divergence(q, p)
+    kl = tfd.kl_divergence(q, p)
   ### non-analytic KL
-  # using MCMC sampling for estimating the KL
-  if callable(q_sample):
-    z = q_sample(q)
-  elif q_sample is None:  # TensorCoercible
-    z = tf.convert_to_tensor(q)
   else:
-    z = q.sample(q_sample)
-  # calculate the output, then perform reduction
-  kl = q.log_prob(z) - p.log_prob(z)
+    # using MCMC sampling for estimating the KL
+    if callable(q_sample):
+      z = q_sample(q)
+    elif q_sample is None:  # TensorCoercible
+      z = tf.convert_to_tensor(q)
+    else:
+      z = q.sample(q_sample)
+    # calculate the output, then perform reduction
+    kl = q.log_prob(z) - p.log_prob(z)
+  ### free-bits
+  if free_bits is not None:
+    units = int(np.prod(q.event_shape))
+    kl = tf.maximum(kl, tf.constant(free_bits * units, dtype=kl.dtype))
   kl = tf.reduce_mean(input_tensor=kl, axis=reduce_axis)
   return kl
 
@@ -267,25 +289,27 @@ class KLdivergence:
     - Calculating KL(q(x)||p(x)) (if reverse=True) or
     - KL(p(x)||q(x)) (if reverse=False)
 
-  Arguments:
-    posterior : `tensorflow_probability.Distribution`, the approximated
-      posterior distribution
-    prior : `tensorflow_probability.Distribution`, the prior distribution
-    analytic : bool (default: False)
-      if True, use the close-form solution  for
-    sample_shape : {Tensor, Number}
-      number of MCMC samples for MCMC estimation of KL-divergence
-    reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
-      (or p_model) by greedily filling in the highest modes of data (or, in
-      other word, placing low probability to where data does not occur).
-      Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
-      propagation place high probability at anywhere data occur
-      (i.e. averagely fitting the data).
-    keepdims : a Boolean. If True, expand the dimension to preserve the MCMC
-      dimension in case of analytic KL.
+  Parameters
+  ----------
+  posterior : `tensorflow_probability.Distribution`, the approximated
+    posterior distribution
+  prior : `tensorflow_probability.Distribution`, the prior distribution
+  analytic : bool (default: False)
+    if True, use the close-form solution  for
+  sample_shape : {Tensor, Number}
+    number of MCMC samples for MCMC estimation of KL-divergence
+  reverse : `bool`. If `True`, calculating `KL(q||p)` which optimizes `q`
+    (or p_model) by greedily filling in the highest modes of data (or, in
+    other word, placing low probability to where data does not occur).
+    Otherwise, `KL(p||q)` a.k.a maximum likelihood, or expectation
+    propagation place high probability at anywhere data occur
+    (i.e. averagely fitting the data).
+  keepdims : a Boolean. If True, expand the dimension to preserve the MCMC
+    dimension in case of analytic KL.
 
-  Note:
-    this class return 0. if the prior is not given (i.e. prior=None)
+  Note
+  ----
+  this class return 0. if the prior is not given (i.e. prior=None)
   """
 
   def __init__(self,
@@ -294,6 +318,7 @@ class KLdivergence:
                analytic=False,
                sample_shape=(),
                reverse=True,
+               free_bits=None,
                keepdims=False):
     self.posterior = posterior
     self.prior = prior
@@ -301,6 +326,7 @@ class KLdivergence:
     self.sample_shape = sample_shape
     self.reverse = bool(reverse)
     self.keepdims = bool(keepdims)
+    self.free_bits = free_bits
 
   def __str__(self):
     if hasattr(self.posterior, 'shape'):
@@ -325,19 +351,22 @@ class KLdivergence:
                analytic=None,
                sample_shape=-1,
                reverse=None,
-               keepdims=False):
+               keepdims=False,
+               free_bits=None):
     prior = self.prior if prior is None else prior
     analytic = self.analytic if analytic is None else bool(analytic)
     sample_shape = self.sample_shape if sample_shape == -1 else sample_shape
     reverse = self.reverse if reverse is None else bool(reverse)
     keepdims = self.keepdims if keepdims is None else bool(keepdims)
+    free_bits = self.free_bits if free_bits is None else free_bits
     if prior is None:
       return 0.
     div = kl_divergence(q=self.posterior,
                         p=prior,
                         analytic=analytic,
                         reverse=reverse,
-                        q_sample=sample_shape)
+                        q_sample=sample_shape,
+                        free_bits=free_bits)
     if analytic and keepdims:
       div = tf.expand_dims(div, axis=0)
     return div
@@ -354,7 +383,7 @@ dist_params = {
     obd.Independent: ['distribution', 'reinterpreted_batch_ndims'],
     obd.ZeroInflated: ['count_distribution', 'inflated_distribution'],
     obd.MixtureSameFamily: ['mixture_distribution', 'components_distribution'],
-    obd.CombinedDistribution: ['distributions'],
+    obd.Blockwise: ['distributions'],
     obd.ConditionalTensor: ['distribution', 'conditional_tensor'],
     # Exponential
     obd.Gamma: ['concentration', 'rate'],
@@ -395,25 +424,37 @@ for _type, _names in dist_params.items():
 
 
 def _find_axis_for_stack(dists, given_axis):
+  """This algorithm find any axis that is different among minibatches as
+  an axis for concatenation."""
   # check event shape is consistent
   if given_axis is not None:
     return int(given_axis)
-
-  event_shape = dists[0].event_shape
-  batch_shape = dists[0].batch_shape
-
+  is_joint_dist = isinstance(dists[0], JointDistribution)
+  event_ref = dists[0].event_shape
+  batch_ref = dists[0].batch_shape
+  if is_joint_dist:
+    event_ref = event_ref[0]
+    batch_ref = batch_ref[0]
+  # check shape matching conditions
   assertions = []
   for d in dists[1:]:
-    assertions.append(tf.assert_equal(event_shape, d.event_shape))
-    assertions.append(tf.assert_equal(batch_shape.ndims, d.batch_shape.ndims))
-
+    if is_joint_dist:
+      event_shape = tf.reduce_sum(d.event_shape)  # assume concatenation
+      ndims = d.batch_shape[0].ndims
+    else:
+      event_shape = d.event_shape
+      ndims = d.batch_shape.ndims
+    assertions.append(tf.assert_equal(event_ref, event_shape))
+    assertions.append(tf.assert_equal(batch_ref.ndims, ndims))
+  # searching for different dimension.
   with tf.control_dependencies(assertions):
     axis = []
     for d in dists:
-      shape = d.batch_shape
-      for ax, (i, j) in enumerate(zip(batch_shape, shape)):
+      shape = d.batch_shape[0] if is_joint_dist else d.batch_shape
+      for ax, (i, j) in enumerate(zip(batch_ref, shape)):
         if i != j:
           axis.append(ax)
+    # default, just  return the first one
     if len(axis) == 0:
       return 0
     assert len(set(axis)) == 1, \
@@ -472,24 +513,21 @@ def concat_distributions(dists: List[tfd.Distribution],
                          validate_args: bool = False,
                          allow_nan_stats: bool = True,
                          name: Optional[Text] = None) -> tfd.Distribution:
-  r""" This layer create a new `Distribution` by concatenate parameters of
+  """This layer create a new `Distribution` by concatenate parameters of
   multiple distributions of the same type along given `axis`
 
   Note
   ----
-  If your distribution is the output from
-  `tensorflow_probability.DistributionLambda`, this function will remove all
-  the keras tracking utilities, for better solution checkout
-  `odin.networks.distribution_util_layer.ConcatDistribution`
+  If your distribution is the output from `DistributionLambda`,
+      this function will remove all the keras history
   """
-  if not isinstance(dists, (tuple, list)):
-    dists = [dists]
+  dists = as_tuple(dists)
   if len(dists) == 1:
     return dists[0]
   if len(dists) == 0:
     raise ValueError("No distributions were given")
   axis = _find_axis_for_stack(dists, given_axis=axis)
-
+  # ====== get the proper distribution type ====== #
   dist_type = type(dists[0])
   # _TensorCoercible will messing up with the parameters of the
   # distribution
@@ -497,7 +535,10 @@ def concat_distributions(dists: List[tfd.Distribution],
     dist_type = type.mro(dist_type)[2]
     assert issubclass(dist_type, tfd.Distribution) and not issubclass(
         dist_type, dtc._TensorCoercible)
-
+  #TODO: issues concatenating JointDistribution, use Batchwise.
+  if issubclass(dist_type, JointDistribution):
+    from odin.bay.distributions.batchwise import Batchwise
+    return Batchwise(dists, axis=axis, validate_args=validate_args, name=name)
   # ====== special cases ====== #
   dist_func = None
   if dist_type == obd.MultivariateNormalDiag:

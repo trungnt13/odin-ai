@@ -2,7 +2,6 @@ from __future__ import print_function, division, absolute_import
 
 import numpy as np
 from scipy.linalg import eigh, cholesky, inv, svd, solve
-import tensorflow as tf
 
 from sklearn.svm import SVC
 from sklearn.discriminant_analysis import LinearDiscriminantAnalysis

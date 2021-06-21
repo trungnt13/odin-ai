@@ -61,7 +61,7 @@ from odin.preprocessing.signal import (
     mvn, pitch_track, power2db, power_spectrogram, pre_emphasis, rastafilt,
     resample, shifted_deltas, smooth, spectra, stack_frames, stft, vad_energy,
     wmvn)
-from odin.utils import (Progbar, as_tuple, batching, cache_memory, ctext,
+from odin.utils import (Progbar, as_tuple, minibatch, cache_memory, ctext,
                         get_all_files, is_fileobj, is_number, is_pickleable,
                         is_string, mpi)
 
@@ -1070,7 +1070,7 @@ class _BNFExtractorBase(Extractor):
     X = self._prepare_input(X, sad)
     y = []
     # make prediction
-    for s, e in batching(n=X.shape[0], batch_size=self.batch_size):
+    for s, e in minibatch(n=X.shape[0], batch_size=self.batch_size):
       y.append(self._apply_dnn(X[s:e]))
     return np.concatenate(y, axis=0)
 

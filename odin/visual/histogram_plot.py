@@ -5,27 +5,38 @@ from collections import defaultdict
 from numbers import Number
 
 import numpy as np
+from odin.visual.plot_utils import *
 from scipy import stats
 
-from odin.visual.plot_utils import *
 
-
-def _fit(x, y, n_bins):
-  from sklearn.preprocessing import KBinsDiscretizer
-  from sklearn.model_selection import GridSearchCV
-  from sklearn.linear_model import LogisticRegression
+def _fit_mapping(x: np.ndarray, y: np.ndarray, n_bins: int):
   from odin.utils import catch_warnings_ignore
+  from sklearn.linear_model import LogisticRegression
+  from sklearn.model_selection import GridSearchCV
+  from sklearn.preprocessing import KBinsDiscretizer
+  from odin.ml.gmm_classifier import GMMclassifier
+  assert x.ndim == 1 and y.ndim == 1
   x = x[:, np.newaxis]
-  y = KBinsDiscretizer(n_bins=int(n_bins), encode='ordinal').fit_transform(
-      y[:, np.newaxis]).ravel().astype(np.int64)
-  with catch_warnings_ignore(UserWarning):
-    lr = GridSearchCV(estimator=LogisticRegression(max_iter=500,
-                                                   solver='liblinear',
-                                                   random_state=1234),
-                      cv=2,
-                      param_grid=dict(C=np.linspace(0.5, 5, num=5)))
-    lr.fit(x, y)
-  return lr
+  # already discrete labels, and the number of bins is enough
+  if np.all(y == y.astype(np.int32)) and len(np.unique(y)) <= n_bins:
+    n_bins = len(np.unique(y))
+    model = GMMclassifier(strategy='all', n_components=2,
+                          covariance_type='full',
+                          n_init=5, random_state=1)
+    model.fit(x, y)
+  else:
+    y = KBinsDiscretizer(n_bins=int(n_bins),
+                         encode='ordinal',
+                         strategy='uniform').fit_transform(y[:, np.newaxis])
+    y = y.ravel().astype(np.int64)
+    with catch_warnings_ignore(UserWarning):
+      model = GridSearchCV(estimator=LogisticRegression(max_iter=500,
+                                                        solver='liblinear',
+                                                        random_state=1),
+                           cv=2,
+                           param_grid=dict(C=np.linspace(0.5, 5, num=5)))
+      model.fit(x, y)
+  return model, n_bins
 
 
 def plot_histogram(x,
@@ -48,17 +59,22 @@ def plot_histogram(x,
                    fontsize=12,
                    bold_title=False,
                    title=None):
-  r"""
-  Arguments:
-    x: array, data for ploting histogram
-    color_val : array (optional), heatmap color value for each histogram bars
-    bins_color : int, number of bins for the colors
-    bins : int, number of histogram bins
-    covariance_factor : None or float,
+  """
+  Parameters
+  ----------
+  x: array
+      data for ploting histogram
+  color_val : array (optional)
+      heatmap color value for each histogram bars
+  bins_color : int
+      number of bins for the colors
+  bins : int
+      number of histogram bins
+  covariance_factor : None or float,
       smaller value lead to more detail for KDE plot
   """
-  from matplotlib import pyplot as plt
   import matplotlib as mpl
+  from matplotlib import pyplot as plt
   bins_color = int(bins_color)
   bins = int(bins)
   # ====== prepare ====== #
@@ -70,7 +86,7 @@ def plot_histogram(x,
   ax.grid(grid)
   # ====== get the bins ====== #
   if range_0_1:
-    x = (x - np.min(x, axis=0, keepdims=True)) /\
+    x = (x - np.min(x, axis=0, keepdims=True)) / \
         (np.max(x, axis=0, keepdims=True) - np.min(x, axis=0, keepdims=True))
   hist, hist_bins = np.histogram(x, bins=bins, density=normalize)
   width = (hist_bins[1] - hist_bins[0]) / 1.36
@@ -80,17 +96,23 @@ def plot_histogram(x,
       f"Given {len(x)} data points but {len(color_val)} color values"
     if color == 'blue':  # change the default color
       color = 'Blues'
-    # create mapping x -> val_bins
-    lr = _fit(x=x, y=color_val, n_bins=bins_color)
-    # all colors
-    vmin, vmax = np.min(color_val), np.max(color_val)
     cmap = plt.cm.get_cmap(color)
-    normalizer = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
-    all_colors = cmap(normalizer(np.linspace(vmin, vmax, num=bins_color)))
-    # map the x bin to val bin then to color
-    feat = np.array([(s + e) / 2 for s, e in zip(hist_bins[:-1], hist_bins[1:])
-                    ])[:, np.newaxis]
-    color = [all_colors[i] for i in lr.predict(feat).ravel()]
+    # create mapping x -> val_bins
+    lr, n_classes = _fit_mapping(x=x, y=color_val, n_bins=bins_color)
+    # map the hist bin to x bin (by avg) then to color
+    feat = np.array([(s + e) / 2
+                     for s, e in zip(hist_bins[:-1], hist_bins[1:])])
+    feat = np.expand_dims(feat, -1)
+    if n_classes == 2:  # binary
+      pred = lr.predict(feat).ravel().astype(np.int32)
+      all_colors = [cmap(0.0), cmap(1.0)]
+      color = [all_colors[i] for i in pred]
+    else:  # multi-classes
+      # all colors
+      vmin, vmax = np.min(color_val), np.max(color_val)
+      normalizer = mpl.colors.Normalize(vmin=vmin, vmax=vmax)
+      all_colors = cmap(normalizer(np.linspace(vmin, vmax, num=bins_color)))
+      color = [all_colors[i] for i in lr.predict(feat).ravel().astype(np.int32)]
   # histogram bar
   ax.bar((hist_bins[:-1] + hist_bins[1:]) / 2 - width / 2,
          hist,
@@ -99,18 +121,18 @@ def plot_histogram(x,
          alpha=alpha,
          linewidth=0.,
          edgecolor=None)
-  # colorbar
+  # color bar
   if color_val is not None and cbar:
     mappable = plt.cm.ScalarMappable(norm=normalizer, cmap=cmap)
     mappable.set_clim(vmin, vmax)
     cba = plt.colorbar(
-        mappable,
-        ax=ax,
-        shrink=0.99,
-        pad=0.01,
-        orientation='horizontal' if cbar_horizontal else 'vertical')
+      mappable,
+      ax=ax,
+      shrink=0.99,
+      pad=0.01,
+      orientation='horizontal' if cbar_horizontal else 'vertical')
     cba.ax.tick_params(labelsize=fontsize - 2)
-  # ====== centerlize the data ====== #
+  # ====== centralize the data ====== #
   min_val = np.min(hist_bins)
   max_val = np.max(hist_bins)
   if centerlize:
@@ -119,15 +141,15 @@ def plot_histogram(x,
   if kde:
     if not normalize:
       raise ValueError(
-          "KDE plot only applicable for normalized-to-1 histogram.")
+        "KDE plot only applicable for normalized-to-1 histogram.")
     density = stats.gaussian_kde(x)
     if isinstance(covariance_factor, Number):
       density.covariance_factor = lambda: float(covariance_factor)
       density._compute_covariance()
     if centerlize:
       xx = np.linspace(
-          np.min(x) - np.abs(max_val) / 2,
-          np.max(x) + np.abs(max_val) / 2, 100)
+        np.min(x) - np.abs(max_val) / 2,
+        np.max(x) + np.abs(max_val) / 2, 100)
     else:
       xx = np.linspace(np.min(x), np.max(x), 100)
     yy = density(xx)
@@ -143,7 +165,7 @@ def plot_histogram(x,
     ax.set_title(str(title),
                  fontsize=fontsize,
                  fontweight='bold' if bold_title else 'regular')
-  return hist, hist_bins
+  return ax, hist, hist_bins
 
 
 def plot_histogram_layers(Xs,
@@ -192,7 +214,7 @@ def plot_histogram_layers(Xs,
                                           num_classes)[::-1], layer_color,
                               np.linspace(0, 100, num_classes), Xs):
     if range_0_1:
-      x = (x - np.min(x, axis=0, keepdims=True)) /\
+      x = (x - np.min(x, axis=0, keepdims=True)) / \
           (np.max(x, axis=0, keepdims=True) - np.min(x, axis=0, keepdims=True))
     hist, hist_bins = np.histogram(x, bins=bins, density=normalize)
     width = (hist_bins[1] - hist_bins[0]) / 1.36
@@ -207,7 +229,7 @@ def plot_histogram_layers(Xs,
     if kde:
       if not normalize:
         raise ValueError(
-            "KDE plot only applicable for normalized-to-1 histogram.")
+          "KDE plot only applicable for normalized-to-1 histogram.")
       density = stats.gaussian_kde(x)
       if isinstance(covariance_factor, Number):
         density.covariance_factor = lambda: float(covariance_factor)
