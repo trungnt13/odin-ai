@@ -182,7 +182,7 @@ def typecheck(inputs=None, outputs=None, debug=2):
         else:  # default value
           input_args.append(j)
       ### main logic
-      if debug is 0:  # ignore
+      if debug == 0: # ignore
         return func(*args, **kwargs)
       ### Check inputs
       if inputs is not None:
@@ -194,9 +194,9 @@ def typecheck(inputs=None, outputs=None, debug=2):
             not _compares_types(argtypes[1:length + 1],
                                 inputs[:length]):  # wrong types
           msg = _info(func.__name__, inputs, argtypes, 0)
-          if debug is 1:
+          if debug == 1:
             print('TypeWarning:', msg)
-          elif debug is 2:
+          elif debug == 2:
             raise TypeError(msg)
       ### get results
       results = func(*args, **kwargs)
@@ -209,9 +209,9 @@ def typecheck(inputs=None, outputs=None, debug=2):
         if len(outputs) > len(res_types) or \
             not _compares_types(res_types[:length], outputs[:length]):
           msg = _info(func.__name__, outputs, res_types, 1)
-          if debug is 1:
+          if debug == 1:
             print('TypeWarning: ', msg)
-          elif debug is 2:
+          elif debug == 2:
             raise TypeError(msg)
       ### finally everything ok
       return results

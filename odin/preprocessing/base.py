@@ -631,7 +631,7 @@ class AsType(Extractor):
       By default, exclude all running statistics '*_sum1' and '*_sum2'
   """
 
-  def __init__(self, dtype, input_name=None, exclude_pattern=".+\_sum[1|2]"):
+  def __init__(self, dtype, input_name=None, exclude_pattern=r".+\_sum[1|2]"):
     super(
         AsType,
         self).__init__(input_name=as_tuple(input_name, t=string_types
