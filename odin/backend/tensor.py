@@ -12,24 +12,18 @@ from __future__ import absolute_import, division, print_function
 
 import copy
 import inspect
-import itertools
 import numbers
-from collections import defaultdict
 from contextlib import contextmanager
-from functools import wraps
 
 import numpy as np
-import scipy as sp
 import tensorflow as tf
 import torch
-from odin.utils import as_tuple, is_number, is_same_shape, is_string
-from odin.utils import one_hot as _one_hot
-from odin.utils import uuid
 from scipy.sparse import spmatrix
 from six import string_types
-from six.moves import builtins
 from tensorflow import nest
-from tensorflow.python.ops import init_ops
+
+from odin.utils import as_tuple
+from odin.utils import one_hot as _one_hot
 
 # TODO: add stack for setting framework context
 _FRAMEWORK_STACK = ['numpy']

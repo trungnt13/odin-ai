@@ -11,6 +11,22 @@ End-to-end design, versatile, plug-n-play, minimized repetitive work
 
 This repo contains the most comprehensive implementation of variational autoencoder and disentangled representation benchmark.
 
+.. code-block:: python
+
+  from odin.fuel import MNIST
+  from odin.networks import get_networks
+  from odin.bay.vi import VariationalAutoencoder
+
+  ds = MNIST()
+  train = ds.create_dataset(partition='train')
+  # optimized architectures for MNIST
+  networks = get_networks(ds, is_hierarchical=False, is_semi_supervised=False)
+
+  # create the VAE
+  vae = VariationalAutoencoder(**networks)
+  vae.build(ds.full_shape)
+  vae.fit(train, max_iter=10000)
+
 TOC
 ---
 

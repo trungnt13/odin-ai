@@ -6,6 +6,7 @@ import numpy as np
 import tensorflow as tf
 from six import string_types
 from tensorflow.keras.optimizers.schedules import LearningRateSchedule
+from odin.fuel import IterableDataset
 from tensorflow.python import keras
 from tensorflow.python.keras.layers import Layer, Activation, Flatten
 from tensorflow_probability.python.distributions import Normal
@@ -903,7 +904,7 @@ _DSNAME_MAP = dict(
 )
 
 
-def get_networks(dataset_name: str,
+def get_networks(dataset_name: [str, IterableDataset],
                  *,
                  is_semi_supervised: bool,
                  is_hierarchical: bool,
@@ -912,6 +913,8 @@ def get_networks(dataset_name: str,
                  **kwargs) -> Dict[str, Layer]:
   """ Return dictionary of networks for encoder, decoder, observation, latents
   and labels (in case of semi-supervised learning) """
+  if isinstance(dataset_name, IterableDataset):
+    dataset_name = dataset_name.name.lower()
   if zdim is not None and zdim <= 0:
     zdim = None
   dataset_name = str(dataset_name).lower().strip()

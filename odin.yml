@@ -12,10 +12,9 @@ channels:
 dependencies:
   - python=3.7
   - pip>=20.3
-  - cudatoolkit=11.0
-  - cudnn=8.0
-  - rapids=0.17
-  - jax>=0.2.12
+  - cudatoolkit=11.2
+  - cudnn=8.1.0
+  - rapids=21.06
   - matplotlib
   - ipython
   - scikit-learn
@@ -23,13 +22,13 @@ dependencies:
   - seaborn
   - tqdm
   - dill
-  - pytorch
-  - torchvision
-  - torchaudio
+#  - pytorch=1.9.0
+#  - torchvision
+#  - torchaudio
 
   - pip:
       - tensorflow==2.5.0
-      - tensorflow-probability==0.13.0-rc0
+      - tensorflow-probability==0.13.0
       - tensorflow-datasets
       - tensorflow_io
       - tensorflow-addons
@@ -45,7 +44,7 @@ dependencies:
       - arviz # bayesian analysis
       - statsmodels # hypothesis testing and frequentist statistic analysis
       - typeguard>=2.10.0
-      - pyro-ppl
+#      - pyro-ppl
 
 # Other helpful library:
 # pip install git+https://github.com/DmitryUlyanov/Multicore-TSNE.git

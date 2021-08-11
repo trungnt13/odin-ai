@@ -17,7 +17,7 @@ from tensorflow import Tensor
 from tensorflow.python import keras
 from tensorflow.python.data.ops.dataset_ops import DatasetV2
 from tensorflow.python.data.ops.iterator_ops import OwnedIterator
-from tensorflow.python.eager.def_function import Function
+from tensorflow.python.eager.def_function import Function as TFFunction
 from tensorflow.python.keras import Model, Sequential
 from tensorflow.python.ops import summary_ops_v2
 from tensorflow.python.summary.summary_iterator import summary_iterator
@@ -500,27 +500,35 @@ class Trainer(object):
   def set_optimize_fn(self,
                       optimize: Callable[..., Tuple[Tensor, Dict[str, Any]]],
                       compile_graph: bool = True,
-                      autograph: bool = False,
-                      experimental: bool = False):
+                      autograph: bool = False):
     assert callable(optimize), \
       'optimize function must be callable with input arguments ' \
       '(inputs, training)'
     if isinstance(optimize, partial):
-      func_name = optimize.func
-    elif isinstance(optimize, Function):
-      func_name = optimize._python_function
+      func = optimize.func
+    elif isinstance(optimize, TFFunction):
+      func = optimize._python_function
     else:
-      func_name = optimize
-    if inspect.ismethod(func_name):
-      func_obj = func_name.__self__
+      func = optimize
+    if inspect.ismethod(func):
+      func_obj = func.__self__
     else:
       func_obj = None
-    func_name = func_name.__name__
-    if compile_graph and not isinstance(optimize, Function):
-      optimize = tf.function(optimize,
-                             autograph=bool(autograph),
-                             experimental_compile=experimental)
-    self._optimize = optimize
+    func_name = func.__name__
+
+    def fn_step(inputs, training):
+      if isinstance(inputs, dict):
+        loss, metrics = optimize(training=training, **inputs)
+      else:
+        loss, metrics = optimize(inputs, training=training)
+      if not isinstance(metrics, dict):
+        raise RuntimeError(
+          f"Metrics must be instance of dictionary, but return: {metrics}")
+      return loss, metrics
+
+    if compile_graph and not isinstance(optimize, TFFunction):
+      fn_step = tf.function(fn_step, autograph=autograph)
+    self._fn_step = fn_step
     self._func_obj = func_obj
     self._func_name = func_name
     return self
@@ -533,7 +541,6 @@ class Trainer(object):
           valid_interval: float = 120,
           compile_graph: bool = True,
           autograph: bool = False,
-          experimental: bool = False,
           logging_interval: float = 5,
           log_tag: str = '',
           max_iter: int = -1,
@@ -562,8 +569,6 @@ class Trainer(object):
         compile the function to graph for computational optimization.
     autograph : Boolean.
         Enable static graph for the `optimize` function.
-    experimental : bool
-        experimental compiling
     logging_interval : Scalar. Interval for print out log information
         (in second).
     log_tag : str
@@ -586,8 +591,7 @@ class Trainer(object):
     """
     self.set_optimize_fn(optimize,
                          compile_graph=compile_graph,
-                         autograph=autograph,
-                         experimental=experimental)
+                         autograph=autograph)
     # reset last stored valid losses
     if len(log_tag) > 0:
       log_tag += " "
@@ -607,17 +611,6 @@ class Trainer(object):
     if valid_interval > 0:  # prefer the interval
       valid_freq = 1
 
-    ### helper function for training iteration
-    def fn_step(inputs, training):
-      if isinstance(inputs, dict):
-        loss, metrics = self._optimize(training=training, **inputs)
-      else:
-        loss, metrics = self._optimize(inputs, training=training)
-      if not isinstance(metrics, dict):
-        raise RuntimeError(
-          f"Metrics must be instance of dictionary, but return: {metrics}")
-      return loss, metrics
-
     ### validating function
     def valid():
       epoch_loss = []
@@ -626,7 +619,7 @@ class Trainer(object):
         enumerate(valid_ds.repeat(1)),
         desc=f"Validating {valid_freq}(it) or {valid_interval:.1f}(s)")
       for it, inputs in valid_progress:
-        _loss, _metrics = fn_step(inputs, training=False)
+        _loss, _metrics = self._fn_step(inputs, training=False)
         # store for calculating average
         epoch_loss.append(_loss)
         for k, v in _metrics.items():
@@ -658,7 +651,7 @@ class Trainer(object):
         # the tensorboard will change after each iteration
         self._cached_tensorboard = None
         # ====== train ====== #
-        loss, metrics = fn_step(inputs, training=True)
+        loss, metrics = self._fn_step(inputs, training=True)
         self._last_train_loss = loss
         self._last_train_metrics = dict(metrics)
         _process_callback_returns(self.print,
