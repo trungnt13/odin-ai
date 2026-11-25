@@ -11,8 +11,8 @@ import string
 import tarfile
 import types
 import warnings
-from collections import (Iterable, Iterator, Mapping, OrderedDict, defaultdict,
-                         deque)
+from collections import OrderedDict, defaultdict, deque
+from collections.abc import Iterable, Iterator, Mapping
 from contextlib import contextmanager
 from datetime import datetime
 from typing import List, Callable, Any

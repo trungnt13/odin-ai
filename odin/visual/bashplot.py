@@ -12,7 +12,7 @@ from __future__ import print_function, absolute_import, division
 import re
 import math
 import warnings
-from collections import Mapping
+from collections.abc import Mapping
 
 import numpy as np
 

@@ -6,7 +6,7 @@ import os
 import pickle
 import struct
 import zipfile
-from collections import Sequence
+from collections.abc import Sequence
 from io import BytesIO
 from numbers import Number
 

@@ -14,7 +14,7 @@ import re
 import random
 import subprocess
 from six import add_metaclass
-from collections import Mapping
+from collections.abc import Mapping
 from abc import abstractproperty, ABCMeta, abstractmethod
 
 import numpy as np

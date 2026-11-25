@@ -11,7 +11,8 @@ from __future__ import print_function, division, absolute_import
 
 import timeit
 import string
-from collections import OrderedDict, Iterator, Iterable, defaultdict, Mapping
+from collections import OrderedDict, defaultdict
+from collections.abc import Iterator, Iterable, Mapping
 from abc import abstractmethod, ABCMeta
 from six import add_metaclass, string_types
 

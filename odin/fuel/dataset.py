@@ -3,7 +3,8 @@ from __future__ import absolute_import, division, print_function
 import os
 import pickle
 import shutil
-from collections import Mapping, OrderedDict
+from collections import OrderedDict
+from collections.abc import Mapping
 from typing import Any, Text
 
 import numpy as np

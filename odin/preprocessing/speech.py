@@ -43,7 +43,8 @@ import os
 import re
 import shutil
 import warnings
-from collections import Mapping, OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict
+from collections.abc import Mapping
 from numbers import Number
 
 import numpy as np

@@ -1,7 +1,7 @@
 from __future__ import absolute_import, division, print_function
 
 import inspect
-from collections import Iterable
+from collections.abc import Iterable
 
 import tensorflow as tf
 from tensorflow import keras

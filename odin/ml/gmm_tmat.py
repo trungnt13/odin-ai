@@ -10,7 +10,8 @@ import pickle
 import random
 import threading
 import time
-from collections import Mapping, OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict
+from collections.abc import Mapping
 
 import numpy as np
 import tensorflow as tf

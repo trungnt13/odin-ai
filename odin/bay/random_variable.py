@@ -2,7 +2,7 @@ from __future__ import absolute_import, division, print_function
 
 import dataclasses
 import inspect
-from collections import MutableSequence, Sequence
+from collections.abc import MutableSequence, Sequence
 from copy import deepcopy
 from typing import Any, Callable, Dict, List, Optional, Union, Sequence
 

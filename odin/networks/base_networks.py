@@ -1,6 +1,6 @@
 from __future__ import absolute_import, division, print_function
 
-import collections
+import collections.abc
 import copy
 import dataclasses
 import glob
@@ -1273,7 +1273,7 @@ class NetConf(dict):
   name: Optional[str] = None
 
   def __post_init__(self):
-    if not isinstance(self.units, collections.Iterable):
+    if not isinstance(self.units, collections.abc.Iterable):
       self.units = tf.nest.flatten(self.units)
     self.units = [int(i) for i in self.units]
     network_types = ('deconv', 'conv', 'dense', 'lstm', 'gru', 'rnn')
