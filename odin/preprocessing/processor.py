@@ -14,7 +14,8 @@ import time
 import warnings
 import wave
 from abc import ABCMeta, abstractmethod, abstractproperty
-from collections import Mapping, defaultdict
+from collections import defaultdict
+from collections.abc import Mapping
 from multiprocessing import Pool, Process, Queue, cpu_count
 from numbers import Number
 

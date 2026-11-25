@@ -1,4 +1,4 @@
-import collections
+import collections.abc
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Union, Sequence
 
@@ -51,7 +51,7 @@ def _split_inputs(inputs, mask, call_kw):
   call_kw1 = {}
   call_kw2 = {}
   for k, v in call_kw.items():
-    if isinstance(v, collections.Sequence):
+    if isinstance(v, collections.abc.Sequence):
       v = [_split_if_tensor(i) for i in v]
       call_kw1[k] = [i[0] for i in v]
       call_kw2[k] = [i[1] for i in v]

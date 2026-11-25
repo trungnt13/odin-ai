@@ -4,7 +4,7 @@ import inspect
 import os
 import re
 from abc import ABCMeta, abstractmethod
-from collections import Mapping
+from collections.abc import Mapping
 from enum import Enum
 
 import numpy as np
@@ -176,7 +176,7 @@ class Extractor(BaseEstimator, TransformerMixin):
   r""" Extractor
 
   The developer must override the `_transform` method:
-   - If the return is instance of `collections.Mapping`, the new features
+   - If the return is instance of `collections.abc.Mapping`, the new features
      will be merged into existed features dictionary (i.e. the input dictionary)
    - If the return is not instance of `Mapping`, the name of given classes will
      be used to name the returned features.

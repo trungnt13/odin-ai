@@ -14,7 +14,8 @@ import itertools
 import os
 import sys
 import warnings
-from collections import Mapping, OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict
+from collections.abc import Mapping
 from contextlib import contextmanager
 from numbers import Number
 from typing import List, Optional, Tuple, Union, Sequence

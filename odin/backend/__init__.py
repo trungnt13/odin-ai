@@ -3,7 +3,7 @@ from __future__ import absolute_import, division, print_function
 import functools
 import inspect
 import os
-from collections import Mapping
+from collections.abc import Mapping
 from contextlib import contextmanager
 
 from odin.backend import (interpolation, keras_callbacks, keras_helpers, losses,

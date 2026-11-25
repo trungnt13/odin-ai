@@ -10,7 +10,7 @@ import time
 import types
 import warnings
 from array import array
-from collections import Mapping
+from collections.abc import Mapping
 from collections import OrderedDict, defaultdict
 from functools import wraps
 from typing import Callable

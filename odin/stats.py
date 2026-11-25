@@ -3,7 +3,8 @@ from __future__ import absolute_import, division, print_function
 
 import math
 import random
-from collections import Iterator, Mapping, OrderedDict, defaultdict
+from collections import OrderedDict, defaultdict
+from collections.abc import Iterator, Mapping
 from itertools import chain
 from numbers import Number
 from scipy.stats import spearmanr, pearsonr

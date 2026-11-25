@@ -1,4 +1,4 @@
-import collections
+import collections.abc
 
 import tensorflow as tf
 from tensorflow_probability.python.distributions import \
@@ -56,7 +56,7 @@ class ConditionalTensor(distribution_lib.Distribution):
     if type(self) is not ConditionalTensor:
       return super(ConditionalTensor, self).__getitem__(slices)
 
-    slices = (tuple(slices) if isinstance(slices, collections.Sequence) else
+    slices = (tuple(slices) if isinstance(slices, collections.abc.Sequence) else
               (slices,))
     if Ellipsis not in slices:
       slices = slices + (Ellipsis,)

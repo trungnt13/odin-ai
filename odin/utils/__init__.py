@@ -18,7 +18,8 @@ import tempfile
 import time
 import timeit
 import types
-from collections import Iterable, Iterator, Mapping, OrderedDict, deque
+from collections import OrderedDict, deque
+from collections.abc import Iterable, Iterator, Mapping
 from itertools import chain, islice, tee
 from multiprocessing import Lock, cpu_count, current_process
 from typing import Optional, Tuple, Sequence, Generator

@@ -10,7 +10,8 @@ from six import add_metaclass
 from six.moves import cPickle
 from contextlib import contextmanager
 from abc import ABCMeta, abstractmethod, abstractproperty
-from collections import OrderedDict, Iterator, defaultdict, MutableMapping, Mapping
+from collections import OrderedDict, defaultdict
+from collections.abc import Iterator, MutableMapping, Mapping
 
 import numpy as np
 
